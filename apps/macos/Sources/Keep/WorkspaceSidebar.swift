@@ -21,7 +21,10 @@ struct WorkspaceSidebar: View {
                     }
                 }
             }
-            .listStyle(.sidebar)
+            // AppKit already owns the sidebar surface. Applying SwiftUI's
+            // sidebar style here creates a second, rounded panel below the
+            // titlebar instead of one Finder-style full-height column.
+            .listStyle(.plain)
             // Let the split view's sidebar material show through instead of
             // the list painting its own opaque background.
             .scrollContentBackground(.hidden)

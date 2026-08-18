@@ -9,6 +9,14 @@ import AppKit
 final class WindowManager {
     static let shared = WindowManager()
 
+    /// How many windows may exist at once.
+    ///
+    /// A chrome experiment once drove window creation in a loop and opened
+    /// dozens of tab windows in seconds, which took the machine down. Every
+    /// window is created through `makeController`, so this is the only lever
+    /// that has to move to widen it again.
+    static let maxWindows = 1
+
     private(set) var controllers: [TerminalWindowController] = []
 
     /// Set while the app quits. Windows closed on quit are the app going
@@ -16,6 +24,18 @@ final class WindowManager {
     var isQuitting = false
 
     private init() {}
+
+    /// The sole way a window comes into being. Returns nil at the cap, and
+    /// callers show whatever they already have instead.
+    private func makeController(
+        workspace: String, rootTab: UInt32, store: Store
+    ) -> TerminalWindowController? {
+        guard controllers.count < Self.maxWindows else { return nil }
+        let controller = TerminalWindowController(
+            workspace: workspace, rootTab: rootTab, store: store)
+        controllers.append(controller)
+        return controller
+    }
 
     /// Show a workspace: one native tab per root daemon tab (panes render
     /// inside their root's window), existing windows left untouched.
@@ -35,9 +55,12 @@ final class WindowManager {
             if let existing = mine.first(where: { $0.rootTab == root.id }) {
                 controller = existing
             } else {
-                controller = TerminalWindowController(
+                // At the cap the remaining tabs keep running in the daemon,
+                // just unshown; later roots may still have a window already.
+                guard let made = makeController(
                     workspace: workspace.name, rootTab: root.id, store: store)
-                controllers.append(controller)
+                else { continue }
+                controller = made
                 if let previous, let window = controller.window {
                     previous.addTabbedWindow(window, ordered: .above)
                 } else if let window = controller.window {
@@ -63,8 +86,8 @@ final class WindowManager {
     func openTab(workspace: String, tab: UInt32, store: Store) {
         guard !controllers.contains(where: { $0.workspace == workspace && $0.rootTab == tab })
         else { return }
-        let controller = TerminalWindowController(workspace: workspace, rootTab: tab, store: store)
-        controllers.append(controller)
+        guard let controller = makeController(workspace: workspace, rootTab: tab, store: store)
+        else { return }
 
         if let sibling = controllers.first(where: { $0.workspace == workspace && $0 !== controller })?.window,
            let window = controller.window {

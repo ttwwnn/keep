@@ -72,16 +72,11 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate {
         // run left behind.
         window.isRestorable = false
 
-        // One line of chrome: the native tab bar is constrained into this
-        // toolbar row (see KeepWindow), beside the traffic lights. The title
-        // is hidden because each tab carries its own.
-        // No toolbar: its backdrop only added another band to fight. The
-        // titlebar is transparent, the sidebar material is patched through
-        // it (see KeepWindow), and the toggle floats as an accessory.
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.contentAnchorView = container
-        window.installSidebarToggle()
+        // ClearMic's SwiftUI `.windowToolbarStyle(.unified)` translates to a
+        // real unified NSToolbar here. Its tracking separator binds the
+        // toolbar's leading section to this split view's sidebar, so AppKit
+        // owns the full-height material and the collapse/resize transition.
+        window.installUnifiedToolbar(tracking: split.splitView)
 
         super.init(window: window)
         window.delegate = self
