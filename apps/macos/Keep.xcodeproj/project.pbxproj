@@ -16,6 +16,7 @@
 		BE8688F3B9607B18598E4710 /* TerminalWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BA9D409D4CE86AC07D787E1 /* TerminalWindowController.swift */; };
 		BF1012E62BB7056EE7E7D3D4 /* SurfaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D420A752F15C72894CF7BC3 /* SurfaceView.swift */; };
 		F124B44B2BB9508A23F7D93F /* Store.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8842845A7C137C580BE530A /* Store.swift */; };
+		FA090A5227C37CD8E0FB206D /* KeepWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78382D18A1C95D16A36057DF /* KeepWindow.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -25,6 +26,7 @@
 		468C7023FE758974CF463692 /* Daemon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Daemon.swift; sourceTree = "<group>"; };
 		5BA9D409D4CE86AC07D787E1 /* TerminalWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalWindowController.swift; sourceTree = "<group>"; };
 		617541C8882EDCC67701FB64 /* GhosttyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyApp.swift; sourceTree = "<group>"; };
+		78382D18A1C95D16A36057DF /* KeepWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepWindow.swift; sourceTree = "<group>"; };
 		7D420A752F15C72894CF7BC3 /* SurfaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurfaceView.swift; sourceTree = "<group>"; };
 		C56562178AF5BFA11BB3ED2E /* WindowManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowManager.swift; sourceTree = "<group>"; };
 		D8842845A7C137C580BE530A /* Store.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Store.swift; sourceTree = "<group>"; };
@@ -81,6 +83,7 @@
 			isa = PBXGroup;
 			children = (
 				468C7023FE758974CF463692 /* Daemon.swift */,
+				78382D18A1C95D16A36057DF /* KeepWindow.swift */,
 				3ADD16A5C6AADA495B3C279A /* main.swift */,
 				D8842845A7C137C580BE530A /* Store.swift */,
 				5BA9D409D4CE86AC07D787E1 /* TerminalWindowController.swift */,
@@ -157,6 +160,7 @@
 			files = (
 				6CF528E340D307EDC50914B8 /* Daemon.swift in Sources */,
 				B60E09C5FD28BB81E35B01C7 /* GhosttyApp.swift in Sources */,
+				FA090A5227C37CD8E0FB206D /* KeepWindow.swift in Sources */,
 				F124B44B2BB9508A23F7D93F /* Store.swift in Sources */,
 				BF1012E62BB7056EE7E7D3D4 /* SurfaceView.swift in Sources */,
 				BE8688F3B9607B18598E4710 /* TerminalWindowController.swift in Sources */,

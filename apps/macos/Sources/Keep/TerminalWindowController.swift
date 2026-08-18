@@ -58,7 +58,7 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate {
         split.addSplitViewItem(sidebarItem)
         split.addSplitViewItem(NSSplitViewItem(viewController: terminal))
 
-        let window = NSWindow(
+        let window = KeepWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1040, height: 660),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
@@ -72,15 +72,17 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate {
         // run left behind.
         window.isRestorable = false
 
-        // The Finder arrangement: the toolbar row shows the active tab's
-        // title over the content area, the sidebar owns the strip to its
-        // left, and the native tab bar slots in beneath when there are tabs.
+        // One line of chrome: the native tab bar is constrained into this
+        // toolbar row (see KeepWindow), beside the traffic lights. The title
+        // is hidden because each tab carries its own.
+        window.contentAnchorView = container
         let toolbar = NSToolbar(identifier: "KeepToolbar")
         toolbar.showsBaselineSeparator = false
         window.toolbar = toolbar
-        window.toolbarStyle = .unified
+        window.toolbarStyle = .unifiedCompact
         window.titlebarAppearsTransparent = true
-        window.titleVisibility = .visible
+        window.titleVisibility = .hidden
+        window.installSidebarToggle()
 
         super.init(window: window)
         window.delegate = self
@@ -145,6 +147,12 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate {
         var label = trimmed.isEmpty ? "tab \(rootTab)" : trimmed
         if panes.count > 1 { label += "  ⊞" }
         window?.title = busy ? "✳ \(label)" : label
+    }
+
+    /// The native tab bar shows its "+" button when this is implemented
+    /// anywhere in the responder chain.
+    override func newWindowForTab(_ sender: Any?) {
+        store.newTab(in: workspace)
     }
 
     func windowWillClose(_ notification: Notification) {

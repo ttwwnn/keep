@@ -47,12 +47,15 @@ and no font handling to build.
 - [x] `keep` — attach, detach, repaint, input forwarding, flat picker
 - [x] workspaces hold tabs; tabs persist with the workspace
 
-**Phase 2 — native macOS app.** Working. One window: a workspace sidebar on
-the left, native macOS tabs in the titlebar row, and a real libghostty
-surface (Metal rendering, your own Ghostty fonts and theme) under each tab,
-running the `keep` client as its child. Tabs are windows sharing a
-`tabbingIdentifier` — the Finder arrangement — so ⌘1…⌘9, drag to reorder and
-the tab overview come from the system. Closing a tab closes it; quitting the
+**Phase 2 — native macOS app.** Working. One line of chrome: traffic lights,
+a sidebar toggle, the native macOS tab bar and its "+" button all share the
+titlebar row (the tab bar is constrained in there, an approach adapted from
+Ghostty's titlebar tabs). The workspace sidebar runs the full height of the
+window Finder-style and the tab bar starts at its edge — collapse it and the
+tabs slide over to the toggle. Each tab is a real libghostty surface (Metal
+rendering, your own Ghostty fonts and theme) running the `keep` client, and
+tabs are windows sharing a `tabbingIdentifier`, so ⌘1…⌘9, drag to reorder
+and the overview come from the system. Closing a tab closes it; quitting the
 app leaves every tab running in the daemon.
 
 Tabs are labelled with the title the program inside sets (OSC 0/2), which
