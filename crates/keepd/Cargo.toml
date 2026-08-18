@@ -1,0 +1,15 @@
+[package]
+name = "keepd"
+description = "Session daemon: owns the PTYs and outlives every client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+keep-vt = { path = "../keep-vt" }
+portable-pty = "0.9.0"
+
+[dev-dependencies]
+portable-pty = "0.9.0"

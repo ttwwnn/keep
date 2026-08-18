@@ -42,7 +42,8 @@ terminal and paints by writing VT sequences, so there is no renderer and no
 font handling to build. This is enough for persistence and session switching.
 
 - [x] `keep-vt` — safe Rust bindings for libghostty-vt
-- [ ] `keepd` — daemon: PTY ownership, session registry, socket protocol
+- [~] `keepd` — PTY ownership and screen state done; session registry and
+      socket protocol still missing
 - [ ] `keep` — client: attach, detach, repaint, input forwarding
 
 **Phase 2 — native macOS client.** SwiftUI for chrome, `NSView` + Metal for the
