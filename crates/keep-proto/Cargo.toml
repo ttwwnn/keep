@@ -1,0 +1,7 @@
+[package]
+name = "keep-proto"
+description = "Wire protocol shared by the keep daemon and its clients"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true

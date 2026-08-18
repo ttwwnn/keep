@@ -2,7 +2,7 @@
 
 Persistent terminal sessions, built on [libghostty-vt](https://libghostty.tip.ghostty.org/).
 
-> Working name. Early development — nothing here is usable yet.
+> Working name. Early, but usable: phase 1 works end to end.
 
 ## Why
 
@@ -37,14 +37,17 @@ native client instead of a lowest-common-denominator one.
 
 ## Status
 
-**Phase 1 — daemon + terminal client.** The client runs inside an existing
-terminal and paints by writing VT sequences, so there is no renderer and no
-font handling to build. This is enough for persistence and session switching.
+**Phase 1 — daemon + terminal client.** Working. The client runs inside an
+existing terminal and paints by writing VT sequences, so there is no renderer
+and no font handling to build.
 
-- [x] `keep-vt` — safe Rust bindings for libghostty-vt
-- [~] `keepd` — PTY ownership and screen state done; session registry and
-      socket protocol still missing
-- [ ] `keep` — client: attach, detach, repaint, input forwarding
+- [x] `keep-vt` — safe bindings for libghostty-vt
+- [x] `keep-proto` — framed wire protocol
+- [x] `keepd` — PTY ownership, screen state, session registry, unix socket
+- [x] `keep` — attach, detach, repaint, input forwarding, flat picker
+
+Not done yet: scrollback (the repaint covers the visible screen only), and
+sessions do not survive a reboot.
 
 **Phase 2 — native macOS client.** SwiftUI for chrome, `NSView` + Metal for the
 grid, talking to the same daemon. Ghostty itself is built this way: its terminal
@@ -58,8 +61,20 @@ universal xcframework:
 
 ```sh
 ./vendor/fetch.sh   # downloads libghostty-vt
-cargo test
+cargo build --release
 ```
+
+Then put `target/release/keep` and `target/release/keepd` on your `PATH`.
+The client starts the daemon on demand; you never run `keepd` yourself.
+
+```sh
+keep              # pick a session, or type a name to start one
+keep myproject    # attach to myproject, creating it if needed
+keep ls           # list sessions
+keep kill name    # end one
+```
+
+Inside a session, `ctrl-\` detaches and leaves everything running.
 
 libghostty-vt has no stable ABI yet and its only release tag is `tip`. The
 vendored copy is pinned on purpose, and `keep-vt` asserts the C struct sizes it

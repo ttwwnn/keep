@@ -113,3 +113,66 @@ fn session_keeps_running_with_no_one_watching() {
     }
     session.kill().ok();
 }
+
+/// Attaching must be a single atomic step: the snapshot and the subscription
+/// happen under one lock. If they did not, a client would either miss output
+/// produced between them, or see output the snapshot already showed.
+#[test]
+fn attach_has_no_gap_and_no_duplicate() {
+    let session = Session::spawn(shell(), 60, 20).expect("spawn");
+
+    session.send(b"echo before$((1+1))\n").expect("send");
+    assert!(
+        wait_for(Duration::from_secs(5), || screen_contains(&session, "before2")),
+        "setup output never appeared"
+    );
+
+    let (repaint_bytes, attachment) = session.attach().expect("attach");
+    let repaint = String::from_utf8_lossy(&repaint_bytes).into_owned();
+    assert!(repaint.contains("before2"), "repaint missed prior output");
+
+    session.send(b"echo after$((2+2))\n").expect("send");
+
+    // Collect what the feed delivers after the snapshot.
+    let mut streamed = String::new();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        match attachment.output.recv_timeout(Duration::from_millis(100)) {
+            Ok(chunk) => {
+                streamed.push_str(&String::from_utf8_lossy(&chunk));
+                if streamed.contains("after4") {
+                    break;
+                }
+            }
+            Err(_) => continue,
+        }
+    }
+
+    assert!(streamed.contains("after4"), "live feed missed new output: {streamed:?}");
+    assert!(
+        !streamed.contains("before2"),
+        "live feed replayed output already in the repaint: {streamed:?}"
+    );
+    session.kill().ok();
+}
+
+/// A departed client must stop being counted immediately, even if the session
+/// produces no further output. Pruning only on a failed send would leave a
+/// quiet session reporting watchers that left long ago.
+#[test]
+fn detaching_stops_counting_the_client_right_away() {
+    let session = Session::spawn(shell(), 40, 10).expect("spawn");
+    assert_eq!(session.attached_clients(), 0, "fresh session has no clients");
+
+    let (_repaint, attachment) = session.attach().expect("attach");
+    assert_eq!(session.attached_clients(), 1, "attach was not counted");
+
+    drop(attachment);
+    assert_eq!(
+        session.attached_clients(),
+        0,
+        "client still counted after detaching from a silent session"
+    );
+
+    session.kill().ok();
+}

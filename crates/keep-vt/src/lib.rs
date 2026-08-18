@@ -81,6 +81,13 @@ pub mod ffi {
         ) -> c_int;
         pub fn ghostty_terminal_free(terminal: Terminal);
         pub fn ghostty_terminal_vt_write(terminal: Terminal, data: *const u8, len: usize);
+        pub fn ghostty_terminal_resize(
+            terminal: Terminal,
+            cols: u16,
+            rows: u16,
+            cell_width_px: u32,
+            cell_height_px: u32,
+        ) -> c_int;
 
         pub fn ghostty_formatter_terminal_new(
             allocator: *const c_void,
@@ -160,6 +167,18 @@ impl Terminal {
             return;
         }
         unsafe { ffi::ghostty_terminal_vt_write(self.raw, data.as_ptr(), data.len()) };
+    }
+
+    /// Resize the grid.
+    ///
+    /// Must be kept in step with the PTY window size, or the child will draw
+    /// for one geometry while the grid tracks another.
+    pub fn resize(&mut self, cols: u16, rows: u16) -> Result<(), Error> {
+        let rc = unsafe { ffi::ghostty_terminal_resize(self.raw, cols, rows, 0, 0) };
+        if rc != ffi::SUCCESS {
+            return Err(Error(rc));
+        }
+        Ok(())
     }
 
     /// Render the current screen state into the requested format.

@@ -1,0 +1,170 @@
+//! keep — persistent terminal sessions.
+
+mod attach;
+mod picker;
+
+use std::io::Write;
+use std::os::unix::net::UnixStream;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use anyhow::{Context, Result};
+use keep_proto::{ClientMsg, ServerMsg, SessionInfo};
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("keep: {e:#}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let socket = keep_proto::socket_path();
+
+    match args.first().map(String::as_str) {
+        None => {
+            ensure_daemon(&socket)?;
+            let sessions = list(&socket)?;
+            match picker::pick(&sessions)? {
+                picker::Choice::Session(name) | picker::Choice::New(name) => {
+                    enter(&socket, &name)
+                }
+                picker::Choice::Cancelled => Ok(()),
+            }
+        }
+        Some("ls" | "list") => {
+            ensure_daemon(&socket)?;
+            print_list(&list(&socket)?);
+            Ok(())
+        }
+        Some("kill") => {
+            let name = args.get(1).context("usage: keep kill <name>")?;
+            ensure_daemon(&socket)?;
+            let mut sock = UnixStream::connect(&socket)?;
+            ClientMsg::Kill { name: name.clone() }.write(&mut sock)?;
+            match ServerMsg::read(&mut sock)? {
+                Some(ServerMsg::Ok) => {
+                    println!("killed {name}");
+                    Ok(())
+                }
+                Some(ServerMsg::Error(e)) => anyhow::bail!(e),
+                _ => anyhow::bail!("unexpected reply"),
+            }
+        }
+        Some("-h" | "--help" | "help") => {
+            print_help();
+            Ok(())
+        }
+        Some("--version" | "-V") => {
+            println!("keep {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        Some(name) => {
+            ensure_daemon(&socket)?;
+            enter(&socket, name)
+        }
+    }
+}
+
+fn enter(socket: &Path, name: &str) -> Result<()> {
+    match attach::attach(socket, name)? {
+        attach::Outcome::Detached => {
+            println!("detached from {name}");
+        }
+        attach::Outcome::SessionEnded => {
+            println!("session {name} ended");
+        }
+    }
+    Ok(())
+}
+
+fn list(socket: &Path) -> Result<Vec<SessionInfo>> {
+    let mut sock = UnixStream::connect(socket).context("connect to daemon")?;
+    ClientMsg::List.write(&mut sock)?;
+    match ServerMsg::read(&mut sock)? {
+        Some(ServerMsg::Sessions(list)) => Ok(list),
+        Some(ServerMsg::Error(e)) => anyhow::bail!(e),
+        _ => anyhow::bail!("unexpected reply from daemon"),
+    }
+}
+
+fn print_list(sessions: &[SessionInfo]) {
+    if sessions.is_empty() {
+        println!("no sessions");
+        return;
+    }
+    for s in sessions {
+        let state = if s.finished {
+            "exited"
+        } else if s.clients > 0 {
+            "attached"
+        } else {
+            "idle"
+        };
+        println!("{:<24} {:>4}x{:<4} {}", s.name, s.cols, s.rows, state);
+    }
+}
+
+/// Start the daemon if it is not already listening.
+///
+/// The daemon is deliberately not a child of this process: it must outlive
+/// every client, including the one that happened to start it.
+fn ensure_daemon(socket: &Path) -> Result<()> {
+    if UnixStream::connect(socket).is_ok() {
+        return Ok(());
+    }
+
+    let exe = daemon_binary()?;
+    std::process::Command::new(&exe)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .with_context(|| format!("start daemon at {}", exe.display()))?;
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if UnixStream::connect(socket).is_ok() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    anyhow::bail!("daemon did not start listening on {}", socket.display())
+}
+
+/// Look for `keepd` next to this binary first, so a build tree and an
+/// installed copy never mix versions.
+fn daemon_binary() -> Result<PathBuf> {
+    if let Ok(p) = std::env::var("KEEPD_BIN") {
+        return Ok(p.into());
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let sibling = dir.join("keepd");
+            if sibling.is_file() {
+                return Ok(sibling);
+            }
+        }
+    }
+    Ok(PathBuf::from("keepd"))
+}
+
+fn print_help() {
+    let mut out = std::io::stdout();
+    let _ = write!(
+        out,
+        "\
+keep — persistent terminal sessions
+
+USAGE
+  keep                 pick a session (or type a name to start one)
+  keep <name>          attach to <name>, creating it if needed
+  keep ls              list sessions
+  keep kill <name>     end a session
+
+IN A SESSION
+  ctrl-\\               detach, leaving everything running
+"
+    );
+}
