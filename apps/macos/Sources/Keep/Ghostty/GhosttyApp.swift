@@ -65,6 +65,23 @@ final class GhosttyApp {
             return
         }
         self.app = app
+
+        // A `theme = dark:...,light:...` config is resolved per color scheme,
+        // and libghostty assumes light until told otherwise. Setting it on the
+        // surface alone is not enough: the choice is made app-wide.
+        syncColorScheme()
+        appearanceObserver = NSApp.observe(\.effectiveAppearance) { [weak self] _, _ in
+            self?.syncColorScheme()
+        }
+    }
+
+    private var appearanceObserver: NSKeyValueObservation?
+
+    /// Follow the system between light and dark.
+    func syncColorScheme() {
+        guard let app else { return }
+        let dark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        ghostty_app_set_color_scheme(app, dark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT)
     }
 
     func tick() {

@@ -52,6 +52,9 @@ pub struct TabInfo {
     pub rows: u16,
     pub clients: u32,
     pub finished: bool,
+    /// What the program inside called itself (OSC 0/2). Empty when it has not
+    /// said, which is why callers need a fallback label.
+    pub title: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -257,6 +260,7 @@ impl ServerMsg {
                         b.u16(t.rows);
                         b.u32(t.clients);
                         b.bool(t.finished);
+                        b.str(&t.title);
                     }
                 }
                 T_SESSIONS
@@ -305,6 +309,7 @@ impl ServerMsg {
                             rows: c.u16()?,
                             clients: c.u32()?,
                             finished: c.bool()?,
+                            title: c.str()?,
                         });
                     }
                     list.push(SessionInfo { name, tabs });
@@ -399,8 +404,22 @@ mod tests {
             SessionInfo {
                 name: "b é".into(),
                 tabs: vec![
-                    TabInfo { id: 1, cols: 80, rows: 24, clients: 0, finished: false },
-                    TabInfo { id: 2, cols: 100, rows: 30, clients: 2, finished: true },
+                    TabInfo {
+                        id: 1,
+                        cols: 80,
+                        rows: 24,
+                        clients: 0,
+                        finished: false,
+                        title: String::new(),
+                    },
+                    TabInfo {
+                        id: 2,
+                        cols: 100,
+                        rows: 30,
+                        clients: 2,
+                        finished: true,
+                        title: "nvim src/main.rs".into(),
+                    },
                 ],
             },
         ]));
@@ -411,8 +430,22 @@ mod tests {
         let s = SessionInfo {
             name: "x".into(),
             tabs: vec![
-                TabInfo { id: 1, cols: 80, rows: 24, clients: 2, finished: false },
-                TabInfo { id: 2, cols: 80, rows: 24, clients: 1, finished: false },
+                TabInfo {
+                    id: 1,
+                    cols: 80,
+                    rows: 24,
+                    clients: 2,
+                    finished: false,
+                    title: String::new(),
+                },
+                TabInfo {
+                    id: 2,
+                    cols: 80,
+                    rows: 24,
+                    clients: 1,
+                    finished: false,
+                    title: String::new(),
+                },
             ],
         };
         assert_eq!(s.clients(), 3);

@@ -121,7 +121,12 @@ fn print_list(sessions: &[SessionInfo]) {
         println!("{:<24} {:>2} tab(s)  {}", s.name, live, state);
         for t in &s.tabs {
             let mark = if t.finished { "exited" } else if t.clients > 0 { "attached" } else { "idle" };
-            println!("  {:<22} {:>4}x{:<4} {}", format!("tab {}", t.id), t.cols, t.rows, mark);
+            let label = if t.title.is_empty() {
+                format!("tab {}", t.id)
+            } else {
+                format!("tab {} · {}", t.id, t.title)
+            };
+            println!("  {:<30} {:>4}x{:<4} {}", label, t.cols, t.rows, mark);
         }
     }
 }

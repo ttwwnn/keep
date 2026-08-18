@@ -13,6 +13,19 @@ enum Daemon {
         var rows: UInt16
         var clients: UInt32
         var finished: Bool
+        /// What the program inside called itself (OSC 0/2). Often empty.
+        var title: String
+
+        /// Shells retitle constantly and usually with the host and path,
+        /// which says nothing useful in a list of tabs from one machine.
+        var label: String {
+            let trimmed = title.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { return "Tab \(id)" }
+            if let tail = trimmed.split(separator: ":").last, trimmed.contains("@") {
+                return String(tail)
+            }
+            return trimmed
+        }
     }
 
     struct Session: Identifiable, Hashable {
@@ -255,7 +268,8 @@ enum Daemon {
                     cols: try r.u16(),
                     rows: try r.u16(),
                     clients: try r.u32(),
-                    finished: try r.u8() != 0
+                    finished: try r.u8() != 0,
+                    title: try r.string()
                 ))
             }
             out.append(Session(name: name, tabs: tabs))

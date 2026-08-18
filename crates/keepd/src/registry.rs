@@ -38,6 +38,7 @@ impl Registry {
                             rows,
                             clients: tab.attached_clients() as u32,
                             finished: tab.is_finished(),
+                            title: tab.title(),
                         }
                     })
                     .collect(),

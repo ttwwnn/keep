@@ -150,6 +150,11 @@ impl Tab {
         Ok(())
     }
 
+    /// What the program inside called itself (OSC 0/2), if anything.
+    pub fn title(&self) -> String {
+        self.inner.lock().map(|g| g.terminal.title()).unwrap_or_default()
+    }
+
     /// The screen as plain text. Used for previews and tests.
     pub fn screen_text(&self) -> Result<String> {
         let guard = self.inner.lock().map_err(|_| anyhow::anyhow!("tab poisoned"))?;

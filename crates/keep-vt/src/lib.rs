@@ -29,6 +29,19 @@ pub mod ffi {
 
     pub const SUCCESS: c_int = 0;
 
+    /// `GhosttyTerminalData` values we read.
+    pub const DATA_TITLE: c_int = 12;
+    pub const DATA_PWD: c_int = 13;
+
+    /// A borrowed string owned by the terminal. Only valid until the next
+    /// mutating call, so copy before releasing the lock.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct GhosttyString {
+        pub ptr: *const u8,
+        pub len: usize,
+    }
+
     pub const FORMAT_PLAIN: c_int = 0;
     pub const FORMAT_VT: c_int = 1;
     pub const FORMAT_HTML: c_int = 2;
@@ -80,6 +93,7 @@ pub mod ffi {
             rows: u16,
         ) -> c_int;
         pub fn ghostty_terminal_free(terminal: Terminal);
+        pub fn ghostty_terminal_get(terminal: Terminal, data: c_int, out: *mut c_void) -> c_int;
         pub fn ghostty_terminal_vt_write(terminal: Terminal, data: *const u8, len: usize);
         pub fn ghostty_terminal_resize(
             terminal: Terminal,
@@ -167,6 +181,32 @@ impl Terminal {
             return;
         }
         unsafe { ffi::ghostty_terminal_vt_write(self.raw, data.as_ptr(), data.len()) };
+    }
+
+    /// The title the program inside set with OSC 0/2.
+    ///
+    /// Empty when nothing has set one. Shells and editors set this constantly,
+    /// which makes it the cheapest way to label a tab with what it is doing.
+    pub fn title(&self) -> String {
+        self.borrowed_string(ffi::DATA_TITLE)
+    }
+
+    /// The working directory the program inside reported via OSC 7.
+    pub fn pwd(&self) -> String {
+        self.borrowed_string(ffi::DATA_PWD)
+    }
+
+    fn borrowed_string(&self, data: c_int) -> String {
+        let mut out = ffi::GhosttyString { ptr: std::ptr::null(), len: 0 };
+        let rc = unsafe {
+            ffi::ghostty_terminal_get(self.raw, data, &mut out as *mut _ as *mut c_void)
+        };
+        if rc != ffi::SUCCESS || out.ptr.is_null() || out.len == 0 {
+            return String::new();
+        }
+        // Copy immediately: the pointer dies on the next mutating call.
+        let bytes = unsafe { std::slice::from_raw_parts(out.ptr, out.len) };
+        String::from_utf8_lossy(bytes).into_owned()
     }
 
     /// Resize the grid.
@@ -318,5 +358,33 @@ mod abi {
         assert_eq!(std::mem::size_of::<ffi::ScreenExtra>(), 16, "ScreenExtra");
         assert_eq!(std::mem::size_of::<ffi::TerminalExtra>(), 32, "TerminalExtra");
         assert_eq!(std::mem::size_of::<ffi::FormatterOptions>(), 56, "FormatterOptions");
+    }
+}
+
+#[cfg(test)]
+mod title {
+    use super::*;
+
+    #[test]
+    fn reads_the_title_set_by_osc() {
+        let mut t = Terminal::new(40, 5).unwrap();
+        assert_eq!(t.title(), "", "a fresh terminal has no title");
+
+        // OSC 2 is what shells and editors use to name the window.
+        t.write(b"\x1b]2;building orion\x07");
+        assert_eq!(t.title(), "building orion");
+
+        // A later title replaces the earlier one.
+        t.write(b"\x1b]2;running tests\x07");
+        assert_eq!(t.title(), "running tests");
+    }
+
+    #[test]
+    fn title_survives_being_split_across_writes() {
+        let mut t = Terminal::new(40, 5).unwrap();
+        for chunk in [&b"\x1b]2;par"[..], b"tial ti", b"tle\x07"] {
+            t.write(chunk);
+        }
+        assert_eq!(t.title(), "partial title");
     }
 }

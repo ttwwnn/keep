@@ -55,6 +55,7 @@ final class TerminalSurfaceView: NSView {
 
         guard let surface else { return }
         ghostty_surface_set_content_scale(surface, config.scale_factor, config.scale_factor)
+        applyColorScheme()
         updateSize()
         startDisplayLink()
     }
@@ -82,6 +83,24 @@ final class TerminalSurfaceView: NSView {
             UInt32(max(1, bounds.width * scale)),
             UInt32(max(1, bounds.height * scale))
         )
+    }
+
+    /// Tell libghostty whether we are dark or light.
+    ///
+    /// Without this it assumes light, so a config with a `dark:`/`light:`
+    /// theme pair renders the wrong half against a dark app.
+    private func applyColorScheme() {
+        guard let surface else { return }
+        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        ghostty_surface_set_color_scheme(
+            surface,
+            dark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT
+        )
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyColorScheme()
     }
 
     override func setFrameSize(_ newSize: NSSize) {

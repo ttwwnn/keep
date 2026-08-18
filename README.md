@@ -51,6 +51,10 @@ and no font handling to build.
 sidebar and a tab bar; each tab is a real libghostty surface (Metal rendering,
 your own Ghostty fonts and theme) running the `keep` client as its child.
 
+Tabs are labelled with the title the program inside sets (OSC 0/2), which
+shells and editors do on their own, so a tab says what it is without anyone
+naming it.
+
 Not done yet: keyboard shortcuts, split views, scrollback (the repaint covers
 the visible screen only), and sessions do not survive a reboot.
 

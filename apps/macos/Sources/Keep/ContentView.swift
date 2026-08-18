@@ -109,8 +109,12 @@ struct ContentView: View {
                         selectedTab = tab.id
                     } label: {
                         HStack(spacing: 6) {
-                            Text("Tab \(tab.id)")
+                            Text(tab.label)
                                 .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .frame(maxWidth: 170)
+                                .help(tab.title.isEmpty ? "Tab \(tab.id)" : tab.title)
                             if session.liveTabs.count > 1 {
                                 Button {
                                     closeTab(tab.id, in: session.name)

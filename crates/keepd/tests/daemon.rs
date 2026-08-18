@@ -276,3 +276,52 @@ fn tabs_are_independent_and_both_survive() {
     assert!(screen.contains("one1"), "first tab lost its own work: {screen:?}");
     assert!(!screen.contains("two2"), "first tab shows the second tab's output: {screen:?}");
 }
+
+/// The title a program sets with OSC has to reach the session list, because
+/// that is what labels a tab you are not currently looking at.
+#[test]
+fn tab_title_reaches_the_session_list() {
+    let path = start_daemon("title");
+
+    let mut client = UnixStream::connect(&path).unwrap();
+    ClientMsg::Attach { session: "titled".into(), tab: TAB_ANY, cols: 80, rows: 24 }
+        .write(&mut client)
+        .unwrap();
+    client.set_read_timeout(Some(Duration::from_secs(5))).ok();
+    ServerMsg::read(&mut client).unwrap();
+    read_repaint(&mut client);
+
+    // Interactive shells retitle on every prompt, so the sleep holds our
+    // title long enough to observe. That the shell competes here is the point:
+    // real tabs get labelled without anyone doing anything.
+    ClientMsg::Input(b"printf '\\033]2;building orion\\007'; sleep 3\n".to_vec())
+        .write(&mut client)
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut seen = String::new();
+    while Instant::now() < deadline {
+        if let Some(t) = title_of(&path, "titled") {
+            seen = t;
+            if seen == "building orion" {
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(seen, "building orion", "title never reached the list");
+}
+
+fn title_of(path: &std::path::Path, session: &str) -> Option<String> {
+    let mut sock = UnixStream::connect(path).ok()?;
+    ClientMsg::List.write(&mut sock).ok()?;
+    sock.set_read_timeout(Some(Duration::from_secs(5))).ok();
+    match ServerMsg::read(&mut sock) {
+        Ok(Some(ServerMsg::Sessions(list))) => list
+            .iter()
+            .find(|s| s.name == session)
+            .and_then(|s| s.tabs.first())
+            .map(|t| t.title.clone()),
+        _ => None,
+    }
+}

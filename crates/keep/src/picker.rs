@@ -158,6 +158,7 @@ mod tests {
                 rows: 24,
                 clients: 0,
                 finished: false,
+                title: String::new(),
             }],
         }
     }
