@@ -23,8 +23,20 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate {
         self.store = store
 
         let surface = TerminalSurfaceView(workspace: workspace, tab: tab)
+        // The window's content extends under the titlebar (fullSizeContentView,
+        // which the full-height sidebar needs), so the terminal must hang off
+        // the safe area or its first rows render behind the title and tab bar.
+        let container = NSView()
+        surface.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(surface)
+        NSLayoutConstraint.activate([
+            surface.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            surface.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            surface.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor),
+            surface.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
         let terminal = NSViewController()
-        terminal.view = surface
+        terminal.view = container
 
         let sidebar = NSHostingController(rootView: WorkspaceSidebar(store: store))
         sidebar.view.setFrameSize(NSSize(width: 220, height: 400))
@@ -34,6 +46,11 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate {
         sidebarItem.minimumThickness = 180
         sidebarItem.maximumThickness = 320
         sidebarItem.canCollapse = true
+        // The Finder treatment: the sidebar runs the full height of the
+        // window, under the titlebar, with the traffic lights floating over
+        // it. The split item's material provides the translucency.
+        sidebarItem.allowsFullHeightLayout = true
+        sidebarItem.titlebarSeparatorStyle = .none
         split.addSplitViewItem(sidebarItem)
         split.addSplitViewItem(NSSplitViewItem(viewController: terminal))
 
@@ -51,14 +68,15 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate {
         // run left behind.
         window.isRestorable = false
 
-        // The tab bar sits in the titlebar only when the window carries a
-        // compact unified toolbar, and there is no title beside it.
+        // The Finder arrangement: the toolbar row shows the active tab's
+        // title over the content area, the sidebar owns the strip to its
+        // left, and the native tab bar slots in beneath when there are tabs.
         let toolbar = NSToolbar(identifier: "KeepToolbar")
         toolbar.showsBaselineSeparator = false
         window.toolbar = toolbar
-        window.toolbarStyle = .unifiedCompact
+        window.toolbarStyle = .unified
         window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
+        window.titleVisibility = .visible
 
         super.init(window: window)
         window.delegate = self

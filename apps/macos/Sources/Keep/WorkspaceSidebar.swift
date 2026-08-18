@@ -22,6 +22,9 @@ struct WorkspaceSidebar: View {
                 }
             }
             .listStyle(.sidebar)
+            // Let the split view's sidebar material show through instead of
+            // the list painting its own opaque background.
+            .scrollContentBackground(.hidden)
 
             Divider()
             HStack(spacing: 6) {
