@@ -15,6 +15,8 @@ enum Daemon {
         var finished: Bool
         /// What the program inside called itself (OSC 0/2). Often empty.
         var title: String
+        /// A command is running, as opposed to a shell waiting at a prompt.
+        var busy: Bool
 
         /// Shells retitle constantly and usually with the host and path,
         /// which says nothing useful in a list of tabs from one machine.
@@ -35,9 +37,14 @@ enum Daemon {
 
         var clients: UInt32 { tabs.reduce(0) { $0 + $1.clients } }
         var liveTabs: [Tab] { tabs.filter { !$0.finished } }
+        /// Any tab actually running something.
+        var busy: Bool { liveTabs.contains { $0.busy } }
 
+        /// What the session is doing matters more than who is watching it, so
+        /// running wins over attached.
         var stateLabel: String {
             if liveTabs.isEmpty { return "empty" }
+            if busy { return "running" }
             return clients > 0 ? "attached" : "idle"
         }
     }
@@ -269,7 +276,8 @@ enum Daemon {
                     rows: try r.u16(),
                     clients: try r.u32(),
                     finished: try r.u8() != 0,
-                    title: try r.string()
+                    title: try r.string(),
+                    busy: try r.u8() != 0
                 ))
             }
             out.append(Session(name: name, tabs: tabs))

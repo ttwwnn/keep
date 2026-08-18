@@ -43,6 +43,9 @@ pub struct Tab {
     child: Mutex<Box<dyn Child + Send + Sync>>,
     finished: Arc<AtomicBool>,
     size: Mutex<(u16, u16)>,
+    /// The shell's own pid, kept to tell "sitting at a prompt" apart from
+    /// "running something".
+    shell_pid: Option<u32>,
 }
 
 /// A live feed of everything the tab writes from the moment of attach.
@@ -72,6 +75,7 @@ impl Tab {
             .context("openpty")?;
 
         let child = pair.slave.spawn_command(command).context("spawn child")?;
+        let shell_pid = child.process_id();
         // Drop the slave: otherwise the master never sees EOF when the child
         // exits, because this process would still hold the other end open.
         drop(pair.slave);
@@ -121,6 +125,7 @@ impl Tab {
             child: Mutex::new(child),
             finished,
             size: Mutex::new((cols, rows)),
+            shell_pid,
         })
     }
 
@@ -203,6 +208,26 @@ impl Tab {
 
     pub fn attached_clients(&self) -> usize {
         self.inner.lock().map(|g| g.subscribers.len()).unwrap_or(0)
+    }
+
+    /// Whether a command is running, as opposed to a shell waiting at its
+    /// prompt.
+    ///
+    /// The terminal's foreground process group is the shell itself while it
+    /// waits, and something else while it runs a command. That is the honest
+    /// signal, and unlike shell integration it needs no cooperation from the
+    /// user's setup.
+    pub fn is_busy(&self) -> bool {
+        if self.is_finished() {
+            return false;
+        }
+        let Some(shell) = self.shell_pid else { return false };
+        let Ok(master) = self.master.lock() else { return false };
+        match master.process_group_leader() {
+            Some(fg) => fg as u32 != shell,
+            // No foreground group means nothing is claiming the terminal.
+            None => false,
+        }
     }
 
     /// True once the child is gone and the PTY hit EOF.

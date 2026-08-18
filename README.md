@@ -53,7 +53,9 @@ your own Ghostty fonts and theme) running the `keep` client as its child.
 
 Tabs are labelled with the title the program inside sets (OSC 0/2), which
 shells and editors do on their own, so a tab says what it is without anyone
-naming it.
+naming it. A session also reports whether it is *running* something, taken
+from the terminal's foreground process group rather than from shell
+integration, so a build in a session nobody is watching still says so.
 
 One wrinkle worth knowing about: the libghostty build we link against accepts
 the per-surface `command`, `env_vars` and `initial_input` fields and then

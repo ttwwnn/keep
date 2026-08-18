@@ -55,6 +55,8 @@ pub struct TabInfo {
     /// What the program inside called itself (OSC 0/2). Empty when it has not
     /// said, which is why callers need a fallback label.
     pub title: String,
+    /// A command is running, as opposed to a shell waiting at its prompt.
+    pub busy: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,6 +68,11 @@ pub struct SessionInfo {
 impl SessionInfo {
     pub fn clients(&self) -> u32 {
         self.tabs.iter().map(|t| t.clients).sum()
+    }
+
+    /// Whether any tab is running something.
+    pub fn busy(&self) -> bool {
+        self.tabs.iter().any(|t| t.busy && !t.finished)
     }
 }
 
@@ -261,6 +268,7 @@ impl ServerMsg {
                         b.u32(t.clients);
                         b.bool(t.finished);
                         b.str(&t.title);
+                        b.bool(t.busy);
                     }
                 }
                 T_SESSIONS
@@ -310,6 +318,7 @@ impl ServerMsg {
                             clients: c.u32()?,
                             finished: c.bool()?,
                             title: c.str()?,
+                            busy: c.bool()?,
                         });
                     }
                     list.push(SessionInfo { name, tabs });
@@ -411,6 +420,7 @@ mod tests {
                         clients: 0,
                         finished: false,
                         title: String::new(),
+                        busy: false,
                     },
                     TabInfo {
                         id: 2,
@@ -419,6 +429,7 @@ mod tests {
                         clients: 2,
                         finished: true,
                         title: "nvim src/main.rs".into(),
+                        busy: true,
                     },
                 ],
             },
@@ -437,6 +448,7 @@ mod tests {
                     clients: 2,
                     finished: false,
                     title: String::new(),
+                    busy: false,
                 },
                 TabInfo {
                     id: 2,
@@ -445,6 +457,7 @@ mod tests {
                     clients: 1,
                     finished: false,
                     title: String::new(),
+                    busy: false,
                 },
             ],
         };

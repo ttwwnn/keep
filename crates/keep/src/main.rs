@@ -125,10 +125,24 @@ fn print_list(sessions: &[SessionInfo]) {
     }
     for s in sessions {
         let live = s.tabs.iter().filter(|t| !t.finished).count();
-        let state = if s.clients() > 0 { "attached" } else { "idle" };
+        let state = if s.busy() {
+            "running"
+        } else if s.clients() > 0 {
+            "attached"
+        } else {
+            "idle"
+        };
         println!("{:<24} {:>2} tab(s)  {}", s.name, live, state);
         for t in &s.tabs {
-            let mark = if t.finished { "exited" } else if t.clients > 0 { "attached" } else { "idle" };
+            let mark = if t.finished {
+                "exited"
+            } else if t.busy {
+                "running"
+            } else if t.clients > 0 {
+                "attached"
+            } else {
+                "idle"
+            };
             let label = if t.title.is_empty() {
                 format!("tab {}", t.id)
             } else {

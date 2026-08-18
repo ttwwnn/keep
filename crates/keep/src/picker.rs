@@ -92,6 +92,8 @@ fn run(stdout: &mut std::io::Stdout, sessions: &[SessionInfo]) -> Result<Choice>
             let live = s.tabs.iter().filter(|t| !t.finished).count();
             let state = if live == 0 {
                 "\x1b[90mempty\x1b[0m".to_string()
+            } else if s.busy() {
+                "\x1b[33mrunning\x1b[0m".to_string()
             } else if s.clients() > 0 {
                 format!("\x1b[32m{} attached\x1b[0m", s.clients())
             } else {
@@ -159,6 +161,7 @@ mod tests {
                 clients: 0,
                 finished: false,
                 title: String::new(),
+                busy: false,
             }],
         }
     }

@@ -66,6 +66,7 @@ struct ContentView: View {
 
     private func dotColor(for session: Daemon.Session) -> Color {
         if session.liveTabs.isEmpty { return .secondary }
+        if session.busy { return .yellow }
         return session.clients > 0 ? .green : .orange
     }
 
@@ -109,6 +110,11 @@ struct ContentView: View {
                         selectedTab = tab.id
                     } label: {
                         HStack(spacing: 6) {
+                            if tab.busy {
+                                Circle()
+                                    .fill(Color.yellow)
+                                    .frame(width: 5, height: 5)
+                            }
                             Text(tab.label)
                                 .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
                                 .lineLimit(1)

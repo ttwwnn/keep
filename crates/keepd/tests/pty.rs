@@ -176,3 +176,35 @@ fn detaching_stops_counting_the_client_right_away() {
 
     session.kill().ok();
 }
+
+/// A tab is busy while a command runs and quiet at the prompt. This is what
+/// tells a session doing work apart from one merely sitting there, which is
+/// the distinction the sidebar needs.
+#[test]
+fn busy_tracks_the_foreground_command() {
+    let session = Tab::spawn(shell(), 60, 12).expect("spawn");
+
+    // Let the shell reach its prompt before judging it.
+    assert!(
+        wait_for(Duration::from_secs(5), || screen_contains(&session, "$")
+            || screen_contains(&session, "%")
+            || screen_contains(&session, "❯")),
+        "shell never showed a prompt: {:?}",
+        session.screen_text()
+    );
+    assert!(!session.is_busy(), "a shell at its prompt is not busy");
+
+    session.send(b"sleep 3\n").expect("send");
+    assert!(
+        wait_for(Duration::from_secs(5), || session.is_busy()),
+        "running sleep did not register as busy"
+    );
+
+    // And it goes quiet again once the command finishes.
+    assert!(
+        wait_for(Duration::from_secs(10), || !session.is_busy()),
+        "still busy after the command should have finished"
+    );
+
+    session.kill().ok();
+}
