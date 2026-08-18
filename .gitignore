@@ -1,0 +1,3 @@
+/target
+# Vendored upstream binary — fetch with vendor/fetch.sh, don't commit 8MB.
+/vendor/libghostty-vt/

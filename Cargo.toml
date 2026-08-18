@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = ["crates/keep-vt"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/luhw-dev/keep"
