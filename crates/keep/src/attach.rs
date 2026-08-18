@@ -40,11 +40,11 @@ pub enum Outcome {
     SessionEnded,
 }
 
-pub fn attach(socket: &std::path::Path, name: &str) -> Result<Outcome> {
+pub fn attach(socket: &std::path::Path, name: &str, tab: u32) -> Result<Outcome> {
     let (cols, rows) = terminal::size().unwrap_or((80, 24));
 
     let mut sock = UnixStream::connect(socket).context("connect to daemon")?;
-    ClientMsg::Attach { name: name.to_string(), cols, rows }.write(&mut sock)?;
+    ClientMsg::Attach { session: name.to_string(), tab, cols, rows }.write(&mut sock)?;
 
     let _raw = RawGuard::enter()?;
 
@@ -110,6 +110,8 @@ pub fn attach(socket: &std::path::Path, name: &str) -> Result<Outcome> {
                 stdout.write_all(&data)?;
                 stdout.flush()?;
             }
+            // Which tab we landed on; the caller asked for TAB_ANY.
+            Ok(Some(ServerMsg::Attached { .. })) => continue,
             Ok(Some(ServerMsg::Ended)) => break Outcome::SessionEnded,
             Ok(Some(ServerMsg::Error(msg))) => {
                 drop(_raw);

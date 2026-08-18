@@ -4,8 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, anyhow};
-use keep_proto::SessionInfo;
-use portable_pty::CommandBuilder;
+use keep_proto::{SessionInfo, TabInfo};
 
 use crate::Session;
 
@@ -26,15 +25,22 @@ impl Registry {
         };
         let mut out: Vec<SessionInfo> = guard
             .iter()
-            .map(|(name, s)| {
-                let (cols, rows) = s.size();
-                SessionInfo {
-                    name: name.clone(),
-                    cols,
-                    rows,
-                    clients: s.attached_clients() as u32,
-                    finished: s.is_finished(),
-                }
+            .map(|(name, session)| SessionInfo {
+                name: name.clone(),
+                tabs: session
+                    .tabs()
+                    .into_iter()
+                    .map(|(id, tab)| {
+                        let (cols, rows) = tab.size();
+                        TabInfo {
+                            id,
+                            cols,
+                            rows,
+                            clients: tab.attached_clients() as u32,
+                            finished: tab.is_finished(),
+                        }
+                    })
+                    .collect(),
             })
             .collect();
         out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -45,36 +51,13 @@ impl Registry {
         self.sessions.lock().ok()?.get(name).cloned()
     }
 
-    /// Attach semantics: an existing session is reused, a missing one is
-    /// created. Reconnecting to a name must never silently start a second
-    /// shell and orphan the first.
-    pub fn get_or_create(
-        &self,
-        name: &str,
-        cwd: Option<&str>,
-        cols: u16,
-        rows: u16,
-    ) -> Result<Arc<Session>> {
+    /// Sessions are created on demand: naming one is enough to have it.
+    pub fn get_or_create(&self, name: &str) -> Result<Arc<Session>> {
         let mut guard = self.sessions.lock().map_err(|_| anyhow!("registry poisoned"))?;
-
-        // A finished session is a corpse; replace it rather than attach to it.
         if let Some(existing) = guard.get(name) {
-            if !existing.is_finished() {
-                return Ok(Arc::clone(existing));
-            }
-            guard.remove(name);
+            return Ok(Arc::clone(existing));
         }
-
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-        let mut cmd = CommandBuilder::new(shell);
-        if let Some(dir) = cwd {
-            cmd.cwd(dir);
-        }
-        // Programs expect these; without TERM many refuse to draw at all.
-        cmd.env("TERM", "xterm-256color");
-        cmd.env("KEEP_SESSION", name);
-
-        let session = Arc::new(Session::spawn(cmd, cols, rows)?);
+        let session = Arc::new(Session::new(name));
         guard.insert(name.to_string(), Arc::clone(&session));
         Ok(session)
     }
@@ -84,13 +67,20 @@ impl Registry {
             let mut guard = self.sessions.lock().map_err(|_| anyhow!("registry poisoned"))?;
             guard.remove(name).ok_or_else(|| anyhow!("no such session: {name}"))?
         };
-        session.kill()
+        session.kill_all()
     }
 
-    /// Drop sessions whose child exited and that nobody is watching.
+    /// Drop dead tabs, then sessions left with nothing in them.
     pub fn reap(&self) {
+        let sessions: Vec<Arc<Session>> = match self.sessions.lock() {
+            Ok(g) => g.values().cloned().collect(),
+            Err(_) => return,
+        };
+        for session in &sessions {
+            session.reap();
+        }
         if let Ok(mut guard) = self.sessions.lock() {
-            guard.retain(|_, s| !(s.is_finished() && s.attached_clients() == 0));
+            guard.retain(|_, s| !s.is_empty());
         }
     }
 }

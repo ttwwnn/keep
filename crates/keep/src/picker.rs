@@ -89,10 +89,11 @@ fn run(stdout: &mut std::io::Stdout, sessions: &[SessionInfo]) -> Result<Choice>
 
         for (i, s) in matches.iter().take(room).enumerate() {
             let marker = if i == selected { "\x1b[36m▌\x1b[0m" } else { " " };
-            let state = if s.finished {
-                "\x1b[90mexited\x1b[0m".to_string()
-            } else if s.clients > 0 {
-                format!("\x1b[32m{} attached\x1b[0m", s.clients)
+            let live = s.tabs.iter().filter(|t| !t.finished).count();
+            let state = if live == 0 {
+                "\x1b[90mempty\x1b[0m".to_string()
+            } else if s.clients() > 0 {
+                format!("\x1b[32m{} attached\x1b[0m", s.clients())
             } else {
                 "\x1b[90midle\x1b[0m".to_string()
             };
@@ -101,7 +102,8 @@ fn run(stdout: &mut std::io::Stdout, sessions: &[SessionInfo]) -> Result<Choice>
             } else {
                 s.name.clone()
             };
-            writeln!(stdout, "\r{marker} {name}  \x1b[90m{}x{}\x1b[0m  {state}", s.cols, s.rows)?;
+            let tabs = if live == 1 { "1 tab".into() } else { format!("{live} tabs") };
+            writeln!(stdout, "\r{marker} {name}  \x1b[90m{tabs}\x1b[0m  {state}")?;
         }
         stdout.flush()?;
 
@@ -148,7 +150,16 @@ mod tests {
     use super::*;
 
     fn s(name: &str) -> SessionInfo {
-        SessionInfo { name: name.into(), cols: 80, rows: 24, clients: 0, finished: false }
+        SessionInfo {
+            name: name.into(),
+            tabs: vec![keep_proto::TabInfo {
+                id: 1,
+                cols: 80,
+                rows: 24,
+                clients: 0,
+                finished: false,
+            }],
+        }
     }
 
     #[test]

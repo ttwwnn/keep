@@ -1,0 +1,27 @@
+name: Keep
+options:
+  bundleIdPrefix: dev.luhw
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+targets:
+  Keep:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/Keep
+    dependencies:
+      - framework: ../../vendor/GhosttyKit.xcframework
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.luhw.keep
+        INFOPLIST_KEY_NSHumanReadableCopyright: ""
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_ALLOWED: YES
+        OTHER_LDFLAGS: "-lc++ -framework Carbon -framework Metal -framework MetalKit -framework CoreText -framework CoreGraphics -framework QuartzCore -framework IOSurface -framework UniformTypeIdentifiers -framework Cocoa -framework CoreVideo"

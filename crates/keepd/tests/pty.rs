@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use keepd::Session;
+use keepd::Tab;
 use portable_pty::CommandBuilder;
 
 /// Poll until `cond` holds. PTY output is asynchronous, so tests must wait on
@@ -24,7 +24,7 @@ fn shell() -> CommandBuilder {
     cmd
 }
 
-fn screen_contains(session: &Session, needle: &str) -> bool {
+fn screen_contains(session: &Tab, needle: &str) -> bool {
     session.screen_text().map(|s| s.contains(needle)).unwrap_or(false)
 }
 
@@ -32,7 +32,7 @@ fn screen_contains(session: &Session, needle: &str) -> bool {
 fn captures_child_output() {
     let mut cmd = CommandBuilder::new("/bin/echo");
     cmd.arg("hello-from-pty");
-    let session = Session::spawn(cmd, 40, 6).expect("spawn");
+    let session = Tab::spawn(cmd, 40, 6).expect("spawn");
 
     assert!(
         wait_for(Duration::from_secs(5), || screen_contains(&session, "hello-from-pty")),
@@ -47,7 +47,7 @@ fn captures_child_output() {
 
 #[test]
 fn forwards_input_to_child() {
-    let session = Session::spawn(shell(), 60, 10).expect("spawn");
+    let session = Tab::spawn(shell(), 60, 10).expect("spawn");
 
     // 42 appears only in the output, never in the echoed command text.
     session.send(b"echo $((6*7))\n").expect("send");
@@ -62,7 +62,7 @@ fn forwards_input_to_child() {
 
 #[test]
 fn repaint_carries_styling_that_plain_text_drops() {
-    let session = Session::spawn(shell(), 60, 10).expect("spawn");
+    let session = Tab::spawn(shell(), 60, 10).expect("spawn");
     session
         .send(b"printf '\\033[1;31mDANGER\\033[0m\\n'\n")
         .expect("send");
@@ -89,7 +89,7 @@ fn repaint_carries_styling_that_plain_text_drops() {
 /// and the state is all there when someone looks again.
 #[test]
 fn session_keeps_running_with_no_one_watching() {
-    let session = Session::spawn(shell(), 60, 20).expect("spawn");
+    let session = Tab::spawn(shell(), 60, 20).expect("spawn");
 
     session
         .send(b"for i in 1 2 3 4; do echo tick-$i; sleep 0.15; done; echo fin$((20+2))\n")
@@ -119,7 +119,7 @@ fn session_keeps_running_with_no_one_watching() {
 /// produced between them, or see output the snapshot already showed.
 #[test]
 fn attach_has_no_gap_and_no_duplicate() {
-    let session = Session::spawn(shell(), 60, 20).expect("spawn");
+    let session = Tab::spawn(shell(), 60, 20).expect("spawn");
 
     session.send(b"echo before$((1+1))\n").expect("send");
     assert!(
@@ -161,7 +161,7 @@ fn attach_has_no_gap_and_no_duplicate() {
 /// quiet session reporting watchers that left long ago.
 #[test]
 fn detaching_stops_counting_the_client_right_away() {
-    let session = Session::spawn(shell(), 40, 10).expect("spawn");
+    let session = Tab::spawn(shell(), 40, 10).expect("spawn");
     assert_eq!(session.attached_clients(), 0, "fresh session has no clients");
 
     let (_repaint, attachment) = session.attach().expect("attach");

@@ -1,211 +1,111 @@
-//! A session: a child process on a PTY, plus the screen state it produced.
+//! A session: a named group of tabs.
 //!
-//! The daemon owns these. That ownership is the whole point — a client can
-//! disconnect and the child keeps running, because nothing about the child's
-//! lifetime is tied to whoever is currently looking at it.
+//! The session is what a person thinks of as "a project". It holds one or
+//! more tabs, and it is the unit that survives clients coming and going. Tabs
+//! live here rather than in the app so that closing the window loses nothing:
+//! reopening finds the same tabs, still running.
 
-use std::io::{Read, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Context, Result};
-use keep_vt::{Format, Terminal};
-use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
+use anyhow::{Result, anyhow};
+use portable_pty::CommandBuilder;
 
-/// How much we read from the PTY per syscall.
-const READ_CHUNK: usize = 64 * 1024;
+use crate::Tab;
 
-/// Screen state and the clients watching it.
-///
-/// These live under one lock on purpose: attaching must take a snapshot and
-/// subscribe as a single step. Split them and a client either misses output
-/// produced between the two, or replays output the snapshot already contains.
-struct Subscriber {
-    id: u64,
-    tx: Sender<Vec<u8>>,
-}
-
-struct Inner {
-    terminal: Terminal,
-    subscribers: Vec<Subscriber>,
-    next_id: u64,
+struct Entry {
+    id: u32,
+    tab: Arc<Tab>,
 }
 
 pub struct Session {
-    inner: Arc<Mutex<Inner>>,
-    writer: Mutex<Box<dyn Write + Send>>,
-    // Mutex, not a bare Box: MasterPty is Send but not Sync, and the daemon
-    // shares each session across connection threads via Arc.
-    master: Mutex<Box<dyn MasterPty + Send>>,
-    child: Mutex<Box<dyn Child + Send + Sync>>,
-    finished: Arc<AtomicBool>,
-    size: Mutex<(u16, u16)>,
-}
-
-/// A live feed of everything the session writes from the moment of attach.
-///
-/// Dropping this unsubscribes. Relying on a failed send to notice a departed
-/// client is not enough: a quiet session sends nothing, so it would keep
-/// reporting a client that left minutes ago.
-pub struct Attachment {
-    /// Output produced after the snapshot.
-    pub output: Receiver<Vec<u8>>,
-    inner: Arc<Mutex<Inner>>,
-    id: u64,
-}
-
-impl Drop for Attachment {
-    fn drop(&mut self) {
-        if let Ok(mut guard) = self.inner.lock() {
-            guard.subscribers.retain(|s| s.id != self.id);
-        }
-    }
+    name: String,
+    tabs: Mutex<Vec<Entry>>,
+    next_id: AtomicU32,
 }
 
 impl Session {
-    pub fn spawn(command: CommandBuilder, cols: u16, rows: u16) -> Result<Self> {
-        let pair = native_pty_system()
-            .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
-            .context("openpty")?;
-
-        let child = pair.slave.spawn_command(command).context("spawn child")?;
-        // Drop the slave: otherwise the master never sees EOF when the child
-        // exits, because this process would still hold the other end open.
-        drop(pair.slave);
-
-        let writer = pair.master.take_writer().context("pty writer")?;
-        let mut reader = pair.master.try_clone_reader().context("pty reader")?;
-
-        let inner = Arc::new(Mutex::new(Inner {
-            terminal: Terminal::new(cols, rows).map_err(|e| anyhow::anyhow!("terminal: {e}"))?,
-            subscribers: Vec::new(),
-            next_id: 0,
-        }));
-        let finished = Arc::new(AtomicBool::new(false));
-
-        // Reader thread. The lock is held only for the parse and fan-out, never
-        // across the read syscall, so a chatty session cannot stall readers of
-        // the screen.
-        let sink = Arc::clone(&inner);
-        let done = Arc::clone(&finished);
-        std::thread::Builder::new()
-            .name("keepd-pty-reader".into())
-            .spawn(move || {
-                let mut buf = vec![0u8; READ_CHUNK];
-                loop {
-                    let n = match reader.read(&mut buf) {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => n,
-                    };
-                    let Ok(mut guard) = sink.lock() else { break };
-                    guard.terminal.write(&buf[..n]);
-                    // Drop clients whose receiver is gone.
-                    let chunk = &buf[..n];
-                    guard.subscribers.retain(|s| s.tx.send(chunk.to_vec()).is_ok());
-                }
-                done.store(true, Ordering::Release);
-                // Dropping the senders lets attached clients notice the end.
-                if let Ok(mut guard) = sink.lock() {
-                    guard.subscribers.clear();
-                }
-            })
-            .context("spawn reader thread")?;
-
-        Ok(Self {
-            inner,
-            writer: Mutex::new(writer),
-            master: Mutex::new(pair.master),
-            child: Mutex::new(child),
-            finished,
-            size: Mutex::new((cols, rows)),
-        })
+    pub fn new(name: impl Into<String>) -> Self {
+        Self { name: name.into(), tabs: Mutex::new(Vec::new()), next_id: AtomicU32::new(1) }
     }
 
-    /// Subscribe to the session.
-    ///
-    /// Returns the screen as it stands now, plus a feed of everything after
-    /// it. Both come from one locked section so no output can slip between.
-    pub fn attach(&self) -> Result<(Vec<u8>, Attachment)> {
-        let mut guard = self.inner.lock().map_err(|_| anyhow::anyhow!("session poisoned"))?;
-        let repaint = guard
-            .terminal
-            .snapshot(Format::Vt)
-            .map_err(|e| anyhow::anyhow!("snapshot: {e}"))?;
-        let (tx, rx) = channel();
-        let id = guard.next_id;
-        guard.next_id += 1;
-        guard.subscribers.push(Subscriber { id, tx });
-        drop(guard);
-        Ok((repaint, Attachment { output: rx, inner: Arc::clone(&self.inner), id }))
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
-    /// Forward client input to the child.
-    pub fn send(&self, bytes: &[u8]) -> Result<()> {
-        let mut w = self.writer.lock().map_err(|_| anyhow::anyhow!("writer poisoned"))?;
-        w.write_all(bytes)?;
-        w.flush()?;
-        Ok(())
-    }
-
-    /// The screen as plain text. Used for previews and tests.
-    pub fn screen_text(&self) -> Result<String> {
-        let guard = self.inner.lock().map_err(|_| anyhow::anyhow!("session poisoned"))?;
-        guard.terminal.text().map_err(|e| anyhow::anyhow!("snapshot: {e}"))
-    }
-
-    /// The screen as VT sequences — what an attaching client is repainted with.
-    pub fn repaint(&self) -> Result<Vec<u8>> {
-        let guard = self.inner.lock().map_err(|_| anyhow::anyhow!("session poisoned"))?;
-        guard
-            .terminal
-            .snapshot(Format::Vt)
-            .map_err(|e| anyhow::anyhow!("snapshot: {e}"))
-    }
-
-    /// Resize both the PTY and the grid.
-    ///
-    /// These must move together: the child draws for the size the kernel
-    /// reports, while the grid interprets what it draws.
-    pub fn resize(&self, cols: u16, rows: u16) -> Result<()> {
-        if cols == 0 || rows == 0 {
-            return Ok(());
+    /// Start a tab running the user's shell.
+    pub fn new_tab(&self, cwd: Option<&str>, cols: u16, rows: u16) -> Result<(u32, Arc<Tab>)> {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+        let mut cmd = CommandBuilder::new(shell);
+        if let Some(dir) = cwd {
+            cmd.cwd(dir);
         }
+        // Programs expect these; without TERM many refuse to draw at all.
+        cmd.env("TERM", "xterm-256color");
+        cmd.env("KEEP_SESSION", &self.name);
+
+        let tab = Arc::new(Tab::spawn(cmd, cols, rows)?);
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+
+        let mut guard = self.tabs.lock().map_err(|_| anyhow!("session poisoned"))?;
+        guard.push(Entry { id, tab: Arc::clone(&tab) });
+        Ok((id, tab))
+    }
+
+    pub fn tab(&self, id: u32) -> Option<Arc<Tab>> {
+        let guard = self.tabs.lock().ok()?;
+        guard.iter().find(|e| e.id == id).map(|e| Arc::clone(&e.tab))
+    }
+
+    /// The tab a client lands on when it names a session but not a tab.
+    pub fn first_or_create(&self, cols: u16, rows: u16) -> Result<(u32, Arc<Tab>)> {
         {
-            let mut guard = self.inner.lock().map_err(|_| anyhow::anyhow!("session poisoned"))?;
-            guard
-                .terminal
-                .resize(cols, rows)
-                .map_err(|e| anyhow::anyhow!("resize grid: {e}"))?;
+            let guard = self.tabs.lock().map_err(|_| anyhow!("session poisoned"))?;
+            if let Some(entry) = guard.iter().find(|e| !e.tab.is_finished()) {
+                return Ok((entry.id, Arc::clone(&entry.tab)));
+            }
         }
-        {
-            let master = self.master.lock().map_err(|_| anyhow::anyhow!("master poisoned"))?;
-            master
-                .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
-                .context("resize pty")?;
-        }
-        if let Ok(mut s) = self.size.lock() {
-            *s = (cols, rows);
+        self.new_tab(None, cols, rows)
+    }
+
+    pub fn tabs(&self) -> Vec<(u32, Arc<Tab>)> {
+        self.tabs
+            .lock()
+            .map(|g| g.iter().map(|e| (e.id, Arc::clone(&e.tab))).collect())
+            .unwrap_or_default()
+    }
+
+    pub fn close_tab(&self, id: u32) -> Result<()> {
+        let tab = {
+            let mut guard = self.tabs.lock().map_err(|_| anyhow!("session poisoned"))?;
+            let pos = guard.iter().position(|e| e.id == id).ok_or_else(|| anyhow!("no tab {id}"))?;
+            guard.remove(pos).tab
+        };
+        tab.kill()
+    }
+
+    pub fn kill_all(&self) -> Result<()> {
+        let tabs: Vec<Arc<Tab>> = {
+            let mut guard = self.tabs.lock().map_err(|_| anyhow!("session poisoned"))?;
+            guard.drain(..).map(|e| e.tab).collect()
+        };
+        for tab in tabs {
+            tab.kill().ok();
         }
         Ok(())
     }
 
-    pub fn size(&self) -> (u16, u16) {
-        self.size.lock().map(|s| *s).unwrap_or((80, 24))
+    /// Drop tabs whose child exited and that nobody is watching.
+    ///
+    /// A finished tab someone is still attached to stays: they may not have
+    /// read the last of its output yet.
+    pub fn reap(&self) {
+        if let Ok(mut guard) = self.tabs.lock() {
+            guard.retain(|e| !(e.tab.is_finished() && e.tab.attached_clients() == 0));
+        }
     }
 
-    pub fn attached_clients(&self) -> usize {
-        self.inner.lock().map(|g| g.subscribers.len()).unwrap_or(0)
-    }
-
-    /// True once the child is gone and the PTY hit EOF.
-    pub fn is_finished(&self) -> bool {
-        self.finished.load(Ordering::Acquire)
-    }
-
-    pub fn kill(&self) -> Result<()> {
-        let mut c = self.child.lock().map_err(|_| anyhow::anyhow!("child poisoned"))?;
-        c.kill()?;
-        Ok(())
+    pub fn is_empty(&self) -> bool {
+        self.tabs.lock().map(|g| g.is_empty()).unwrap_or(true)
     }
 }

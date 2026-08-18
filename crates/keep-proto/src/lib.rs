@@ -12,10 +12,11 @@ pub const MAX_FRAME: usize = 16 * 1024 * 1024;
 
 const T_LIST: u8 = 0x01;
 const T_ATTACH: u8 = 0x02;
-const T_CREATE: u8 = 0x03;
+const T_NEW_TAB: u8 = 0x03;
 const T_INPUT: u8 = 0x04;
 const T_RESIZE: u8 = 0x05;
 const T_KILL: u8 = 0x06;
+const T_CLOSE_TAB: u8 = 0x07;
 
 const T_SESSIONS: u8 = 0x81;
 const T_REPAINT: u8 = 0x82;
@@ -23,21 +24,30 @@ const T_OUTPUT: u8 = 0x83;
 const T_ERROR: u8 = 0x84;
 const T_OK: u8 = 0x85;
 const T_ENDED: u8 = 0x86;
+const T_ATTACHED: u8 = 0x87;
+const T_TAB_CREATED: u8 = 0x88;
+
+/// Ask for whichever tab the session lands on, rather than a specific one.
+pub const TAB_ANY: u32 = 0;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientMsg {
     List,
-    /// Attach to an existing session, or create it if missing.
-    Attach { name: String, cols: u16, rows: u16 },
-    Create { name: String, cwd: Option<String>, cols: u16, rows: u16 },
+    /// Attach to a tab. `tab` may be [`TAB_ANY`], meaning "the first live tab,
+    /// creating one if the session has none". The session itself is created
+    /// on demand.
+    Attach { session: String, tab: u32, cols: u16, rows: u16 },
+    NewTab { session: String, cwd: Option<String>, cols: u16, rows: u16 },
+    CloseTab { session: String, tab: u32 },
     Input(Vec<u8>),
     Resize { cols: u16, rows: u16 },
-    Kill { name: String },
+    /// End a whole session, tabs and all.
+    Kill { session: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionInfo {
-    pub name: String,
+pub struct TabInfo {
+    pub id: u32,
     pub cols: u16,
     pub rows: u16,
     pub clients: u32,
@@ -45,14 +55,30 @@ pub struct SessionInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionInfo {
+    pub name: String,
+    pub tabs: Vec<TabInfo>,
+}
+
+impl SessionInfo {
+    pub fn clients(&self) -> u32 {
+        self.tabs.iter().map(|t| t.clients).sum()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerMsg {
     Sessions(Vec<SessionInfo>),
+    /// Which tab the attach landed on. Sent before the repaint, because a
+    /// client that asked for [`TAB_ANY`] does not know yet.
+    Attached { tab: u32 },
+    TabCreated { tab: u32 },
     /// The screen as it stood at attach time.
     Repaint(Vec<u8>),
     Output(Vec<u8>),
     Error(String),
     Ok,
-    /// The session's child exited.
+    /// The tab's child exited.
     Ended,
 }
 
@@ -149,18 +175,24 @@ impl ClientMsg {
         let mut b = Buf::new();
         let tag = match self {
             ClientMsg::List => T_LIST,
-            ClientMsg::Attach { name, cols, rows } => {
-                b.str(name);
+            ClientMsg::Attach { session, tab, cols, rows } => {
+                b.str(session);
+                b.u32(*tab);
                 b.u16(*cols);
                 b.u16(*rows);
                 T_ATTACH
             }
-            ClientMsg::Create { name, cwd, cols, rows } => {
-                b.str(name);
+            ClientMsg::NewTab { session, cwd, cols, rows } => {
+                b.str(session);
                 b.str(cwd.as_deref().unwrap_or(""));
                 b.u16(*cols);
                 b.u16(*rows);
-                T_CREATE
+                T_NEW_TAB
+            }
+            ClientMsg::CloseTab { session, tab } => {
+                b.str(session);
+                b.u32(*tab);
+                T_CLOSE_TAB
             }
             ClientMsg::Input(data) => {
                 b.bytes(data);
@@ -171,8 +203,8 @@ impl ClientMsg {
                 b.u16(*rows);
                 T_RESIZE
             }
-            ClientMsg::Kill { name } => {
-                b.str(name);
+            ClientMsg::Kill { session } => {
+                b.str(session);
                 T_KILL
             }
         };
@@ -184,20 +216,26 @@ impl ClientMsg {
         let mut c = Cursor(&payload);
         let msg = match tag {
             T_LIST => ClientMsg::List,
-            T_ATTACH => ClientMsg::Attach { name: c.str()?, cols: c.u16()?, rows: c.u16()? },
-            T_CREATE => {
-                let name = c.str()?;
+            T_ATTACH => ClientMsg::Attach {
+                session: c.str()?,
+                tab: c.u32()?,
+                cols: c.u16()?,
+                rows: c.u16()?,
+            },
+            T_NEW_TAB => {
+                let session = c.str()?;
                 let cwd = c.str()?;
-                ClientMsg::Create {
-                    name,
+                ClientMsg::NewTab {
+                    session,
                     cwd: if cwd.is_empty() { None } else { Some(cwd) },
                     cols: c.u16()?,
                     rows: c.u16()?,
                 }
             }
+            T_CLOSE_TAB => ClientMsg::CloseTab { session: c.str()?, tab: c.u32()? },
             T_INPUT => ClientMsg::Input(c.bytes()?),
             T_RESIZE => ClientMsg::Resize { cols: c.u16()?, rows: c.u16()? },
-            T_KILL => ClientMsg::Kill { name: c.str()? },
+            T_KILL => ClientMsg::Kill { session: c.str()? },
             _ => return Err(bad("unknown client tag")),
         };
         Ok(Some(msg))
@@ -212,12 +250,24 @@ impl ServerMsg {
                 b.u32(list.len() as u32);
                 for s in list {
                     b.str(&s.name);
-                    b.u16(s.cols);
-                    b.u16(s.rows);
-                    b.u32(s.clients);
-                    b.bool(s.finished);
+                    b.u32(s.tabs.len() as u32);
+                    for t in &s.tabs {
+                        b.u32(t.id);
+                        b.u16(t.cols);
+                        b.u16(t.rows);
+                        b.u32(t.clients);
+                        b.bool(t.finished);
+                    }
                 }
                 T_SESSIONS
+            }
+            ServerMsg::Attached { tab } => {
+                b.u32(*tab);
+                T_ATTACHED
+            }
+            ServerMsg::TabCreated { tab } => {
+                b.u32(*tab);
+                T_TAB_CREATED
             }
             ServerMsg::Repaint(data) => {
                 b.bytes(data);
@@ -245,16 +295,24 @@ impl ServerMsg {
                 let n = c.u32()? as usize;
                 let mut list = Vec::with_capacity(n.min(1024));
                 for _ in 0..n {
-                    list.push(SessionInfo {
-                        name: c.str()?,
-                        cols: c.u16()?,
-                        rows: c.u16()?,
-                        clients: c.u32()?,
-                        finished: c.bool()?,
-                    });
+                    let name = c.str()?;
+                    let tab_count = c.u32()? as usize;
+                    let mut tabs = Vec::with_capacity(tab_count.min(1024));
+                    for _ in 0..tab_count {
+                        tabs.push(TabInfo {
+                            id: c.u32()?,
+                            cols: c.u16()?,
+                            rows: c.u16()?,
+                            clients: c.u32()?,
+                            finished: c.bool()?,
+                        });
+                    }
+                    list.push(SessionInfo { name, tabs });
                 }
                 ServerMsg::Sessions(list)
             }
+            T_ATTACHED => ServerMsg::Attached { tab: c.u32()? },
+            T_TAB_CREATED => ServerMsg::TabCreated { tab: c.u32()? },
             T_REPAINT => ServerMsg::Repaint(c.bytes()?),
             T_OUTPUT => ServerMsg::Output(c.bytes()?),
             T_ERROR => ServerMsg::Error(c.str()?),
@@ -302,17 +360,29 @@ mod tests {
     #[test]
     fn client_messages_round_trip() {
         roundtrip_client(ClientMsg::List);
-        roundtrip_client(ClientMsg::Attach { name: "www".into(), cols: 120, rows: 40 });
-        roundtrip_client(ClientMsg::Create {
-            name: "proj".into(),
+        roundtrip_client(ClientMsg::Attach {
+            session: "www".into(),
+            tab: 3,
+            cols: 120,
+            rows: 40,
+        });
+        roundtrip_client(ClientMsg::Attach {
+            session: "www".into(),
+            tab: TAB_ANY,
+            cols: 80,
+            rows: 24,
+        });
+        roundtrip_client(ClientMsg::NewTab {
+            session: "proj".into(),
             cwd: Some("/Users/x/y z".into()),
             cols: 80,
             rows: 24,
         });
-        roundtrip_client(ClientMsg::Create { name: "n".into(), cwd: None, cols: 1, rows: 1 });
+        roundtrip_client(ClientMsg::NewTab { session: "n".into(), cwd: None, cols: 1, rows: 1 });
+        roundtrip_client(ClientMsg::CloseTab { session: "proj".into(), tab: 7 });
         roundtrip_client(ClientMsg::Input(vec![0x1b, b'[', b'A', 0x00, 0xff]));
         roundtrip_client(ClientMsg::Resize { cols: 65535, rows: 1 });
-        roundtrip_client(ClientMsg::Kill { name: "gone".into() });
+        roundtrip_client(ClientMsg::Kill { session: "gone".into() });
     }
 
     #[test]
@@ -322,10 +392,30 @@ mod tests {
         roundtrip_server(ServerMsg::Error("no such session".into()));
         roundtrip_server(ServerMsg::Output(vec![0; 1000]));
         roundtrip_server(ServerMsg::Repaint(b"\x1b[2J\x1b[Hhi".to_vec()));
+        roundtrip_server(ServerMsg::Attached { tab: 4 });
+        roundtrip_server(ServerMsg::TabCreated { tab: 9 });
         roundtrip_server(ServerMsg::Sessions(vec![
-            SessionInfo { name: "a".into(), cols: 80, rows: 24, clients: 0, finished: false },
-            SessionInfo { name: "b é".into(), cols: 100, rows: 30, clients: 2, finished: true },
+            SessionInfo { name: "a".into(), tabs: vec![] },
+            SessionInfo {
+                name: "b é".into(),
+                tabs: vec![
+                    TabInfo { id: 1, cols: 80, rows: 24, clients: 0, finished: false },
+                    TabInfo { id: 2, cols: 100, rows: 30, clients: 2, finished: true },
+                ],
+            },
         ]));
+    }
+
+    #[test]
+    fn session_client_count_sums_its_tabs() {
+        let s = SessionInfo {
+            name: "x".into(),
+            tabs: vec![
+                TabInfo { id: 1, cols: 80, rows: 24, clients: 2, finished: false },
+                TabInfo { id: 2, cols: 80, rows: 24, clients: 1, finished: false },
+            ],
+        };
+        assert_eq!(s.clients(), 3);
     }
 
     /// Framing must survive several messages back to back on one stream.

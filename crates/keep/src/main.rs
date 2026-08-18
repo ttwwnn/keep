@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use keep_proto::{ClientMsg, ServerMsg, SessionInfo};
+use keep_proto::{ClientMsg, ServerMsg, SessionInfo, TAB_ANY};
 
 fn main() {
     if let Err(e) = run() {
@@ -28,7 +28,7 @@ fn run() -> Result<()> {
             let sessions = list(&socket)?;
             match picker::pick(&sessions)? {
                 picker::Choice::Session(name) | picker::Choice::New(name) => {
-                    enter(&socket, &name)
+                    enter(&socket, &name, TAB_ANY)
                 }
                 picker::Choice::Cancelled => Ok(()),
             }
@@ -38,11 +38,26 @@ fn run() -> Result<()> {
             print_list(&list(&socket)?);
             Ok(())
         }
+        Some("new") => {
+            let name = args.get(1).context("usage: keep new <session>")?;
+            ensure_daemon(&socket)?;
+            let mut sock = UnixStream::connect(&socket)?;
+            ClientMsg::NewTab { session: name.clone(), cwd: None, cols: 80, rows: 24 }
+                .write(&mut sock)?;
+            match ServerMsg::read(&mut sock)? {
+                Some(ServerMsg::TabCreated { tab }) => {
+                    println!("{name}: opened tab {tab}");
+                    Ok(())
+                }
+                Some(ServerMsg::Error(e)) => anyhow::bail!(e),
+                _ => anyhow::bail!("unexpected reply"),
+            }
+        }
         Some("kill") => {
             let name = args.get(1).context("usage: keep kill <name>")?;
             ensure_daemon(&socket)?;
             let mut sock = UnixStream::connect(&socket)?;
-            ClientMsg::Kill { name: name.clone() }.write(&mut sock)?;
+            ClientMsg::Kill { session: name.clone() }.write(&mut sock)?;
             match ServerMsg::read(&mut sock)? {
                 Some(ServerMsg::Ok) => {
                     println!("killed {name}");
@@ -62,13 +77,19 @@ fn run() -> Result<()> {
         }
         Some(name) => {
             ensure_daemon(&socket)?;
-            enter(&socket, name)
+            // `keep <session> --tab N` targets one tab; without it the daemon
+            // picks the session's first live tab.
+            let tab = match args.iter().position(|a| a == "--tab") {
+                Some(i) => args.get(i + 1).and_then(|v| v.parse().ok()).unwrap_or(TAB_ANY),
+                None => TAB_ANY,
+            };
+            enter(&socket, name, tab)
         }
     }
 }
 
-fn enter(socket: &Path, name: &str) -> Result<()> {
-    match attach::attach(socket, name)? {
+fn enter(socket: &Path, name: &str, tab: u32) -> Result<()> {
+    match attach::attach(socket, name, tab)? {
         attach::Outcome::Detached => {
             println!("detached from {name}");
         }
@@ -95,14 +116,13 @@ fn print_list(sessions: &[SessionInfo]) {
         return;
     }
     for s in sessions {
-        let state = if s.finished {
-            "exited"
-        } else if s.clients > 0 {
-            "attached"
-        } else {
-            "idle"
-        };
-        println!("{:<24} {:>4}x{:<4} {}", s.name, s.cols, s.rows, state);
+        let live = s.tabs.iter().filter(|t| !t.finished).count();
+        let state = if s.clients() > 0 { "attached" } else { "idle" };
+        println!("{:<24} {:>2} tab(s)  {}", s.name, live, state);
+        for t in &s.tabs {
+            let mark = if t.finished { "exited" } else if t.clients > 0 { "attached" } else { "idle" };
+            println!("  {:<22} {:>4}x{:<4} {}", format!("tab {}", t.id), t.cols, t.rows, mark);
+        }
     }
 }
 
@@ -160,7 +180,9 @@ keep — persistent terminal sessions
 USAGE
   keep                 pick a session (or type a name to start one)
   keep <name>          attach to <name>, creating it if needed
-  keep ls              list sessions
+  keep <name> --tab N  attach to a specific tab
+  keep new <name>      open a tab in <name>, without attaching
+  keep ls              list sessions and their tabs
   keep kill <name>     end a session
 
 IN A SESSION

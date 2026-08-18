@@ -10,9 +10,9 @@ Terminal emulators lose your work. Close the window and every process dies with
 it. `tmux` solves that, but it also brings a hierarchy — sessions, then windows,
 then panes — that you have to navigate even when you never split a pane.
 
-`keep` takes the other half of the trade: real persistence, one flat list. A
-session is a project. You switch with a fuzzy finder, not by remembering which
-window index holds which task.
+`keep` takes the other half of the trade: real persistence with a shape you
+can hold in your head. A session is a project; a session has tabs. Both live
+in the daemon, so closing the window loses neither.
 
 ## How
 
@@ -45,9 +45,14 @@ and no font handling to build.
 - [x] `keep-proto` — framed wire protocol
 - [x] `keepd` — PTY ownership, screen state, session registry, unix socket
 - [x] `keep` — attach, detach, repaint, input forwarding, flat picker
+- [x] sessions hold tabs; tabs persist with the session
 
-Not done yet: scrollback (the repaint covers the visible screen only), and
-sessions do not survive a reboot.
+**Phase 2 — native macOS app.** Working. A SwiftUI shell with a session
+sidebar and a tab bar; each tab is a real libghostty surface (Metal rendering,
+your own Ghostty fonts and theme) running the `keep` client as its child.
+
+Not done yet: keyboard shortcuts, split views, scrollback (the repaint covers
+the visible screen only), and sessions do not survive a reboot.
 
 **Phase 2 — native macOS client.** SwiftUI for chrome, `NSView` + Metal for the
 grid, talking to the same daemon. Ghostty itself is built this way: its terminal

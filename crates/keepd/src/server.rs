@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use keep_proto::{ClientMsg, ServerMsg};
+use keep_proto::{ClientMsg, ServerMsg, TAB_ANY};
 
 use crate::Registry;
 
@@ -87,24 +87,39 @@ fn handle(stream: UnixStream, registry: Arc<Registry>) -> Result<()> {
             ServerMsg::Sessions(registry.list()).write(&mut writer)?;
             Ok(())
         }
-        ClientMsg::Kill { name } => {
-            let msg = match registry.kill(&name) {
+        ClientMsg::Kill { session } => {
+            let msg = match registry.kill(&session) {
                 Ok(()) => ServerMsg::Ok,
                 Err(e) => ServerMsg::Error(e.to_string()),
             };
             msg.write(&mut writer)?;
             Ok(())
         }
-        ClientMsg::Create { name, cwd, cols, rows } => {
-            let msg = match registry.get_or_create(&name, cwd.as_deref(), cols, rows) {
-                Ok(_) => ServerMsg::Ok,
+        ClientMsg::NewTab { session, cwd, cols, rows } => {
+            let msg = match registry
+                .get_or_create(&session)
+                .and_then(|s| s.new_tab(cwd.as_deref(), cols, rows))
+            {
+                Ok((tab, _)) => ServerMsg::TabCreated { tab },
                 Err(e) => ServerMsg::Error(e.to_string()),
             };
             msg.write(&mut writer)?;
             Ok(())
         }
-        ClientMsg::Attach { name, cols, rows } => {
-            attach(reader, writer, registry, &name, cols, rows)
+        ClientMsg::CloseTab { session, tab } => {
+            let msg = match registry
+                .get(&session)
+                .ok_or_else(|| anyhow::anyhow!("no such session: {session}"))
+                .and_then(|s| s.close_tab(tab))
+            {
+                Ok(()) => ServerMsg::Ok,
+                Err(e) => ServerMsg::Error(e.to_string()),
+            };
+            msg.write(&mut writer)?;
+            Ok(())
+        }
+        ClientMsg::Attach { session, tab, cols, rows } => {
+            attach(reader, writer, registry, &session, tab, cols, rows)
         }
         other => {
             ServerMsg::Error(format!("unexpected opening message: {other:?}")).write(&mut writer)?;
@@ -113,16 +128,28 @@ fn handle(stream: UnixStream, registry: Arc<Registry>) -> Result<()> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn attach(
     mut reader: UnixStream,
     mut writer: UnixStream,
     registry: Arc<Registry>,
     name: &str,
+    tab_id: u32,
     cols: u16,
     rows: u16,
 ) -> Result<()> {
-    let session = match registry.get_or_create(name, None, cols, rows) {
-        Ok(s) => s,
+    let resolved = registry.get_or_create(name).and_then(|s| {
+        if tab_id == TAB_ANY {
+            s.first_or_create(cols, rows)
+        } else {
+            s.tab(tab_id)
+                .map(|t| (tab_id, t))
+                .ok_or_else(|| anyhow::anyhow!("no tab {tab_id} in session {name}"))
+        }
+    });
+
+    let (tab_id, session) = match resolved {
+        Ok(pair) => pair,
         Err(e) => {
             ServerMsg::Error(e.to_string()).write(&mut writer)?;
             return Ok(());
@@ -131,6 +158,9 @@ fn attach(
 
     // The client's geometry wins: it is the thing actually displaying this.
     session.resize(cols, rows).ok();
+
+    // Tell the client which tab it landed on — it may have asked for TAB_ANY.
+    ServerMsg::Attached { tab: tab_id }.write(&mut writer)?;
 
     let (repaint, attachment) = session.attach()?;
     ServerMsg::Repaint(repaint).write(&mut writer)?;
