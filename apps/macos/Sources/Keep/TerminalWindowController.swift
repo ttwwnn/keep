@@ -75,13 +75,12 @@ final class TerminalWindowController: NSWindowController, NSWindowDelegate {
         // One line of chrome: the native tab bar is constrained into this
         // toolbar row (see KeepWindow), beside the traffic lights. The title
         // is hidden because each tab carries its own.
-        window.contentAnchorView = container
-        let toolbar = NSToolbar(identifier: "KeepToolbar")
-        toolbar.showsBaselineSeparator = false
-        window.toolbar = toolbar
-        window.toolbarStyle = .unifiedCompact
+        // No toolbar: its backdrop only added another band to fight. The
+        // titlebar is transparent, the sidebar material is patched through
+        // it (see KeepWindow), and the toggle floats as an accessory.
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
+        window.contentAnchorView = container
         window.installSidebarToggle()
 
         super.init(window: window)

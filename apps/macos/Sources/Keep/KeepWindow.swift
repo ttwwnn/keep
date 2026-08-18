@@ -1,188 +1,66 @@
 import AppKit
 import SwiftUI
 
-/// A window whose native tab bar lives in the titlebar row, so the chrome is
-/// a single line: traffic lights, tabs, the new-tab button.
-///
-/// AppKit offers no supported way to do this. The approach — intercept the
-/// tab bar accessory as it is added and constrain it into the toolbar row —
-/// is adapted from Ghostty's `TitlebarTabsTahoeTerminalWindow` (MIT), which
-/// carries the scars of every edge case. Private class names are looked up
-/// by string; when they drift in a macOS release, the window degrades to a
-/// normal tab bar below the titlebar rather than breaking.
-final class KeepWindow: NSWindow, NSToolbarDelegate {
-    /// The content-side view the tab bar's left edge hugs while the sidebar
-    /// is expanded, so the sidebar owns the strip above itself.
+/// The window chrome, arranged the way Finder arranges it: the sidebar runs
+/// to the very top with the traffic lights and toggle floating over it, and
+/// the native tab bar sits in its own row on the content side.
+final class KeepWindow: NSWindow {
+    /// The content-side view marking where the sidebar ends.
     weak var contentAnchorView: NSView?
-
-    private var tabBarObserver: NSObjectProtocol? {
-        didSet {
-            guard let oldValue else { return }
-            NotificationCenter.default.removeObserver(oldValue)
-        }
-    }
-
-    deinit {
-        if let tabBarObserver {
-            NotificationCenter.default.removeObserver(tabBarObserver)
-        }
-    }
-
-    override func becomeMain() {
-        super.becomeMain()
-        // Only the main window of a tab group carries the real NSTabBar, and
-        // AppKit moves it between windows as main changes; re-adopt it every
-        // time we gain main. setupTabBar is idempotent.
-        setupTabBar()
-        installSidebarMaterialPatch()
-    }
 
     private var sidebarPatch: NSVisualEffectView?
 
-    /// Paint the sidebar's material across the titlebar strip above it.
+    override func becomeMain() {
+        super.becomeMain()
+        installSidebarMaterialPatch()
+    }
+
+    /// Let the sidebar's material show through the titlebar strip above it.
     ///
-    /// AppKit's own full-height treatment stops doing this as soon as the
-    /// titlebar carries accessories — which ours must, for the tabs and the
-    /// toggle — leaving a band of plain titlebar above the sidebar. This
-    /// patch is the same material pinned behind the titlebar's content, its
-    /// right edge tied to the sidebar divider, so it collapses to nothing
-    /// together with the sidebar.
+    /// The theme frame paints an opaque band across the titlebar no matter
+    /// what — with the toolbar gone and the titlebar transparent it still
+    /// does — cutting the sidebar off. This view sits inside the titlebar
+    /// and uses `.withinWindow` blending, so it reproduces whatever the
+    /// window renders beneath it: the sidebar's actual material, which
+    /// already extends to the top thanks to fullSizeContentView. Because it
+    /// samples this window rather than the desktop, it cannot drift from the
+    /// real sidebar the way a second `.behindWindow` material did. Its
+    /// trailing edge is tied to the divider, so it collapses with the
+    /// sidebar.
     private func installSidebarMaterialPatch() {
         guard sidebarPatch == nil,
-            let titlebarView,
+            let themeFrame = contentView?.superview,
+            let titlebar = themeFrame.subviews.first(where: {
+                String(describing: type(of: $0)) == "NSTitlebarContainerView"
+            }),
             let contentAnchorView
         else { return }
 
         let patch = NSVisualEffectView()
         patch.material = .sidebar
-        patch.blendingMode = .behindWindow
+        patch.blendingMode = .withinWindow
         patch.state = .followsWindowActiveState
         patch.translatesAutoresizingMaskIntoConstraints = false
-        titlebarView.addSubview(patch, positioned: .below, relativeTo: titlebarView.subviews.first)
+        titlebar.addSubview(patch, positioned: .below, relativeTo: titlebar.subviews.first)
         NSLayoutConstraint.activate([
-            patch.leadingAnchor.constraint(equalTo: titlebarView.leadingAnchor),
-            patch.topAnchor.constraint(equalTo: titlebarView.topAnchor),
-            patch.bottomAnchor.constraint(equalTo: titlebarView.bottomAnchor),
+            patch.leadingAnchor.constraint(equalTo: titlebar.leadingAnchor),
+            patch.topAnchor.constraint(equalTo: titlebar.topAnchor),
+            patch.bottomAnchor.constraint(equalTo: titlebar.bottomAnchor),
             patch.trailingAnchor.constraint(equalTo: contentAnchorView.leadingAnchor),
         ])
         sidebarPatch = patch
     }
 
-    // AppKit adds the native tab bar through this. Detect it and change its
-    // layout attribute before the call — after is an AppKit assertion.
-    override func addTitlebarAccessoryViewController(
-        _ childViewController: NSTitlebarAccessoryViewController
-    ) {
-        guard isTabBar(childViewController) else {
-            super.addTitlebarAccessoryViewController(childViewController)
-            return
-        }
-        tabBarObserver = nil
-        childViewController.layoutAttribute = .right
-        super.addTitlebarAccessoryViewController(childViewController)
-        DispatchQueue.main.async { self.setupTabBar() }
-    }
-
-    override func removeTitlebarAccessoryViewController(at index: Int) {
-        if let child = titlebarAccessoryViewControllers[safe: index], isTabBar(child) {
-            tabBarObserver = nil
-        }
-        super.removeTitlebarAccessoryViewController(at: index)
-    }
-
-    private func isTabBar(_ child: NSTitlebarAccessoryViewController) -> Bool {
-        guard child.identifier == nil else { return false }
-        if child.view.contains(className: "NSTabBar") { return true }
-        // When a window joins an existing group, AppKit first adds an empty
-        // NSView and attaches the tab bar later.
-        return child.layoutAttribute == .bottom
-            && child.view.className == "NSView"
-            && child.view.subviews.isEmpty
-    }
-
-    /// Constrain the tab bar's accessory into the toolbar row.
-    private func setupTabBar() {
-        guard tabBarObserver == nil else { return }
-        guard
-            let titlebarView,
-            let tabBarView,
-            let clipView = tabBarView.firstSuperview(withClassName: "NSTitlebarAccessoryClipView")
-                ?? tabBarView.firstSuperview(withClassName: "NSTitlebarAccessoryContainerView"),
-            let accessoryView = clipView.subviews[safe: 0],
-            let toolbarView = titlebarView.firstDescendant(withClassName: "NSToolbarView")
-        else { return }
-
-        // Without this the bar stretches to the accessory row's height.
-        if let newTabButton = titlebarView.firstDescendant(withClassName: "NSTabBarNewTabButton") {
-            tabBarView.frame.size.height = newTabButton.frame.width
-        }
-
-        clipView.translatesAutoresizingMaskIntoConstraints = false
-        accessoryView.translatesAutoresizingMaskIntoConstraints = false
-
-        // The bar's left edge: at the sidebar divider while the sidebar is
-        // expanded (the sidebar owns the strip above itself), but never left
-        // of the traffic lights and the sidebar toggle, which is where it
-        // lands when the sidebar collapses.
-        let chromeClearance: CGFloat = 160
-        var leftConstraints: [NSLayoutConstraint] = [
-            clipView.leftAnchor.constraint(
-                greaterThanOrEqualTo: toolbarView.leftAnchor, constant: chromeClearance)
-        ]
-        if let contentAnchorView {
-            leftConstraints.append(
-                clipView.leftAnchor.constraint(
-                    greaterThanOrEqualTo: contentAnchorView.leftAnchor))
-            let hug = clipView.leftAnchor.constraint(equalTo: contentAnchorView.leftAnchor)
-            hug.priority = .defaultLow
-            leftConstraints.append(hug)
-        }
-
-        NSLayoutConstraint.activate(leftConstraints + [
-            clipView.rightAnchor.constraint(equalTo: toolbarView.rightAnchor),
-            clipView.topAnchor.constraint(equalTo: toolbarView.topAnchor, constant: 2),
-            clipView.heightAnchor.constraint(equalTo: toolbarView.heightAnchor),
-            accessoryView.leftAnchor.constraint(equalTo: clipView.leftAnchor),
-            accessoryView.rightAnchor.constraint(equalTo: clipView.rightAnchor),
-            accessoryView.topAnchor.constraint(equalTo: clipView.topAnchor),
-            accessoryView.heightAnchor.constraint(equalTo: clipView.heightAnchor),
-        ])
-        clipView.needsLayout = true
-        accessoryView.needsLayout = true
-
-        // Appearance changes resize the bar and wipe these constraints;
-        // watch for that and re-apply.
-        tabBarView.postsFrameChangedNotifications = true
-        tabBarObserver = NotificationCenter.default.addObserver(
-            forName: NSView.frameDidChangeNotification,
-            object: tabBarView,
-            queue: .main
-        ) { [weak self] _ in
-            guard let self else { return }
-            self.tabBarObserver = nil
-            DispatchQueue.main.async { self.setupTabBar() }
-        }
-    }
-}
-
-// MARK: - sidebar toggle accessory
-
-extension KeepWindow {
-    /// A sidebar toggle beside the traffic lights.
+    /// A sidebar toggle beside the traffic lights, floating over the sidebar.
     ///
-    /// Not an NSToolbarItem: the tab bar overlay makes the toolbar believe it
-    /// has no room and shunts its items into the overflow chevron. A titlebar
-    /// accessory with `.left` layout is positioned independently of toolbar
-    /// layout, so it stays put in both sidebar states.
+    /// SwiftUI in a titlebar accessory: toolbar items need a toolbar (whose
+    /// backdrop is the very band being fought), and an unbordered NSButton
+    /// with a template image drew nothing inside the transparent titlebar.
     func installSidebarToggle() {
-        // SwiftUI, not NSButton: an unbordered template image inside the
-        // transparent titlebar rendered nothing (though it stayed clickable),
-        // while SwiftUI draws SF Symbols dependably anywhere.
         let view = NSHostingView(rootView: SidebarToggle())
         view.setFrameSize(view.fittingSize)
 
         let accessory = NSTitlebarAccessoryViewController()
-        // The identifier keeps isTabBar from mistaking this for the tab bar.
         accessory.identifier = NSUserInterfaceItemIdentifier("keep-sidebar-toggle")
         accessory.view = view
         accessory.layoutAttribute = .left
@@ -205,47 +83,5 @@ private struct SidebarToggle: View {
         .buttonStyle(.plain)
         .help("Toggle Sidebar")
         .padding(.leading, 6)
-    }
-}
-
-// MARK: - private-view spelunking
-
-extension NSWindow {
-    /// The `NSTitlebarView` inside the theme frame. Private API by KVC.
-    var titlebarView: NSView? {
-        guard let frame = contentView?.superview else { return nil }
-        guard frame.responds(to: Selector(("titlebarView"))) else { return nil }
-        return frame.value(forKey: "titlebarView") as? NSView
-    }
-
-    var tabBarView: NSView? {
-        titlebarView?.firstDescendant(withClassName: "NSTabBar")
-    }
-}
-
-extension NSView {
-    func firstSuperview(withClassName name: String) -> NSView? {
-        guard let superview else { return nil }
-        if String(describing: type(of: superview)) == name { return superview }
-        return superview.firstSuperview(withClassName: name)
-    }
-
-    func firstDescendant(withClassName name: String) -> NSView? {
-        for subview in subviews {
-            if String(describing: type(of: subview)) == name { return subview }
-            if let found = subview.firstDescendant(withClassName: name) { return found }
-        }
-        return nil
-    }
-
-    func contains(className name: String) -> Bool {
-        if String(describing: type(of: self)) == name { return true }
-        return subviews.contains { $0.contains(className: name) }
-    }
-}
-
-extension Array {
-    subscript(safe index: Int) -> Element? {
-        indices.contains(index) ? self[index] : nil
     }
 }
