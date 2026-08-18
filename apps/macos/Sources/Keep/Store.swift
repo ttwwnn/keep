@@ -84,6 +84,24 @@ final class Store: ObservableObject {
         }
     }
 
+    /// Split the focused pane of the front window. Direction 1 = right,
+    /// 2 = down (the protocol's values).
+    func split(direction: UInt8) {
+        guard let controller = WindowManager.shared.frontController else { return }
+        do {
+            let id = try Daemon.newTab(
+                in: controller.workspace,
+                splitOf: controller.focusedTab,
+                splitDir: direction
+            )
+            controller.addPane(tab: id, direction: direction)
+            workspaces = (try? Daemon.list()) ?? workspaces
+        } catch {
+            self.error = error.localizedDescription
+            presentError()
+        }
+    }
+
     func createWorkspace(named name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }

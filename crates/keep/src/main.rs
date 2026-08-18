@@ -50,8 +50,15 @@ fn run() -> Result<()> {
             let name = args.get(1).context("usage: keep new <workspace>")?;
             ensure_daemon(&socket)?;
             let mut sock = UnixStream::connect(&socket)?;
-            ClientMsg::NewTab { workspace: name.clone(), cwd: None, cols: 80, rows: 24 }
-                .write(&mut sock)?;
+            ClientMsg::NewTab {
+                workspace: name.clone(),
+                cwd: None,
+                cols: 80,
+                rows: 24,
+                split_of: TAB_ANY,
+                split_dir: keep_proto::SPLIT_NONE,
+            }
+            .write(&mut sock)?;
             match ServerMsg::read(&mut sock)? {
                 Some(ServerMsg::TabCreated { tab }) => {
                     println!("{name}: opened tab {tab}");
@@ -143,11 +150,14 @@ fn print_list(workspaces: &[WorkspaceInfo]) {
             } else {
                 "idle"
             };
-            let label = if t.title.is_empty() {
+            let mut label = if t.title.is_empty() {
                 format!("tab {}", t.id)
             } else {
                 format!("tab {} · {}", t.id, t.title)
             };
+            if t.split_of != TAB_ANY {
+                label = format!("{label} (pane of {})", t.split_of);
+            }
             println!("  {:<30} {:>4}x{:<4} {}", label, t.cols, t.rows, mark);
         }
     }

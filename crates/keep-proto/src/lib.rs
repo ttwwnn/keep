@@ -30,6 +30,11 @@ const T_TAB_CREATED: u8 = 0x88;
 /// Ask for whichever tab the session lands on, rather than a specific one.
 pub const TAB_ANY: u32 = 0;
 
+/// Split placement for a new tab.
+pub const SPLIT_NONE: u8 = 0;
+pub const SPLIT_RIGHT: u8 = 1;
+pub const SPLIT_DOWN: u8 = 2;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientMsg {
     List,
@@ -37,7 +42,17 @@ pub enum ClientMsg {
     /// creating one if the workspace has none". The workspace itself is
     /// created on demand.
     Attach { workspace: String, tab: u32, cols: u16, rows: u16 },
-    NewTab { workspace: String, cwd: Option<String>, cols: u16, rows: u16 },
+    /// `split_of` other than [`TAB_ANY`] makes this tab a pane of that tab,
+    /// placed per `split_dir`. The arrangement lives in the daemon so a
+    /// reattaching client rebuilds the same layout.
+    NewTab {
+        workspace: String,
+        cwd: Option<String>,
+        cols: u16,
+        rows: u16,
+        split_of: u32,
+        split_dir: u8,
+    },
     CloseTab { workspace: String, tab: u32 },
     Input(Vec<u8>),
     Resize { cols: u16, rows: u16 },
@@ -57,6 +72,9 @@ pub struct TabInfo {
     pub title: String,
     /// A command is running, as opposed to a shell waiting at its prompt.
     pub busy: bool,
+    /// The tab this one is a pane of, or [`TAB_ANY`] for a standalone tab.
+    pub split_of: u32,
+    pub split_dir: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -192,11 +210,13 @@ impl ClientMsg {
                 b.u16(*rows);
                 T_ATTACH
             }
-            ClientMsg::NewTab { workspace, cwd, cols, rows } => {
+            ClientMsg::NewTab { workspace, cwd, cols, rows, split_of, split_dir } => {
                 b.str(workspace);
                 b.str(cwd.as_deref().unwrap_or(""));
                 b.u16(*cols);
                 b.u16(*rows);
+                b.u32(*split_of);
+                b.0.push(*split_dir);
                 T_NEW_TAB
             }
             ClientMsg::CloseTab { workspace, tab } => {
@@ -240,6 +260,8 @@ impl ClientMsg {
                     cwd: if cwd.is_empty() { None } else { Some(cwd) },
                     cols: c.u16()?,
                     rows: c.u16()?,
+                    split_of: c.u32()?,
+                    split_dir: c.u8()?,
                 }
             }
             T_CLOSE_TAB => ClientMsg::CloseTab { workspace: c.str()?, tab: c.u32()? },
@@ -269,6 +291,8 @@ impl ServerMsg {
                         b.bool(t.finished);
                         b.str(&t.title);
                         b.bool(t.busy);
+                        b.u32(t.split_of);
+                        b.0.push(t.split_dir);
                     }
                 }
                 T_WORKSPACES
@@ -319,6 +343,8 @@ impl ServerMsg {
                             finished: c.bool()?,
                             title: c.str()?,
                             busy: c.bool()?,
+                            split_of: c.u32()?,
+                            split_dir: c.u8()?,
                         });
                     }
                     list.push(WorkspaceInfo { name, tabs });
@@ -391,8 +417,17 @@ mod tests {
             cwd: Some("/Users/x/y z".into()),
             cols: 80,
             rows: 24,
+            split_of: TAB_ANY,
+            split_dir: SPLIT_NONE,
         });
-        roundtrip_client(ClientMsg::NewTab { workspace: "n".into(), cwd: None, cols: 1, rows: 1 });
+        roundtrip_client(ClientMsg::NewTab {
+            workspace: "n".into(),
+            cwd: None,
+            cols: 1,
+            rows: 1,
+            split_of: 7,
+            split_dir: SPLIT_DOWN,
+        });
         roundtrip_client(ClientMsg::CloseTab { workspace: "proj".into(), tab: 7 });
         roundtrip_client(ClientMsg::Input(vec![0x1b, b'[', b'A', 0x00, 0xff]));
         roundtrip_client(ClientMsg::Resize { cols: 65535, rows: 1 });
@@ -421,6 +456,8 @@ mod tests {
                         finished: false,
                         title: String::new(),
                         busy: false,
+                        split_of: TAB_ANY,
+                        split_dir: SPLIT_NONE,
                     },
                     TabInfo {
                         id: 2,
@@ -430,6 +467,8 @@ mod tests {
                         finished: true,
                         title: "nvim src/main.rs".into(),
                         busy: true,
+                        split_of: 1,
+                        split_dir: SPLIT_RIGHT,
                     },
                 ],
             },
@@ -449,6 +488,8 @@ mod tests {
                     finished: false,
                     title: String::new(),
                     busy: false,
+                    split_of: TAB_ANY,
+                    split_dir: SPLIT_NONE,
                 },
                 TabInfo {
                     id: 2,
@@ -458,6 +499,8 @@ mod tests {
                     finished: false,
                     title: String::new(),
                     busy: false,
+                    split_of: TAB_ANY,
+                    split_dir: SPLIT_NONE,
                 },
             ],
         };

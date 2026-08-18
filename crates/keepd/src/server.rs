@@ -95,10 +95,10 @@ fn handle(stream: UnixStream, registry: Arc<Registry>) -> Result<()> {
             msg.write(&mut writer)?;
             Ok(())
         }
-        ClientMsg::NewTab { workspace, cwd, cols, rows } => {
+        ClientMsg::NewTab { workspace, cwd, cols, rows, split_of, split_dir } => {
             let msg = match registry
                 .get_or_create(&workspace)
-                .and_then(|s| s.new_tab(cwd.as_deref(), cols, rows))
+                .and_then(|s| s.new_tab(cwd.as_deref(), cols, rows, split_of, split_dir))
             {
                 Ok((tab, _)) => ServerMsg::TabCreated { tab },
                 Err(e) => ServerMsg::Error(e.to_string()),

@@ -28,6 +28,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.newTabInFront()
     }
 
+    @objc func splitRight(_ sender: Any?) {
+        store.split(direction: 1)
+    }
+
+    @objc func splitDown(_ sender: Any?) {
+        store.split(direction: 2)
+    }
+
     @objc func newWorkspace(_ sender: Any?) {
         let alert = NSAlert()
         alert.messageText = "New workspace"
@@ -58,6 +66,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fileMenu.addItem(withTitle: "New Tab", action: #selector(newTab(_:)), keyEquivalent: "t")
         fileMenu.addItem(
             withTitle: "New Workspace…", action: #selector(newWorkspace(_:)), keyEquivalent: "n")
+        fileMenu.addItem(.separator())
+        fileMenu.addItem(
+            withTitle: "Split Right", action: #selector(splitRight(_:)), keyEquivalent: "d")
+        let splitDownItem = NSMenuItem(
+            title: "Split Down", action: #selector(splitDown(_:)), keyEquivalent: "d")
+        splitDownItem.keyEquivalentModifierMask = [.command, .shift]
+        fileMenu.addItem(splitDownItem)
         fileMenu.addItem(.separator())
         fileMenu.addItem(
             withTitle: "Close Tab", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")

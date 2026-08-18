@@ -229,9 +229,16 @@ fn tabs_are_independent_and_both_survive() {
 
     // Ask for a second tab in the same workspace.
     let mut opener = UnixStream::connect(&path).unwrap();
-    ClientMsg::NewTab { workspace: "proj".into(), cwd: None, cols: 80, rows: 24 }
-        .write(&mut opener)
-        .unwrap();
+    ClientMsg::NewTab {
+        workspace: "proj".into(),
+        cwd: None,
+        cols: 80,
+        rows: 24,
+        split_of: TAB_ANY,
+        split_dir: 0,
+    }
+    .write(&mut opener)
+    .unwrap();
     opener.set_read_timeout(Some(Duration::from_secs(5))).ok();
     let second_id = match ServerMsg::read(&mut opener).unwrap() {
         Some(ServerMsg::TabCreated { tab }) => tab,
@@ -323,5 +330,100 @@ fn title_of(path: &std::path::Path, workspace: &str) -> Option<String> {
             .and_then(|s| s.tabs.first())
             .map(|t| t.title.clone()),
         _ => None,
+    }
+}
+
+/// The split arrangement lives in the daemon, so a client that reconnects can
+/// rebuild the same layout. A pane whose base tab dies is promoted to a
+/// standalone tab rather than left pointing at nothing.
+#[test]
+fn splits_are_recorded_and_orphans_promoted() {
+    let path = start_daemon("split");
+
+    // Base tab.
+    let mut base = UnixStream::connect(&path).unwrap();
+    ClientMsg::Attach { workspace: "dev".into(), tab: TAB_ANY, cols: 80, rows: 24 }
+        .write(&mut base)
+        .unwrap();
+    base.set_read_timeout(Some(Duration::from_secs(5))).ok();
+    let base_id = match ServerMsg::read(&mut base).unwrap() {
+        Some(ServerMsg::Attached { tab }) => tab,
+        other => panic!("expected attached, got {other:?}"),
+    };
+
+    // A pane split to the right of it.
+    let mut opener = UnixStream::connect(&path).unwrap();
+    ClientMsg::NewTab {
+        workspace: "dev".into(),
+        cwd: None,
+        cols: 80,
+        rows: 24,
+        split_of: base_id,
+        split_dir: keep_proto::SPLIT_RIGHT,
+    }
+    .write(&mut opener)
+    .unwrap();
+    opener.set_read_timeout(Some(Duration::from_secs(5))).ok();
+    let pane_id = match ServerMsg::read(&mut opener).unwrap() {
+        Some(ServerMsg::TabCreated { tab }) => tab,
+        other => panic!("expected tab created, got {other:?}"),
+    };
+
+    // Splitting a tab that does not exist must be refused, not recorded.
+    let mut bad = UnixStream::connect(&path).unwrap();
+    ClientMsg::NewTab {
+        workspace: "dev".into(),
+        cwd: None,
+        cols: 80,
+        rows: 24,
+        split_of: 9999,
+        split_dir: keep_proto::SPLIT_RIGHT,
+    }
+    .write(&mut bad)
+    .unwrap();
+    bad.set_read_timeout(Some(Duration::from_secs(5))).ok();
+    match ServerMsg::read(&mut bad).unwrap() {
+        Some(ServerMsg::Error(_)) => {}
+        other => panic!("expected an error for a dangling split, got {other:?}"),
+    }
+
+    // The list carries the arrangement.
+    let tabs = tabs_of(&path, "dev");
+    let pane = tabs.iter().find(|t| t.id == pane_id).expect("pane missing");
+    assert_eq!(pane.split_of, base_id);
+    assert_eq!(pane.split_dir, keep_proto::SPLIT_RIGHT);
+
+    // Close the base; the pane must be promoted, not orphaned.
+    let mut closer = UnixStream::connect(&path).unwrap();
+    ClientMsg::CloseTab { workspace: "dev".into(), tab: base_id }.write(&mut closer).unwrap();
+    closer.set_read_timeout(Some(Duration::from_secs(5))).ok();
+    ServerMsg::read(&mut closer).unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut promoted = false;
+    while Instant::now() < deadline {
+        let tabs = tabs_of(&path, "dev");
+        if let Some(pane) = tabs.iter().find(|t| t.id == pane_id) {
+            if pane.split_of == TAB_ANY {
+                promoted = true;
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(promoted, "pane still points at the closed base tab");
+}
+
+fn tabs_of(path: &std::path::Path, workspace: &str) -> Vec<keep_proto::TabInfo> {
+    let mut sock = UnixStream::connect(path).unwrap();
+    ClientMsg::List.write(&mut sock).unwrap();
+    sock.set_read_timeout(Some(Duration::from_secs(5))).ok();
+    match ServerMsg::read(&mut sock) {
+        Ok(Some(ServerMsg::Workspaces(list))) => list
+            .into_iter()
+            .find(|s| s.name == workspace)
+            .map(|s| s.tabs)
+            .unwrap_or_default(),
+        _ => Vec::new(),
     }
 }

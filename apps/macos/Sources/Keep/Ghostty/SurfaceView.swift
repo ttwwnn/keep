@@ -11,7 +11,7 @@ final class TerminalSurfaceView: NSView {
     private var surface: ghostty_surface_t?
     private var displayLink: CVDisplayLink?
     private let workspace: String
-    private let tab: UInt32
+    let tab: UInt32
 
     init(workspace: String, tab: UInt32) {
         self.workspace = workspace

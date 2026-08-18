@@ -162,6 +162,8 @@ mod tests {
                 finished: false,
                 title: String::new(),
                 busy: false,
+                split_of: 0,
+                split_dir: 0,
             }],
         }
     }

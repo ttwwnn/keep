@@ -17,6 +17,9 @@ enum Daemon {
         var title: String
         /// A command is running, as opposed to a shell waiting at a prompt.
         var busy: Bool
+        /// The tab this one is a pane of (0 = standalone), and where it sits.
+        var splitOf: UInt32
+        var splitDir: UInt8
 
         /// Shells retitle constantly and usually with the host and path,
         /// which says nothing useful in a list of tabs from one machine.
@@ -37,6 +40,26 @@ enum Daemon {
 
         var clients: UInt32 { tabs.reduce(0) { $0 + $1.clients } }
         var liveTabs: [Tab] { tabs.filter { !$0.finished } }
+
+        /// Tabs that anchor a window; panes hang off one of these.
+        var rootTabs: [Tab] { liveTabs.filter { $0.splitOf == 0 } }
+
+        /// The panes belonging to a root, in creation order, following chains
+        /// (a pane split from a pane still lands in the root's window).
+        func panes(of root: UInt32) -> [Tab] {
+            var owner: [UInt32: UInt32] = [:]
+            for t in liveTabs { owner[t.id] = t.splitOf }
+            func rootOf(_ id: UInt32) -> UInt32 {
+                var cur = id
+                var hops = 0
+                while let up = owner[cur], up != 0, hops < 64 {
+                    cur = up
+                    hops += 1
+                }
+                return cur
+            }
+            return liveTabs.filter { $0.splitOf != 0 && rootOf($0.id) == root }
+        }
         /// Any tab actually running something.
         var busy: Bool { liveTabs.contains { $0.busy } }
 
@@ -136,7 +159,13 @@ enum Daemon {
     /// Open a new tab in a workspace, creating the workspace if needed.
     /// Returns the new tab's id.
     @discardableResult
-    static func newTab(in workspace: String, cols: UInt16 = 80, rows: UInt16 = 24) throws -> UInt32 {
+    static func newTab(
+        in workspace: String,
+        cols: UInt16 = 80,
+        rows: UInt16 = 24,
+        splitOf: UInt32 = 0,
+        splitDir: UInt8 = 0
+    ) throws -> UInt32 {
         let sock = try connect()
         defer { close(sock) }
         var w = Writer()
@@ -144,6 +173,8 @@ enum Daemon {
         w.string("")           // cwd: inherit the daemon's
         w.u16(cols)
         w.u16(rows)
+        w.u32(splitOf)
+        w.data.append(splitDir)
         try send(sock, tag: tagNewTab, payload: w.data)
 
         let (tag, payload) = try recv(sock)
@@ -277,7 +308,9 @@ enum Daemon {
                     clients: try r.u32(),
                     finished: try r.u8() != 0,
                     title: try r.string(),
-                    busy: try r.u8() != 0
+                    busy: try r.u8() != 0,
+                    splitOf: try r.u32(),
+                    splitDir: try r.u8()
                 ))
             }
             out.append(Workspace(name: name, tabs: tabs))

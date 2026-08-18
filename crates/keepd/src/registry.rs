@@ -30,16 +30,18 @@ impl Registry {
                 tabs: workspace
                     .tabs()
                     .into_iter()
-                    .map(|(id, tab)| {
-                        let (cols, rows) = tab.size();
+                    .map(|t| {
+                        let (cols, rows) = t.tab.size();
                         TabInfo {
-                            id,
+                            id: t.id,
                             cols,
                             rows,
-                            clients: tab.attached_clients() as u32,
-                            finished: tab.is_finished(),
-                            title: tab.title(),
-                            busy: tab.is_busy(),
+                            clients: t.tab.attached_clients() as u32,
+                            finished: t.tab.is_finished(),
+                            title: t.tab.title(),
+                            busy: t.tab.is_busy(),
+                            split_of: t.split_of,
+                            split_dir: t.split_dir,
                         }
                     })
                     .collect(),

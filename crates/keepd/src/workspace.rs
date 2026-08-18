@@ -16,6 +16,18 @@ use crate::Tab;
 struct Entry {
     id: u32,
     tab: Arc<Tab>,
+    /// The tab this one is a pane of (0 = standalone), and where it sits.
+    /// Kept here, not in the app: the layout must survive every client.
+    split_of: u32,
+    split_dir: u8,
+}
+
+/// A snapshot of one tab and its place in the layout.
+pub struct TabRef {
+    pub id: u32,
+    pub split_of: u32,
+    pub split_dir: u8,
+    pub tab: Arc<Tab>,
 }
 
 pub struct Workspace {
@@ -34,7 +46,17 @@ impl Workspace {
     }
 
     /// Start a tab running the user's shell.
-    pub fn new_tab(&self, cwd: Option<&str>, cols: u16, rows: u16) -> Result<(u32, Arc<Tab>)> {
+    ///
+    /// `split_of` other than 0 makes it a pane of that tab; the target must
+    /// exist, or a stale client could quietly create an orphan layout.
+    pub fn new_tab(
+        &self,
+        cwd: Option<&str>,
+        cols: u16,
+        rows: u16,
+        split_of: u32,
+        split_dir: u8,
+    ) -> Result<(u32, Arc<Tab>)> {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
         let mut cmd = CommandBuilder::new(shell);
         if let Some(dir) = cwd {
@@ -48,7 +70,10 @@ impl Workspace {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
 
         let mut guard = self.tabs.lock().map_err(|_| anyhow!("workspace poisoned"))?;
-        guard.push(Entry { id, tab: Arc::clone(&tab) });
+        if split_of != 0 && !guard.iter().any(|e| e.id == split_of) {
+            return Err(anyhow!("no tab {split_of} to split"));
+        }
+        guard.push(Entry { id, tab: Arc::clone(&tab), split_of, split_dir });
         Ok((id, tab))
     }
 
@@ -65,14 +90,27 @@ impl Workspace {
                 return Ok((entry.id, Arc::clone(&entry.tab)));
             }
         }
-        self.new_tab(None, cols, rows)
+        self.new_tab(None, cols, rows, 0, 0)
     }
 
-    pub fn tabs(&self) -> Vec<(u32, Arc<Tab>)> {
-        self.tabs
-            .lock()
-            .map(|g| g.iter().map(|e| (e.id, Arc::clone(&e.tab))).collect())
-            .unwrap_or_default()
+    pub fn tabs(&self) -> Vec<TabRef> {
+        let guard = match self.tabs.lock() {
+            Ok(g) => g,
+            Err(_) => return Vec::new(),
+        };
+        let live: std::collections::HashSet<u32> = guard.iter().map(|e| e.id).collect();
+        guard
+            .iter()
+            .map(|e| TabRef {
+                id: e.id,
+                // A pane whose base tab is gone is promoted to standalone
+                // rather than reported dangling: the layout must always be
+                // reconstructible from what this returns.
+                split_of: if live.contains(&e.split_of) { e.split_of } else { 0 },
+                split_dir: e.split_dir,
+                tab: Arc::clone(&e.tab),
+            })
+            .collect()
     }
 
     pub fn close_tab(&self, id: u32) -> Result<()> {

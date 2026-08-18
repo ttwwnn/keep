@@ -17,8 +17,8 @@ final class WindowManager {
 
     private init() {}
 
-    /// Show a workspace: one native tab per live daemon tab, existing windows
-    /// left untouched.
+    /// Show a workspace: one native tab per root daemon tab (panes render
+    /// inside their root's window), existing windows left untouched.
     func show(workspace: Daemon.Workspace, store: Store) {
         let mine = controllers.filter { $0.workspace == workspace.name }
 
@@ -30,25 +30,28 @@ final class WindowManager {
         }
 
         var previous: NSWindow? = nil
-        for tab in workspace.liveTabs {
-            if let existing = mine.first(where: { $0.tab == tab.id }) {
-                existing.updateTitle(tab.title, busy: tab.busy)
-                previous = existing.window
-                continue
+        for root in workspace.rootTabs {
+            let controller: TerminalWindowController
+            if let existing = mine.first(where: { $0.rootTab == root.id }) {
+                controller = existing
+            } else {
+                controller = TerminalWindowController(
+                    workspace: workspace.name, rootTab: root.id, store: store)
+                controllers.append(controller)
+                if let previous, let window = controller.window {
+                    previous.addTabbedWindow(window, ordered: .above)
+                } else if let window = controller.window {
+                    window.setFrame(
+                        NSRect(x: 0, y: 0, width: 1040, height: 660), display: false)
+                    window.center()
+                }
+                controller.showWindow(nil)
             }
-            let controller = TerminalWindowController(
-                workspace: workspace.name, tab: tab.id, store: store)
-            controller.updateTitle(tab.title, busy: tab.busy)
-            controllers.append(controller)
-
-            if let previous, let window = controller.window {
-                previous.addTabbedWindow(window, ordered: .above)
-            } else if let window = controller.window {
-                window.setFrame(
-                    NSRect(x: 0, y: 0, width: 1040, height: 660), display: false)
-                window.center()
+            controller.updateTitle(root.title, busy: root.busy)
+            // Rebuild this window's panes from the daemon's layout.
+            for pane in workspace.panes(of: root.id) {
+                controller.addPane(tab: pane.id, direction: pane.splitDir)
             }
-            controller.showWindow(nil)
             previous = controller.window
         }
 
@@ -58,10 +61,9 @@ final class WindowManager {
 
     /// Open one new tab window without touching the others.
     func openTab(workspace: String, tab: UInt32, store: Store) {
-        guard !controllers.contains(where: { $0.workspace == workspace && $0.tab == tab }) else {
-            return
-        }
-        let controller = TerminalWindowController(workspace: workspace, tab: tab, store: store)
+        guard !controllers.contains(where: { $0.workspace == workspace && $0.rootTab == tab })
+        else { return }
+        let controller = TerminalWindowController(workspace: workspace, rootTab: tab, store: store)
         controllers.append(controller)
 
         if let sibling = controllers.first(where: { $0.workspace == workspace && $0 !== controller })?.window,
@@ -75,25 +77,33 @@ final class WindowManager {
         controller.window?.makeKeyAndOrderFront(nil)
     }
 
-    /// Refresh labels and drop windows whose tab the daemon no longer has.
+    /// Refresh labels, drop panes and windows the daemon no longer has.
     /// Never opens anything.
     func sync(with workspaces: [Daemon.Workspace]) {
         for controller in controllers {
-            let tab = workspaces
-                .first { $0.name == controller.workspace }?
-                .liveTabs.first { $0.id == controller.tab }
-            if let tab {
-                controller.updateTitle(tab.title, busy: tab.busy)
-            } else {
+            guard
+                let workspace = workspaces.first(where: { $0.name == controller.workspace }),
+                let root = workspace.liveTabs.first(where: { $0.id == controller.rootTab })
+            else {
                 controller.isClosingBecauseTabEnded = true
                 controller.close()
+                continue
+            }
+            controller.updateTitle(root.title, busy: root.busy)
+            let live = Set(workspace.liveTabs.map(\.id))
+            for tab in controller.tabs where tab != controller.rootTab && !live.contains(tab) {
+                controller.removePane(tab: tab)
             }
         }
     }
 
     var frontWorkspace: String? {
-        (NSApp.keyWindow?.windowController as? TerminalWindowController)?.workspace
-            ?? controllers.first?.workspace
+        frontController?.workspace ?? controllers.first?.workspace
+    }
+
+    var frontController: TerminalWindowController? {
+        (NSApp.keyWindow?.windowController as? TerminalWindowController)
+            ?? (NSApp.mainWindow?.windowController as? TerminalWindowController)
     }
 
     func forget(_ controller: TerminalWindowController) {
