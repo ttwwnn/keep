@@ -7,21 +7,25 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		1A4DF695AB0229E7D445A48A /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ADD16A5C6AADA495B3C279A /* main.swift */; };
+		4C11E82F43E6FB91AC2D84D4 /* WindowManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C56562178AF5BFA11BB3ED2E /* WindowManager.swift */; };
+		4DB878DD72C4C206A5CC0301 /* TerminalWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56536F4D7E90097E7A27D4A0 /* TerminalWindow.swift */; };
 		6CF528E340D307EDC50914B8 /* Daemon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 468C7023FE758974CF463692 /* Daemon.swift */; };
-		75C813030CA45DFCED69E7AC /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7730CE1F6E8663E98FA68AAA /* ContentView.swift */; };
 		833915A3B32536A749A3ED62 /* GhosttyKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1493E76B2245010775C7CC76 /* GhosttyKit.xcframework */; };
 		B60E09C5FD28BB81E35B01C7 /* GhosttyApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 617541C8882EDCC67701FB64 /* GhosttyApp.swift */; };
+		BE8688F3B9607B18598E4710 /* TerminalWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BA9D409D4CE86AC07D787E1 /* TerminalWindowController.swift */; };
 		BF1012E62BB7056EE7E7D3D4 /* SurfaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D420A752F15C72894CF7BC3 /* SurfaceView.swift */; };
-		CEE2EF2B9E80180E901D997E /* KeepApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42EDCC9985079E83B57AA12E /* KeepApp.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		1493E76B2245010775C7CC76 /* GhosttyKit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = GhosttyKit.xcframework; path = ../../vendor/GhosttyKit.xcframework; sourceTree = "<group>"; };
-		42EDCC9985079E83B57AA12E /* KeepApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepApp.swift; sourceTree = "<group>"; };
+		3ADD16A5C6AADA495B3C279A /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		468C7023FE758974CF463692 /* Daemon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Daemon.swift; sourceTree = "<group>"; };
+		56536F4D7E90097E7A27D4A0 /* TerminalWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalWindow.swift; sourceTree = "<group>"; };
+		5BA9D409D4CE86AC07D787E1 /* TerminalWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalWindowController.swift; sourceTree = "<group>"; };
 		617541C8882EDCC67701FB64 /* GhosttyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyApp.swift; sourceTree = "<group>"; };
-		7730CE1F6E8663E98FA68AAA /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		7D420A752F15C72894CF7BC3 /* SurfaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurfaceView.swift; sourceTree = "<group>"; };
+		C56562178AF5BFA11BB3ED2E /* WindowManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowManager.swift; sourceTree = "<group>"; };
 		FEB4BBC629ECFAF569DEF4E7 /* Keep.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Keep.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -74,9 +78,11 @@
 		E39CC0D0744BBACF19F6A1B8 /* Keep */ = {
 			isa = PBXGroup;
 			children = (
-				7730CE1F6E8663E98FA68AAA /* ContentView.swift */,
 				468C7023FE758974CF463692 /* Daemon.swift */,
-				42EDCC9985079E83B57AA12E /* KeepApp.swift */,
+				3ADD16A5C6AADA495B3C279A /* main.swift */,
+				56536F4D7E90097E7A27D4A0 /* TerminalWindow.swift */,
+				5BA9D409D4CE86AC07D787E1 /* TerminalWindowController.swift */,
+				C56562178AF5BFA11BB3ED2E /* WindowManager.swift */,
 				4FD48526C04EA48291064CA9 /* Ghostty */,
 			);
 			path = Keep;
@@ -146,11 +152,13 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				75C813030CA45DFCED69E7AC /* ContentView.swift in Sources */,
 				6CF528E340D307EDC50914B8 /* Daemon.swift in Sources */,
 				B60E09C5FD28BB81E35B01C7 /* GhosttyApp.swift in Sources */,
-				CEE2EF2B9E80180E901D997E /* KeepApp.swift in Sources */,
 				BF1012E62BB7056EE7E7D3D4 /* SurfaceView.swift in Sources */,
+				4DB878DD72C4C206A5CC0301 /* TerminalWindow.swift in Sources */,
+				BE8688F3B9607B18598E4710 /* TerminalWindowController.swift in Sources */,
+				4C11E82F43E6FB91AC2D84D4 /* WindowManager.swift in Sources */,
+				1A4DF695AB0229E7D445A48A /* main.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -16,8 +16,11 @@ final class TerminalSurfaceView: NSView {
     init(session: String, tab: UInt32) {
         self.session = session
         self.tab = tab
-        super.init(frame: .zero)
+        super.init(frame: NSRect(x: 0, y: 0, width: 900, height: 560))
         wantsLayer = true
+        // As a window's contentView this must track the window, and the size
+        // it reports is the geometry the remote session is told to use.
+        autoresizingMask = [.width, .height]
         // Without this the view keeps its own backing store and libghostty
         // draws into something the window never composites.
         layerContentsRedrawPolicy = .duringViewResize
@@ -69,6 +72,7 @@ final class TerminalSurfaceView: NSView {
 
         guard let surface else { return }
         ghostty_surface_set_content_scale(surface, config.scale_factor, config.scale_factor)
+        layer?.contentsScale = window?.backingScaleFactor ?? 2.0
         applyColorScheme()
         updateSize()
         startDisplayLink()
@@ -109,12 +113,37 @@ final class TerminalSurfaceView: NSView {
 
     private func updateSize() {
         guard let surface else { return }
-        let scale = window?.backingScaleFactor ?? 2.0
+        // libghostty wants the framebuffer size, so convert rather than
+        // multiplying by a guessed scale.
+        let backing = convertToBacking(bounds).size
         ghostty_surface_set_size(
             surface,
-            UInt32(max(1, bounds.width * scale)),
-            UInt32(max(1, bounds.height * scale))
+            UInt32(max(1, backing.width)),
+            UInt32(max(1, backing.height))
         )
+    }
+
+    /// Keep the layer from being rescaled by the compositor.
+    ///
+    /// We already render at the display's resolution, so the layer must be
+    /// told its contents are that dense. Leaving `contentsScale` at 1 makes
+    /// Core Animation scale the drawable again, and the terminal ends up
+    /// drawn into a corner of its own view.
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        guard let window else { return }
+
+        CATransaction.begin()
+        // Otherwise Core Animation animates the scale change, which looks janky.
+        CATransaction.setDisableActions(true)
+        layer?.contentsScale = window.backingScaleFactor
+        CATransaction.commit()
+
+        if let surface {
+            let scale = window.backingScaleFactor
+            ghostty_surface_set_content_scale(surface, scale, scale)
+        }
+        updateSize()
     }
 
     /// Tell libghostty whether we are dark or light.
@@ -137,6 +166,13 @@ final class TerminalSurfaceView: NSView {
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
+        updateSize()
+    }
+
+    override func layout() {
+        super.layout()
+        // setFrameSize alone misses the first pass, when the view is still
+        // at its placeholder size and the session would be told it is tiny.
         updateSize()
     }
 

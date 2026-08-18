@@ -47,9 +47,12 @@ and no font handling to build.
 - [x] `keep` — attach, detach, repaint, input forwarding, flat picker
 - [x] sessions hold tabs; tabs persist with the session
 
-**Phase 2 — native macOS app.** Working. A SwiftUI shell with a session
-sidebar and a tab bar; each tab is a real libghostty surface (Metal rendering,
-your own Ghostty fonts and theme) running the `keep` client as its child.
+**Phase 2 — native macOS app.** Working. Each tab is its own window holding a
+real libghostty surface (Metal rendering, your own Ghostty fonts and theme)
+running the `keep` client as its child. Windows sharing a session share a
+`tabbingIdentifier`, so macOS groups them into one native tab bar in the
+titlebar — and ⌘1…⌘9, drag to reorder and the tab overview come from the
+system rather than from us.
 
 Tabs are labelled with the title the program inside sets (OSC 0/2), which
 shells and editors do on their own, so a tab says what it is without anyone
