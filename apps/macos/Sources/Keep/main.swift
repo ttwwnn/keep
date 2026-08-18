@@ -1,65 +1,45 @@
 import AppKit
 
-/// AppKit rather than SwiftUI at the top level: native window tabbing lives on
-/// `NSWindow`, and driving it through SwiftUI's window management fights the
-/// framework more than it helps.
+/// AppKit at the top: native tabbing lives on `NSWindow`, and driving it
+/// through SwiftUI's window management fights the framework. SwiftUI is still
+/// used where it earns its keep — the sidebar is a hosted SwiftUI view.
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    let store = Store()
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = GhosttyApp.shared
         buildMenu()
-
-        do {
-            try Daemon.ensureRunning()
-        } catch {
-            presentFatal(error.localizedDescription)
-            return
-        }
-
-        // Nothing to show on a fresh daemon, so start something.
-        if ((try? Daemon.list()) ?? []).isEmpty {
-            WindowManager.shared.newTab(in: defaultSessionName())
-        }
-        WindowManager.shared.startPolling()
+        store.start()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        // Closing every window must not kill the daemon's work; the app is
-        // just a viewer.
+        // The app is a viewer; the daemon keeps the work.
         true
     }
 
-    private func defaultSessionName() -> String {
-        FileManager.default.homeDirectoryForCurrentUser.lastPathComponent
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Quit closes windows as a side effect; that must not close tabs.
+        WindowManager.shared.isQuitting = true
+        return .terminateNow
     }
 
     @objc func newTab(_ sender: Any?) {
-        guard let session = WindowManager.shared.currentSession else { return }
-        WindowManager.shared.newTab(in: session)
+        store.newTabInFront()
     }
 
-    @objc func newSession(_ sender: Any?) {
+    @objc func newWorkspace(_ sender: Any?) {
         let alert = NSAlert()
-        alert.messageText = "New session"
-        alert.informativeText = "Sessions keep running when their windows close."
+        alert.messageText = "New workspace"
+        alert.informativeText = "Workspaces keep running after their windows close."
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         field.placeholderString = "name"
         alert.accessoryView = field
+        alert.window.initialFirstResponder = field
         alert.addButton(withTitle: "Create")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-
-        let name = field.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty else { return }
-        WindowManager.shared.newTab(in: name)
-    }
-
-    private func presentFatal(_ message: String) {
-        let alert = NSAlert()
-        alert.alertStyle = .critical
-        alert.messageText = "Cannot reach the keep daemon"
-        alert.informativeText = message
-        alert.runModal()
-        NSApp.terminate(nil)
+        store.createWorkspace(named: field.stringValue)
     }
 
     private func buildMenu() {
@@ -67,20 +47,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "Quit Keep", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(
+            withTitle: "Quit Keep", action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q")
         appItem.submenu = appMenu
         main.addItem(appItem)
 
         let fileItem = NSMenuItem()
         let fileMenu = NSMenu(title: "File")
         fileMenu.addItem(withTitle: "New Tab", action: #selector(newTab(_:)), keyEquivalent: "t")
-        fileMenu.addItem(withTitle: "New Session…", action: #selector(newSession(_:)), keyEquivalent: "n")
+        fileMenu.addItem(
+            withTitle: "New Workspace…", action: #selector(newWorkspace(_:)), keyEquivalent: "n")
         fileMenu.addItem(.separator())
-        fileMenu.addItem(withTitle: "Close Tab", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        fileMenu.addItem(
+            withTitle: "Close Tab", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         fileItem.submenu = fileMenu
         main.addItem(fileItem)
 
-        // Gives us Show Next/Previous Tab and the tab overview for free.
+        let viewItem = NSMenuItem()
+        let viewMenu = NSMenu(title: "View")
+        viewMenu.addItem(
+            withTitle: "Toggle Sidebar",
+            action: #selector(NSSplitViewController.toggleSidebar(_:)), keyEquivalent: "s")
+        viewMenu.items.last?.keyEquivalentModifierMask = [.command, .control]
+        viewItem.submenu = viewMenu
+        main.addItem(viewItem)
+
+        // Native tabs put Show Next/Previous Tab and the overview here.
         let windowItem = NSMenuItem()
         let windowMenu = NSMenu(title: "Window")
         windowItem.submenu = windowMenu
@@ -91,9 +84,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-let delegate = AppDelegate()
-let app = NSApplication.shared
-app.delegate = delegate
-app.setActivationPolicy(.regular)
-app.activate(ignoringOtherApps: true)
-app.run()
+// Top-level code runs on the main actor when the entry point awaits it.
+MainActor.assumeIsolated {
+    let delegate = AppDelegate()
+    let app = NSApplication.shared
+    app.delegate = delegate
+    app.setActivationPolicy(.regular)
+    app.activate(ignoringOtherApps: true)
+    // Keep the delegate alive for the app's lifetime.
+    objc_setAssociatedObject(app, "keep.delegate", delegate, .OBJC_ASSOCIATION_RETAIN)
+    app.run()
+}

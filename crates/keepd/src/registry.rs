@@ -1,16 +1,16 @@
-//! The set of live sessions, keyed by name.
+//! The set of live workspaces, keyed by name.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, anyhow};
-use keep_proto::{SessionInfo, TabInfo};
+use keep_proto::{TabInfo, WorkspaceInfo};
 
-use crate::Session;
+use crate::Workspace;
 
 #[derive(Default)]
 pub struct Registry {
-    sessions: Mutex<HashMap<String, Arc<Session>>>,
+    workspaces: Mutex<HashMap<String, Arc<Workspace>>>,
 }
 
 impl Registry {
@@ -18,16 +18,16 @@ impl Registry {
         Self::default()
     }
 
-    pub fn list(&self) -> Vec<SessionInfo> {
-        let guard = match self.sessions.lock() {
+    pub fn list(&self) -> Vec<WorkspaceInfo> {
+        let guard = match self.workspaces.lock() {
             Ok(g) => g,
             Err(_) => return Vec::new(),
         };
-        let mut out: Vec<SessionInfo> = guard
+        let mut out: Vec<WorkspaceInfo> = guard
             .iter()
-            .map(|(name, session)| SessionInfo {
+            .map(|(name, workspace)| WorkspaceInfo {
                 name: name.clone(),
-                tabs: session
+                tabs: workspace
                     .tabs()
                     .into_iter()
                     .map(|(id, tab)| {
@@ -49,39 +49,39 @@ impl Registry {
         out
     }
 
-    pub fn get(&self, name: &str) -> Option<Arc<Session>> {
-        self.sessions.lock().ok()?.get(name).cloned()
+    pub fn get(&self, name: &str) -> Option<Arc<Workspace>> {
+        self.workspaces.lock().ok()?.get(name).cloned()
     }
 
-    /// Sessions are created on demand: naming one is enough to have it.
-    pub fn get_or_create(&self, name: &str) -> Result<Arc<Session>> {
-        let mut guard = self.sessions.lock().map_err(|_| anyhow!("registry poisoned"))?;
+    /// Workspaces are created on demand: naming one is enough to have it.
+    pub fn get_or_create(&self, name: &str) -> Result<Arc<Workspace>> {
+        let mut guard = self.workspaces.lock().map_err(|_| anyhow!("registry poisoned"))?;
         if let Some(existing) = guard.get(name) {
             return Ok(Arc::clone(existing));
         }
-        let session = Arc::new(Session::new(name));
-        guard.insert(name.to_string(), Arc::clone(&session));
-        Ok(session)
+        let workspace = Arc::new(Workspace::new(name));
+        guard.insert(name.to_string(), Arc::clone(&workspace));
+        Ok(workspace)
     }
 
     pub fn kill(&self, name: &str) -> Result<()> {
-        let session = {
-            let mut guard = self.sessions.lock().map_err(|_| anyhow!("registry poisoned"))?;
-            guard.remove(name).ok_or_else(|| anyhow!("no such session: {name}"))?
+        let workspace = {
+            let mut guard = self.workspaces.lock().map_err(|_| anyhow!("registry poisoned"))?;
+            guard.remove(name).ok_or_else(|| anyhow!("no such workspace: {name}"))?
         };
-        session.kill_all()
+        workspace.kill_all()
     }
 
-    /// Drop dead tabs, then sessions left with nothing in them.
+    /// Drop dead tabs, then workspaces left with nothing in them.
     pub fn reap(&self) {
-        let sessions: Vec<Arc<Session>> = match self.sessions.lock() {
+        let workspaces: Vec<Arc<Workspace>> = match self.workspaces.lock() {
             Ok(g) => g.values().cloned().collect(),
             Err(_) => return,
         };
-        for session in &sessions {
-            session.reap();
+        for workspace in &workspaces {
+            workspace.reap();
         }
-        if let Ok(mut guard) = self.sessions.lock() {
+        if let Ok(mut guard) = self.workspaces.lock() {
             guard.retain(|_, s| !s.is_empty());
         }
     }

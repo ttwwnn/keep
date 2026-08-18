@@ -1,6 +1,6 @@
-//! A session: a named group of tabs.
+//! A workspace: a named group of tabs.
 //!
-//! The session is what a person thinks of as "a project". It holds one or
+//! The workspace is what a person thinks of as "a project". It holds one or
 //! more tabs, and it is the unit that survives clients coming and going. Tabs
 //! live here rather than in the app so that closing the window loses nothing:
 //! reopening finds the same tabs, still running.
@@ -18,13 +18,13 @@ struct Entry {
     tab: Arc<Tab>,
 }
 
-pub struct Session {
+pub struct Workspace {
     name: String,
     tabs: Mutex<Vec<Entry>>,
     next_id: AtomicU32,
 }
 
-impl Session {
+impl Workspace {
     pub fn new(name: impl Into<String>) -> Self {
         Self { name: name.into(), tabs: Mutex::new(Vec::new()), next_id: AtomicU32::new(1) }
     }
@@ -42,12 +42,12 @@ impl Session {
         }
         // Programs expect these; without TERM many refuse to draw at all.
         cmd.env("TERM", "xterm-256color");
-        cmd.env("KEEP_SESSION", &self.name);
+        cmd.env("KEEP_WORKSPACE", &self.name);
 
         let tab = Arc::new(Tab::spawn(cmd, cols, rows)?);
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
 
-        let mut guard = self.tabs.lock().map_err(|_| anyhow!("session poisoned"))?;
+        let mut guard = self.tabs.lock().map_err(|_| anyhow!("workspace poisoned"))?;
         guard.push(Entry { id, tab: Arc::clone(&tab) });
         Ok((id, tab))
     }
@@ -57,10 +57,10 @@ impl Session {
         guard.iter().find(|e| e.id == id).map(|e| Arc::clone(&e.tab))
     }
 
-    /// The tab a client lands on when it names a session but not a tab.
+    /// The tab a client lands on when it names a workspace but not a tab.
     pub fn first_or_create(&self, cols: u16, rows: u16) -> Result<(u32, Arc<Tab>)> {
         {
-            let guard = self.tabs.lock().map_err(|_| anyhow!("session poisoned"))?;
+            let guard = self.tabs.lock().map_err(|_| anyhow!("workspace poisoned"))?;
             if let Some(entry) = guard.iter().find(|e| !e.tab.is_finished()) {
                 return Ok((entry.id, Arc::clone(&entry.tab)));
             }
@@ -77,7 +77,7 @@ impl Session {
 
     pub fn close_tab(&self, id: u32) -> Result<()> {
         let tab = {
-            let mut guard = self.tabs.lock().map_err(|_| anyhow!("session poisoned"))?;
+            let mut guard = self.tabs.lock().map_err(|_| anyhow!("workspace poisoned"))?;
             let pos = guard.iter().position(|e| e.id == id).ok_or_else(|| anyhow!("no tab {id}"))?;
             guard.remove(pos).tab
         };
@@ -86,7 +86,7 @@ impl Session {
 
     pub fn kill_all(&self) -> Result<()> {
         let tabs: Vec<Arc<Tab>> = {
-            let mut guard = self.tabs.lock().map_err(|_| anyhow!("session poisoned"))?;
+            let mut guard = self.tabs.lock().map_err(|_| anyhow!("workspace poisoned"))?;
             guard.drain(..).map(|e| e.tab).collect()
         };
         for tab in tabs {

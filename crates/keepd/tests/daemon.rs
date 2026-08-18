@@ -61,7 +61,7 @@ fn work_survives_the_client_going_away() {
 
     // --- first client attaches and does some work ---
     let mut c1 = UnixStream::connect(&path).expect("connect");
-    ClientMsg::Attach { session: "demo".into(), tab: TAB_ANY, cols: 80, rows: 24 }
+    ClientMsg::Attach { workspace: "demo".into(), tab: TAB_ANY, cols: 80, rows: 24 }
         .write(&mut c1)
         .unwrap();
 
@@ -86,7 +86,7 @@ fn work_survives_the_client_going_away() {
 
     // --- second client attaches to the same name ---
     let mut c2 = UnixStream::connect(&path).expect("reconnect");
-    ClientMsg::Attach { session: "demo".into(), tab: TAB_ANY, cols: 80, rows: 24 }
+    ClientMsg::Attach { workspace: "demo".into(), tab: TAB_ANY, cols: 80, rows: 24 }
         .write(&mut c2)
         .unwrap();
     c2.set_read_timeout(Some(Duration::from_secs(5))).ok();
@@ -107,11 +107,11 @@ fn work_survives_the_client_going_away() {
 }
 
 #[test]
-fn list_reports_live_sessions() {
+fn list_reports_live_workspaces() {
     let path = start_daemon("list");
 
     let mut attached = UnixStream::connect(&path).unwrap();
-    ClientMsg::Attach { session: "one".into(), tab: TAB_ANY, cols: 80, rows: 24 }
+    ClientMsg::Attach { workspace: "one".into(), tab: TAB_ANY, cols: 80, rows: 24 }
         .write(&mut attached)
         .unwrap();
     attached.set_read_timeout(Some(Duration::from_secs(5))).ok();
@@ -122,7 +122,7 @@ fn list_reports_live_sessions() {
     lister.set_read_timeout(Some(Duration::from_secs(5))).ok();
 
     match ServerMsg::read(&mut lister).unwrap() {
-        Some(ServerMsg::Sessions(list)) => {
+        Some(ServerMsg::Workspaces(list)) => {
             let names: Vec<_> = list.iter().map(|s| s.name.as_str()).collect();
             assert!(names.contains(&"one"), "session missing from list: {names:?}");
             let one = list.iter().find(|s| s.name == "one").unwrap();
@@ -139,7 +139,7 @@ fn attaching_twice_reuses_one_shell() {
     let path = start_daemon("reuse");
 
     let mut a = UnixStream::connect(&path).unwrap();
-    ClientMsg::Attach { session: "shared".into(), tab: TAB_ANY, cols: 80, rows: 24 }.write(&mut a).unwrap();
+    ClientMsg::Attach { workspace: "shared".into(), tab: TAB_ANY, cols: 80, rows: 24 }.write(&mut a).unwrap();
     a.set_read_timeout(Some(Duration::from_secs(5))).ok();
     ServerMsg::read(&mut a).unwrap();
 
@@ -149,7 +149,7 @@ fn attaching_twice_reuses_one_shell() {
     // A second client on the same name must land in the same shell, seeing
     // the first client's work in its repaint.
     let mut b = UnixStream::connect(&path).unwrap();
-    ClientMsg::Attach { session: "shared".into(), tab: TAB_ANY, cols: 80, rows: 24 }.write(&mut b).unwrap();
+    ClientMsg::Attach { workspace: "shared".into(), tab: TAB_ANY, cols: 80, rows: 24 }.write(&mut b).unwrap();
     b.set_read_timeout(Some(Duration::from_secs(5))).ok();
 
     let data = read_repaint(&mut b).expect("no repaint for second client");
@@ -164,7 +164,7 @@ fn disconnected_client_stops_being_counted() {
     let path = start_daemon("count");
 
     let mut client = UnixStream::connect(&path).unwrap();
-    ClientMsg::Attach { session: "quiet".into(), tab: TAB_ANY, cols: 80, rows: 24 }.write(&mut client).unwrap();
+    ClientMsg::Attach { workspace: "quiet".into(), tab: TAB_ANY, cols: 80, rows: 24 }.write(&mut client).unwrap();
     client.set_read_timeout(Some(Duration::from_secs(5))).ok();
     ServerMsg::read(&mut client).unwrap();
 
@@ -201,21 +201,21 @@ fn clients_of(path: &std::path::Path, name: &str) -> u32 {
     ClientMsg::List.write(&mut sock).unwrap();
     sock.set_read_timeout(Some(Duration::from_secs(5))).ok();
     match ServerMsg::read(&mut sock) {
-        Ok(Some(ServerMsg::Sessions(list))) => {
+        Ok(Some(ServerMsg::Workspaces(list))) => {
             list.iter().find(|s| s.name == name).map(|s| s.clients()).unwrap_or(0)
         }
         _ => 0,
     }
 }
 
-/// Tabs in one session are independent terminals, and both persist.
+/// Tabs in one workspace are independent terminals, and both persist.
 #[test]
 fn tabs_are_independent_and_both_survive() {
     let path = start_daemon("tabs");
 
     // First tab, via a plain attach.
     let mut one = UnixStream::connect(&path).unwrap();
-    ClientMsg::Attach { session: "proj".into(), tab: TAB_ANY, cols: 80, rows: 24 }
+    ClientMsg::Attach { workspace: "proj".into(), tab: TAB_ANY, cols: 80, rows: 24 }
         .write(&mut one)
         .unwrap();
     one.set_read_timeout(Some(Duration::from_secs(5))).ok();
@@ -227,9 +227,9 @@ fn tabs_are_independent_and_both_survive() {
     ClientMsg::Input(b"echo one$((1+0))\n".to_vec()).write(&mut one).unwrap();
     assert!(read_until(&mut one, "one1", Duration::from_secs(10)).contains("one1"));
 
-    // Ask for a second tab in the same session.
+    // Ask for a second tab in the same workspace.
     let mut opener = UnixStream::connect(&path).unwrap();
-    ClientMsg::NewTab { session: "proj".into(), cwd: None, cols: 80, rows: 24 }
+    ClientMsg::NewTab { workspace: "proj".into(), cwd: None, cols: 80, rows: 24 }
         .write(&mut opener)
         .unwrap();
     opener.set_read_timeout(Some(Duration::from_secs(5))).ok();
@@ -241,7 +241,7 @@ fn tabs_are_independent_and_both_survive() {
 
     // Work in the second tab.
     let mut two = UnixStream::connect(&path).unwrap();
-    ClientMsg::Attach { session: "proj".into(), tab: second_id, cols: 80, rows: 24 }
+    ClientMsg::Attach { workspace: "proj".into(), tab: second_id, cols: 80, rows: 24 }
         .write(&mut two)
         .unwrap();
     two.set_read_timeout(Some(Duration::from_secs(5))).ok();
@@ -250,15 +250,15 @@ fn tabs_are_independent_and_both_survive() {
     ClientMsg::Input(b"echo two$((1+1))\n".to_vec()).write(&mut two).unwrap();
     assert!(read_until(&mut two, "two2", Duration::from_secs(10)).contains("two2"));
 
-    // One session, two tabs.
+    // One workspace, two tabs.
     let mut lister = UnixStream::connect(&path).unwrap();
     ClientMsg::List.write(&mut lister).unwrap();
     lister.set_read_timeout(Some(Duration::from_secs(5))).ok();
-    let sessions = match ServerMsg::read(&mut lister).unwrap() {
-        Some(ServerMsg::Sessions(list)) => list,
+    let workspaces = match ServerMsg::read(&mut lister).unwrap() {
+        Some(ServerMsg::Workspaces(list)) => list,
         other => panic!("expected list, got {other:?}"),
     };
-    let proj = sessions.iter().find(|s| s.name == "proj").expect("session missing");
+    let proj = workspaces.iter().find(|s| s.name == "proj").expect("workspace missing");
     assert_eq!(proj.tabs.len(), 2, "expected two tabs, got {:?}", proj.tabs);
 
     // Each tab kept its own screen: neither shows the other's output.
@@ -267,7 +267,7 @@ fn tabs_are_independent_and_both_survive() {
     std::thread::sleep(Duration::from_millis(200));
 
     let mut back = UnixStream::connect(&path).unwrap();
-    ClientMsg::Attach { session: "proj".into(), tab: first_id, cols: 80, rows: 24 }
+    ClientMsg::Attach { workspace: "proj".into(), tab: first_id, cols: 80, rows: 24 }
         .write(&mut back)
         .unwrap();
     back.set_read_timeout(Some(Duration::from_secs(5))).ok();
@@ -277,14 +277,14 @@ fn tabs_are_independent_and_both_survive() {
     assert!(!screen.contains("two2"), "first tab shows the second tab's output: {screen:?}");
 }
 
-/// The title a program sets with OSC has to reach the session list, because
+/// The title a program sets with OSC has to reach the workspace list, because
 /// that is what labels a tab you are not currently looking at.
 #[test]
-fn tab_title_reaches_the_session_list() {
+fn tab_title_reaches_the_workspace_list() {
     let path = start_daemon("title");
 
     let mut client = UnixStream::connect(&path).unwrap();
-    ClientMsg::Attach { session: "titled".into(), tab: TAB_ANY, cols: 80, rows: 24 }
+    ClientMsg::Attach { workspace: "titled".into(), tab: TAB_ANY, cols: 80, rows: 24 }
         .write(&mut client)
         .unwrap();
     client.set_read_timeout(Some(Duration::from_secs(5))).ok();
@@ -312,14 +312,14 @@ fn tab_title_reaches_the_session_list() {
     assert_eq!(seen, "building orion", "title never reached the list");
 }
 
-fn title_of(path: &std::path::Path, session: &str) -> Option<String> {
+fn title_of(path: &std::path::Path, workspace: &str) -> Option<String> {
     let mut sock = UnixStream::connect(path).ok()?;
     ClientMsg::List.write(&mut sock).ok()?;
     sock.set_read_timeout(Some(Duration::from_secs(5))).ok();
     match ServerMsg::read(&mut sock) {
-        Ok(Some(ServerMsg::Sessions(list))) => list
+        Ok(Some(ServerMsg::Workspaces(list))) => list
             .iter()
-            .find(|s| s.name == session)
+            .find(|s| s.name == workspace)
             .and_then(|s| s.tabs.first())
             .map(|t| t.title.clone()),
         _ => None,

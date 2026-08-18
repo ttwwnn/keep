@@ -1,101 +1,102 @@
 import AppKit
 
-/// Keeps the windows and the daemon's view of the world in step.
+/// Owns the tab windows for the workspace currently on screen.
+///
+/// Only user actions open or close windows. The poller merely relabels the
+/// ones that exist — an earlier version reconciled windows against the
+/// daemon on a timer and reopened every window the user had just closed,
+/// because the daemon still had the tab.
 final class WindowManager {
     static let shared = WindowManager()
 
-    static let defaultContentSize = NSSize(width: 960, height: 620)
+    private(set) var controllers: [TerminalWindowController] = []
 
-    private var controllers: [TerminalWindowController] = []
-    private var poll: Timer?
+    /// Set while the app quits. Windows closed on quit are the app going
+    /// away, not the user closing tabs: the daemon must keep everything.
+    var isQuitting = false
 
     private init() {}
 
-    /// Bring the whole daemon state on screen: a window per live tab, grouped
-    /// into one tab bar per session.
-    func sync() {
-        let sessions = (try? Daemon.list()) ?? []
+    /// Show a workspace: one native tab per live daemon tab, existing windows
+    /// left untouched.
+    func show(workspace: Daemon.Workspace, store: Store) {
+        let mine = controllers.filter { $0.workspace == workspace.name }
 
-        for session in sessions {
-            for tab in session.liveTabs {
-                if let existing = controller(session: session.name, tab: tab.id) {
-                    existing.updateTitle(tab.title, busy: tab.busy)
-                } else {
-                    open(session: session.name, tab: tab.id, title: tab.title, busy: tab.busy)
-                }
-            }
-        }
-
-        // Close windows whose tab is gone from the daemon.
-        let live = Set(sessions.flatMap { s in s.liveTabs.map { "\(s.name)#\($0.id)" } })
-        for controller in controllers where !live.contains("\(controller.session)#\(controller.tab)") {
+        // Close windows of other workspaces: the window is a view of one
+        // workspace at a time, which is what "switching" means here.
+        for controller in controllers where controller.workspace != workspace.name {
+            controller.isClosingBecauseTabEnded = true
             controller.close()
         }
+
+        var previous: NSWindow? = nil
+        for tab in workspace.liveTabs {
+            if let existing = mine.first(where: { $0.tab == tab.id }) {
+                existing.updateTitle(tab.title, busy: tab.busy)
+                previous = existing.window
+                continue
+            }
+            let controller = TerminalWindowController(
+                workspace: workspace.name, tab: tab.id, store: store)
+            controller.updateTitle(tab.title, busy: tab.busy)
+            controllers.append(controller)
+
+            if let previous, let window = controller.window {
+                previous.addTabbedWindow(window, ordered: .above)
+            } else if let window = controller.window {
+                window.setFrame(
+                    NSRect(x: 0, y: 0, width: 1040, height: 660), display: false)
+                window.center()
+            }
+            controller.showWindow(nil)
+            previous = controller.window
+        }
+
+        controllers.first { $0.workspace == workspace.name }?
+            .window?.makeKeyAndOrderFront(nil)
     }
 
-    func startPolling() {
-        sync()
-        poll = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            self?.sync()
+    /// Open one new tab window without touching the others.
+    func openTab(workspace: String, tab: UInt32, store: Store) {
+        guard !controllers.contains(where: { $0.workspace == workspace && $0.tab == tab }) else {
+            return
         }
-    }
-
-    @discardableResult
-    func open(session: String, tab: UInt32, title: String = "", busy: Bool = false)
-        -> TerminalWindowController
-    {
-        if let existing = controller(session: session, tab: tab) {
-            existing.showWindow(nil)
-            return existing
-        }
-
-        let controller = TerminalWindowController(session: session, tab: tab)
-        controller.updateTitle(title, busy: busy)
+        let controller = TerminalWindowController(workspace: workspace, tab: tab, store: store)
         controllers.append(controller)
 
-        // Join this session's tab group rather than opening a loose window.
-        let sibling = controllers.first { $0.session == session && $0 !== controller }?.window
-        if let sibling, let window = controller.window {
+        if let sibling = controllers.first(where: { $0.workspace == workspace && $0 !== controller })?.window,
+           let window = controller.window {
             sibling.addTabbedWindow(window, ordered: .above)
+        } else if let window = controller.window {
+            window.setFrame(NSRect(x: 0, y: 0, width: 1040, height: 660), display: false)
+            window.center()
         }
-
         controller.showWindow(nil)
-
-        // Only the window that opens a group chooses the size; the rest are
-        // tabs and must take the group's frame, or joining would resize the
-        // window out from under whoever is using it.
         controller.window?.makeKeyAndOrderFront(nil)
+    }
 
-        if sibling == nil, let window = controller.window {
-            var frame = window.frameRect(forContentRect: NSRect(origin: .zero, size: Self.defaultContentSize))
-            if let screen = window.screen ?? NSScreen.main {
-                let visible = screen.visibleFrame
-                frame.origin = NSPoint(
-                    x: visible.midX - frame.width / 2,
-                    y: visible.midY - frame.height / 2
-                )
+    /// Refresh labels and drop windows whose tab the daemon no longer has.
+    /// Never opens anything.
+    func sync(with workspaces: [Daemon.Workspace]) {
+        for controller in controllers {
+            let tab = workspaces
+                .first { $0.name == controller.workspace }?
+                .liveTabs.first { $0.id == controller.tab }
+            if let tab {
+                controller.updateTitle(tab.title, busy: tab.busy)
+            } else {
+                controller.isClosingBecauseTabEnded = true
+                controller.close()
             }
-            window.setFrame(frame, display: true)
         }
-        return controller
     }
 
-    func newTab(in session: String) {
-        guard let id = try? Daemon.newTab(in: session) else { return }
-        open(session: session, tab: id)
-    }
-
-    /// The session the frontmost window belongs to, for "new tab here".
-    var currentSession: String? {
-        (NSApp.keyWindow?.windowController as? TerminalWindowController)?.session
-            ?? controllers.first?.session
+    var frontWorkspace: String? {
+        (NSApp.keyWindow?.windowController as? TerminalWindowController)?.workspace
+            ?? controllers.first?.workspace
     }
 
     func forget(_ controller: TerminalWindowController) {
         controllers.removeAll { $0 === controller }
-    }
-
-    private func controller(session: String, tab: UInt32) -> TerminalWindowController? {
-        controllers.first { $0.session == session && $0.tab == tab }
     }
 }

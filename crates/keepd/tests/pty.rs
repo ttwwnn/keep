@@ -88,7 +88,7 @@ fn repaint_carries_styling_that_plain_text_drops() {
 /// The reason this project exists: work continues while nobody is attached,
 /// and the state is all there when someone looks again.
 #[test]
-fn session_keeps_running_with_no_one_watching() {
+fn tab_keeps_running_with_no_one_watching() {
     let session = Tab::spawn(shell(), 60, 20).expect("spawn");
 
     session
@@ -178,7 +178,7 @@ fn detaching_stops_counting_the_client_right_away() {
 }
 
 /// A tab is busy while a command runs and quiet at the prompt. This is what
-/// tells a session doing work apart from one merely sitting there, which is
+/// tells a workspace doing work apart from one merely sitting there, which is
 /// the distinction the sidebar needs.
 #[test]
 fn busy_tracks_the_foreground_command() {

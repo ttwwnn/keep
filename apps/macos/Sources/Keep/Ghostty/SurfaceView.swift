@@ -10,11 +10,11 @@ import SwiftUI
 final class TerminalSurfaceView: NSView {
     private var surface: ghostty_surface_t?
     private var displayLink: CVDisplayLink?
-    private let session: String
+    private let workspace: String
     private let tab: UInt32
 
-    init(session: String, tab: UInt32) {
-        self.session = session
+    init(workspace: String, tab: UInt32) {
+        self.workspace = workspace
         self.tab = tab
         super.init(frame: NSRect(x: 0, y: 0, width: 900, height: 560))
         wantsLayer = true
@@ -58,13 +58,13 @@ final class TerminalSurfaceView: NSView {
         // `initial_input` is honoured (the runtime copies it into its own
         // arena), so hand the shell an `exec` line instead: the shell replaces
         // itself with our client and no stray shell is left behind.
-        // The client to run is fixed app-wide (see GhosttyApp). Which session
+        // The client to run is fixed app-wide (see GhosttyApp). Which workspace
         // and tab it should attach to travels through the working directory:
         // of the per-surface fields, that is the only one this build of
         // libghostty honours. `command`, `env_vars` and `initial_input` are
         // all accepted by the API and then ignored, which is why the target
         // is written to a file the client reads and deletes.
-        guard let dir = Self.makeTargetDirectory(session: session, tab: tab) else { return }
+        guard let dir = Self.makeTargetDirectory(workspace: workspace, tab: tab) else { return }
         dir.withCString { wd in
             config.working_directory = wd
             surface = ghostty_surface_new(app, &config)
@@ -79,13 +79,13 @@ final class TerminalSurfaceView: NSView {
     }
 
     /// A private directory holding this surface's attach target.
-    private static func makeTargetDirectory(session: String, tab: UInt32) -> String? {
+    private static func makeTargetDirectory(workspace: String, tab: UInt32) -> String? {
         let base = FileManager.default.temporaryDirectory
             .appendingPathComponent("keep-attach", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-            try "\(session)\n\(tab)\n".write(
+            try "\(workspace)\n\(tab)\n".write(
                 to: base.appendingPathComponent(".keep-attach"),
                 atomically: true,
                 encoding: .utf8
@@ -239,11 +239,11 @@ final class TerminalSurfaceView: NSView {
 
 /// Bridges the AppKit surface into SwiftUI.
 struct TerminalSurface: NSViewRepresentable {
-    let session: String
+    let workspace: String
     let tab: UInt32
 
     func makeNSView(context: Context) -> TerminalSurfaceView {
-        TerminalSurfaceView(session: session, tab: tab)
+        TerminalSurfaceView(workspace: workspace, tab: tab)
     }
 
     func updateNSView(_ nsView: TerminalSurfaceView, context: Context) {}

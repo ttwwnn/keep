@@ -18,7 +18,7 @@ const T_RESIZE: u8 = 0x05;
 const T_KILL: u8 = 0x06;
 const T_CLOSE_TAB: u8 = 0x07;
 
-const T_SESSIONS: u8 = 0x81;
+const T_WORKSPACES: u8 = 0x81;
 const T_REPAINT: u8 = 0x82;
 const T_OUTPUT: u8 = 0x83;
 const T_ERROR: u8 = 0x84;
@@ -34,15 +34,15 @@ pub const TAB_ANY: u32 = 0;
 pub enum ClientMsg {
     List,
     /// Attach to a tab. `tab` may be [`TAB_ANY`], meaning "the first live tab,
-    /// creating one if the session has none". The session itself is created
-    /// on demand.
-    Attach { session: String, tab: u32, cols: u16, rows: u16 },
-    NewTab { session: String, cwd: Option<String>, cols: u16, rows: u16 },
-    CloseTab { session: String, tab: u32 },
+    /// creating one if the workspace has none". The workspace itself is
+    /// created on demand.
+    Attach { workspace: String, tab: u32, cols: u16, rows: u16 },
+    NewTab { workspace: String, cwd: Option<String>, cols: u16, rows: u16 },
+    CloseTab { workspace: String, tab: u32 },
     Input(Vec<u8>),
     Resize { cols: u16, rows: u16 },
-    /// End a whole session, tabs and all.
-    Kill { session: String },
+    /// End a whole workspace, tabs and all.
+    Kill { workspace: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,12 +60,12 @@ pub struct TabInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionInfo {
+pub struct WorkspaceInfo {
     pub name: String,
     pub tabs: Vec<TabInfo>,
 }
 
-impl SessionInfo {
+impl WorkspaceInfo {
     pub fn clients(&self) -> u32 {
         self.tabs.iter().map(|t| t.clients).sum()
     }
@@ -78,7 +78,7 @@ impl SessionInfo {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerMsg {
-    Sessions(Vec<SessionInfo>),
+    Workspaces(Vec<WorkspaceInfo>),
     /// Which tab the attach landed on. Sent before the repaint, because a
     /// client that asked for [`TAB_ANY`] does not know yet.
     Attached { tab: u32 },
@@ -185,22 +185,22 @@ impl ClientMsg {
         let mut b = Buf::new();
         let tag = match self {
             ClientMsg::List => T_LIST,
-            ClientMsg::Attach { session, tab, cols, rows } => {
-                b.str(session);
+            ClientMsg::Attach { workspace, tab, cols, rows } => {
+                b.str(workspace);
                 b.u32(*tab);
                 b.u16(*cols);
                 b.u16(*rows);
                 T_ATTACH
             }
-            ClientMsg::NewTab { session, cwd, cols, rows } => {
-                b.str(session);
+            ClientMsg::NewTab { workspace, cwd, cols, rows } => {
+                b.str(workspace);
                 b.str(cwd.as_deref().unwrap_or(""));
                 b.u16(*cols);
                 b.u16(*rows);
                 T_NEW_TAB
             }
-            ClientMsg::CloseTab { session, tab } => {
-                b.str(session);
+            ClientMsg::CloseTab { workspace, tab } => {
+                b.str(workspace);
                 b.u32(*tab);
                 T_CLOSE_TAB
             }
@@ -213,8 +213,8 @@ impl ClientMsg {
                 b.u16(*rows);
                 T_RESIZE
             }
-            ClientMsg::Kill { session } => {
-                b.str(session);
+            ClientMsg::Kill { workspace } => {
+                b.str(workspace);
                 T_KILL
             }
         };
@@ -227,25 +227,25 @@ impl ClientMsg {
         let msg = match tag {
             T_LIST => ClientMsg::List,
             T_ATTACH => ClientMsg::Attach {
-                session: c.str()?,
+                workspace: c.str()?,
                 tab: c.u32()?,
                 cols: c.u16()?,
                 rows: c.u16()?,
             },
             T_NEW_TAB => {
-                let session = c.str()?;
+                let workspace = c.str()?;
                 let cwd = c.str()?;
                 ClientMsg::NewTab {
-                    session,
+                    workspace,
                     cwd: if cwd.is_empty() { None } else { Some(cwd) },
                     cols: c.u16()?,
                     rows: c.u16()?,
                 }
             }
-            T_CLOSE_TAB => ClientMsg::CloseTab { session: c.str()?, tab: c.u32()? },
+            T_CLOSE_TAB => ClientMsg::CloseTab { workspace: c.str()?, tab: c.u32()? },
             T_INPUT => ClientMsg::Input(c.bytes()?),
             T_RESIZE => ClientMsg::Resize { cols: c.u16()?, rows: c.u16()? },
-            T_KILL => ClientMsg::Kill { session: c.str()? },
+            T_KILL => ClientMsg::Kill { workspace: c.str()? },
             _ => return Err(bad("unknown client tag")),
         };
         Ok(Some(msg))
@@ -256,7 +256,7 @@ impl ServerMsg {
     pub fn write(&self, w: &mut impl Write) -> io::Result<()> {
         let mut b = Buf::new();
         let tag = match self {
-            ServerMsg::Sessions(list) => {
+            ServerMsg::Workspaces(list) => {
                 b.u32(list.len() as u32);
                 for s in list {
                     b.str(&s.name);
@@ -271,7 +271,7 @@ impl ServerMsg {
                         b.bool(t.busy);
                     }
                 }
-                T_SESSIONS
+                T_WORKSPACES
             }
             ServerMsg::Attached { tab } => {
                 b.u32(*tab);
@@ -303,7 +303,7 @@ impl ServerMsg {
         let Some((tag, payload)) = read_frame(r)? else { return Ok(None) };
         let mut c = Cursor(&payload);
         let msg = match tag {
-            T_SESSIONS => {
+            T_WORKSPACES => {
                 let n = c.u32()? as usize;
                 let mut list = Vec::with_capacity(n.min(1024));
                 for _ in 0..n {
@@ -321,9 +321,9 @@ impl ServerMsg {
                             busy: c.bool()?,
                         });
                     }
-                    list.push(SessionInfo { name, tabs });
+                    list.push(WorkspaceInfo { name, tabs });
                 }
-                ServerMsg::Sessions(list)
+                ServerMsg::Workspaces(list)
             }
             T_ATTACHED => ServerMsg::Attached { tab: c.u32()? },
             T_TAB_CREATED => ServerMsg::TabCreated { tab: c.u32()? },
@@ -375,28 +375,28 @@ mod tests {
     fn client_messages_round_trip() {
         roundtrip_client(ClientMsg::List);
         roundtrip_client(ClientMsg::Attach {
-            session: "www".into(),
+            workspace: "www".into(),
             tab: 3,
             cols: 120,
             rows: 40,
         });
         roundtrip_client(ClientMsg::Attach {
-            session: "www".into(),
+            workspace: "www".into(),
             tab: TAB_ANY,
             cols: 80,
             rows: 24,
         });
         roundtrip_client(ClientMsg::NewTab {
-            session: "proj".into(),
+            workspace: "proj".into(),
             cwd: Some("/Users/x/y z".into()),
             cols: 80,
             rows: 24,
         });
-        roundtrip_client(ClientMsg::NewTab { session: "n".into(), cwd: None, cols: 1, rows: 1 });
-        roundtrip_client(ClientMsg::CloseTab { session: "proj".into(), tab: 7 });
+        roundtrip_client(ClientMsg::NewTab { workspace: "n".into(), cwd: None, cols: 1, rows: 1 });
+        roundtrip_client(ClientMsg::CloseTab { workspace: "proj".into(), tab: 7 });
         roundtrip_client(ClientMsg::Input(vec![0x1b, b'[', b'A', 0x00, 0xff]));
         roundtrip_client(ClientMsg::Resize { cols: 65535, rows: 1 });
-        roundtrip_client(ClientMsg::Kill { session: "gone".into() });
+        roundtrip_client(ClientMsg::Kill { workspace: "gone".into() });
     }
 
     #[test]
@@ -408,9 +408,9 @@ mod tests {
         roundtrip_server(ServerMsg::Repaint(b"\x1b[2J\x1b[Hhi".to_vec()));
         roundtrip_server(ServerMsg::Attached { tab: 4 });
         roundtrip_server(ServerMsg::TabCreated { tab: 9 });
-        roundtrip_server(ServerMsg::Sessions(vec![
-            SessionInfo { name: "a".into(), tabs: vec![] },
-            SessionInfo {
+        roundtrip_server(ServerMsg::Workspaces(vec![
+            WorkspaceInfo { name: "a".into(), tabs: vec![] },
+            WorkspaceInfo {
                 name: "b é".into(),
                 tabs: vec![
                     TabInfo {
@@ -437,8 +437,8 @@ mod tests {
     }
 
     #[test]
-    fn session_client_count_sums_its_tabs() {
-        let s = SessionInfo {
+    fn workspace_client_count_sums_its_tabs() {
+        let s = WorkspaceInfo {
             name: "x".into(),
             tabs: vec![
                 TabInfo {

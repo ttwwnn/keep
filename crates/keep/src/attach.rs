@@ -1,4 +1,4 @@
-//! The attach loop: raw terminal in, session output out.
+//! The attach loop: raw terminal in, tab output out.
 
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
@@ -11,7 +11,7 @@ use crossterm::terminal;
 use keep_proto::{ClientMsg, ServerMsg};
 
 /// Ctrl-\ detaches. Chosen because almost nothing binds it, so it does not
-/// shadow a key the program inside the session wanted.
+/// shadow a key the program inside the tab wanted.
 const DETACH_BYTE: u8 = 0x1c;
 
 /// Restores the terminal on every exit path, including panics.
@@ -37,14 +37,14 @@ impl Drop for RawGuard {
 
 pub enum Outcome {
     Detached,
-    SessionEnded,
+    Ended,
 }
 
 pub fn attach(socket: &std::path::Path, name: &str, tab: u32) -> Result<Outcome> {
     let (cols, rows) = terminal::size().unwrap_or((80, 24));
 
     let mut sock = UnixStream::connect(socket).context("connect to daemon")?;
-    ClientMsg::Attach { session: name.to_string(), tab, cols, rows }.write(&mut sock)?;
+    ClientMsg::Attach { workspace: name.to_string(), tab, cols, rows }.write(&mut sock)?;
 
     let _raw = RawGuard::enter()?;
 
@@ -112,7 +112,7 @@ pub fn attach(socket: &std::path::Path, name: &str, tab: u32) -> Result<Outcome>
             }
             // Which tab we landed on; the caller asked for TAB_ANY.
             Ok(Some(ServerMsg::Attached { .. })) => continue,
-            Ok(Some(ServerMsg::Ended)) => break Outcome::SessionEnded,
+            Ok(Some(ServerMsg::Ended)) => break Outcome::Ended,
             Ok(Some(ServerMsg::Error(msg))) => {
                 drop(_raw);
                 anyhow::bail!("{msg}");
@@ -122,7 +122,7 @@ pub fn attach(socket: &std::path::Path, name: &str, tab: u32) -> Result<Outcome>
                 break if detached.load(Ordering::Acquire) {
                     Outcome::Detached
                 } else {
-                    Outcome::SessionEnded
+                    Outcome::Ended
                 };
             }
         }

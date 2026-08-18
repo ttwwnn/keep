@@ -84,20 +84,20 @@ fn handle(stream: UnixStream, registry: Arc<Registry>) -> Result<()> {
     match first {
         ClientMsg::List => {
             registry.reap();
-            ServerMsg::Sessions(registry.list()).write(&mut writer)?;
+            ServerMsg::Workspaces(registry.list()).write(&mut writer)?;
             Ok(())
         }
-        ClientMsg::Kill { session } => {
-            let msg = match registry.kill(&session) {
+        ClientMsg::Kill { workspace } => {
+            let msg = match registry.kill(&workspace) {
                 Ok(()) => ServerMsg::Ok,
                 Err(e) => ServerMsg::Error(e.to_string()),
             };
             msg.write(&mut writer)?;
             Ok(())
         }
-        ClientMsg::NewTab { session, cwd, cols, rows } => {
+        ClientMsg::NewTab { workspace, cwd, cols, rows } => {
             let msg = match registry
-                .get_or_create(&session)
+                .get_or_create(&workspace)
                 .and_then(|s| s.new_tab(cwd.as_deref(), cols, rows))
             {
                 Ok((tab, _)) => ServerMsg::TabCreated { tab },
@@ -106,10 +106,10 @@ fn handle(stream: UnixStream, registry: Arc<Registry>) -> Result<()> {
             msg.write(&mut writer)?;
             Ok(())
         }
-        ClientMsg::CloseTab { session, tab } => {
+        ClientMsg::CloseTab { workspace, tab } => {
             let msg = match registry
-                .get(&session)
-                .ok_or_else(|| anyhow::anyhow!("no such session: {session}"))
+                .get(&workspace)
+                .ok_or_else(|| anyhow::anyhow!("no such workspace: {workspace}"))
                 .and_then(|s| s.close_tab(tab))
             {
                 Ok(()) => ServerMsg::Ok,
@@ -118,8 +118,8 @@ fn handle(stream: UnixStream, registry: Arc<Registry>) -> Result<()> {
             msg.write(&mut writer)?;
             Ok(())
         }
-        ClientMsg::Attach { session, tab, cols, rows } => {
-            attach(reader, writer, registry, &session, tab, cols, rows)
+        ClientMsg::Attach { workspace, tab, cols, rows } => {
+            attach(reader, writer, registry, &workspace, tab, cols, rows)
         }
         other => {
             ServerMsg::Error(format!("unexpected opening message: {other:?}")).write(&mut writer)?;
@@ -144,11 +144,11 @@ fn attach(
         } else {
             s.tab(tab_id)
                 .map(|t| (tab_id, t))
-                .ok_or_else(|| anyhow::anyhow!("no tab {tab_id} in session {name}"))
+                .ok_or_else(|| anyhow::anyhow!("no tab {tab_id} in workspace {name}"))
         }
     });
 
-    let (tab_id, session) = match resolved {
+    let (tab_id, tab) = match resolved {
         Ok(pair) => pair,
         Err(e) => {
             ServerMsg::Error(e.to_string()).write(&mut writer)?;
@@ -157,12 +157,12 @@ fn attach(
     };
 
     // The client's geometry wins: it is the thing actually displaying this.
-    session.resize(cols, rows).ok();
+    tab.resize(cols, rows).ok();
 
     // Tell the client which tab it landed on — it may have asked for TAB_ANY.
     ServerMsg::Attached { tab: tab_id }.write(&mut writer)?;
 
-    let (repaint, attachment) = session.attach()?;
+    let (repaint, attachment) = tab.attach()?;
     ServerMsg::Repaint(repaint).write(&mut writer)?;
 
     // Pump: session output to the socket. Sole writer for the rest of the
@@ -173,7 +173,7 @@ fn attach(
     // forever, still holding the attachment and still counted as a watcher.
     let stop = Arc::new(AtomicBool::new(false));
     let pump_stop = Arc::clone(&stop);
-    let ended_session = Arc::clone(&session);
+    let ended_tab = Arc::clone(&tab);
     let pump = std::thread::Builder::new()
         .name("keepd-pump".into())
         .spawn(move || {
@@ -188,7 +188,7 @@ fn attach(
                         if pump_stop.load(Ordering::Acquire) {
                             break;
                         }
-                        if ended_session.is_finished() {
+                        if ended_tab.is_finished() {
                             let _ = ServerMsg::Ended.write(&mut writer);
                             break;
                         }
@@ -208,18 +208,18 @@ fn attach(
     while let Some(msg) = ClientMsg::read(&mut reader).unwrap_or(None) {
         match msg {
             ClientMsg::Input(data) => {
-                if session.send(&data).is_err() {
+                if tab.send(&data).is_err() {
                     break;
                 }
             }
             ClientMsg::Resize { cols, rows } => {
-                session.resize(cols, rows).ok();
+                tab.resize(cols, rows).ok();
             }
             _ => break,
         }
     }
 
-    // The client is gone. The session is not: that is the whole point.
+    // The client is gone. The workspace is not: that is the whole point.
     stop.store(true, Ordering::Release);
     drop(reader);
     pump.join().ok();

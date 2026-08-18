@@ -1,4 +1,4 @@
-//! keep — persistent terminal sessions.
+//! keep — persistent terminal workspaces.
 
 mod attach;
 mod picker;
@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use keep_proto::{ClientMsg, ServerMsg, SessionInfo, TAB_ANY};
+use keep_proto::{ClientMsg, ServerMsg, TAB_ANY, WorkspaceInfo};
 
 fn main() {
     if let Err(e) = run() {
@@ -33,9 +33,9 @@ fn run() -> Result<()> {
                 return enter(&socket, &name, tab);
             }
 
-            let sessions = list(&socket)?;
-            match picker::pick(&sessions)? {
-                picker::Choice::Session(name) | picker::Choice::New(name) => {
+            let workspaces = list(&socket)?;
+            match picker::pick(&workspaces)? {
+                picker::Choice::Workspace(name) | picker::Choice::New(name) => {
                     enter(&socket, &name, TAB_ANY)
                 }
                 picker::Choice::Cancelled => Ok(()),
@@ -47,10 +47,10 @@ fn run() -> Result<()> {
             Ok(())
         }
         Some("new") => {
-            let name = args.get(1).context("usage: keep new <session>")?;
+            let name = args.get(1).context("usage: keep new <workspace>")?;
             ensure_daemon(&socket)?;
             let mut sock = UnixStream::connect(&socket)?;
-            ClientMsg::NewTab { session: name.clone(), cwd: None, cols: 80, rows: 24 }
+            ClientMsg::NewTab { workspace: name.clone(), cwd: None, cols: 80, rows: 24 }
                 .write(&mut sock)?;
             match ServerMsg::read(&mut sock)? {
                 Some(ServerMsg::TabCreated { tab }) => {
@@ -65,7 +65,7 @@ fn run() -> Result<()> {
             let name = args.get(1).context("usage: keep kill <name>")?;
             ensure_daemon(&socket)?;
             let mut sock = UnixStream::connect(&socket)?;
-            ClientMsg::Kill { session: name.clone() }.write(&mut sock)?;
+            ClientMsg::Kill { workspace: name.clone() }.write(&mut sock)?;
             match ServerMsg::read(&mut sock)? {
                 Some(ServerMsg::Ok) => {
                     println!("killed {name}");
@@ -101,29 +101,29 @@ fn enter(socket: &Path, name: &str, tab: u32) -> Result<()> {
         attach::Outcome::Detached => {
             println!("detached from {name}");
         }
-        attach::Outcome::SessionEnded => {
-            println!("session {name} ended");
+        attach::Outcome::Ended => {
+            println!("{name} ended");
         }
     }
     Ok(())
 }
 
-fn list(socket: &Path) -> Result<Vec<SessionInfo>> {
+fn list(socket: &Path) -> Result<Vec<WorkspaceInfo>> {
     let mut sock = UnixStream::connect(socket).context("connect to daemon")?;
     ClientMsg::List.write(&mut sock)?;
     match ServerMsg::read(&mut sock)? {
-        Some(ServerMsg::Sessions(list)) => Ok(list),
+        Some(ServerMsg::Workspaces(list)) => Ok(list),
         Some(ServerMsg::Error(e)) => anyhow::bail!(e),
         _ => anyhow::bail!("unexpected reply from daemon"),
     }
 }
 
-fn print_list(sessions: &[SessionInfo]) {
-    if sessions.is_empty() {
-        println!("no sessions");
+fn print_list(workspaces: &[WorkspaceInfo]) {
+    if workspaces.is_empty() {
+        println!("no workspaces");
         return;
     }
-    for s in sessions {
+    for s in workspaces {
         let live = s.tabs.iter().filter(|t| !t.finished).count();
         let state = if s.busy() {
             "running"
@@ -183,7 +183,7 @@ fn ensure_daemon(socket: &Path) -> Result<()> {
 /// The name of the file an embedder drops in the working directory.
 const TARGET_FILE: &str = ".keep-attach";
 
-/// Read the session and tab an embedder wants, if it left them for us.
+/// Read the workspace and tab an embedder wants, if it left them for us.
 ///
 /// The macOS app cannot pass arguments: libghostty takes its spawn command
 /// once per application, and the per-surface `command`, `env_vars` and
@@ -233,17 +233,17 @@ fn print_help() {
     let _ = write!(
         out,
         "\
-keep — persistent terminal sessions
+keep — persistent terminal workspaces
 
 USAGE
-  keep                 pick a session (or type a name to start one)
+  keep                 pick a workspace (or type a name to start one)
   keep <name>          attach to <name>, creating it if needed
   keep <name> --tab N  attach to a specific tab
   keep new <name>      open a tab in <name>, without attaching
-  keep ls              list sessions and their tabs
-  keep kill <name>     end a session
+  keep ls              list workspaces and their tabs
+  keep kill <name>     end a workspace
 
-IN A SESSION
+IN A TAB
   ctrl-\\               detach, leaving everything running
 "
     );

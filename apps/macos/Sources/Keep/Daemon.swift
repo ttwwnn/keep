@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Mirrors `crates/keep-proto`: frames are `[tag: u8][len: u32 be][payload]`.
 /// Kept deliberately small — the app only needs to enumerate and kill
-/// sessions. Terminal I/O never comes through here; a surface runs the
+/// workspaces. Terminal I/O never comes through here; a surface runs the
 /// `keep` client as its child process instead.
 enum Daemon {
     struct Tab: Identifiable, Hashable {
@@ -30,7 +30,7 @@ enum Daemon {
         }
     }
 
-    struct Session: Identifiable, Hashable {
+    struct Workspace: Identifiable, Hashable {
         var name: String
         var tabs: [Tab]
         var id: String { name }
@@ -116,7 +116,7 @@ enum Daemon {
         throw Failure.cannotConnect(socketPath)
     }
 
-    static func list() throws -> [Session] {
+    static func list() throws -> [Workspace] {
         let sock = try connect()
         defer { close(sock) }
         try send(sock, tag: tagList, payload: Data())
@@ -124,7 +124,7 @@ enum Daemon {
         let (tag, payload) = try recv(sock)
         switch tag {
         case tagSessions:
-            return try decodeSessions(payload)
+            return try decodeWorkspaces(payload)
         case tagError:
             var r = Reader(payload)
             throw Failure.protocolError(try r.string())
@@ -133,14 +133,14 @@ enum Daemon {
         }
     }
 
-    /// Open a new tab in a session, creating the session if needed.
+    /// Open a new tab in a workspace, creating the workspace if needed.
     /// Returns the new tab's id.
     @discardableResult
-    static func newTab(in session: String, cols: UInt16 = 80, rows: UInt16 = 24) throws -> UInt32 {
+    static func newTab(in workspace: String, cols: UInt16 = 80, rows: UInt16 = 24) throws -> UInt32 {
         let sock = try connect()
         defer { close(sock) }
         var w = Writer()
-        w.string(session)
+        w.string(workspace)
         w.string("")           // cwd: inherit the daemon's
         w.u16(cols)
         w.u16(rows)
@@ -155,11 +155,11 @@ enum Daemon {
         }
     }
 
-    static func closeTab(_ tab: UInt32, in session: String) throws {
+    static func closeTab(_ tab: UInt32, in workspace: String) throws {
         let sock = try connect()
         defer { close(sock) }
         var w = Writer()
-        w.string(session)
+        w.string(workspace)
         w.u32(tab)
         try send(sock, tag: tagCloseTab, payload: w.data)
 
@@ -259,10 +259,10 @@ enum Daemon {
         return out
     }
 
-    private static func decodeSessions(_ payload: Data) throws -> [Session] {
+    private static func decodeWorkspaces(_ payload: Data) throws -> [Workspace] {
         var r = Reader(payload)
         let count = try r.u32()
-        var out: [Session] = []
+        var out: [Workspace] = []
         out.reserveCapacity(Int(min(count, 4096)))
         for _ in 0..<count {
             let name = try r.string()
@@ -280,7 +280,7 @@ enum Daemon {
                     busy: try r.u8() != 0
                 ))
             }
-            out.append(Session(name: name, tabs: tabs))
+            out.append(Workspace(name: name, tabs: tabs))
         }
         return out
     }

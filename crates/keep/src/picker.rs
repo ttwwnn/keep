@@ -1,6 +1,6 @@
-//! The flat session picker.
+//! The flat workspace picker.
 //!
-//! One list, no hierarchy: every session is a peer, you type to narrow and
+//! One list, no hierarchy: every workspace is a peer, you type to narrow and
 //! press enter. There is no notion of windows or panes to navigate through.
 
 use std::io::Write;
@@ -8,11 +8,11 @@ use std::io::Write;
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::{cursor, execute, terminal};
-use keep_proto::SessionInfo;
+use keep_proto::WorkspaceInfo;
 
 pub enum Choice {
-    Session(String),
-    /// The query did not match anything, so it becomes a new session name.
+    Workspace(String),
+    /// The query did not match anything, so it becomes a new workspace name.
     New(String),
     Cancelled,
 }
@@ -42,8 +42,8 @@ fn fuzzy_score(needle: &str, haystack: &str) -> Option<i32> {
     Some(score)
 }
 
-fn filtered<'a>(sessions: &'a [SessionInfo], query: &str) -> Vec<&'a SessionInfo> {
-    let mut scored: Vec<(i32, &SessionInfo)> = sessions
+fn filtered<'a>(workspaces: &'a [WorkspaceInfo], query: &str) -> Vec<&'a WorkspaceInfo> {
+    let mut scored: Vec<(i32, &WorkspaceInfo)> = workspaces
         .iter()
         .filter_map(|s| fuzzy_score(query, &s.name).map(|sc| (sc, s)))
         .collect();
@@ -51,24 +51,24 @@ fn filtered<'a>(sessions: &'a [SessionInfo], query: &str) -> Vec<&'a SessionInfo
     scored.into_iter().map(|(_, s)| s).collect()
 }
 
-pub fn pick(sessions: &[SessionInfo]) -> Result<Choice> {
+pub fn pick(workspaces: &[WorkspaceInfo]) -> Result<Choice> {
     let mut stdout = std::io::stdout();
     terminal::enable_raw_mode()?;
     execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide)?;
 
-    let result = run(&mut stdout, sessions);
+    let result = run(&mut stdout, workspaces);
 
     execute!(stdout, cursor::Show, terminal::LeaveAlternateScreen)?;
     terminal::disable_raw_mode()?;
     result
 }
 
-fn run(stdout: &mut std::io::Stdout, sessions: &[SessionInfo]) -> Result<Choice> {
+fn run(stdout: &mut std::io::Stdout, workspaces: &[WorkspaceInfo]) -> Result<Choice> {
     let mut query = String::new();
     let mut selected = 0usize;
 
     loop {
-        let matches = filtered(sessions, &query);
+        let matches = filtered(workspaces, &query);
         selected = selected.min(matches.len().saturating_sub(1));
 
         let (_, rows) = terminal::size().unwrap_or((80, 24));
@@ -80,9 +80,9 @@ fn run(stdout: &mut std::io::Stdout, sessions: &[SessionInfo]) -> Result<Choice>
 
         if matches.is_empty() {
             let label = if query.is_empty() {
-                "no sessions yet — type a name to start one".to_string()
+                "no workspaces yet — type a name to start one".to_string()
             } else {
-                format!("enter to start a new session named \"{query}\"")
+                format!("enter to start a new workspace named \"{query}\"")
             };
             writeln!(stdout, "\r  \x1b[90m{label}\x1b[0m")?;
         }
@@ -120,16 +120,16 @@ fn run(stdout: &mut std::io::Stdout, sessions: &[SessionInfo]) -> Result<Choice>
                 return Ok(Choice::Cancelled);
             }
             KeyCode::Enter => {
-                let matches = filtered(sessions, &query);
+                let matches = filtered(workspaces, &query);
                 return Ok(match matches.get(selected) {
-                    Some(s) => Choice::Session(s.name.clone()),
+                    Some(s) => Choice::Workspace(s.name.clone()),
                     None if !query.is_empty() => Choice::New(query),
                     None => Choice::Cancelled,
                 });
             }
             KeyCode::Up => selected = selected.saturating_sub(1),
             KeyCode::Down => {
-                let len = filtered(sessions, &query).len();
+                let len = filtered(workspaces, &query).len();
                 if selected + 1 < len {
                     selected += 1;
                 }
@@ -151,8 +151,8 @@ fn run(stdout: &mut std::io::Stdout, sessions: &[SessionInfo]) -> Result<Choice>
 mod tests {
     use super::*;
 
-    fn s(name: &str) -> SessionInfo {
-        SessionInfo {
+    fn s(name: &str) -> WorkspaceInfo {
+        WorkspaceInfo {
             name: name.into(),
             tabs: vec![keep_proto::TabInfo {
                 id: 1,
