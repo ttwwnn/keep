@@ -194,31 +194,44 @@ struct ContentView: View {
         let name = newName.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return }
         newName = ""
-        selectedSession = name
-        selectedTab = nil
-        // Attaching is what brings the session into being; the surface does it.
-        reload()
+        // A session has to exist on the daemon before anything can show it:
+        // the terminal is only rendered for a session already in the list, so
+        // waiting for an attach to create it would leave the name nowhere.
+        addTab(to: name)
     }
 
     private func addTab(to session: String) {
-        if let id = try? Daemon.newTab(in: session) {
+        do {
+            let id = try Daemon.newTab(in: session)
             selectedSession = session
             selectedTab = id
+        } catch {
+            // Never fail silently here: from the outside a swallowed error and
+            // a created session look identical, which is worse than an error.
+            self.error = error.localizedDescription
         }
         reload()
     }
 
     private func closeTab(_ tab: UInt32, in session: String) {
-        try? Daemon.closeTab(tab, in: session)
-        if selectedTab == tab { selectedTab = nil }
+        do {
+            try Daemon.closeTab(tab, in: session)
+            if selectedTab == tab { selectedTab = nil }
+        } catch {
+            self.error = error.localizedDescription
+        }
         reload()
     }
 
     private func kill(_ name: String) {
-        try? Daemon.kill(name)
-        if selectedSession == name {
-            selectedSession = nil
-            selectedTab = nil
+        do {
+            try Daemon.kill(name)
+            if selectedSession == name {
+                selectedSession = nil
+                selectedTab = nil
+            }
+        } catch {
+            self.error = error.localizedDescription
         }
         reload()
     }
