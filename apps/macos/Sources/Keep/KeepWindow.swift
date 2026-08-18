@@ -34,6 +34,38 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
         // AppKit moves it between windows as main changes; re-adopt it every
         // time we gain main. setupTabBar is idempotent.
         setupTabBar()
+        installSidebarMaterialPatch()
+    }
+
+    private var sidebarPatch: NSVisualEffectView?
+
+    /// Paint the sidebar's material across the titlebar strip above it.
+    ///
+    /// AppKit's own full-height treatment stops doing this as soon as the
+    /// titlebar carries accessories — which ours must, for the tabs and the
+    /// toggle — leaving a band of plain titlebar above the sidebar. This
+    /// patch is the same material pinned behind the titlebar's content, its
+    /// right edge tied to the sidebar divider, so it collapses to nothing
+    /// together with the sidebar.
+    private func installSidebarMaterialPatch() {
+        guard sidebarPatch == nil,
+            let titlebarView,
+            let contentAnchorView
+        else { return }
+
+        let patch = NSVisualEffectView()
+        patch.material = .sidebar
+        patch.blendingMode = .behindWindow
+        patch.state = .followsWindowActiveState
+        patch.translatesAutoresizingMaskIntoConstraints = false
+        titlebarView.addSubview(patch, positioned: .below, relativeTo: titlebarView.subviews.first)
+        NSLayoutConstraint.activate([
+            patch.leadingAnchor.constraint(equalTo: titlebarView.leadingAnchor),
+            patch.topAnchor.constraint(equalTo: titlebarView.topAnchor),
+            patch.bottomAnchor.constraint(equalTo: titlebarView.bottomAnchor),
+            patch.trailingAnchor.constraint(equalTo: contentAnchorView.leadingAnchor),
+        ])
+        sidebarPatch = patch
     }
 
     // AppKit adds the native tab bar through this. Detect it and change its
