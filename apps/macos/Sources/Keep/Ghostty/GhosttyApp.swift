@@ -28,6 +28,15 @@ final class GhosttyApp {
         // Honour the user's own Ghostty config: same fonts and theme they
         // already tuned, with no separate settings file to maintain.
         ghostty_config_load_default_files(config)
+
+        // Every surface runs the keep client. The per-surface `command` field
+        // is ignored by this build of libghostty, so the command is fixed here
+        // at app level and each surface names its target through environment
+        // variables instead, which are honoured.
+        if let overridePath = Self.writeCommandOverride() {
+            overridePath.withCString { ghostty_config_load_file(config, $0) }
+        }
+
         ghostty_config_finalize(config)
 
         var runtime = ghostty_runtime_config_s()
@@ -76,6 +85,32 @@ final class GhosttyApp {
     }
 
     private var appearanceObserver: NSKeyValueObservation?
+
+    /// The keep client a surface runs.
+    static var clientBinary: String {
+        if let override = ProcessInfo.processInfo.environment["KEEP_BIN"] { return override }
+        // Resources, not MacOS: the app executable is "Keep" and macOS
+        // filesystems are case-insensitive, so a sibling named "keep" would
+        // overwrite the app itself.
+        let bundled = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Resources/keep").path
+        return FileManager.default.isExecutableFile(atPath: bundled) ? bundled : "keep"
+    }
+
+    /// A tiny Ghostty config that points `command` at our client.
+    private static func writeCommandOverride() -> String? {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("keep-app", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("command.conf")
+        let body = "command = \(clientBinary)\n"
+        do {
+            try body.write(to: file, atomically: true, encoding: .utf8)
+            return file.path
+        } catch {
+            return nil
+        }
+    }
 
     /// Follow the system between light and dark.
     func syncColorScheme() {

@@ -25,6 +25,14 @@ fn run() -> Result<()> {
     match args.first().map(String::as_str) {
         None => {
             ensure_daemon(&socket)?;
+
+            // An embedder (the macOS app) launches this with no arguments and
+            // leaves the target in the working directory. Read it exactly
+            // once: the read consumes the file.
+            if let Some((name, tab)) = embedded_target() {
+                return enter(&socket, &name, tab);
+            }
+
             let sessions = list(&socket)?;
             match picker::pick(&sessions)? {
                 picker::Choice::Session(name) | picker::Choice::New(name) => {
@@ -158,6 +166,37 @@ fn ensure_daemon(socket: &Path) -> Result<()> {
     anyhow::bail!("daemon did not start listening on {}", socket.display())
 }
 
+/// The name of the file an embedder drops in the working directory.
+const TARGET_FILE: &str = ".keep-attach";
+
+/// Read the session and tab an embedder wants, if it left them for us.
+///
+/// The macOS app cannot pass arguments: libghostty takes its spawn command
+/// once per application, and the per-surface `command`, `env_vars` and
+/// `initial_input` fields are all ignored by the runtime we link against.
+/// `working_directory` is the one per-surface field that survives, so the app
+/// gives each surface a private directory holding this file.
+///
+/// The file is consumed on read: a session that later runs `cd` into the same
+/// directory must not be treated as a fresh attach request.
+fn embedded_target() -> Option<(String, u32)> {
+    embedded_target_in(&std::env::current_dir().ok()?)
+}
+
+fn embedded_target_in(dir: &Path) -> Option<(String, u32)> {
+    let path = dir.join(TARGET_FILE);
+    let body = std::fs::read_to_string(&path).ok()?;
+    std::fs::remove_file(&path).ok();
+
+    let mut lines = body.lines();
+    let name = lines.next()?.trim().to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let tab = lines.next().and_then(|v| v.trim().parse().ok()).unwrap_or(TAB_ANY);
+    Some((name, tab))
+}
+
 /// Look for `keepd` next to this binary first, so a build tree and an
 /// installed copy never mix versions.
 fn daemon_binary() -> Result<PathBuf> {
@@ -194,4 +233,49 @@ IN A SESSION
   ctrl-\\               detach, leaving everything running
 "
     );
+}
+
+#[cfg(test)]
+mod embedded {
+    use super::*;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("keep-target-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn reads_session_and_tab() {
+        let dir = scratch("pair");
+        std::fs::write(dir.join(TARGET_FILE), "orion\n7\n").unwrap();
+        assert_eq!(embedded_target_in(&dir), Some(("orion".into(), 7)));
+    }
+
+    #[test]
+    fn a_missing_tab_means_any_tab() {
+        let dir = scratch("notab");
+        std::fs::write(dir.join(TARGET_FILE), "orion\n").unwrap();
+        assert_eq!(embedded_target_in(&dir), Some(("orion".into(), TAB_ANY)));
+    }
+
+    /// Reading consumes the file. Calling twice must not resurrect the target,
+    /// and must not panic: an earlier version read it once to test and once to
+    /// use, so the second read found nothing.
+    #[test]
+    fn the_target_is_consumed_by_reading_it() {
+        let dir = scratch("once");
+        std::fs::write(dir.join(TARGET_FILE), "orion\n1\n").unwrap();
+
+        assert!(embedded_target_in(&dir).is_some(), "first read should find it");
+        assert_eq!(embedded_target_in(&dir), None, "second read should find nothing");
+        assert!(!dir.join(TARGET_FILE).exists(), "file should be gone");
+    }
+
+    #[test]
+    fn no_file_is_not_an_error() {
+        let dir = scratch("empty");
+        std::fs::remove_file(dir.join(TARGET_FILE)).ok();
+        assert_eq!(embedded_target_in(&dir), None);
+    }
 }

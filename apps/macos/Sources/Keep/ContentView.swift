@@ -155,7 +155,7 @@ struct ContentView: View {
         if let tab = selectedTab ?? session.liveTabs.first?.id {
             // Keyed by session and tab: switching either must build a fresh
             // surface, not reuse one still pointed at the previous terminal.
-            TerminalSurface(command: "\(Self.keepBinary) \(session.name) --tab \(tab)")
+            TerminalSurface(session: session.name, tab: tab)
                 .id("\(session.name)#\(tab)")
         } else {
             ContentUnavailableView(
@@ -164,19 +164,6 @@ struct ContentView: View {
                 description: Text("Press + to open one.")
             )
         }
-    }
-
-    /// The client binary a surface runs. Looked up next to the app first so a
-    /// bundled copy wins over whatever happens to be on PATH.
-    private static var keepBinary: String {
-        if let override = ProcessInfo.processInfo.environment["KEEP_BIN"] { return override }
-        // Resources, not MacOS: the app executable is "Keep" and macOS
-        // filesystems are case-insensitive, so a sibling named "keep" would
-        // overwrite the app itself.
-        let bundled = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/Resources/keep").path
-        if FileManager.default.isExecutableFile(atPath: bundled) { return bundled }
-        return "keep"
     }
 
     // MARK: - actions

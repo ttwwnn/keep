@@ -55,6 +55,12 @@ Tabs are labelled with the title the program inside sets (OSC 0/2), which
 shells and editors do on their own, so a tab says what it is without anyone
 naming it.
 
+One wrinkle worth knowing about: the libghostty build we link against accepts
+the per-surface `command`, `env_vars` and `initial_input` fields and then
+ignores them. Only `working_directory` survives, so the app fixes the client
+app-wide and hands each surface its target through a file in a private
+working directory, which the client reads and deletes.
+
 Not done yet: keyboard shortcuts, split views, scrollback (the repaint covers
 the visible screen only), and sessions do not survive a reboot.
 
