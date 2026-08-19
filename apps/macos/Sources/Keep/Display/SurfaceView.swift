@@ -428,4 +428,40 @@ final class TerminalSurfaceView: NSView {
         let p = convert(event.locationInWindow, from: nil)
         ghostty_surface_mouse_pos(surface, p.x, bounds.height - p.y, Self.mods(from: event.modifierFlags))
     }
+
+    /// Scrolling, which is also how the scrollback becomes reachable at all:
+    /// the surface keeps the history, and until these events were forwarded
+    /// there was simply no way to move the viewport into it.
+    override func scrollWheel(with event: NSEvent) {
+        guard let surface else { return }
+        var x = event.scrollingDeltaX
+        var y = event.scrollingDeltaY
+
+        // `ghostty_input_scroll_mods_t` is a packed byte the header declines
+        // to declare (see its comment at the typedef): bit 0 says the deltas
+        // are precise — a trackpad reporting points rather than lines — and
+        // bits 1-3 carry the momentum phase, which the renderer needs to tell
+        // a flick from a drag.
+        var mods: Int32 = 0
+        if event.hasPreciseScrollingDeltas {
+            mods = 1
+            var momentum: ghostty_input_mouse_momentum_e
+            switch event.momentumPhase {
+            case .began: momentum = GHOSTTY_MOUSE_MOMENTUM_BEGAN
+            case .stationary: momentum = GHOSTTY_MOUSE_MOMENTUM_STATIONARY
+            case .changed: momentum = GHOSTTY_MOUSE_MOMENTUM_CHANGED
+            case .ended: momentum = GHOSTTY_MOUSE_MOMENTUM_ENDED
+            case .cancelled: momentum = GHOSTTY_MOUSE_MOMENTUM_CANCELLED
+            case .mayBegin: momentum = GHOSTTY_MOUSE_MOMENTUM_MAY_BEGIN
+            default: momentum = GHOSTTY_MOUSE_MOMENTUM_NONE
+            }
+            mods |= Int32(momentum.rawValue) << 1
+        } else {
+            // A wheel reports lines; the renderer works in points.
+            x *= 10
+            y *= 10
+        }
+
+        ghostty_surface_mouse_scroll(surface, x, y, mods)
+    }
 }
