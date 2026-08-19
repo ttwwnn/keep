@@ -37,6 +37,14 @@ final class SurfacePool {
         return surface
     }
 
+    /// The surface for a pane, only where one already exists.
+    ///
+    /// Distinct from `surface(workspace:tab:)`, which makes one: asking a
+    /// question about a pane must not start a client for it.
+    func existing(workspace: String, tab: UInt32) -> TerminalSurfaceView? {
+        surfaces[Key(workspace: workspace, tab: tab)]
+    }
+
     /// Let go of a tab's surface, which tears down its client.
     ///
     /// Only for a tab the daemon no longer has. A surface dropped while its

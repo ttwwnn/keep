@@ -243,6 +243,51 @@ final class TerminalSurfaceView: NSView {
 
     /// Report the draw rate once a second while tracing. Silence is the
     /// expected state for anything hidden.
+    // MARK: - scrolling to a line
+
+    /// Put a line of history on screen, counted back from the newest.
+    ///
+    /// Ghostty exposes scrolling as keybind actions rather than as calls, so
+    /// this asks for the actions by the names a config would use.
+    ///
+    /// It asks twice. A pane opened by a search result is mounted by the same
+    /// switch that asks for the scroll, and its history is still arriving over
+    /// the socket — the snapshot lands the viewport back at the bottom after
+    /// the first attempt. Asking again once it has settled costs nothing when
+    /// the first attempt already worked, because the target is the same place.
+    func scrollBack(lines: Int) {
+        apply(scrollBack: lines)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+            self?.apply(scrollBack: lines)
+        }
+    }
+
+    private func apply(scrollBack lines: Int) {
+        guard surface != nil else {
+            Trace.log("scroll", "\(workspace)/\(tab) asked for \(lines) with no surface")
+            return
+        }
+        // From the bottom, always: the oldest end of a history is where the
+        // daemon's copy and this one disagree, because a terminal trims it.
+        perform("scroll_to_bottom")
+        // Four rows short of the line, so it arrives with what follows it
+        // rather than pinned to the last row of the screen. A line already
+        // near the end simply stays where the bottom is.
+        let back = max(0, lines - 4)
+        guard back > 0 else { return }
+        perform("scroll_page_lines:-\(back)")
+    }
+
+    @discardableResult
+    private func perform(_ action: String) -> Bool {
+        guard let surface else { return false }
+        let done = action.withCString {
+            ghostty_surface_binding_action(surface, $0, UInt(action.utf8.count))
+        }
+        Trace.log("scroll", "\(workspace)/\(tab) \(action) done=\(done)")
+        return done
+    }
+
     private func startTraceTimer() {
         guard Trace.enabled else { return }
         traceTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in

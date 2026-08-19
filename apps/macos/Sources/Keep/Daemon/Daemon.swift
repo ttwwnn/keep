@@ -95,7 +95,7 @@ enum Daemon {
     private static let tagOk: UInt8 = 0x85
     private static let tagTabCreated: UInt8 = 0x88
     private static let tagPreviewText: UInt8 = 0x89
-    private static let tagSearchHits: UInt8 = 0x8a
+    private static let tagSearchHits: UInt8 = 0x9a
 
     static var socketPath: String {
         if let override = ProcessInfo.processInfo.environment["KEEP_SOCKET"] {
@@ -232,7 +232,13 @@ enum Daemon {
         var workspace: String
         var tab: UInt32
         var line: UInt32
+        /// How many lines the tab's history holds. `line` counts from the
+        /// oldest, which is the end a terminal trims; distance from the
+        /// newest is the part two terminals agree on.
+        var total: UInt32
         var text: String
+        /// How far back the line sits from the newest one.
+        var fromEnd: UInt32 { total > line ? total - 1 - line : 0 }
         /// Byte range of the match inside `text`.
         var matchStart: UInt32
         var matchLength: UInt32
@@ -265,6 +271,7 @@ enum Daemon {
                 let workspace = try r.string()
                 let tab = try r.u32()
                 let line = try r.u32()
+                let total = try r.u32()
                 let text = try r.string()
                 let matchStart = try r.u32()
                 let matchLength = try r.u32()
@@ -273,7 +280,7 @@ enum Daemon {
                 var after: [String] = []
                 for _ in 0..<(try r.u32()) { after.append(try r.string()) }
                 hits.append(Hit(
-                    workspace: workspace, tab: tab, line: line, text: text,
+                    workspace: workspace, tab: tab, line: line, total: total, text: text,
                     matchStart: matchStart, matchLength: matchLength,
                     before: before, after: after))
             }

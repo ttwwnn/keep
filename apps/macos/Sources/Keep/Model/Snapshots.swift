@@ -147,8 +147,10 @@ struct PickerModel: Hashable {
             case running(TabID)
             /// A directory to open a new workspace in.
             case destination(path: String)
-            /// A line of history, and the tab it is in.
-            case hit(TabID, line: UInt32)
+            /// A line of history: the tab it is in, and the pane of that
+            /// tab that holds it. A hit is found by pane, and a pane is not a
+            /// tab — going to one means opening its tab and focusing it.
+            case hit(TabID, pane: UInt32, line: UInt32, fromEnd: UInt32)
 
         }
         let kind: Kind
@@ -161,7 +163,7 @@ struct PickerModel: Hashable {
             switch kind {
             case .running(let tab): return "run:\(tab)"
             case .destination(let path): return "dir:\(path)"
-            case .hit(let tab, let line): return "hit:\(tab):\(line)"
+            case .hit(let tab, let pane, let line, _): return "hit:\(tab):\(pane):\(line)"
             }
         }
     }

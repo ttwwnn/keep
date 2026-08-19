@@ -324,9 +324,15 @@ final class Session {
                     var items: [PickerModel.Item] = []
                     var matches: [String: PickerModel.Match] = [:]
                     for hit in hits {
-                        let tab = TabID(workspace: hit.workspace, root: hit.tab)
+                        // The daemon searches panes, and reports the pane's own
+                        // id. Only a root id names a tab, so a hit inside a
+                        // split has to be resolved back to the tab holding it
+                        // — without this the row is inert, because activating
+                        // an id that is nobody's tab does nothing.
+                        let tab = self.tab(holding: hit.tab, in: hit.workspace)
+                            ?? TabID(workspace: hit.workspace, root: hit.tab)
                         let item = PickerModel.Item(
-                            kind: .hit(tab, line: hit.line),
+                            kind: .hit(tab, pane: hit.tab, line: hit.line, fromEnd: hit.fromEnd),
                             title: hit.text.isEmpty ? " " : hit.text,
                             detail: "\(hit.line + 1)",
                             busy: false
@@ -359,8 +365,10 @@ final class Session {
             publish()
             guard let id, let item = open.items.first(where: { $0.id == id }) else { return }
             switch item.kind {
-            case .running(let tab): loadPreview(of: tab, for: id)
-            case .hit(let tab, _): loadPreview(of: tab, for: id)
+            case .running(let tab): loadPreview(of: tab, pane: tab.root, for: id)
+            // The pane that matched, not the tab's root: previewing the root
+            // of a split shows something the search never looked at.
+            case .hit(let tab, let pane, _, _): loadPreview(of: tab, pane: pane, for: id)
             case .destination: break
             }
 
@@ -372,11 +380,19 @@ final class Session {
                 dispatch(.activateTab(tab))
             case .destination(let path):
                 openWorkspace(at: path)
-            case .hit(let tab, _):
-                // Land on the tab the line is in. Where in its history the
-                // line sits is the daemon's coordinate, not the surface's —
-                // scrolling the pane to it is a separate matter.
-                dispatch(.activateTab(tab))
+            case .hit(let tab, let pane, _, let fromEnd):
+                // Land on the tab, then on the pane inside it, then on the
+                // line. The pane is mounted by the publish above, so the
+                // scroll is asked for after it, not before.
+                activate(tab)
+                workspaces.first { $0.name == tab.workspace }?
+                    .tabs.first { $0.id == tab }?
+                    .noteFocus(pane: pane)
+                publish()
+                renderer?.focusActiveTerminal()
+                Trace.log("scroll", "hit \(tab.workspace)/\(pane) back \(fromEnd)")
+                SurfacePool.shared.existing(workspace: tab.workspace, tab: pane)?
+                    .scrollBack(lines: Int(fromEnd))
             }
 
         case .dismissPickerItem(let id):
@@ -395,6 +411,14 @@ final class Session {
 
     /// THE switch. Workspace clicks, strip clicks, ⌘1–9 and empty-workspace
     /// entry all funnel here; there is exactly one switch path in the program.
+    /// The tab a pane belongs to, which is the only thing that can be
+    /// activated: panes are addressed by the daemon, tabs by the shell.
+    private func tab(holding pane: UInt32, in workspace: String) -> TabID? {
+        workspaces.first { $0.name == workspace }?
+            .tabs.first { $0.owns(pane: pane) }?
+            .id
+    }
+
     private func activate(_ id: TabID?) {
         guard let id, let workspace = workspaces.first(where: { $0.name == id.workspace })
         else { return }
@@ -461,9 +485,9 @@ final class Session {
         }
     }
 
-    private func loadPreview(of tab: TabID, for item: String) {
+    private func loadPreview(of tab: TabID, pane: UInt32, for item: String) {
         DispatchQueue.global(qos: .userInitiated).async {
-            let text = (try? Daemon.preview(workspace: tab.workspace, tab: tab.root)) ?? ""
+            let text = (try? Daemon.preview(workspace: tab.workspace, tab: pane)) ?? ""
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.picker?.previewOf == item else { return }
                 self.picker?.previewText = text

@@ -26,7 +26,9 @@ const T_ENDED: u8 = 0x86;
 const T_ATTACHED: u8 = 0x87;
 const T_TAB_CREATED: u8 = 0x88;
 const T_PREVIEW_TEXT: u8 = 0x89;
-const T_SEARCH_HITS: u8 = 0x8a;
+// Renumbered when hits gained their history's length: a client that
+// expects the field must not read a hit that predates it.
+const T_SEARCH_HITS: u8 = 0x9a;
 
 // Blob frames carry their payload raw, with no length inside it — the frame
 // header already has one. They were renumbered when that redundant length was
@@ -109,6 +111,11 @@ pub struct SearchHit {
     pub tab: u32,
     /// Line number within that tab's history, counting from its oldest.
     pub line: u32,
+    /// How many lines that history holds, so a client can turn `line` into a
+    /// distance from the newest line. The old end of a history is where two
+    /// terminals disagree — one trims what the other still has — so the end
+    /// they share is the only sound thing to count from.
+    pub total: u32,
     pub text: String,
     /// Where the match sits inside `text`, in bytes, so the caller can mark
     /// exactly what matched rather than guessing by searching again.
@@ -434,6 +441,7 @@ impl ServerMsg {
                     b.str(&hit.workspace);
                     b.u32(hit.tab);
                     b.u32(hit.line);
+                    b.u32(hit.total);
                     b.str(&hit.text);
                     b.u32(hit.match_start);
                     b.u32(hit.match_len);
@@ -499,6 +507,7 @@ impl ServerMsg {
                     let workspace = c.str()?;
                     let tab = c.u32()?;
                     let line = c.u32()?;
+                    let total = c.u32()?;
                     let text = c.str()?;
                     let match_start = c.u32()?;
                     let match_len = c.u32()?;
@@ -511,7 +520,7 @@ impl ServerMsg {
                         after.push(c.str()?);
                     }
                     hits.push(SearchHit {
-                        workspace, tab, line, text, match_start, match_len, before, after,
+                        workspace, tab, line, total, text, match_start, match_len, before, after,
                     });
                 }
                 ServerMsg::SearchHits(hits)
@@ -611,13 +620,13 @@ mod tests {
         roundtrip_server(ServerMsg::SearchHits(vec![]));
         roundtrip_server(ServerMsg::SearchHits(vec![
             SearchHit {
-                workspace: "www".into(), tab: 3, line: 812, text: "error: é".into(),
+                workspace: "www".into(), tab: 3, line: 812, total: 4096, text: "error: é".into(),
                 match_start: 0, match_len: 5,
                 before: vec!["one".into(), "two".into()],
                 after: vec!["three".into()],
             },
             SearchHit {
-                workspace: "a".into(), tab: 1, line: 0, text: String::new(),
+                workspace: "a".into(), tab: 1, line: 0, total: 1, text: String::new(),
                 match_start: 0, match_len: 0, before: vec![], after: vec![],
             },
         ]));

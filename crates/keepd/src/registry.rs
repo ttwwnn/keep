@@ -118,6 +118,7 @@ impl Registry {
                         workspace: name.clone(),
                         tab: entry.id,
                         line: index as u32,
+                        total: lines.len() as u32,
                         text: line.trim_end().to_string(),
                         match_start: start as u32,
                         match_len: len as u32,
