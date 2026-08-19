@@ -233,15 +233,25 @@ enum Daemon {
         var tab: UInt32
         var line: UInt32
         var text: String
+        /// Byte range of the match inside `text`.
+        var matchStart: UInt32
+        var matchLength: UInt32
+        var before: [String]
+        var after: [String]
     }
 
-    /// Lines of history matching `query`, across every tab the daemon has.
-    static func search(_ query: String, limit: UInt32 = 200) throws -> [Hit] {
+    /// Lines of history matching `query`. `scope` of nil searches every tab
+    /// the daemon has; naming one searches only that pane.
+    static func search(
+        _ query: String, limit: UInt32 = 200, scope: (workspace: String, tab: UInt32)? = nil
+    ) throws -> [Hit] {
         let sock = try connect()
         defer { close(sock) }
         var w = Writer()
         w.string(query)
         w.u32(limit)
+        w.string(scope?.workspace ?? "")
+        w.u32(scope?.tab ?? 0)
         try send(sock, tag: tagSearch, payload: w.data)
 
         let (tag, payload) = try recv(sock)
@@ -252,12 +262,20 @@ enum Daemon {
             var hits: [Hit] = []
             hits.reserveCapacity(Int(min(count, 4096)))
             for _ in 0..<count {
+                let workspace = try r.string()
+                let tab = try r.u32()
+                let line = try r.u32()
+                let text = try r.string()
+                let matchStart = try r.u32()
+                let matchLength = try r.u32()
+                var before: [String] = []
+                for _ in 0..<(try r.u32()) { before.append(try r.string()) }
+                var after: [String] = []
+                for _ in 0..<(try r.u32()) { after.append(try r.string()) }
                 hits.append(Hit(
-                    workspace: try r.string(),
-                    tab: try r.u32(),
-                    line: try r.u32(),
-                    text: try r.string()
-                ))
+                    workspace: workspace, tab: tab, line: line, text: text,
+                    matchStart: matchStart, matchLength: matchLength,
+                    before: before, after: after))
             }
             return hits
         case tagError: throw Failure.protocolError(try r.string())

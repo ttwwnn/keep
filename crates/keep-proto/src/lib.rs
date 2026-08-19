@@ -70,10 +70,14 @@ pub enum ClientMsg {
     /// without attaching to it — the daemon already holds the grid, so this
     /// costs a snapshot rather than a client.
     Preview { workspace: String, tab: u32 },
-    /// Look for `query` in every tab's history. The daemon holds the text —
-    /// including for tabs no client has ever opened — so it is the only place
-    /// that can answer this once rather than once per client.
-    Search { query: String, limit: u32 },
+    /// Look for `query` in history. The daemon holds the text — including for
+    /// tabs no client has ever opened — so it is the only place that can
+    /// answer this once rather than once per client.
+    ///
+    /// An empty `workspace` searches everything; naming one with a tab scopes
+    /// the search to that pane, which is the difference between "find it
+    /// anywhere" and "find it here".
+    Search { query: String, limit: u32, workspace: String, tab: u32 },
     Input(Vec<u8>),
     Resize { cols: u16, rows: u16 },
     /// End a whole workspace, tabs and all.
@@ -97,7 +101,8 @@ pub struct TabInfo {
     pub split_dir: u8,
 }
 
-/// One line of history that matched, and where it lives.
+/// One line of history that matched, where it lives, and enough around it to
+/// recognise the place without going there.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchHit {
     pub workspace: String,
@@ -105,6 +110,13 @@ pub struct SearchHit {
     /// Line number within that tab's history, counting from its oldest.
     pub line: u32,
     pub text: String,
+    /// Where the match sits inside `text`, in bytes, so the caller can mark
+    /// exactly what matched rather than guessing by searching again.
+    pub match_start: u32,
+    pub match_len: u32,
+    /// The lines immediately before and after, oldest first.
+    pub before: Vec<String>,
+    pub after: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -295,9 +307,11 @@ impl ClientMsg {
                 b.u32(*tab);
                 T_PREVIEW
             }
-            ClientMsg::Search { query, limit } => {
+            ClientMsg::Search { query, limit, workspace, tab } => {
                 b.str(query);
                 b.u32(*limit);
+                b.str(workspace);
+                b.u32(*tab);
                 T_SEARCH
             }
             // The frame header already carries the length, so a blob payload
@@ -347,7 +361,12 @@ impl ClientMsg {
             }
             T_CLOSE_TAB => ClientMsg::CloseTab { workspace: c.str()?, tab: c.u32()? },
             T_PREVIEW => ClientMsg::Preview { workspace: c.str()?, tab: c.u32()? },
-            T_SEARCH => ClientMsg::Search { query: c.str()?, limit: c.u32()? },
+            T_SEARCH => ClientMsg::Search {
+                query: c.str()?,
+                limit: c.u32()?,
+                workspace: c.str()?,
+                tab: c.u32()?,
+            },
             T_RESIZE => ClientMsg::Resize { cols: c.u16()?, rows: c.u16()? },
             T_KILL => ClientMsg::Kill { workspace: c.str()? },
             _ => return Err(bad("unknown client tag")),
@@ -416,6 +435,16 @@ impl ServerMsg {
                     b.u32(hit.tab);
                     b.u32(hit.line);
                     b.str(&hit.text);
+                    b.u32(hit.match_start);
+                    b.u32(hit.match_len);
+                    b.u32(hit.before.len() as u32);
+                    for line in &hit.before {
+                        b.str(line);
+                    }
+                    b.u32(hit.after.len() as u32);
+                    for line in &hit.after {
+                        b.str(line);
+                    }
                 }
                 T_SEARCH_HITS
             }
@@ -467,11 +496,22 @@ impl ServerMsg {
                 let n = c.u32()? as usize;
                 let mut hits = Vec::with_capacity(n.min(4096));
                 for _ in 0..n {
+                    let workspace = c.str()?;
+                    let tab = c.u32()?;
+                    let line = c.u32()?;
+                    let text = c.str()?;
+                    let match_start = c.u32()?;
+                    let match_len = c.u32()?;
+                    let mut before = Vec::new();
+                    for _ in 0..c.u32()? {
+                        before.push(c.str()?);
+                    }
+                    let mut after = Vec::new();
+                    for _ in 0..c.u32()? {
+                        after.push(c.str()?);
+                    }
                     hits.push(SearchHit {
-                        workspace: c.str()?,
-                        tab: c.u32()?,
-                        line: c.u32()?,
-                        text: c.str()?,
+                        workspace, tab, line, text, match_start, match_len, before, after,
                     });
                 }
                 ServerMsg::SearchHits(hits)
@@ -550,7 +590,12 @@ mod tests {
         });
         roundtrip_client(ClientMsg::CloseTab { workspace: "proj".into(), tab: 7 });
         roundtrip_client(ClientMsg::Preview { workspace: "proj".into(), tab: 2 });
-        roundtrip_client(ClientMsg::Search { query: "error".into(), limit: 200 });
+        roundtrip_client(ClientMsg::Search {
+            query: "error".into(), limit: 200, workspace: String::new(), tab: 0,
+        });
+        roundtrip_client(ClientMsg::Search {
+            query: "é".into(), limit: 1, workspace: "www".into(), tab: 4,
+        });
         roundtrip_client(ClientMsg::Input(vec![0x1b, b'[', b'A', 0x00, 0xff]));
         roundtrip_client(ClientMsg::Resize { cols: 65535, rows: 1 });
         roundtrip_client(ClientMsg::Kill { workspace: "gone".into() });
@@ -565,8 +610,16 @@ mod tests {
         roundtrip_server(ServerMsg::PreviewText(String::new()));
         roundtrip_server(ServerMsg::SearchHits(vec![]));
         roundtrip_server(ServerMsg::SearchHits(vec![
-            SearchHit { workspace: "www".into(), tab: 3, line: 812, text: "error: é".into() },
-            SearchHit { workspace: "a".into(), tab: 1, line: 0, text: String::new() },
+            SearchHit {
+                workspace: "www".into(), tab: 3, line: 812, text: "error: é".into(),
+                match_start: 0, match_len: 5,
+                before: vec!["one".into(), "two".into()],
+                after: vec!["three".into()],
+            },
+            SearchHit {
+                workspace: "a".into(), tab: 1, line: 0, text: String::new(),
+                match_start: 0, match_len: 0, before: vec![], after: vec![],
+            },
         ]));
         roundtrip_server(ServerMsg::Output(vec![0; 1000]));
         roundtrip_server(ServerMsg::Repaint(b"\x1b[2J\x1b[Hhi".to_vec()));

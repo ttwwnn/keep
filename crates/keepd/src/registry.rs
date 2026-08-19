@@ -58,38 +58,79 @@ impl Registry {
     /// holds each tab's whole screen, scrollback included, for tabs no client
     /// has ever opened. Asking each client to search its own view would miss
     /// most of what there is to find.
-    pub fn search(&self, query: &str, limit: usize) -> Vec<SearchHit> {
+    /// Lines of history containing `query`, case insensitively.
+    ///
+    /// `scope` of `None` searches every tab of every workspace; naming one
+    /// scopes it to that pane. The search runs here because this is where the
+    /// text is: the daemon holds each tab's whole screen, scrollback included,
+    /// for tabs no client has ever opened.
+    pub fn search(
+        &self,
+        query: &str,
+        limit: usize,
+        scope: Option<(&str, u32)>,
+    ) -> Vec<SearchHit> {
         if query.is_empty() || limit == 0 {
             return Vec::new();
         }
         let needle = query.to_lowercase();
-        let workspaces: Vec<(String, Arc<Workspace>)> = match self.workspaces.lock() {
-            Ok(g) => {
-                let mut all: Vec<_> = g.iter().map(|(n, w)| (n.clone(), Arc::clone(w))).collect();
-                all.sort_by(|a, b| a.0.cmp(&b.0));
-                all
-            }
+        let mut targets: Vec<(String, Arc<Workspace>)> = match self.workspaces.lock() {
+            Ok(g) => g.iter().map(|(n, w)| (n.clone(), Arc::clone(w))).collect(),
             Err(_) => return Vec::new(),
         };
+        targets.sort_by(|a, b| a.0.cmp(&b.0));
+        if let Some((name, _)) = scope {
+            targets.retain(|(n, _)| n == name);
+        }
+
+        /// How much of the surrounding output travels with a hit. Enough to
+        /// recognise the place without going there; more would be the pane.
+        const CONTEXT: usize = 2;
 
         let mut hits = Vec::new();
-        for (name, workspace) in workspaces {
+        for (name, workspace) in targets {
             for entry in workspace.tabs() {
+                if let Some((_, tab)) = scope {
+                    if entry.id != tab {
+                        continue;
+                    }
+                }
                 // Snapshot per tab, not per line: the lock is the tab's, and
                 // holding it while matching would stall its reader thread.
                 let Ok(text) = entry.tab.screen_text() else { continue };
-                for (index, line) in text.lines().enumerate() {
+                let lines: Vec<&str> = text.lines().collect();
+                for (index, line) in lines.iter().enumerate() {
                     if hits.len() >= limit {
                         return hits;
                     }
-                    if line.to_lowercase().contains(&needle) {
-                        hits.push(SearchHit {
-                            workspace: name.clone(),
-                            tab: entry.id,
-                            line: index as u32,
-                            text: line.trim_end().to_string(),
-                        });
-                    }
+                    let Some(at) = line.to_lowercase().find(&needle) else { continue };
+                    // `find` on the lowercased copy gives a byte offset that
+                    // is only meaningful there when case folding changes
+                    // length; re-anchor on the original so the caller can
+                    // slice it safely.
+                    let start = if line.is_char_boundary(at) { at } else { 0 };
+                    let len = if line.is_char_boundary(start + query.len()) {
+                        query.len()
+                    } else {
+                        0
+                    };
+                    hits.push(SearchHit {
+                        workspace: name.clone(),
+                        tab: entry.id,
+                        line: index as u32,
+                        text: line.trim_end().to_string(),
+                        match_start: start as u32,
+                        match_len: len as u32,
+                        before: lines[index.saturating_sub(CONTEXT)..index]
+                            .iter()
+                            .map(|l| l.trim_end().to_string())
+                            .collect(),
+                        after: lines[(index + 1).min(lines.len())
+                            ..(index + 1 + CONTEXT).min(lines.len())]
+                            .iter()
+                            .map(|l| l.trim_end().to_string())
+                            .collect(),
+                    });
                 }
             }
         }

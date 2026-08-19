@@ -25,11 +25,18 @@ final class PickerView: NSView {
     private let preview = NSTextView()
     private let previewScroll = NSScrollView()
     private let card = NSVisualEffectView()
+    /// "3 of 47", the way a browser counts.
+    private let counter = NSTextField(labelWithString: "")
 
     private var all: [PickerModel.Item] = []
     private var shown: [PickerModel.Item] = []
     private var query = ""
     private var mode: PickerModel.Mode = .goTo
+    private var matches: [String: PickerModel.Match] = [:]
+    private var isSearching: Bool {
+        if case .search = mode { return true }
+        return false
+    }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -56,6 +63,12 @@ final class PickerView: NSView {
         field.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(field)
 
+        counter.font = .systemFont(ofSize: 11)
+        counter.textColor = .tertiaryLabelColor
+        counter.alignment = .right
+        counter.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(counter)
+
         let divider = NSBox()
         divider.boxType = .separator
         divider.translatesAutoresizingMaskIntoConstraints = false
@@ -81,7 +94,7 @@ final class PickerView: NSView {
         preview.isEditable = false
         preview.isSelectable = false
         preview.drawsBackground = false
-        preview.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+        preview.font = GhosttyApp.shared.terminalFont(size: 10)
         preview.textColor = .secondaryLabelColor
         preview.textContainerInset = NSSize(width: 10, height: 8)
         previewScroll.documentView = preview
@@ -103,7 +116,9 @@ final class PickerView: NSView {
 
             field.topAnchor.constraint(equalTo: card.topAnchor, constant: 14),
             field.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
-            field.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
+            field.trailingAnchor.constraint(equalTo: counter.leadingAnchor, constant: -10),
+            counter.centerYAnchor.constraint(equalTo: field.centerYAnchor),
+            counter.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
 
             divider.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 12),
             divider.leadingAnchor.constraint(equalTo: card.leadingAnchor),
@@ -134,18 +149,44 @@ final class PickerView: NSView {
         if !card.frame.contains(point) { onCancel?() }
     }
 
+    /// The terminal's font may change with a config reload, and the preview
+    /// shows terminal output — including glyphs only a Nerd Font supplies.
+    private func adoptTerminalFont() {
+        let font = GhosttyApp.shared.terminalFont(size: 10)
+        if preview.font != font { preview.font = font }
+    }
+
     func apply(_ model: PickerModel) {
+        adoptTerminalFont()
         if mode != model.mode {
             mode = model.mode
-            field.placeholderString = mode == .search ? "search history…" : "go to…"
+            switch mode {
+            case .goTo:
+                field.placeholderString = "go to…"
+            case .search(let global):
+                field.placeholderString = global
+                    ? "find everywhere…"
+                    : "find in \(model.scopeLabel ?? "this pane")…"
+            }
             field.stringValue = ""
             query = ""
         }
+        matches = model.matches
         if all != model.items {
             all = model.items
             refilter(preservingSelection: true)
         }
-        if preview.string != model.previewText {
+        // A hit previews as the lines around it, which is what tells you
+        // whether it is the place you meant; anything else previews as the
+        // screen the daemon holds.
+        if let id = model.previewOf, let match = model.matches[id],
+           let item = model.items.first(where: { $0.id == id }) {
+            let context = (match.before + [item.title] + match.after).joined(separator: "\n")
+            if preview.string != context {
+                preview.string = context
+                preview.scrollToBeginningOfDocument(nil)
+            }
+        } else if preview.string != model.previewText {
             preview.string = model.previewText
             preview.scrollToBeginningOfDocument(nil)
         }
@@ -167,13 +208,26 @@ final class PickerView: NSView {
         let previous = preservingSelection ? selectedItemID : nil
         // In search the daemon has already decided what matches; filtering
         // its answer again with a different rule would hide real hits.
-        shown = mode == .search ? all : Self.matches(all, query: query)
+        shown = isSearching ? all : Self.matches(all, query: query)
         table.reloadData()
         let index = previous.flatMap { id in shown.firstIndex { $0.id == id } } ?? 0
         select(row: shown.isEmpty ? -1 : index)
     }
 
+    private func updateCounter() {
+        guard isSearching else {
+            counter.stringValue = ""
+            return
+        }
+        if shown.isEmpty {
+            counter.stringValue = query.isEmpty ? "" : "no matches"
+        } else {
+            counter.stringValue = "\(max(table.selectedRow, 0) + 1) of \(shown.count)"
+        }
+    }
+
     private func select(row: Int) {
+        defer { updateCounter() }
         guard row >= 0, row < shown.count else {
             table.deselectAll(nil)
             onHighlight?(nil)
@@ -183,6 +237,30 @@ final class PickerView: NSView {
         // well asked the daemon for the same preview twice.
         table.selectRowIndexes([row], byExtendingSelection: false)
         table.scrollRowToVisible(row)
+    }
+
+    /// The matched text, marked the way a browser marks it: a tinted run
+    /// inside the line rather than a differently coloured line.
+    static func marked(_ text: String, range: Range<Int>, font: NSFont) -> NSAttributedString {
+        let attributed = NSMutableAttributedString(
+            string: text,
+            attributes: [.font: font, .foregroundColor: NSColor.labelColor])
+        let bytes = Array(text.utf8)
+        guard range.lowerBound >= 0, range.upperBound <= bytes.count,
+              range.lowerBound < range.upperBound,
+              // Byte offsets from the daemon; NSAttributedString wants UTF-16.
+              let lower = String(decoding: bytes[..<range.lowerBound], as: UTF8.self)
+                .utf16.count as Int?,
+              let length = String(decoding: bytes[range], as: UTF8.self).utf16.count as Int?,
+              lower + length <= attributed.length
+        else { return attributed }
+        attributed.addAttributes(
+            [
+                .backgroundColor: NSColor.systemYellow.withAlphaComponent(0.35),
+                .foregroundColor: NSColor.labelColor,
+            ],
+            range: NSRange(location: lower, length: length))
+        return attributed
     }
 
     /// Subsequence matching, the way every fuzzy finder behaves: the letters
@@ -267,7 +345,12 @@ extension PickerView: NSTableViewDataSource, NSTableViewDelegate {
 
         let title = NSTextField(labelWithString: item.title)
         if case .hit = item.kind {
-            title.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+            let font = GhosttyApp.shared.terminalFont(size: 11)
+            title.font = font
+            if let match = matches[item.id] {
+                title.attributedStringValue = Self.marked(
+                    item.title, range: match.range, font: font)
+            }
         } else {
             title.font = .systemFont(ofSize: 13)
         }
@@ -275,7 +358,8 @@ extension PickerView: NSTableViewDataSource, NSTableViewDelegate {
         title.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(title)
 
-        let detail = NSTextField(labelWithString: item.detail)
+        let detailText = matches[item.id].map { "\($0.group):\(item.detail)" } ?? item.detail
+        let detail = NSTextField(labelWithString: detailText)
         detail.font = .systemFont(ofSize: 11)
         detail.textColor = .secondaryLabelColor
         detail.lineBreakMode = .byTruncatingHead
@@ -321,6 +405,7 @@ extension PickerView: NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
+        updateCounter()
         onHighlight?(selectedItemID)
     }
 

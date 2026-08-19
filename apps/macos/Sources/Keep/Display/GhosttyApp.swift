@@ -45,6 +45,15 @@ final class GhosttyApp {
     private(set) var terminalBackgroundOpacity: Double = 1
     private(set) var terminalBackgroundBlur: Int16 = 0
 
+    /// The font the terminal itself renders with.
+    ///
+    /// Anywhere the app shows terminal output outside a surface — the picker's
+    /// preview, search results — has to use it, or the glyphs a Nerd Font
+    /// supplies come out as boxes. Read from the resolved config rather than
+    /// named here, so changing the terminal's font changes these too.
+    fileprivate(set) var terminalFontFamily: String?
+    fileprivate(set) var terminalFontSize: Double = 13
+
     fileprivate func adopt(background: NSColor, opacity: Double, blur: Int16) {
         let opacity = min(max(opacity, 0), 1)
         let backgroundChanged = terminalBackground?.isEqual(background) != true
@@ -58,6 +67,75 @@ final class GhosttyApp {
         terminalBackgroundBlur = blur
         NotificationCenter.default.post(name: Self.backgroundDidChange, object: nil)
     }
+
+    /// Read `font-family` and `font-size` from the terminal's own config.
+    ///
+    /// Not from `ghostty_config_get`: it answers for typed scalars like the
+    /// background colour, but font-family is a repeatable string and comes
+    /// back empty, and font-size is not the width this call expects. Reading
+    /// the file the terminal reads is less clever and actually works.
+    /// Returns rather than assigns: this is called from `init`, and touching
+    /// `shared` there re-enters the singleton's own initializer.
+    fileprivate static func fontSettings() -> (family: String?, size: Double) {
+        let home = NSHomeDirectory()
+        // XDG first, then the macOS location; the later one wins if both set
+        // it, matching how the terminal resolves them.
+        let paths = [
+            (home as NSString).appendingPathComponent(".config/ghostty/config"),
+            (home as NSString)
+                .appendingPathComponent("Library/Application Support/com.mitchellh.ghostty/config"),
+        ]
+        var family: String?
+        var size: Double?
+        // The first file that exists wins, whole. The terminal resolves one
+        // config location — XDG for preference — rather than merging them,
+        // and merging here read a stale macOS-location file over the one the
+        // terminal was actually using.
+        for path in paths {
+            guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { continue }
+            for line in text.split(separator: "\n") {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.hasPrefix("#"), let equals = trimmed.firstIndex(of: "=")
+                else { continue }
+                let key = trimmed[..<equals].trimmingCharacters(in: .whitespaces)
+                let value = trimmed[trimmed.index(after: equals)...]
+                    .trimmingCharacters(in: .whitespaces)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                switch key {
+                case "font-family" where !value.isEmpty: family = value
+                case "font-size": size = Double(value)
+                default: break
+                }
+            }
+            if family != nil || size != nil { break }
+        }
+        return (family, size ?? 13)
+    }
+
+    /// The font to show terminal text in outside a surface, at `size` points.
+    /// Falls back to the system's monospaced face when the configured family
+    /// is not installed — a wrong-looking preview beats an empty one.
+    func terminalFont(size: Double? = nil) -> NSFont {
+        let points = size ?? terminalFontSize
+        let base = terminalFontFamily.flatMap { NSFont(name: $0, size: points) }
+            ?? .monospacedSystemFont(ofSize: points, weight: .regular)
+
+        // Terminal output is full of glyphs no ordinary face has — the icons
+        // a Nerd Font puts in the private use area, which is why previews
+        // came out as boxes. Cascading to one covers them whatever the base
+        // face turns out to be, including when the configured family cannot
+        // be read at all.
+        guard let fallback = Self.nerdFontFamily else { return base }
+        let descriptor = base.fontDescriptor.addingAttributes([
+            .cascadeList: [NSFontDescriptor(fontAttributes: [.family: fallback])]
+        ])
+        return NSFont(descriptor: descriptor, size: points) ?? base
+    }
+
+    /// Any installed Nerd Font, found once.
+    private static let nerdFontFamily: String? = NSFontManager.shared
+        .availableFontFamilies
+        .first { $0.localizedCaseInsensitiveContains("nerd font") }
 
     /// Read the background out of a config libghostty handed back, which —
     /// unlike one we build ourselves — has `theme = dark:...,light:...`
@@ -115,6 +193,10 @@ final class GhosttyApp {
         // sync after startup and reloads.
         terminalBackgroundOpacity = Self.backgroundOpacity(of: config) ?? 1
         terminalBackgroundBlur = Self.backgroundBlur(of: config) ?? 0
+        let font = Self.fontSettings()
+        terminalFontFamily = font.family
+        terminalFontSize = font.size
+        Trace.log("config", "terminal font: \(font.family ?? "system") @\(font.size)pt")
 
         var runtime = ghostty_runtime_config_s()
         runtime.userdata = nil
@@ -154,6 +236,9 @@ final class GhosttyApp {
                 else { return true }
                 DispatchQueue.main.async {
                     GhosttyApp.shared.adopt(background: color, opacity: opacity, blur: blur)
+                    let font = GhosttyApp.fontSettings()
+                    GhosttyApp.shared.terminalFontFamily = font.family
+                    GhosttyApp.shared.terminalFontSize = font.size
                 }
                 return true
             case GHOSTTY_ACTION_RELOAD_CONFIG:

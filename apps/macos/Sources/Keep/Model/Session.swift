@@ -270,27 +270,37 @@ final class Session {
                 return
             }
             picker = PickerModel(
-                mode: .goTo, query: "", items: pickerItems(),
-                previewOf: nil, previewText: "")
+                mode: .goTo, matches: [:], scopeLabel: nil, query: "",
+                items: pickerItems(), previewOf: nil, previewText: "")
             publish()
             // zoxide is a process launch; the list opens on what is already
             // known and grows a moment later rather than waiting for it.
             loadDestinations()
 
-        case .toggleSearch:
-            guard picker?.mode != .search else {
+        case .toggleSearch(let global):
+            let wanted = PickerModel.Mode.search(global: global)
+            guard picker?.mode != wanted else {
                 dispatch(.closePicker)
                 return
             }
+            let label: String
+            if global {
+                label = "everywhere"
+            } else if let tab = activeWorkspace?.activeTab {
+                label = "\(tab.id.workspace) › \(tab.title.isEmpty ? "tab \(tab.id.root)" : tab.title)"
+            } else {
+                label = "this pane"
+            }
             picker = PickerModel(
-                mode: .search, query: "", items: [], previewOf: nil, previewText: "")
+                mode: wanted, matches: [:], scopeLabel: label, query: "",
+                items: [], previewOf: nil, previewText: "")
             publish()
 
         case .setPickerQuery(let query):
             guard var open = picker else { return }
             open.query = query
             picker = open
-            guard open.mode == .search else { return }
+            guard case .search(let global) = open.mode else { return }
             searchGeneration += 1
             let generation = searchGeneration
             guard !query.isEmpty else {
@@ -301,21 +311,37 @@ final class Session {
             // Blocking socket work, off the main thread, and only the newest
             // answer is kept: typing produces a question per keystroke and
             // they do not come back in order.
+            // The pane you are in, unless the search is global.
+            let scope: (workspace: String, tab: UInt32)? = global
+                ? nil
+                : activeWorkspace?.activeTab.map { ($0.id.workspace, $0.focusedPane) }
             DispatchQueue.global(qos: .userInitiated).async {
-                let hits = (try? Daemon.search(query)) ?? []
+                let hits = (try? Daemon.search(query, scope: scope)) ?? []
                 DispatchQueue.main.async { [weak self] in
                     guard let self, self.searchGeneration == generation,
-                          self.picker?.mode == .search
+                          case .search = self.picker?.mode
                     else { return }
-                    self.picker?.items = hits.map { hit in
+                    var items: [PickerModel.Item] = []
+                    var matches: [String: PickerModel.Match] = [:]
+                    for hit in hits {
                         let tab = TabID(workspace: hit.workspace, root: hit.tab)
-                        return PickerModel.Item(
+                        let item = PickerModel.Item(
                             kind: .hit(tab, line: hit.line),
                             title: hit.text.isEmpty ? " " : hit.text,
-                            detail: "\(hit.workspace) › tab \(hit.tab)",
+                            detail: "\(hit.line + 1)",
                             busy: false
                         )
+                        items.append(item)
+                        let start = Int(hit.matchStart)
+                        matches[item.id] = PickerModel.Match(
+                            range: start..<(start + Int(hit.matchLength)),
+                            before: hit.before,
+                            after: hit.after,
+                            group: "\(hit.workspace) › tab \(hit.tab)"
+                        )
                     }
+                    self.picker?.items = items
+                    self.picker?.matches = matches
                     self.publish()
                 }
             }

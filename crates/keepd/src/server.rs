@@ -130,8 +130,9 @@ fn handle(stream: UnixStream, registry: Arc<Registry>) -> Result<()> {
             ServerMsg::PreviewText(text).write(&mut writer)?;
             Ok(())
         }
-        ClientMsg::Search { query, limit } => {
-            let hits = registry.search(&query, limit as usize);
+        ClientMsg::Search { query, limit, workspace, tab } => {
+            let scope = if workspace.is_empty() { None } else { Some((workspace.as_str(), tab)) };
+            let hits = registry.search(&query, limit as usize, scope);
             ServerMsg::SearchHits(hits).write(&mut writer)?;
             Ok(())
         }

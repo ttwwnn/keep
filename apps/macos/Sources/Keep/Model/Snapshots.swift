@@ -108,8 +108,8 @@ enum Intent {
     /// summons it is the key that dismisses it.
     case togglePicker
     /// Same overlay, other question: what is in the history rather than
-    /// where can I go.
-    case toggleSearch
+    /// where can I go. Scoped to the pane you are in, or across everything.
+    case toggleSearch(global: Bool)
     case closePicker
     /// What was typed. Local filtering answers the "go to" list; searching
     /// history is a question only the daemon can answer.
@@ -136,8 +136,9 @@ struct PickerModel: Hashable {
         /// Filtering happens locally: the list is already in hand.
         case goTo
         /// Every keystroke is a question for the daemon, which is the only
-        /// one holding the history.
-        case search
+        /// one holding the history. `global` decides whether the question is
+        /// about everything or only the pane in front of you.
+        case search(global: Bool)
     }
 
     struct Item: Hashable, Identifiable {
@@ -148,6 +149,7 @@ struct PickerModel: Hashable {
             case destination(path: String)
             /// A line of history, and the tab it is in.
             case hit(TabID, line: UInt32)
+
         }
         let kind: Kind
         /// "workspace › title", or the directory's name.
@@ -165,6 +167,16 @@ struct PickerModel: Hashable {
     }
 
     var mode: Mode
+    /// Search only: what matched, so a row can mark it and a header can count.
+    struct Match: Hashable {
+        let range: Range<Int>       // byte range within the row's title
+        let before: [String]
+        let after: [String]
+        let group: String           // "workspace › tab N"
+    }
+    var matches: [String: Match]
+    /// Search only: nil while the daemon has not answered yet.
+    var scopeLabel: String?
     var query: String
     var items: [Item]
     var previewOf: String?
