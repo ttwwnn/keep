@@ -107,6 +107,7 @@ final class TerminalSurfaceView: NSView {
 
         guard let surface else { return }
         GhosttyApp.shared.register(surface: surface, view: self)
+        settlingUntil = CACurrentMediaTime() + 0.7
         ghostty_surface_set_content_scale(surface, config.scale_factor, config.scale_factor)
         layer?.contentsScale = window?.backingScaleFactor ?? 2.0
         applyColorScheme()
@@ -361,6 +362,62 @@ final class TerminalSurfaceView: NSView {
             UInt32(max(1, backing.width)),
             UInt32(max(1, backing.height))
         )
+        reportGrid()
+    }
+
+    // MARK: - saying how big the pane is
+
+    private lazy var sizeBadge: SizeBadgeView = {
+        let badge = SizeBadgeView(frame: .zero)
+        badge.alphaValue = 0
+        addSubview(badge)
+        return badge
+    }()
+    /// The grid last seen. Nil until the first size, because the size a pane
+    /// opens at is not a resize and nobody asked to be told it.
+    private var lastGrid: (cols: UInt16, rows: UInt16)?
+    private var badgeHide: DispatchWorkItem?
+    /// Until when a change of grid is settling rather than being asked for.
+    ///
+    /// Mounting a pane walks through two or three sizes as constraints
+    /// resolve, and revealing a hidden one takes the size it slept through.
+    /// Neither is somebody dragging an edge, and announcing them flashes the
+    /// chip at a person who did nothing.
+    private var settlingUntil: CFTimeInterval = 0
+
+    /// Show the grid, if setting the pixel size actually changed it.
+    ///
+    /// Points are not the unit that matters: dragging a divider a few pixels
+    /// often leaves the columns and rows exactly as they were, and saying so
+    /// then would be noise. Only a real change speaks.
+    private func reportGrid() {
+        guard let surface, !isHiddenOrHasHiddenAncestor else { return }
+        let size = ghostty_surface_size(surface)
+        guard size.columns > 0, size.rows > 0 else { return }
+        let grid = (cols: size.columns, rows: size.rows)
+        Trace.log("layout", "\(workspace)/\(tab) grid \(grid.cols)x\(grid.rows)")
+        defer { lastGrid = grid }
+        guard let previous = lastGrid else { return }
+        guard previous != grid else { return }
+        guard CACurrentMediaTime() > settlingUntil else { return }
+
+        sizeBadge.show("\(grid.cols) × \(grid.rows)")
+        sizeBadge.frame.size = sizeBadge.fittingSize
+        sizeBadge.frame.origin = NSPoint(
+            x: ((bounds.width - sizeBadge.frame.width) / 2).rounded(),
+            y: ((bounds.height - sizeBadge.frame.height) / 2).rounded())
+        badgeHide?.cancel()
+        sizeBadge.animator().alphaValue = 1
+
+        let hide = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.25
+                self.sizeBadge.animator().alphaValue = 0
+            }
+        }
+        badgeHide = hide
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9, execute: hide)
     }
 
     private func flushPendingSize() {
@@ -373,6 +430,10 @@ final class TerminalSurfaceView: NSView {
             UInt32(max(1, pending.width)),
             UInt32(max(1, pending.height))
         )
+        // A pane catching up after being revealed is not being resized in
+        // front of anyone; it takes the new grid without announcing it.
+        settlingUntil = CACurrentMediaTime() + 0.7
+        reportGrid()
     }
 
     /// Keep the layer from being rescaled by the compositor: we render at the
@@ -625,5 +686,50 @@ final class TerminalSurfaceView: NSView {
         }
 
         ghostty_surface_mouse_scroll(surface, x, y, mods)
+    }
+}
+
+// MARK: - the size, while it is changing
+
+/// A chip in the middle of a pane saying how many cells it holds.
+///
+/// A terminal's size is in columns and rows, not points, and a drag that
+/// changes the window by a few pixels may change the grid by none — which is
+/// the thing worth showing while you drag: what the program inside will
+/// actually be given.
+private final class SizeBadgeView: NSView {
+    private let label = NSTextField(labelWithString: "")
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = 6
+        layer?.cornerCurve = .continuous
+        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.72).cgColor
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
+
+        label.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        label.textColor = .white
+        label.alignment = .center
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    /// It is a readout, not a control: the terminal underneath keeps the mouse.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func show(_ text: String) {
+        label.stringValue = text
+        needsLayout = true
     }
 }
