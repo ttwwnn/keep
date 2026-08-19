@@ -19,6 +19,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private weak var splitView: NSSplitView?
 
     private var applied: SessionSnapshot?
+    /// The tab a carried pane is hovering over, and the wait before it opens.
+    private var springTarget: TabID?
+    private var spring: Timer?
     /// True while render is moving geometry, so the split-view delegate does
     /// not echo model-driven changes back as user intents.
     private var isApplyingSnapshot = false
@@ -107,6 +110,38 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
         container.onPaneFocus = { [weak self] id, pane in
             self?.session.dispatch(.focusPane(id, pane))
+        }
+        // A pane carried over a tab opens it, after long enough to mean it.
+        // The timer runs in the event-tracking mode too: during a drag that
+        // is the only mode there is, and a timer that only fires in the
+        // default mode never fires at all.
+        container.tabUnderPointer = { [weak self] windowPoint in
+            guard let self else { return nil }
+            return self.tabStrip.tab(at: self.tabStrip.convert(windowPoint, from: nil))
+        }
+        container.onCarryOver = { [weak self] windowPoint in
+            guard let self else { return }
+            guard let windowPoint else {
+                self.cancelSpring()
+                return
+            }
+            let over = self.tabStrip.tab(at: self.tabStrip.convert(windowPoint, from: nil))
+            guard let over, over != self.container.visibleTab else {
+                self.cancelSpring()
+                return
+            }
+            guard over != self.springTarget else { return }
+            self.cancelSpring()
+            self.springTarget = over
+            let timer = Timer(timeInterval: 0.45, repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, let target = self.springTarget else { return }
+                    self.session.dispatch(.activateTab(target))
+                }
+            }
+            RunLoop.current.add(timer, forMode: .default)
+            RunLoop.current.add(timer, forMode: .eventTracking)
+            self.spring = timer
         }
         container.onPaneDrop = { [weak self] id, pane, target, side in
             guard let self, self.applied?.active?.id == id else { return }
@@ -324,6 +359,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // eye measures from, not the close button inside it, so it is the
         // capsule the two ends are matched on.
         tabStrip.leadingClearance = state.isCollapsed ? 128 : 0
+    }
+
+    private func cancelSpring() {
+        spring?.invalidate()
+        spring = nil
+        springTarget = nil
     }
 
     private func dividerMoved() {

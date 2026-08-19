@@ -64,6 +64,16 @@ final class TabStripView: NSView {
         }
     }
 
+    /// Which tab is at a point in this view, if any. Asked while a pane is
+    /// being carried, to know which tab to spring open.
+    func tab(at point: NSPoint) -> TabID? {
+        guard bounds.contains(point) else { return nil }
+        for (index, cell) in cells.enumerated() where cell.frame.contains(point) {
+            return items[index].id
+        }
+        return nil
+    }
+
     /// Empty regions stay draggable titlebar, like the tint backdrops.
     override func hitTest(_ point: NSPoint) -> NSView? {
         let hit = super.hitTest(point)

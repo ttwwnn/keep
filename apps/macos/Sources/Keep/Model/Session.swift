@@ -360,8 +360,9 @@ final class Session {
             }
 
         case .movePane(let pane, let target, let side):
-            guard let workspace = activeWorkspace, let tab = workspace.activeTab,
-                  tab.owns(pane: pane), tab.owns(pane: target), pane != target
+            guard let workspace = activeWorkspace, pane != target,
+                  let source = workspace.tabs.first(where: { $0.owns(pane: pane) }),
+                  let destination = workspace.tabs.first(where: { $0.owns(pane: target) })
             else { return }
             // A pane's place is its parent and the direction it sits in. To
             // land on the right or below, the newcomer simply hangs off the
@@ -370,40 +371,37 @@ final class Session {
             // change roles instead: the newcomer takes the other's place and
             // the other becomes its pane. Both are the same thing said from
             // opposite ends, which is why the daemon takes them together.
-            let mine = place(of: pane, in: tab)
-            let theirs = place(of: target, in: tab)
-            let moves: [Daemon.Move]
+            let mine = place(of: pane, in: source)
+            let theirs = place(of: target, in: destination)
+            var moves = vacating(pane, in: source)
             switch side {
             case .right:
-                moves = [Daemon.Move(tab: pane, splitOf: target, splitDir: 1)]
+                moves.append(Daemon.Move(tab: pane, splitOf: target, splitDir: 1))
             case .bottom:
-                moves = [Daemon.Move(tab: pane, splitOf: target, splitDir: 2)]
+                moves.append(Daemon.Move(tab: pane, splitOf: target, splitDir: 2))
             case .left:
-                moves = [
-                    Daemon.Move(tab: pane, splitOf: theirs.parent, splitDir: theirs.dir),
-                    Daemon.Move(tab: target, splitOf: pane, splitDir: 1),
-                ]
+                moves.append(
+                    Daemon.Move(tab: pane, splitOf: theirs.parent, splitDir: theirs.dir))
+                moves.append(Daemon.Move(tab: target, splitOf: pane, splitDir: 1))
             case .top:
-                moves = [
-                    Daemon.Move(tab: pane, splitOf: theirs.parent, splitDir: theirs.dir),
-                    Daemon.Move(tab: target, splitOf: pane, splitDir: 2),
-                ]
+                moves.append(
+                    Daemon.Move(tab: pane, splitOf: theirs.parent, splitDir: theirs.dir))
+                moves.append(Daemon.Move(tab: target, splitOf: pane, splitDir: 2))
             case .onto:
-                moves = [
-                    Daemon.Move(tab: pane, splitOf: theirs.parent, splitDir: theirs.dir),
-                    Daemon.Move(tab: target, splitOf: mine.parent, splitDir: mine.dir),
-                ]
+                moves.append(
+                    Daemon.Move(tab: pane, splitOf: theirs.parent, splitDir: theirs.dir))
+                moves.append(Daemon.Move(tab: target, splitOf: mine.parent, splitDir: mine.dir))
             }
             rearrange(moves, in: workspace.name, focusing: pane)
 
         case .detachPane(let pane):
-            guard let workspace = activeWorkspace, let tab = workspace.activeTab,
-                  tab.owns(pane: pane), pane != tab.id.root
+            guard let workspace = activeWorkspace,
+                  let source = workspace.tabs.first(where: { $0.owns(pane: pane) }),
+                  !source.panes.isEmpty
             else { return }
-            rearrange(
-                [Daemon.Move(tab: pane, splitOf: 0, splitDir: 0)],
-                in: workspace.name,
-                focusing: pane)
+            var moves = vacating(pane, in: source)
+            moves.append(Daemon.Move(tab: pane, splitOf: 0, splitDir: 0))
+            rearrange(moves, in: workspace.name, focusing: pane)
 
         case .closePicker:
             picker = nil
@@ -478,6 +476,25 @@ final class Session {
         return SurfacePool.shared
             .existing(workspace: workspace, tab: pane)?
             .currentDirectory ?? ""
+    }
+
+    /// The moves that let a pane leave without taking anything with it.
+    ///
+    /// Panes record what they were split from, so the ones hanging off the
+    /// one being dragged would travel with it — the whole subtree, when what
+    /// was picked up was a single pane. They stay: the first takes the
+    /// departing pane's place and the others hang off it, which is what
+    /// closing that pane would have done.
+    private func vacating(_ pane: UInt32, in tab: TabEntity) -> [Daemon.Move] {
+        let children = tab.panes.filter { $0.splitOf == pane }
+        guard let heir = children.first else { return [] }
+        let mine = place(of: pane, in: tab)
+        var moves = [Daemon.Move(tab: heir.tab, splitOf: mine.parent, splitDir: mine.dir)]
+        for other in children.dropFirst() {
+            moves.append(
+                Daemon.Move(tab: other.tab, splitOf: heir.tab, splitDir: other.splitDir))
+        }
+        return moves
     }
 
     /// Where a pane sits: what it hangs off and how.

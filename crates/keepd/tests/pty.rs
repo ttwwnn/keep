@@ -477,3 +477,49 @@ fn rearranging_can_detach_a_pane_into_a_tab() {
     assert_eq!(roots, vec![root, pane], "the pane did not become a tab of its own");
     workspace.kill_all().ok();
 }
+
+/// A pane moved into another tab belongs to that tab, and the tab it left
+/// stays a tab.
+#[test]
+fn a_pane_can_be_moved_into_another_tab() {
+    let workspace = keepd::Workspace::new("across");
+    let (first, _) = workspace.new_tab(None, 80, 24, 0, 0).expect("first tab");
+    let (pane, _) = workspace.new_tab(None, 80, 24, first, 1).expect("pane of the first");
+    let (second, _) = workspace.new_tab(None, 80, 24, 0, 0).expect("second tab");
+
+    workspace.rearrange(&[(pane, second, 1)]).expect("move across");
+
+    let tabs = workspace.tabs();
+    let roots: Vec<u32> = tabs.iter().filter(|t| t.split_of == 0).map(|t| t.id).collect();
+    assert_eq!(roots, vec![first, second], "moving a pane changed which tabs exist");
+    let moved = tabs.iter().find(|t| t.id == pane).expect("the pane survived");
+    assert_eq!(moved.split_of, second, "the pane did not join the other tab");
+}
+
+/// Dragging one pane must move one pane.
+///
+/// Panes record what they were split from, so the ones hanging off the one
+/// being dragged would travel with it — a whole subtree, when what was picked
+/// up was a single pane. The app sends the moves that keep them: the first
+/// takes the departing pane's place and the rest hang off it. This states the
+/// shape that composition has to produce.
+#[test]
+fn moving_a_pane_can_leave_its_own_panes_behind() {
+    let workspace = keepd::Workspace::new("alone");
+    let (root, _) = workspace.new_tab(None, 80, 24, 0, 0).expect("root");
+    let (middle, _) = workspace.new_tab(None, 80, 24, root, 1).expect("middle");
+    let (below, _) = workspace.new_tab(None, 80, 24, middle, 2).expect("below the middle");
+    let (elsewhere, _) = workspace.new_tab(None, 80, 24, 0, 0).expect("another tab");
+
+    // What the app composes: the child takes the mover's place, then the
+    // mover goes.
+    workspace
+        .rearrange(&[(below, root, 1), (middle, elsewhere, 1)])
+        .expect("move one pane");
+
+    let tabs = workspace.tabs();
+    let stayed = tabs.iter().find(|t| t.id == below).expect("the child survived");
+    assert_eq!(stayed.split_of, root, "the child was dragged along");
+    let moved = tabs.iter().find(|t| t.id == middle).expect("the mover survived");
+    assert_eq!(moved.split_of, elsewhere, "the pane did not arrive");
+}
