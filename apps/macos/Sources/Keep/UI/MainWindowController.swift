@@ -156,9 +156,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         } else {
             // Same tab: apply what changed around it.
             let host = container.host(for: active)
-            host.apply(root: active.id.root, panes: active.panes)
+            let rebuilt = host.apply(root: active.id.root, panes: active.panes)
             host.setFocusedPane(active.focusedPane)
-            if applied?.active?.focusedPane != active.focusedPane,
+            // Re-assert the keyboard when the focus moved OR when the
+            // arrangement was rebuilt: a rebuild severs the responder chain,
+            // and leaving it where AppKit dropped it can put keystrokes into
+            // a surface belonging to a tab nobody is looking at.
+            if rebuilt || applied?.active?.focusedPane != active.focusedPane,
                 let surface = host.surface(for: active.focusedPane),
                 window?.firstResponder !== surface
             {

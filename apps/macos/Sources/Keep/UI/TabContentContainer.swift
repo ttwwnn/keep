@@ -65,6 +65,10 @@ final class TabHostView: NSView {
     private var focusedPane: UInt32?
     private var splitViews: [NSSplitView] = []
     private var surfaces: [UInt32: TerminalSurfaceView] = [:]
+    /// The block API hands back a token, and only that token unregisters —
+    /// removeObserver(self) removes nothing, so every rebuild used to leave
+    /// its observers behind, still firing on split views nobody can see.
+    private var splitObservers: [NSObjectProtocol] = []
 
     /// A pane surface took the keyboard; forwarded up with this tab's identity
     /// so a report from a hidden tab cannot be mistaken for the active one's.
@@ -92,7 +96,7 @@ final class TabHostView: NSView {
     required init?(coder: NSCoder) { fatalError("not supported") }
 
     deinit {
-        NotificationCenter.default.removeObserver(self)
+        for observer in splitObservers { NotificationCenter.default.removeObserver(observer) }
     }
 
     override func layout() {
@@ -104,15 +108,18 @@ final class TabHostView: NSView {
     /// Rebuild the arrangement when its shape changed. Surfaces come from the
     /// pool, so re-parenting one costs nothing: its renderer and its client
     /// process are untouched by moving between split views.
-    func apply(root: UInt32, panes: [PaneState]) {
+    ///
+    /// Returns whether it rebuilt. A rebuild takes the focused surface out of
+    /// the responder chain, and AppKit answers that by handing the keyboard
+    /// to something of its own choosing — so the caller has to put it back.
+    @discardableResult
+    func apply(root: UInt32, panes: [PaneState]) -> Bool {
         let next = PaneTree.build(root: root, panes: panes)
-        guard next != tree else { return }
+        guard next != tree else { return false }
         tree = next
 
-        for split in splitViews {
-            NotificationCenter.default.removeObserver(
-                self, name: NSSplitView.didResizeSubviewsNotification, object: split)
-        }
+        for observer in splitObservers { NotificationCenter.default.removeObserver(observer) }
+        splitObservers.removeAll()
         splitViews.removeAll()
         surfaces.removeAll()
         for view in subviews where view !== focusRing { view.removeFromSuperview() }
@@ -131,6 +138,7 @@ final class TabHostView: NSView {
             split.layoutSubtreeIfNeeded()
         }
         positionFocusRing()
+        return true
     }
 
     private func build(_ node: PaneTree) -> NSView {
@@ -156,13 +164,13 @@ final class TabHostView: NSView {
             // Dragging a divider resizes that split's own subviews, not this
             // host, so nothing here lays out and the focus ring would stay on
             // the pane's old edge. Every split in the tree reports.
-            NotificationCenter.default.addObserver(
+            splitObservers.append(NotificationCenter.default.addObserver(
                 forName: NSSplitView.didResizeSubviewsNotification,
                 object: split,
                 queue: .main
             ) { [weak self] _ in
                 MainActor.assumeIsolated { self?.positionFocusRing() }
-            }
+            })
             return split
         }
     }
