@@ -159,17 +159,34 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
             target: self,
             action: #selector(toggleSidebar(_:))
         )
-        button.bezelStyle = .circular
+        button.isBordered = false
         button.controlSize = .small
         button.imagePosition = .imageOnly
         button.imageScaling = .scaleProportionallyDown
         button.toolTip = "Toggle Sidebar"
-        button.setFrameSize(NSSize(width: 28, height: 28))
+        button.contentTintColor = .secondaryLabelColor
+        let side: CGFloat = 24
+        button.frame = NSRect(x: 0, y: 0, width: side, height: side)
 
+        // The same ground the new-tab button stands on, so the two controls
+        // in the chrome are made of one thing.
         let accessory = NSTitlebarAccessoryViewController()
         accessory.identifier = Self.toggleSidebarAccessoryIdentifier
         accessory.layoutAttribute = .left
-        accessory.view = button
+        if let glass = Glass.lozenge(cornerRadius: side / 2) {
+            Glass.tint(glass, NSColor.white.withAlphaComponent(0.22))
+            glass.frame = NSRect(x: 0, y: 0, width: side, height: side)
+            glass.addSubview(button)
+            let host = NSView(frame: NSRect(x: 0, y: 0, width: side + 8, height: side))
+            glass.frame.origin.x = 4
+            host.addSubview(glass)
+            accessory.view = host
+        } else {
+            button.bezelStyle = .circular
+            button.isBordered = true
+            button.setFrameSize(NSSize(width: 28, height: 28))
+            accessory.view = button
+        }
         addTitlebarAccessoryViewController(accessory)
     }
 

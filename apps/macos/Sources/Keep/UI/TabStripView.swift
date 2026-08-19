@@ -25,11 +25,17 @@ final class TabStripView: NSView {
     private var items: [SessionSnapshot.StripItem] = []
     private var cells: [TabCellView] = []
     private let newTabButton = NSButton()
+    /// The button's ground: glass where the system has it.
+    private let newTabBackground: NSView = Glass.lozenge(cornerRadius: 12) ?? NSView()
+    private let newTabIsGlass = Glass.isAvailable
     private var backgroundObserver: NSObjectProtocol?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
+
+        newTabBackground.wantsLayer = true
+        addSubview(newTabBackground)
 
         newTabButton.image = NSImage(
             systemSymbolName: "plus", accessibilityDescription: "New Tab")
@@ -85,6 +91,11 @@ final class TabStripView: NSView {
     private func retint() {
         applyCells()
         newTabButton.contentTintColor = Palette.current.dimText
+        if newTabIsGlass {
+            Glass.tint(newTabBackground, Palette.current.glassTint)
+        } else {
+            newTabBackground.layer?.backgroundColor = Palette.current.controlFill.cgColor
+        }
     }
 
     private func applyCells() {
@@ -105,9 +116,22 @@ final class TabStripView: NSView {
     override func layout() {
         super.layout()
         let height = bounds.height
-        let plusWidth: CGFloat = 30
-        newTabButton.frame = NSRect(
-            x: bounds.width - plusWidth - 4, y: (height - 24) / 2, width: plusWidth, height: 24)
+        // A circle with a plus in it, not a bare glyph: it reads as a
+        // control, which is what it is.
+        let plusSide: CGFloat = 24
+        let plusWidth = plusSide + 12
+        let plusRect = NSRect(
+            x: bounds.width - plusSide - 10, y: (height - plusSide) / 2,
+            width: plusSide, height: plusSide)
+        newTabButton.frame = plusRect
+        newTabBackground.frame = plusRect
+        if newTabIsGlass {
+            Glass.setCornerRadius(newTabBackground, plusSide / 2)
+            Glass.tint(newTabBackground, Palette.current.glassTint)
+        } else {
+            newTabBackground.layer?.cornerRadius = plusSide / 2
+            newTabBackground.layer?.backgroundColor = Palette.current.controlFill.cgColor
+        }
 
         guard !cells.isEmpty else { return }
         let left = leadingClearance
@@ -135,6 +159,12 @@ final class TabStripView: NSView {
         /// The selected tab's fill. Nothing paints the unselected ones.
         let selectedFill: NSColor
         let hoverFill: NSColor
+        /// The hairline around the selected tab, and the "+" button's ground.
+        let edge: NSColor
+        let controlFill: NSColor
+        /// What glass is aimed at. Refraction alone comes out darker than a
+        /// dark bar, and the shape this is modelled on is lighter than one.
+        let glassTint: NSColor
 
         static var current: Palette {
             let background = GhosttyApp.shared.terminalBackground ?? .black
@@ -147,8 +177,11 @@ final class TabStripView: NSView {
             return Palette(
                 text: ink.withAlphaComponent(dark ? 0.92 : 0.85),
                 dimText: ink.withAlphaComponent(0.45),
-                selectedFill: ink.withAlphaComponent(dark ? 0.10 : 0.07),
-                hoverFill: ink.withAlphaComponent(dark ? 0.05 : 0.035)
+                selectedFill: ink.withAlphaComponent(dark ? 0.14 : 0.09),
+                hoverFill: ink.withAlphaComponent(dark ? 0.05 : 0.035),
+                edge: ink.withAlphaComponent(dark ? 0.16 : 0.10),
+                controlFill: ink.withAlphaComponent(dark ? 0.09 : 0.06),
+                glassTint: ink.withAlphaComponent(dark ? 0.22 : 0.14)
             )
         }
     }
@@ -165,23 +198,31 @@ private final class TabCellView: NSView {
     private var shortcut: String?
     private var hovered = false
 
-    private let fill = NSView()
+    /// The selected tab's capsule, in glass where the system has it.
+    ///
+    /// Two things had to be right for it to read: a glass view refracts what
+    /// is behind it and needs a light tint to come out lighter than a dark
+    /// bar rather than darker, and a border must not be set on its layer —
+    /// that layer is a plain rectangle, so the hairline came out as a box
+    /// around the capsule instead of following it. Glass carries its own
+    /// edge; it does not want one drawn on.
+    private let fill: NSView = Glass.lozenge(cornerRadius: 12) ?? NSView()
+    private let fillIsGlass = Glass.isAvailable
     private let label = NSTextField(labelWithString: "")
     private let shortcutLabel = NSTextField(labelWithString: "")
     private let closeButton = NSButton()
 
     /// How much of the row the fill leaves alone, so a tab reads as a shape
     /// inside the titlebar rather than as a full-height block.
-    private let verticalInset: CGFloat = 10
-    private let horizontalInset: CGFloat = 3
+    private let verticalInset: CGFloat = 11
+    private let horizontalInset: CGFloat = 4
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
 
         fill.wantsLayer = true
-        fill.layer?.cornerRadius = 6
-        fill.layer?.cornerCurve = .continuous
+        if !fillIsGlass { fill.layer?.cornerCurve = .continuous }
         addSubview(fill)
 
         label.font = .systemFont(ofSize: 12)
@@ -232,6 +273,16 @@ private final class TabCellView: NSView {
     override func layout() {
         super.layout()
         fill.frame = bounds.insetBy(dx: horizontalInset, dy: verticalInset)
+        // A capsule, not a rounded rectangle: the radius is half the height,
+        // which is the shape a tab lozenge has.
+        // A capsule: the radius is half the height, which is the shape a tab
+        // lozenge has.
+        let radius = fill.frame.height / 2
+        if fillIsGlass {
+            Glass.setCornerRadius(fill, radius)
+        } else {
+            fill.layer?.cornerRadius = radius
+        }
         // The number is a hint, not a control: it steps aside when a tab is
         // too narrow to carry both it and a readable title.
         shortcutLabel.isHidden = shortcut == nil || bounds.width < 160
@@ -254,11 +305,22 @@ private final class TabCellView: NSView {
         label.textColor = item.isActive ? palette.text : palette.dimText
 
         // Only the selected tab is painted. The rest are text on the chrome,
-        // and hovering one hints at it without claiming to be it.
-        let background: NSColor = item.isActive
-            ? palette.selectedFill
-            : (hovered ? palette.hoverFill : .clear)
-        fill.layer?.backgroundColor = background.cgColor
+        // and hovering one hints at it without claiming to be it. On glass
+        // the lozenge is simply present or absent — refraction is the
+        // highlight, so painting a colour under it as well would muddy it.
+        if fillIsGlass {
+            // Present or absent, tinted rather than painted: refraction is
+            // the highlight, and a tint is how it is aimed lighter.
+            fill.isHidden = !item.isActive && !hovered
+            Glass.tint(fill, item.isActive ? palette.glassTint : palette.hoverFill)
+        } else {
+            fill.layer?.borderWidth = item.isActive ? 1 : 0
+            fill.layer?.borderColor = palette.edge.cgColor
+            let background: NSColor = item.isActive
+                ? palette.selectedFill
+                : (hovered ? palette.hoverFill : .clear)
+            fill.layer?.backgroundColor = background.cgColor
+        }
 
         shortcutLabel.stringValue = shortcut ?? ""
         shortcutLabel.textColor = palette.dimText

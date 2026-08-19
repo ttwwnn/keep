@@ -24,7 +24,9 @@ final class PickerView: NSView {
     private let table = NSTableView()
     private let preview = NSTextView()
     private let previewScroll = NSScrollView()
-    private let card = NSVisualEffectView()
+    /// What the card holds; the card itself is glass around it.
+    private let cardContent = NSView()
+    private var card: NSView!
     /// "3 of 47", the way a browser counts.
     private let counter = NSTextField(labelWithString: "")
 
@@ -44,13 +46,7 @@ final class PickerView: NSView {
         // A dimmed ground, so the terminal behind reads as "not now".
         layer?.backgroundColor = NSColor.black.withAlphaComponent(0.35).cgColor
 
-        card.material = .hudWindow
-        card.blendingMode = .withinWindow
-        card.state = .active
-        card.wantsLayer = true
-        card.layer?.cornerRadius = 10
-        card.layer?.borderWidth = 1
-        card.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
+        card = Glass.panel(cardContent, cornerRadius: 14)
         card.translatesAutoresizingMaskIntoConstraints = false
         addSubview(card)
 
@@ -61,18 +57,18 @@ final class PickerView: NSView {
         field.focusRingType = .none
         field.delegate = self
         field.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(field)
+        cardContent.addSubview(field)
 
         counter.font = .systemFont(ofSize: 11)
         counter.textColor = .tertiaryLabelColor
         counter.alignment = .right
         counter.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(counter)
+        cardContent.addSubview(counter)
 
         let divider = NSBox()
         divider.boxType = .separator
         divider.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(divider)
+        cardContent.addSubview(divider)
 
         table.headerView = nil
         table.rowHeight = 34
@@ -89,7 +85,7 @@ final class PickerView: NSView {
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(scroll)
+        cardContent.addSubview(scroll)
 
         preview.isEditable = false
         preview.isSelectable = false
@@ -101,12 +97,12 @@ final class PickerView: NSView {
         previewScroll.drawsBackground = false
         previewScroll.hasVerticalScroller = false
         previewScroll.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(previewScroll)
+        cardContent.addSubview(previewScroll)
 
         let previewDivider = NSBox()
         previewDivider.boxType = .separator
         previewDivider.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(previewDivider)
+        cardContent.addSubview(previewDivider)
 
         NSLayoutConstraint.activate([
             card.centerXAnchor.constraint(equalTo: centerXAnchor),
@@ -114,29 +110,29 @@ final class PickerView: NSView {
             card.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.66),
             card.heightAnchor.constraint(equalTo: heightAnchor, multiplier: 0.62),
 
-            field.topAnchor.constraint(equalTo: card.topAnchor, constant: 14),
-            field.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+            field.topAnchor.constraint(equalTo: cardContent.topAnchor, constant: 14),
+            field.leadingAnchor.constraint(equalTo: cardContent.leadingAnchor, constant: 16),
             field.trailingAnchor.constraint(equalTo: counter.leadingAnchor, constant: -10),
             counter.centerYAnchor.constraint(equalTo: field.centerYAnchor),
-            counter.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
+            counter.trailingAnchor.constraint(equalTo: cardContent.trailingAnchor, constant: -16),
 
             divider.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 12),
-            divider.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-            divider.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            divider.leadingAnchor.constraint(equalTo: cardContent.leadingAnchor),
+            divider.trailingAnchor.constraint(equalTo: cardContent.trailingAnchor),
 
             scroll.topAnchor.constraint(equalTo: divider.bottomAnchor),
-            scroll.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            scroll.heightAnchor.constraint(equalTo: card.heightAnchor, multiplier: 0.54),
+            scroll.leadingAnchor.constraint(equalTo: cardContent.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: cardContent.trailingAnchor),
+            scroll.heightAnchor.constraint(equalTo: cardContent.heightAnchor, multiplier: 0.54),
 
             previewDivider.topAnchor.constraint(equalTo: scroll.bottomAnchor),
-            previewDivider.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-            previewDivider.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            previewDivider.leadingAnchor.constraint(equalTo: cardContent.leadingAnchor),
+            previewDivider.trailingAnchor.constraint(equalTo: cardContent.trailingAnchor),
 
             previewScroll.topAnchor.constraint(equalTo: previewDivider.bottomAnchor),
-            previewScroll.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-            previewScroll.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            previewScroll.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            previewScroll.leadingAnchor.constraint(equalTo: cardContent.leadingAnchor),
+            previewScroll.trailingAnchor.constraint(equalTo: cardContent.trailingAnchor),
+            previewScroll.bottomAnchor.constraint(equalTo: cardContent.bottomAnchor),
         ])
     }
 
