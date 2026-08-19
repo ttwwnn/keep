@@ -66,13 +66,13 @@ pub fn attach(socket: &std::path::Path, name: &str, tab: u32) -> Result<Outcome>
                 if let Some(pos) = buf[..n].iter().position(|b| *b == DETACH_BYTE) {
                     // Forward whatever preceded the detach key, then stop.
                     if pos > 0 {
-                        let _ = ClientMsg::Input(buf[..pos].to_vec()).write(&mut input_sock);
+                        let _ = ClientMsg::write_input(&mut input_sock, &buf[..pos]);
                     }
                     input_flag.store(true, Ordering::Release);
                     let _ = input_sock.shutdown(std::net::Shutdown::Both);
                     break;
                 }
-                if ClientMsg::Input(buf[..n].to_vec()).write(&mut input_sock).is_err() {
+                if ClientMsg::write_input(&mut input_sock, &buf[..n]).is_err() {
                     break;
                 }
             }
@@ -102,20 +102,26 @@ pub fn attach(socket: &std::path::Path, name: &str, tab: u32) -> Result<Outcome>
         })
         .context("spawn resize thread")?;
 
-    // daemon -> stdout
-    let mut stdout = std::io::stdout();
+    // daemon -> stdout. Locked once for the whole loop: `stdout()` takes the
+    // process-wide handle on every call, and this loop runs once per chunk of
+    // terminal output.
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    // Reported after the lock is released — the raw-mode guard writes to
+    // stdout on its way out.
+    let mut failure: Option<String> = None;
     let outcome = loop {
         match ServerMsg::read(&mut sock) {
             Ok(Some(ServerMsg::Repaint(data))) | Ok(Some(ServerMsg::Output(data))) => {
-                stdout.write_all(&data)?;
-                stdout.flush()?;
+                out.write_all(&data)?;
+                out.flush()?;
             }
             // Which tab we landed on; the caller asked for TAB_ANY.
             Ok(Some(ServerMsg::Attached { .. })) => continue,
             Ok(Some(ServerMsg::Ended)) => break Outcome::Ended,
             Ok(Some(ServerMsg::Error(msg))) => {
-                drop(_raw);
-                anyhow::bail!("{msg}");
+                failure = Some(msg);
+                break Outcome::Ended;
             }
             Ok(Some(_)) => continue,
             Ok(None) | Err(_) => {
@@ -127,6 +133,12 @@ pub fn attach(socket: &std::path::Path, name: &str, tab: u32) -> Result<Outcome>
             }
         }
     };
+    drop(out);
+
+    if let Some(msg) = failure {
+        drop(_raw);
+        anyhow::bail!("{msg}");
+    }
 
     Ok(outcome)
 }

@@ -5,7 +5,7 @@
 //! screen bytes, so the useful properties are a small dependency surface and
 //! framing that cannot desynchronise, not extensibility.
 
-use std::io::{self, Read, Write};
+use std::io::{self, IoSlice, Read, Write};
 
 /// Refuse absurd frames rather than trying to allocate them.
 pub const MAX_FRAME: usize = 16 * 1024 * 1024;
@@ -176,8 +176,27 @@ fn write_frame(w: &mut impl Write, tag: u8, payload: &[u8]) -> io::Result<()> {
     let mut head = [0u8; 5];
     head[0] = tag;
     head[1..].copy_from_slice(&(payload.len() as u32).to_be_bytes());
-    w.write_all(&head)?;
-    w.write_all(payload)?;
+    if payload.is_empty() {
+        w.write_all(&head)?;
+        return w.flush();
+    }
+    // Header and payload leave in one syscall. Two `write_all`s would double
+    // the syscall count on the path that carries every byte of terminal
+    // output. A vectored write may still go short, so finish it by hand
+    // rather than assuming it wrote everything.
+    let total = head.len() + payload.len();
+    let mut done = 0usize;
+    while done < total {
+        let n = if done < head.len() {
+            w.write_vectored(&[IoSlice::new(&head[done..]), IoSlice::new(payload)])?
+        } else {
+            w.write(&payload[done - head.len()..])?
+        };
+        if n == 0 {
+            return Err(io::ErrorKind::WriteZero.into());
+        }
+        done += n;
+    }
     w.flush()
 }
 
@@ -199,6 +218,14 @@ fn read_frame(r: &mut impl Read) -> io::Result<Option<(u8, Vec<u8>)>> {
 }
 
 impl ClientMsg {
+    /// Write an input frame straight from borrowed bytes.
+    ///
+    /// Equivalent to writing [`ClientMsg::Input`], without owning the bytes to
+    /// do it — which on a paste means not copying the whole clipboard first.
+    pub fn write_input(w: &mut impl Write, data: &[u8]) -> io::Result<()> {
+        write_frame(w, T_INPUT, data)
+    }
+
     pub fn write(&self, w: &mut impl Write) -> io::Result<()> {
         let mut b = Buf::new();
         let tag = match self {
@@ -224,10 +251,10 @@ impl ClientMsg {
                 b.u32(*tab);
                 T_CLOSE_TAB
             }
-            ClientMsg::Input(data) => {
-                b.bytes(data);
-                T_INPUT
-            }
+            // The frame header already carries the length, so a blob payload
+            // goes straight out instead of through `Buf`. That spare copy
+            // would otherwise land on every byte typed or pasted.
+            ClientMsg::Input(data) => return write_frame(w, T_INPUT, data),
             ClientMsg::Resize { cols, rows } => {
                 b.u16(*cols);
                 b.u16(*rows);
@@ -243,6 +270,11 @@ impl ClientMsg {
 
     pub fn read(r: &mut impl Read) -> io::Result<Option<Self>> {
         let Some((tag, payload)) = read_frame(r)? else { return Ok(None) };
+        // A blob payload *is* the frame, so move the buffer rather than
+        // copying it out of itself.
+        if tag == T_INPUT {
+            return Ok(Some(ClientMsg::Input(payload)));
+        }
         let mut c = Cursor(&payload);
         let msg = match tag {
             T_LIST => ClientMsg::List,
@@ -265,7 +297,6 @@ impl ClientMsg {
                 }
             }
             T_CLOSE_TAB => ClientMsg::CloseTab { workspace: c.str()?, tab: c.u32()? },
-            T_INPUT => ClientMsg::Input(c.bytes()?),
             T_RESIZE => ClientMsg::Resize { cols: c.u16()?, rows: c.u16()? },
             T_KILL => ClientMsg::Kill { workspace: c.str()? },
             _ => return Err(bad("unknown client tag")),
@@ -275,6 +306,16 @@ impl ClientMsg {
 }
 
 impl ServerMsg {
+    /// Write an output frame straight from borrowed bytes.
+    ///
+    /// The daemon hands one chunk to every client watching a tab, all sharing
+    /// the same allocation. Building a [`ServerMsg::Output`] to write it would
+    /// undo that by copying the chunk once per client — which is the cost the
+    /// sharing exists to avoid.
+    pub fn write_output(w: &mut impl Write, data: &[u8]) -> io::Result<()> {
+        write_frame(w, T_OUTPUT, data)
+    }
+
     pub fn write(&self, w: &mut impl Write) -> io::Result<()> {
         let mut b = Buf::new();
         let tag = match self {
@@ -305,14 +346,10 @@ impl ServerMsg {
                 b.u32(*tab);
                 T_TAB_CREATED
             }
-            ServerMsg::Repaint(data) => {
-                b.bytes(data);
-                T_REPAINT
-            }
-            ServerMsg::Output(data) => {
-                b.bytes(data);
-                T_OUTPUT
-            }
+            // As with `ClientMsg::Input`: the frame is the payload, and this
+            // is the path every byte the terminal produces travels down.
+            ServerMsg::Repaint(data) => return write_frame(w, T_REPAINT, data),
+            ServerMsg::Output(data) => return write_frame(w, T_OUTPUT, data),
             ServerMsg::Error(msg) => {
                 b.str(msg);
                 T_ERROR
@@ -325,6 +362,12 @@ impl ServerMsg {
 
     pub fn read(r: &mut impl Read) -> io::Result<Option<Self>> {
         let Some((tag, payload)) = read_frame(r)? else { return Ok(None) };
+        if tag == T_OUTPUT {
+            return Ok(Some(ServerMsg::Output(payload)));
+        }
+        if tag == T_REPAINT {
+            return Ok(Some(ServerMsg::Repaint(payload)));
+        }
         let mut c = Cursor(&payload);
         let msg = match tag {
             T_WORKSPACES => {
@@ -353,8 +396,6 @@ impl ServerMsg {
             }
             T_ATTACHED => ServerMsg::Attached { tab: c.u32()? },
             T_TAB_CREATED => ServerMsg::TabCreated { tab: c.u32()? },
-            T_REPAINT => ServerMsg::Repaint(c.bytes()?),
-            T_OUTPUT => ServerMsg::Output(c.bytes()?),
             T_ERROR => ServerMsg::Error(c.str()?),
             T_OK => ServerMsg::Ok,
             T_ENDED => ServerMsg::Ended,
@@ -505,6 +546,28 @@ mod tests {
             ],
         };
         assert_eq!(s.clients(), 3);
+    }
+
+    /// A blob payload is the frame and nothing else.
+    ///
+    /// The frame header already carries the length, so a second one inside the
+    /// payload buys nothing and costs a copy of every byte of terminal output.
+    /// This pins that: 5 bytes of header, then the data.
+    #[test]
+    fn blob_frames_carry_no_second_length() {
+        let mut buf = Vec::new();
+        ServerMsg::Output(vec![7u8; 1000]).write(&mut buf).unwrap();
+        assert_eq!(buf.len(), 5 + 1000, "output frame is not header + payload");
+        assert_eq!(&buf[5..], &[7u8; 1000][..]);
+
+        let mut buf = Vec::new();
+        ClientMsg::Input(vec![9u8; 40]).write(&mut buf).unwrap();
+        assert_eq!(buf.len(), 5 + 40, "input frame is not header + payload");
+
+        // The borrowed writers must produce the very same bytes.
+        let mut borrowed = Vec::new();
+        ClientMsg::write_input(&mut borrowed, &[9u8; 40]).unwrap();
+        assert_eq!(borrowed, buf);
     }
 
     /// Framing must survive several messages back to back on one stream.

@@ -8,7 +8,7 @@
 
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
@@ -18,6 +18,16 @@ use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system}
 /// How much we read from the PTY per syscall.
 const READ_CHUNK: usize = 64 * 1024;
 
+/// How many chunks may sit unread for one client before the daemon stops
+/// queueing for it.
+///
+/// The queue has to have a ceiling. A client whose socket has stopped draining
+/// — a minimised window, a machine gone to sleep — would otherwise make the
+/// daemon buffer everything its tab produces, and a tab can produce output far
+/// faster than a stalled client reads it. What replaces the queue is not a hole
+/// in the stream but a repaint; see [`Attachment::resync`].
+const CLIENT_BACKLOG: usize = 64;
+
 /// Screen state and the clients watching it.
 ///
 /// These live under one lock on purpose: attaching must take a snapshot and
@@ -25,7 +35,10 @@ const READ_CHUNK: usize = 64 * 1024;
 /// produced between the two, or replays output the snapshot already contains.
 struct Subscriber {
     id: u64,
-    tx: Sender<Vec<u8>>,
+    tx: SyncSender<Arc<[u8]>>,
+    /// Set when this client was too far behind to be handed a chunk. It is
+    /// repaid with the whole screen rather than a stream missing a piece.
+    overflowed: Arc<AtomicBool>,
 }
 
 struct Inner {
@@ -55,9 +68,35 @@ pub struct Tab {
 /// reporting a client that left minutes ago.
 pub struct Attachment {
     /// Output produced after the snapshot.
-    pub output: Receiver<Vec<u8>>,
+    pub output: Receiver<Arc<[u8]>>,
     inner: Arc<Mutex<Inner>>,
     id: u64,
+    overflowed: Arc<AtomicBool>,
+}
+
+impl Attachment {
+    /// Whether the daemon had to drop output because this client fell behind.
+    pub fn overflowed(&self) -> bool {
+        self.overflowed.load(Ordering::Acquire)
+    }
+
+    /// Recover from a drop: discard what is queued and return the whole screen
+    /// in its place.
+    ///
+    /// Both steps happen under the tab's lock — the same one the reader holds
+    /// while it updates the grid and enqueues. That is what makes this exact
+    /// rather than approximate: nothing can be enqueued between the drain and
+    /// the snapshot, so the screen returned accounts for every byte the tab has
+    /// produced, including the ones this client never received.
+    pub fn resync(&self) -> Result<Vec<u8>> {
+        let guard = self.inner.lock().map_err(|_| anyhow::anyhow!("tab poisoned"))?;
+        while self.output.try_recv().is_ok() {}
+        self.overflowed.store(false, Ordering::Release);
+        guard
+            .terminal
+            .snapshot(Format::Vt)
+            .map_err(|e| anyhow::anyhow!("snapshot: {e}"))
+    }
 }
 
 impl Drop for Attachment {
@@ -106,9 +145,22 @@ impl Tab {
                     };
                     let Ok(mut guard) = sink.lock() else { break };
                     guard.terminal.write(&buf[..n]);
-                    // Drop clients whose receiver is gone.
-                    let chunk = &buf[..n];
-                    guard.subscribers.retain(|s| s.tx.send(chunk.to_vec()).is_ok());
+                    // One allocation for the whole fan-out: every client gets a
+                    // handle to the same bytes rather than its own copy of a
+                    // chunk that can be 64 KiB.
+                    let chunk: Arc<[u8]> = Arc::from(&buf[..n]);
+                    guard.subscribers.retain(|s| match s.tx.try_send(Arc::clone(&chunk)) {
+                        Ok(()) => true,
+                        // A client that cannot keep up keeps its slot. Blocking
+                        // here would stall the parse — and with it every other
+                        // client — for the sake of the slowest one.
+                        Err(TrySendError::Full(_)) => {
+                            s.overflowed.store(true, Ordering::Release);
+                            true
+                        }
+                        // Drop clients whose receiver is gone.
+                        Err(TrySendError::Disconnected(_)) => false,
+                    });
                 }
                 done.store(true, Ordering::Release);
                 // Dropping the senders lets attached clients notice the end.
@@ -139,12 +191,13 @@ impl Tab {
             .terminal
             .snapshot(Format::Vt)
             .map_err(|e| anyhow::anyhow!("snapshot: {e}"))?;
-        let (tx, rx) = channel();
+        let (tx, rx) = sync_channel(CLIENT_BACKLOG);
         let id = guard.next_id;
         guard.next_id += 1;
-        guard.subscribers.push(Subscriber { id, tx });
+        let overflowed = Arc::new(AtomicBool::new(false));
+        guard.subscribers.push(Subscriber { id, tx, overflowed: Arc::clone(&overflowed) });
         drop(guard);
-        Ok((repaint, Attachment { output: rx, inner: Arc::clone(&self.inner), id }))
+        Ok((repaint, Attachment { output: rx, inner: Arc::clone(&self.inner), id, overflowed }))
     }
 
     /// Forward client input to the child.

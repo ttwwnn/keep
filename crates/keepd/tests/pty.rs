@@ -208,3 +208,49 @@ fn busy_tracks_the_foreground_command() {
 
     session.kill().ok();
 }
+
+/// A client that stops reading must not be able to grow the daemon without
+/// bound — and must not be handed a stream with a hole in it either.
+///
+/// The queue has a ceiling. Once it is full the daemon drops chunks for that
+/// client and records the fact; what the client gets in their place is the
+/// whole screen, which is authoritative in a way the missing bytes were not.
+#[test]
+fn a_client_that_stops_reading_is_repainted_not_starved() {
+    let session = Tab::spawn(shell(), 60, 20).expect("spawn");
+
+    // Attach and then never touch `output`: this stands in for a client whose
+    // socket has stopped draining.
+    let (_repaint, attachment) = session.attach().expect("attach");
+    assert!(!attachment.overflowed(), "a fresh attachment has dropped nothing");
+
+    // Far more output than the backlog can hold.
+    session.send(b"seq 1 200000\n").expect("send");
+    assert!(
+        wait_for(Duration::from_secs(20), || attachment.overflowed()),
+        "the queue never filled, so the drop path was never exercised"
+    );
+
+    // The grid keeps up regardless: falling behind costs the client its queued
+    // chunks, never the tab's own state.
+    session.send(b"echo sentinel$((7+6))\n").expect("send");
+    assert!(
+        wait_for(Duration::from_secs(20), || screen_contains(&session, "sentinel13")),
+        "the tab stopped tracking its own screen: {:?}",
+        session.screen_text()
+    );
+
+    let screen = attachment.resync().expect("resync");
+    assert!(
+        String::from_utf8_lossy(&screen).contains("sentinel13"),
+        "the repaint missed output produced while the client was behind"
+    );
+    assert!(!attachment.overflowed(), "resync left the client still marked behind");
+    assert!(
+        attachment.output.try_recv().is_err(),
+        "resync left stale chunks queued behind the repaint"
+    );
+
+    assert_eq!(session.attached_clients(), 1, "falling behind must not unsubscribe");
+    session.kill().ok();
+}

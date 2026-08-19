@@ -178,9 +178,25 @@ fn attach(
         .name("keepd-pump".into())
         .spawn(move || {
             loop {
+                // A client the daemon had to drop output for is handed the
+                // screen whole. Forwarding the rest of the stream instead
+                // would leave it painting on top of a gap it cannot see.
+                if attachment.overflowed() {
+                    match attachment.resync() {
+                        Ok(screen) => {
+                            if ServerMsg::Repaint(screen).write(&mut writer).is_err() {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                    continue;
+                }
                 match attachment.output.recv_timeout(Duration::from_millis(200)) {
                     Ok(chunk) => {
-                        if ServerMsg::Output(chunk).write(&mut writer).is_err() {
+                        // Borrowed, not owned: this chunk is shared with every
+                        // other client watching the tab.
+                        if ServerMsg::write_output(&mut writer, &chunk).is_err() {
                             break;
                         }
                     }
