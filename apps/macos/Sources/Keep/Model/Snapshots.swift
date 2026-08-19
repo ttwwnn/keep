@@ -20,11 +20,67 @@ struct SidebarState: Hashable, Codable {
     static let initial = SidebarState(isCollapsed: false, width: 220)
 }
 
-/// One pane beyond a tab's root, in daemon order.
+/// One pane beyond a tab's root, in daemon (creation) order.
 struct PaneState: Hashable {
     let tab: UInt32
+    /// The pane this one was split off from — the root, or another pane.
+    let splitOf: UInt32
     /// Protocol values: 1 = right, 2 = down.
     let splitDir: UInt8
+}
+
+/// How a tab's panes are arranged.
+///
+/// Splitting replaces the pane you were in with a pair: that pane and the new
+/// one, side by side or stacked. Do it again on either half and that half is
+/// replaced in turn — so an arrangement is a tree, and a tab that mixes
+/// directions is the ordinary case rather than the exotic one.
+///
+/// The daemon has recorded this all along (each pane knows which pane it was
+/// split from, and in which direction); this rebuilds the shape from those
+/// records.
+indirect enum PaneTree: Hashable {
+    case leaf(UInt32)
+    /// `vertical` is the divider's orientation: vertical divider = side by
+    /// side, which is what "split right" means.
+    case split(vertical: Bool, PaneTree, PaneTree)
+
+    static func build(root: UInt32, panes: [PaneState]) -> PaneTree {
+        var tree = PaneTree.leaf(root)
+        // Creation order matters: a pane can only be split off something that
+        // already exists, so replaying in order rebuilds the exact shape.
+        for pane in panes {
+            tree = tree.replacing(
+                leaf: pane.splitOf,
+                with: .split(
+                    vertical: pane.splitDir != 2,
+                    .leaf(pane.splitOf),
+                    .leaf(pane.tab)
+                )
+            )
+        }
+        return tree
+    }
+
+    private func replacing(leaf target: UInt32, with subtree: PaneTree) -> PaneTree {
+        switch self {
+        case .leaf(let id):
+            return id == target ? subtree : self
+        case .split(let vertical, let first, let second):
+            return .split(
+                vertical: vertical,
+                first.replacing(leaf: target, with: subtree),
+                second.replacing(leaf: target, with: subtree)
+            )
+        }
+    }
+
+    var leaves: [UInt32] {
+        switch self {
+        case .leaf(let id): return [id]
+        case .split(_, let first, let second): return first.leaves + second.leaves
+        }
+    }
 }
 
 /// The one downward channel. Every mutation in the app enters as one of

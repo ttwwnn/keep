@@ -44,7 +44,8 @@ apps/macos/Sources/Keep/
 │   ├── Daemon.swift              wire protocol + Daemon.Tab/Workspace models
 │   └── DaemonPoller.swift        2 s timer → Session.reconcile
 ├── Model/                        layers 4–5 — no AppKit import
-│   ├── Snapshots.swift           TabID, SidebarState, PaneState, Intent, *Snapshot
+│   ├── Snapshots.swift           TabID, SidebarState, PaneState, PaneTree,
+│   │                              Intent, *Snapshot
 │   ├── TabEntity.swift           layer 4: one per daemon root tab
 │   ├── WorkspaceEntity.swift     layer 5: tab order, active tab, status
 │   ├── Session.swift             layer-5 root: single writer, replaces Store
@@ -172,6 +173,15 @@ the original per-tab spec, made after living with it.
 → Session updates the active ids — the outgoing entity needs no freezing,
 since nothing sends a deactivated entity messages → `render` → pipeline. A workspace click resolves to that workspace's remembered
 active tab and joins the identical path.
+
+**Split a pane** (⌘D right, ⌘⇧D down): `dispatch(.split(dir))` → Session asks
+the daemon for a tab split off the *focused* pane → reconcile → render. The
+arrangement is a tree: splitting replaces the pane you were in with a pair,
+and doing it again on either half replaces that half in turn. `PaneTree`
+rebuilds that shape from the daemon's records (each pane knows which pane it
+came from and in which direction), and the UI renders it as nested split
+views — one `NSSplitView` has one orientation, so a flat list would force the
+whole tab to share whichever direction came first.
 
 **Return to the previous tab**: identical dispatch; every step is a cache hit.
 The host is still mounted, surfaces alive, Metal layers holding their last

@@ -27,7 +27,9 @@ final class TabEntity {
     func apply(root: Daemon.Tab, panes daemonPanes: [Daemon.Tab]) -> Bool {
         let newTitle = root.label
         let newBusy = root.busy || daemonPanes.contains { $0.busy }
-        let newPanes = daemonPanes.map { PaneState(tab: $0.id, splitDir: $0.splitDir) }
+        let newPanes = daemonPanes.map {
+            PaneState(tab: $0.id, splitOf: $0.splitOf, splitDir: $0.splitDir)
+        }
         let changed = newTitle != title || newBusy != busy || newPanes != panes
         title = newTitle
         busy = newBusy

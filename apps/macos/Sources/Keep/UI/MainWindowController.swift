@@ -154,7 +154,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         } else {
             // Same tab: apply what changed around it.
             let host = container.host(for: active)
-            host.apply(panes: active.panes)
+            host.apply(root: active.id.root, panes: active.panes)
             host.setFocusedPane(active.focusedPane)
             if applied?.active?.focusedPane != active.focusedPane,
                 let surface = host.surface(for: active.focusedPane),
@@ -203,7 +203,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
         // 2. Arrangement and layout while still hidden (hidden views lay out
         //    fine; surface sizes flush on unhide).
-        incoming.apply(panes: active.panes)
+        incoming.apply(root: active.id.root, panes: active.panes)
         incoming.setFocusedPane(active.focusedPane)
         incoming.frame = container.bounds
         incoming.layoutSubtreeIfNeeded()
