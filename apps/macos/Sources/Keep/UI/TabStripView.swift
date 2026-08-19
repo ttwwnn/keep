@@ -81,17 +81,26 @@ final class TabStripView: NSView {
             addSubview(cell)
             cells.append(cell)
         }
-        for (cell, item) in zip(cells, items) {
-            cell.apply(item, palette: Palette.current)
-        }
+        applyCells()
         needsLayout = true
     }
 
     private func retint() {
-        for (cell, item) in zip(cells, items) {
-            cell.apply(item, palette: Palette.current)
-        }
+        applyCells()
         newTabButton.contentTintColor = Palette.current.title.withAlphaComponent(0.55)
+    }
+
+    private func applyCells() {
+        let palette = Palette.current
+        for (index, cell) in cells.enumerated() {
+            let item = items[index]
+            // A separator belongs between two tabs, not at the ends of the
+            // row, and not beside the selected one — its own edge already
+            // reads as a boundary.
+            let next = index + 1 < items.count ? items[index + 1] : nil
+            let separator = next.map { !item.isActive && !$0.isActive } ?? false
+            cell.apply(item, palette: palette, trailingSeparator: separator)
+        }
     }
 
     override func layout() {
@@ -104,9 +113,18 @@ final class TabStripView: NSView {
         guard !cells.isEmpty else { return }
         let left = leadingClearance
         let available = max(0, bounds.width - left - plusWidth - 8)
-        let width = min(220, max(60, available / CGFloat(cells.count)))
-        for (index, cell) in cells.enumerated() {
-            cell.frame = NSRect(x: left + CGFloat(index) * width, y: 0, width: width, height: height)
+        // Tabs fill the row rather than sitting in a corner of it, which is
+        // what every native tab bar does and what made a lone tab look like a
+        // stray button. They only stop growing when there is more room than a
+        // title can use.
+        let width = max(60, min(available, available / CGFloat(cells.count)))
+        var x = left
+        for cell in cells {
+            // Whole pixels: a hairline on a half-pixel boundary renders as a
+            // soft grey smear instead of a line.
+            let next = (x + width).rounded()
+            cell.frame = NSRect(x: x.rounded(), y: 0, width: next - x.rounded(), height: height)
+            x = next
         }
     }
 
@@ -147,6 +165,8 @@ private final class TabCellView: NSView {
     var onClose: ((TabID) -> Void)?
 
     private var item: SessionSnapshot.StripItem?
+    private var palette: TabStripView.Palette?
+    private var showsSeparator = false
     private var hovered = false
     private let label = NSTextField(labelWithString: "")
     private let closeButton = NSButton()
@@ -200,8 +220,14 @@ private final class TabCellView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not supported") }
 
-    func apply(_ item: SessionSnapshot.StripItem, palette: TabStripView.Palette) {
+    func apply(
+        _ item: SessionSnapshot.StripItem,
+        palette: TabStripView.Palette,
+        trailingSeparator: Bool = false
+    ) {
         self.item = item
+        self.palette = palette
+        showsSeparator = trailingSeparator
         var title = item.title
         if item.hasPanes { title += "  ⊞" }
         if item.busy { title = "✳ \(title)" }
@@ -213,12 +239,29 @@ private final class TabCellView: NSView {
         layer?.backgroundColor = item.isActive
             ? nil
             : (hovered ? palette.hoverOverlay : palette.unselectedOverlay).cgColor
+        hairline.isHidden = !showsSeparator
         hairline.layer?.backgroundColor = palette.hairline.cgColor
         closeButton.contentTintColor = palette.title.withAlphaComponent(0.7)
+        closeButton.isHidden = !hovered
         setAccessibilityLabel(title)
         toolTip = item.title
     }
 
+    override func mouseEntered(with event: NSEvent) {
+        guard !hovered else { return }
+        hovered = true
+        refresh()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        guard hovered else { return }
+        hovered = false
+        refresh()
+    }
+
+    /// Cells are reused and resized as tabs come and go, and a cell that
+    /// moves out from under the pointer is never sent `mouseExited`. Asking
+    /// where the mouse actually is settles it.
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         for area in trackingAreas { removeTrackingArea(area) }
@@ -227,22 +270,20 @@ private final class TabCellView: NSView {
             options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
             owner: self
         ))
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        hovered = true
-        closeButton.isHidden = false
-        refresh()
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        hovered = false
-        closeButton.isHidden = true
-        refresh()
+        let inside = window.map { window -> Bool in
+            let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+            return bounds.contains(point)
+        } ?? false
+        if inside != hovered {
+            hovered = inside
+            refresh()
+        }
     }
 
     private func refresh() {
-        if let item { apply(item, palette: .current) }
+        if let item, let palette {
+            apply(item, palette: palette, trailingSeparator: showsSeparator)
+        }
     }
 
     override func mouseDown(with event: NSEvent) {
