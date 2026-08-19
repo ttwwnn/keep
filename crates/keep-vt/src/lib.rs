@@ -243,7 +243,10 @@ impl Terminal {
                 modes: false,
                 scrolling_region: false,
                 tabstops: false,
-                pwd: false,
+                // The directory the shell announced. A client that attaches
+                // learns it from the snapshot rather than waiting for the next
+                // prompt, which is what decides where a new tab opens.
+                pwd: true,
                 keyboard: false,
                 screen: extra_screen,
             },
