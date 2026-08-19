@@ -817,12 +817,55 @@ private final class VeilView: NSView {
 /// pane had one. It is the only part of a terminal that is not the terminal:
 /// everywhere else the mouse belongs to the program inside, so a pane cannot
 /// be picked up by its middle without taking selection away.
+///
+/// Made of the same thing as the chrome's other controls — untinted glass at
+/// rest, which refracts into a quiet well, and tinted under the pointer.
 final class GripView: NSView {
     var onEvent: ((NSEvent, Phase) -> Void)?
-    private var hovered = false { didSet { needsDisplay = true } }
-    private var dragging = false
+    private let ground: NSView = Glass.lozenge(cornerRadius: 7) ?? NSView()
+    private let isGlass = Glass.isAvailable
+    private let dots = DotsView()
+    private var hovered = false { didSet { retint() } }
+    private var dragging = false { didSet { retint() } }
 
     enum Phase { case began, moved, ended }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        ground.wantsLayer = true
+        if !isGlass { ground.layer?.cornerCurve = .continuous }
+        addSubview(ground)
+        addSubview(dots)
+        retint()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    override func layout() {
+        super.layout()
+        ground.frame = bounds
+        dots.frame = bounds
+        let radius = bounds.height / 2
+        if isGlass {
+            Glass.setCornerRadius(ground, radius)
+        } else {
+            ground.layer?.cornerRadius = radius
+        }
+    }
+
+    private func retint() {
+        let palette = TabStripView.Palette.current
+        if isGlass {
+            Glass.tint(ground, hovered || dragging ? palette.glassTint : nil)
+        } else {
+            let strength: CGFloat = dragging ? 0.16 : (hovered ? 0.12 : 0.06)
+            ground.layer?.backgroundColor = NSColor.white
+                .withAlphaComponent(strength).cgColor
+        }
+        dots.strength = dragging ? 0.95 : (hovered ? 0.8 : 0.4)
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -839,34 +882,30 @@ final class GripView: NSView {
     override func mouseDown(with event: NSEvent) {
         dragging = true
         onEvent?(event, .began)
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        guard dragging else { return }
-        onEvent?(event, .moved)
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        guard dragging else { return }
+        // The gesture is run from a nested event loop above this view, which
+        // keeps every event from here on; this view will not hear the mouse
+        // go up, so it stops looking dragged when the loop returns.
         dragging = false
-        onEvent?(event, .ended)
     }
 
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: .openHand)
     }
+}
+
+/// The three dots, over whatever ground the grip is standing on.
+private final class DotsView: NSView {
+    var strength: CGFloat = 0.4 { didSet { needsDisplay = true } }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     override func draw(_ dirtyRect: NSRect) {
-        let strength: CGFloat = dragging ? 0.9 : (hovered ? 0.7 : 0.3)
-        NSColor.white.withAlphaComponent(strength * 0.12).setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2)
-            .fill()
         NSColor.white.withAlphaComponent(strength).setFill()
         let dot: CGFloat = 3
         let gap: CGFloat = 5
         let total = dot * 3 + gap * 2
-        var x = (bounds.width - total) / 2
-        let y = (bounds.height - dot) / 2
+        var x = ((bounds.width - total) / 2).rounded()
+        let y = ((bounds.height - dot) / 2).rounded()
         for _ in 0..<3 {
             NSBezierPath(ovalIn: NSRect(x: x, y: y, width: dot, height: dot)).fill()
             x += dot + gap
