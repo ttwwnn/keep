@@ -307,7 +307,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // With the sidebar collapsed the content starts at the window's left
         // edge, under the traffic lights and the toggle button; the strip
         // clears them. Expanded, the sidebar itself is the clearance.
-        tabStrip.leadingClearance = state.isCollapsed ? 116 : 0
+        //
+        // The toggle ends at 120 in the strip's own coordinates — measured,
+        // not guessed — so anything less puts the first tab underneath it.
+        // A tab's close button sits 12 points into its cell, which is the
+        // same gap the new-tab button keeps from the last tab at the other
+        // end: starting the row exactly where the toggle stops makes the two
+        // ends of the chrome breathe alike.
+        tabStrip.leadingClearance = state.isCollapsed ? 120 : 0
     }
 
     private func dividerMoved() {
