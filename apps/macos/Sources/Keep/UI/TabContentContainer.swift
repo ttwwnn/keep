@@ -69,15 +69,6 @@ final class TabHostView: NSView {
     /// so a report from a hidden tab cannot be mistaken for the active one's.
     var onPaneFocus: ((TabID, UInt32) -> Void)?
 
-    /// How much of itself a pane keeps when the keyboard is elsewhere.
-    ///
-    /// A split with no visible focus leaves you guessing where the next
-    /// keystroke — or the next split — is going to land. Marking the one you
-    /// are in draws a line around it; stepping the others back says the same
-    /// thing without drawing anything, and the thing it says is true of the
-    /// whole pane rather than of its edge.
-    private static let restingOpacity: CGFloat = 0.65
-
     init(id: TabID) {
         self.id = id
         super.init(frame: .zero)
@@ -170,13 +161,7 @@ final class TabHostView: NSView {
     private func applyResting() {
         let many = (tree?.leaves.count ?? 0) > 1
         for (pane, surface) in surfaces {
-            let resting = many && pane != focusedPane
-            let target = resting ? Self.restingOpacity : 1
-            guard surface.alphaValue != target else { continue }
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.12
-                surface.animator().alphaValue = target
-            }
+            surface.isResting = many && pane != focusedPane
         }
     }
 

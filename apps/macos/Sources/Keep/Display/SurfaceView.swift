@@ -365,6 +365,45 @@ final class TerminalSurfaceView: NSView {
         reportGrid()
     }
 
+    // MARK: - resting
+
+    /// A sheet of the terminal's own background colour, laid over the pane
+    /// that does not have the keyboard.
+    ///
+    /// Fading the view itself was the obvious thing and the wrong one: this
+    /// window is translucent, so less opacity means more of what is behind it
+    /// comes through, and a dimmed pane came out lighter than a lit one. The
+    /// background is already this colour, so a veil of it changes nothing
+    /// there and takes the text back — which is the part that was meant to
+    /// step back in the first place.
+    private lazy var restingVeil: NSView = {
+        let veil = VeilView(frame: bounds)
+        veil.wantsLayer = true
+        veil.autoresizingMask = [.width, .height]
+        veil.layer?.backgroundColor = (GhosttyApp.shared.terminalBackground ?? .black).cgColor
+        veil.alphaValue = 0
+        addSubview(veil)
+        return veil
+    }()
+
+    /// How much of the text a pane keeps when the keyboard is elsewhere.
+    private static let veilStrength: CGFloat = 0.5
+
+    var isResting = false {
+        didSet {
+            guard isResting != oldValue else { return }
+            restingVeil.layer?.backgroundColor =
+                (GhosttyApp.shared.terminalBackground ?? .black).cgColor
+            // Kept on top: the size chip is added later and would otherwise
+            // end up underneath the veil that arrives after it.
+            addSubview(restingVeil, positioned: .below, relativeTo: nil)
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.12
+                restingVeil.animator().alphaValue = isResting ? Self.veilStrength : 0
+            }
+        }
+    }
+
     // MARK: - saying how big the pane is
 
     private lazy var sizeBadge: SizeBadgeView = {
@@ -732,4 +771,9 @@ private final class SizeBadgeView: NSView {
         label.stringValue = text
         needsLayout = true
     }
+}
+
+/// The veil never takes a click: it sits over a terminal.
+private final class VeilView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
