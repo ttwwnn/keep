@@ -16,6 +16,7 @@ const T_NEW_TAB: u8 = 0x03;
 const T_RESIZE: u8 = 0x05;
 const T_KILL: u8 = 0x06;
 const T_CLOSE_TAB: u8 = 0x07;
+const T_PREVIEW: u8 = 0x08;
 
 const T_WORKSPACES: u8 = 0x81;
 const T_ERROR: u8 = 0x84;
@@ -23,6 +24,7 @@ const T_OK: u8 = 0x85;
 const T_ENDED: u8 = 0x86;
 const T_ATTACHED: u8 = 0x87;
 const T_TAB_CREATED: u8 = 0x88;
+const T_PREVIEW_TEXT: u8 = 0x89;
 
 // Blob frames carry their payload raw, with no length inside it — the frame
 // header already has one. They were renumbered when that redundant length was
@@ -62,6 +64,10 @@ pub enum ClientMsg {
         split_dir: u8,
     },
     CloseTab { workspace: String, tab: u32 },
+    /// The tab's screen as plain text. For showing what a tab is doing
+    /// without attaching to it — the daemon already holds the grid, so this
+    /// costs a snapshot rather than a client.
+    Preview { workspace: String, tab: u32 },
     Input(Vec<u8>),
     Resize { cols: u16, rows: u16 },
     /// End a whole workspace, tabs and all.
@@ -116,6 +122,9 @@ pub enum ServerMsg {
     Ok,
     /// The tab's child exited.
     Ended,
+    /// The screen a [`ClientMsg::Preview`] asked for. Empty when the tab is
+    /// gone, which the caller shows as nothing rather than as an error.
+    PreviewText(String),
 }
 
 // ---------------------------------------------------------------- encoding
@@ -264,6 +273,11 @@ impl ClientMsg {
                 b.u32(*tab);
                 T_CLOSE_TAB
             }
+            ClientMsg::Preview { workspace, tab } => {
+                b.str(workspace);
+                b.u32(*tab);
+                T_PREVIEW
+            }
             // The frame header already carries the length, so a blob payload
             // goes straight out instead of through `Buf`. That spare copy
             // would otherwise land on every byte typed or pasted.
@@ -310,6 +324,7 @@ impl ClientMsg {
                 }
             }
             T_CLOSE_TAB => ClientMsg::CloseTab { workspace: c.str()?, tab: c.u32()? },
+            T_PREVIEW => ClientMsg::Preview { workspace: c.str()?, tab: c.u32()? },
             T_RESIZE => ClientMsg::Resize { cols: c.u16()?, rows: c.u16()? },
             T_KILL => ClientMsg::Kill { workspace: c.str()? },
             _ => return Err(bad("unknown client tag")),
@@ -367,6 +382,10 @@ impl ServerMsg {
                 b.str(msg);
                 T_ERROR
             }
+            ServerMsg::PreviewText(text) => {
+                b.str(text);
+                T_PREVIEW_TEXT
+            }
             ServerMsg::Ok => T_OK,
             ServerMsg::Ended => T_ENDED,
         };
@@ -410,6 +429,7 @@ impl ServerMsg {
             T_ATTACHED => ServerMsg::Attached { tab: c.u32()? },
             T_TAB_CREATED => ServerMsg::TabCreated { tab: c.u32()? },
             T_ERROR => ServerMsg::Error(c.str()?),
+            T_PREVIEW_TEXT => ServerMsg::PreviewText(c.str()?),
             T_OK => ServerMsg::Ok,
             T_ENDED => ServerMsg::Ended,
             _ => return Err(bad("unknown server tag")),
@@ -483,6 +503,7 @@ mod tests {
             split_dir: SPLIT_DOWN,
         });
         roundtrip_client(ClientMsg::CloseTab { workspace: "proj".into(), tab: 7 });
+        roundtrip_client(ClientMsg::Preview { workspace: "proj".into(), tab: 2 });
         roundtrip_client(ClientMsg::Input(vec![0x1b, b'[', b'A', 0x00, 0xff]));
         roundtrip_client(ClientMsg::Resize { cols: 65535, rows: 1 });
         roundtrip_client(ClientMsg::Kill { workspace: "gone".into() });
@@ -493,6 +514,8 @@ mod tests {
         roundtrip_server(ServerMsg::Ok);
         roundtrip_server(ServerMsg::Ended);
         roundtrip_server(ServerMsg::Error("no such session".into()));
+        roundtrip_server(ServerMsg::PreviewText("$ cargo test\n   ok".into()));
+        roundtrip_server(ServerMsg::PreviewText(String::new()));
         roundtrip_server(ServerMsg::Output(vec![0; 1000]));
         roundtrip_server(ServerMsg::Repaint(b"\x1b[2J\x1b[Hhi".to_vec()));
         roundtrip_server(ServerMsg::Attached { tab: 4 });

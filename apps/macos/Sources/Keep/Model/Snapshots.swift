@@ -104,6 +104,47 @@ enum Intent {
     /// would be written to whichever tab happened to be active.
     case focusPane(TabID, UInt32)
     case setSidebar(SidebarState)     // from the toggle or a divider drag
+    case openPicker
+    case closePicker
+    /// Show what this row is; nil clears the preview.
+    case previewPickerItem(String?)
+    case choosePickerItem(String)
+    /// ⌃D on a row: end what it points at.
+    case dismissPickerItem(String)
+}
+
+/// The flat "go to" list.
+///
+/// Modelled on the picker this replaces, and on the reason its author gave
+/// for it: you do not choose a session and then a window — you choose the
+/// thing and land on it. So there is no hierarchy here. Everything running
+/// is one row, most recently visited first, and below it the places to start
+/// something new.
+struct PickerModel: Hashable {
+    struct Item: Hashable, Identifiable {
+        enum Kind: Hashable {
+            /// A tab that exists, in some workspace.
+            case running(TabID)
+            /// A directory to open a new workspace in.
+            case destination(path: String)
+        }
+        let kind: Kind
+        /// "workspace › title", or the directory's name.
+        let title: String
+        /// The path, or what the tab is doing.
+        let detail: String
+        let busy: Bool
+        var id: String {
+            switch kind {
+            case .running(let tab): return "run:\(tab)"
+            case .destination(let path): return "dir:\(path)"
+            }
+        }
+    }
+
+    var items: [Item]
+    var previewOf: String?
+    var previewText: String
 }
 
 /// Everything layer 6 needs to draw a frame. Pure values: views never appear
@@ -134,6 +175,8 @@ struct SessionSnapshot: Hashable {
     }
 
     var sidebar: SidebarState
+    /// Non-nil while the picker is open.
+    var picker: PickerModel?
     var rows: [SidebarRow]
     var strip: [StripItem]
     var active: ActiveTab?

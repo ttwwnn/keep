@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - menu actions (each one is an intent)
 
     @objc func newTab(_ sender: Any?) { session.dispatch(.newTab(in: nil)) }
+    @objc func goTo(_ sender: Any?) { session.dispatch(.openPicker) }
     @objc func closePane(_ sender: Any?) { session.dispatch(.closePane(nil)) }
     @objc func closeTab(_ sender: Any?) { session.dispatch(.closeTab(nil)) }
     @objc func splitRight(_ sender: Any?) { session.dispatch(.split(1)) }
@@ -105,6 +106,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fileMenu.addItem(closeTabItem)
         fileItem.submenu = fileMenu
         main.addItem(fileItem)
+
+        let goItem = NSMenuItem()
+        let goMenu = NSMenu(title: "Go")
+        goMenu.addItem(withTitle: "Go To…", action: #selector(goTo(_:)), keyEquivalent: "p")
+        goItem.submenu = goMenu
+        main.addItem(goItem)
 
         let viewItem = NSMenuItem()
         let viewMenu = NSMenu(title: "View")

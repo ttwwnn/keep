@@ -31,6 +31,14 @@ final class Session {
     private let sidebarStore = SidebarStateStore()
     private var lastSnapshot: SessionSnapshot?
 
+    // MARK: picker state
+    private var picker: PickerModel?
+    /// Tabs in the order they were last entered, newest first. The daemon
+    /// records no such thing — and it should not, since this is about where
+    /// *you* have been, not about the work.
+    private var recentTabs: [TabID] = []
+    private var destinations: [String] = []
+
     private var activeWorkspace: WorkspaceEntity? {
         workspaces.first { $0.name == activeWorkspaceName }
     }
@@ -253,6 +261,47 @@ final class Session {
         case .setSidebar(let state):
             sidebarStore.save(state)
             publish()
+
+        case .openPicker:
+            picker = PickerModel(items: pickerItems(), previewOf: nil, previewText: "")
+            publish()
+            // zoxide is a process launch; the list opens on what is already
+            // known and grows a moment later rather than waiting for it.
+            loadDestinations()
+
+        case .closePicker:
+            picker = nil
+            publish()
+            renderer?.focusActiveTerminal()
+
+        case .previewPickerItem(let id):
+            guard var open = picker else { return }
+            open.previewOf = id
+            open.previewText = ""
+            picker = open
+            publish()
+            guard let id, let item = open.items.first(where: { $0.id == id }) else { return }
+            if case .running(let tab) = item.kind { loadPreview(of: tab, for: id) }
+
+        case .choosePickerItem(let id):
+            guard let item = picker?.items.first(where: { $0.id == id }) else { return }
+            picker = nil
+            switch item.kind {
+            case .running(let tab):
+                dispatch(.activateTab(tab))
+            case .destination(let path):
+                openWorkspace(at: path)
+            }
+
+        case .dismissPickerItem(let id):
+            guard let item = picker?.items.first(where: { $0.id == id }),
+                  case .running(let tab) = item.kind
+            else { return }
+            try? Daemon.closeTab(tab.root, in: tab.workspace)
+            SurfacePool.shared.discard(workspace: tab.workspace, tab: tab.root)
+            refreshFromDaemon()
+            picker?.items = pickerItems()
+            publish()
         }
     }
 
@@ -265,6 +314,94 @@ final class Session {
         else { return }
         activeWorkspaceName = id.workspace
         workspace.activate(id)
+        recentTabs.removeAll { $0 == id }
+        recentTabs.insert(id, at: 0)
+    }
+
+    /// Everything running, most recently visited first, then the places to
+    /// start something new.
+    private func pickerItems() -> [PickerModel.Item] {
+        var running: [PickerModel.Item] = []
+        var seen = Set<TabID>()
+        func append(_ tab: TabEntity, in workspace: String) {
+            guard seen.insert(tab.id).inserted else { return }
+            running.append(PickerModel.Item(
+                kind: .running(tab.id),
+                title: "\(workspace) › \(tab.title.isEmpty ? "tab \(tab.id.root)" : tab.title)",
+                detail: tab.panes.isEmpty ? "" : "\(tab.panes.count + 1) panes",
+                busy: tab.busy
+            ))
+        }
+        // Where you have been, then whatever you have not visited yet.
+        for id in recentTabs {
+            if let workspace = workspaces.first(where: { $0.name == id.workspace }),
+               let tab = workspace.tabs.first(where: { $0.id == id }) {
+                append(tab, in: workspace.name)
+            }
+        }
+        for workspace in workspaces {
+            for tab in workspace.tabs { append(tab, in: workspace.name) }
+        }
+
+        let existing = Set(workspaces.map(\.name))
+        let new = destinations.compactMap { path -> PickerModel.Item? in
+            let name = (path as NSString).lastPathComponent
+            // A directory whose workspace already exists is reachable above.
+            guard !existing.contains(name) else { return nil }
+            return PickerModel.Item(
+                kind: .destination(path: path),
+                title: name,
+                detail: abbreviate(path),
+                busy: false
+            )
+        }
+        return running + new
+    }
+
+    private func abbreviate(_ path: String) -> String {
+        let home = NSHomeDirectory()
+        return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
+    }
+
+    private func loadDestinations() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let paths = Zoxide.directories()
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.picker != nil else { return }
+                self.destinations = paths
+                self.picker?.items = self.pickerItems()
+                self.publish()
+            }
+        }
+    }
+
+    private func loadPreview(of tab: TabID, for item: String) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let text = (try? Daemon.preview(workspace: tab.workspace, tab: tab.root)) ?? ""
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.picker?.previewOf == item else { return }
+                self.picker?.previewText = text
+                self.publish()
+            }
+        }
+    }
+
+    /// Open a workspace named after a directory, with its first tab there.
+    private func openWorkspace(at path: String) {
+        let name = (path as NSString).lastPathComponent
+        if workspaces.first(where: { $0.name == name })?.tabs.isEmpty == false {
+            dispatch(.activateWorkspace(name))
+            return
+        }
+        do {
+            let id = try Daemon.newTab(in: name, cwd: path)
+            refreshFromDaemon()
+            activate(TabID(workspace: name, root: id))
+            publish()
+            renderer?.focusActiveTerminal()
+        } catch {
+            renderer?.present(error: error.localizedDescription)
+        }
     }
 
     /// Re-list and reconcile after any mutation the daemon took part in.
@@ -308,7 +445,7 @@ final class Session {
         }
         let universe = Set(workspaces.flatMap { $0.tabs.map(\.id) })
         return SessionSnapshot(
-            sidebar: sidebarStore.state, rows: rows, strip: strip,
+            sidebar: sidebarStore.state, picker: picker, rows: rows, strip: strip,
             active: active, universe: universe)
     }
 }

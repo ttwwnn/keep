@@ -118,6 +118,18 @@ fn handle(stream: UnixStream, registry: Arc<Registry>) -> Result<()> {
             msg.write(&mut writer)?;
             Ok(())
         }
+        ClientMsg::Preview { workspace, tab } => {
+            // A tab that has gone previews as nothing: the picker showing it
+            // is a list that can lag behind the daemon by a poll, and an
+            // error there would be noise, not information.
+            let text = registry
+                .get(&workspace)
+                .and_then(|w| w.tab(tab))
+                .and_then(|t| t.screen_text().ok())
+                .unwrap_or_default();
+            ServerMsg::PreviewText(text).write(&mut writer)?;
+            Ok(())
+        }
         ClientMsg::Attach { workspace, tab, cols, rows } => {
             attach(reader, writer, registry, &workspace, tab, cols, rows)
         }

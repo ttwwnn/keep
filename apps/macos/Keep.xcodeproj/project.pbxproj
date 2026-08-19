@@ -13,11 +13,13 @@
 		301FC7FCBC5FCEE57D947FFA /* Daemon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B1FC2433A269BA7AA8510FD /* Daemon.swift */; };
 		37E566353DB718B0FE901831 /* WorkspaceSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05581E4C489CBFCB9EE0FC63 /* WorkspaceSidebar.swift */; };
 		38DFD5E48BF89D0DFF2D3606 /* TabContentContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FDC62FD5F9E5BB0275F688A /* TabContentContainer.swift */; };
+		395692A2EBB054F85205F0CB /* Zoxide.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02DE3503066299BDBBF6E5E8 /* Zoxide.swift */; };
 		42C317891120DD2DE4CC07E0 /* MainWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39D911C7DB5BAD50525CD8D4 /* MainWindowController.swift */; };
 		43B96FF24E38E0F3B1F6D06A /* TabEntity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5461D3D1159F36613F895FA2 /* TabEntity.swift */; };
 		455019EEBA12AFF62782ABC6 /* Session.swift in Sources */ = {isa = PBXBuildFile; fileRef = A62F12BE65464B5D829B95B5 /* Session.swift */; };
 		4A2967F994700E628ED8287E /* WorkspaceEntity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 455B3F87550E85E26FFD249F /* WorkspaceEntity.swift */; };
 		6F431B737F8BD1938D1B0FF2 /* Trace.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4662B67EB8646DBFEB7245F /* Trace.swift */; };
+		6F5D18F3C86797CC64FB6C14 /* PickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84B8EF3EABE63EB3AD2EC738 /* PickerView.swift */; };
 		833915A3B32536A749A3ED62 /* GhosttyKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1493E76B2245010775C7CC76 /* GhosttyKit.xcframework */; };
 		84C8CA80F395C374233C7CA3 /* KeepWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26C7493E188242FF1E50B5D4 /* KeepWindow.swift */; };
 		B04424C572755CE4309A1FE1 /* SurfacePool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90248BC4509FC2E08EB2D118 /* SurfacePool.swift */; };
@@ -29,6 +31,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		02DE3503066299BDBBF6E5E8 /* Zoxide.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Zoxide.swift; sourceTree = "<group>"; };
 		05581E4C489CBFCB9EE0FC63 /* WorkspaceSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSidebar.swift; sourceTree = "<group>"; };
 		135A8576CC41EE22386C8C4D /* GhosttyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyApp.swift; sourceTree = "<group>"; };
 		1493E76B2245010775C7CC76 /* GhosttyKit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = GhosttyKit.xcframework; path = ../../vendor/GhosttyKit.xcframework; sourceTree = "<group>"; };
@@ -43,6 +46,7 @@
 		455B3F87550E85E26FFD249F /* WorkspaceEntity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceEntity.swift; sourceTree = "<group>"; };
 		5461D3D1159F36613F895FA2 /* TabEntity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabEntity.swift; sourceTree = "<group>"; };
 		5B1FC2433A269BA7AA8510FD /* Daemon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Daemon.swift; sourceTree = "<group>"; };
+		84B8EF3EABE63EB3AD2EC738 /* PickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PickerView.swift; sourceTree = "<group>"; };
 		90248BC4509FC2E08EB2D118 /* SurfacePool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurfacePool.swift; sourceTree = "<group>"; };
 		9C981DAB120BC0DE6416E716 /* SurfaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurfaceView.swift; sourceTree = "<group>"; };
 		A62F12BE65464B5D829B95B5 /* Session.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Session.swift; sourceTree = "<group>"; };
@@ -76,6 +80,7 @@
 			children = (
 				26C7493E188242FF1E50B5D4 /* KeepWindow.swift */,
 				39D911C7DB5BAD50525CD8D4 /* MainWindowController.swift */,
+				84B8EF3EABE63EB3AD2EC738 /* PickerView.swift */,
 				21F9A16ACB41B05219BCFCA5 /* SidebarHost.swift */,
 				1FDC62FD5F9E5BB0275F688A /* TabContentContainer.swift */,
 				3519A6ACCC0D876A65383EF4 /* TabStripView.swift */,
@@ -118,6 +123,7 @@
 			children = (
 				5B1FC2433A269BA7AA8510FD /* Daemon.swift */,
 				2C6200092D4D21F2BB040D2A /* DaemonPoller.swift */,
+				02DE3503066299BDBBF6E5E8 /* Zoxide.swift */,
 			);
 			path = Daemon;
 			sourceTree = "<group>";
@@ -222,6 +228,7 @@
 				EB832312EF01355D4678683C /* GhosttyApp.swift in Sources */,
 				84C8CA80F395C374233C7CA3 /* KeepWindow.swift in Sources */,
 				42C317891120DD2DE4CC07E0 /* MainWindowController.swift in Sources */,
+				6F5D18F3C86797CC64FB6C14 /* PickerView.swift in Sources */,
 				455019EEBA12AFF62782ABC6 /* Session.swift in Sources */,
 				1D448336142D0DABA8D8D0A8 /* SidebarHost.swift in Sources */,
 				D10C70635824F4B9A739338F /* SidebarStateStore.swift in Sources */,
@@ -234,6 +241,7 @@
 				6F431B737F8BD1938D1B0FF2 /* Trace.swift in Sources */,
 				4A2967F994700E628ED8287E /* WorkspaceEntity.swift in Sources */,
 				37E566353DB718B0FE901831 /* WorkspaceSidebar.swift in Sources */,
+				395692A2EBB054F85205F0CB /* Zoxide.swift in Sources */,
 				1A4DF695AB0229E7D445A48A /* main.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

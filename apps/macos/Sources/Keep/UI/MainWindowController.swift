@@ -14,6 +14,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private let tabStrip = TabStripView()
     private let container = TabContentContainer()
     private let sidebarHost: SidebarHost
+    private let picker = PickerView()
     private weak var sidebarItem: NSSplitViewItem?
     private weak var splitView: NSSplitView?
 
@@ -112,6 +113,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         tabStrip.onClose = { [weak self] id in self?.session.dispatch(.closeTab(id)) }
         tabStrip.onNewTab = { [weak self] in self?.session.dispatch(.newTab(in: nil)) }
 
+        picker.onHighlight = { [weak self] id in
+            self?.session.dispatch(.previewPickerItem(id))
+        }
+        picker.onChoose = { [weak self] id in self?.session.dispatch(.choosePickerItem(id)) }
+        picker.onDismissItem = { [weak self] id in
+            self?.session.dispatch(.dismissPickerItem(id))
+        }
+        picker.onCancel = { [weak self] in self?.session.dispatch(.closePicker) }
+
         // Divider drags become model facts, debounced; model-driven geometry
         // is guarded out so it cannot echo back as intent.
         NotificationCenter.default.addObserver(
@@ -136,6 +146,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
         sidebarHost.render(snapshot.rows)
         tabStrip.apply(snapshot.strip)
+        renderPicker(snapshot.picker)
         // The sidebar is one state for the whole app: applied here, once,
         // rather than restored per tab. The user's own toggle animates.
         if applied?.sidebar != snapshot.sidebar {
@@ -181,6 +192,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
               window?.firstResponder !== surface
         else { return }
         window?.makeFirstResponder(surface)
+    }
+
+    /// The picker covers the whole window while it is up, and takes the
+    /// keyboard for exactly that long.
+    private func renderPicker(_ model: PickerModel?) {
+        guard let model else {
+            guard picker.superview != nil else { return }
+            picker.removeFromSuperview()
+            return
+        }
+        if picker.superview == nil, let content = window?.contentView {
+            picker.frame = content.bounds
+            picker.autoresizingMask = [.width, .height]
+            content.addSubview(picker)
+            picker.apply(model)
+            picker.takeFocus()
+            return
+        }
+        picker.apply(model)
     }
 
     func present(error: String) {

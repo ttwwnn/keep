@@ -88,10 +88,12 @@ enum Daemon {
     private static let tagNewTab: UInt8 = 0x03
     private static let tagKill: UInt8 = 0x06
     private static let tagCloseTab: UInt8 = 0x07
+    private static let tagPreview: UInt8 = 0x08
     private static let tagSessions: UInt8 = 0x81
     private static let tagError: UInt8 = 0x84
     private static let tagOk: UInt8 = 0x85
     private static let tagTabCreated: UInt8 = 0x88
+    private static let tagPreviewText: UInt8 = 0x89
 
     static var socketPath: String {
         if let override = ProcessInfo.processInfo.environment["KEEP_SOCKET"] {
@@ -161,6 +163,7 @@ enum Daemon {
     @discardableResult
     static func newTab(
         in workspace: String,
+        cwd: String = "",
         cols: UInt16 = 80,
         rows: UInt16 = 24,
         splitOf: UInt32 = 0,
@@ -170,7 +173,7 @@ enum Daemon {
         defer { close(sock) }
         var w = Writer()
         w.string(workspace)
-        w.string("")           // cwd: inherit the daemon's
+        w.string(cwd)          // empty: inherit the daemon's
         w.u16(cols)
         w.u16(rows)
         w.u32(splitOf)
@@ -198,6 +201,28 @@ enum Daemon {
         if tag == tagError {
             var r = Reader(payload)
             throw Failure.protocolError(try r.string())
+        }
+    }
+
+    /// A tab's screen as plain text, without attaching to it.
+    ///
+    /// The daemon holds every tab's grid, so showing what a tab is doing
+    /// costs a snapshot rather than a client — including for tabs of a
+    /// workspace this app has never opened.
+    static func preview(workspace: String, tab: UInt32) throws -> String {
+        let sock = try connect()
+        defer { close(sock) }
+        var w = Writer()
+        w.string(workspace)
+        w.u32(tab)
+        try send(sock, tag: tagPreview, payload: w.data)
+
+        let (tag, payload) = try recv(sock)
+        var r = Reader(payload)
+        switch tag {
+        case tagPreviewText: return try r.string()
+        case tagError: throw Failure.protocolError(try r.string())
+        default: throw Failure.protocolError("unexpected reply tag \(tag)")
         }
     }
 
