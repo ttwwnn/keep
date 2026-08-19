@@ -117,9 +117,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let viewMenu = NSMenu(title: "View")
         let toggleSidebarItem = viewMenu.addItem(
             withTitle: "Toggle Sidebar",
-            action: #selector(toggleSidebar(_:)), keyEquivalent: "s")
+            action: #selector(toggleSidebar(_:)), keyEquivalent: "/")
         toggleSidebarItem.target = self
-        toggleSidebarItem.keyEquivalentModifierMask = [.command, .control]
         viewItem.submenu = viewMenu
         main.addItem(viewItem)
 
