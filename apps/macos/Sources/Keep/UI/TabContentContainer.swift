@@ -59,6 +59,19 @@ final class TabHostView: NSView {
     private let paneSplit = NSSplitView()
     private var panes: [(tab: UInt32, surface: TerminalSurfaceView)] = []
     private var appliedPanes: [PaneState]?
+    private var focusedPane: UInt32?
+
+    /// Which pane has the keyboard, drawn only when there is more than one.
+    /// A split with no visible focus leaves you guessing where the next
+    /// keystroke — or the next split — is going to land.
+    private let focusRing: NSView = {
+        let ring = FocusRingView()
+        ring.wantsLayer = true
+        ring.layer?.borderWidth = 2
+        ring.layer?.cornerRadius = 3
+        ring.isHidden = true
+        return ring
+    }()
 
     /// A pane surface took the keyboard; forwarded up to become a model fact.
     var onPaneFocus: ((UInt32) -> Void)?
@@ -70,6 +83,7 @@ final class TabHostView: NSView {
         paneSplit.isVertical = true
         paneSplit.autoresizingMask = [.width, .height]
         addSubview(paneSplit)
+        addSubview(focusRing)
     }
 
     @available(*, unavailable)
@@ -78,6 +92,27 @@ final class TabHostView: NSView {
     override func layout() {
         super.layout()
         paneSplit.frame = bounds
+        positionFocusRing()
+    }
+
+    /// Mark the pane holding the keyboard.
+    func setFocusedPane(_ tab: UInt32) {
+        guard focusedPane != tab else { return }
+        focusedPane = tab
+        positionFocusRing()
+    }
+
+    private func positionFocusRing() {
+        guard panes.count > 1, let focusedPane,
+              let surface = surface(for: focusedPane)
+        else {
+            focusRing.isHidden = true
+            return
+        }
+        focusRing.layer?.borderColor = NSColor.controlAccentColor
+            .withAlphaComponent(0.9).cgColor
+        focusRing.frame = convert(surface.bounds, from: surface)
+        focusRing.isHidden = false
     }
 
     /// Bring the split in line with the daemon's arrangement. The root pane
@@ -104,6 +139,7 @@ final class TabHostView: NSView {
             panes.append((tab, surface))
         }
         panes.sort { (order.firstIndex(of: $0.tab) ?? 0) < (order.firstIndex(of: $1.tab) ?? 0) }
+        needsLayout = true
 
         // Rebuild the arranged list when it disagrees — the split's visual
         // order must match the daemon's, not just our array's.
@@ -132,4 +168,10 @@ final class TabHostView: NSView {
     }
 
     var paneSurfaces: [TerminalSurfaceView] { panes.map(\.surface) }
+}
+
+
+/// The focus marker never takes a click: it sits over a terminal.
+private final class FocusRingView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

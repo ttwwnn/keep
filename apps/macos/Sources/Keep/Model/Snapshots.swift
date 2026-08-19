@@ -9,8 +9,11 @@ struct TabID: Hashable, Codable, CustomStringConvertible {
     var description: String { "\(workspace)/\(root)" }
 }
 
-/// The whole of a tab's sidebar memory. Frozen on deactivation by simply not
-/// being touched; restored by being re-applied.
+/// The sidebar's collapsed state and width.
+///
+/// One value for the whole app, not one per tab: the sidebar is furniture,
+/// and furniture that rearranges itself as you move between tabs reads as a
+/// glitch rather than as memory.
 struct SidebarState: Hashable, Codable {
     var isCollapsed: Bool
     var width: CGFloat
@@ -35,11 +38,12 @@ enum Intent {
     case previousTab
     case newTab(in: String?)          // nil = the active workspace
     case newWorkspace(named: String)
-    case closeTab(TabID?)             // nil = the active tab (⌘W)
+    case closeTab(TabID?)             // nil = the active tab, panes and all
+    case closePane(UInt32?)           // nil = the focused pane (⌘W)
     case killWorkspace(String)
     case split(UInt8)                 // protocol values: 1 = right, 2 = down
     case focusPane(UInt32)            // a surface of the active tab took focus
-    case setSidebar(SidebarState)     // the active tab's; from toggle or divider drag
+    case setSidebar(SidebarState)     // from the toggle or a divider drag
 }
 
 /// Everything layer 6 needs to draw a frame. Pure values: views never appear
@@ -66,10 +70,10 @@ struct SessionSnapshot: Hashable {
         let id: TabID
         let title: String               // window title
         let panes: [PaneState]          // beyond the root, daemon order
-        let sidebar: SidebarState       // the frozen state to restore
         let focusedPane: UInt32         // daemon tab id holding the keyboard
     }
 
+    var sidebar: SidebarState
     var rows: [SidebarRow]
     var strip: [StripItem]
     var active: ActiveTab?

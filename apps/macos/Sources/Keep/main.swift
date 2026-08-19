@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - menu actions (each one is an intent)
 
     @objc func newTab(_ sender: Any?) { session.dispatch(.newTab(in: nil)) }
+    @objc func closePane(_ sender: Any?) { session.dispatch(.closePane(nil)) }
     @objc func closeTab(_ sender: Any?) { session.dispatch(.closeTab(nil)) }
     @objc func splitRight(_ sender: Any?) { session.dispatch(.split(1)) }
     @objc func splitDown(_ sender: Any?) { session.dispatch(.split(2)) }
@@ -94,8 +95,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         splitDownItem.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(splitDownItem)
         fileMenu.addItem(.separator())
+        // ⌘W closes what you are looking at — the pane. Only a tab with no
+        // splits makes the two the same thing.
         fileMenu.addItem(
-            withTitle: "Close Tab", action: #selector(closeTab(_:)), keyEquivalent: "w")
+            withTitle: "Close Pane", action: #selector(closePane(_:)), keyEquivalent: "w")
+        let closeTabItem = NSMenuItem(
+            title: "Close Tab", action: #selector(closeTab(_:)), keyEquivalent: "w")
+        closeTabItem.keyEquivalentModifierMask = [.command, .shift]
+        fileMenu.addItem(closeTabItem)
         fileItem.submenu = fileMenu
         main.addItem(fileItem)
 

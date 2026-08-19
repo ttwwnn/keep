@@ -117,7 +117,17 @@ impl Workspace {
         let tab = {
             let mut guard = self.tabs.lock().map_err(|_| anyhow!("workspace poisoned"))?;
             let pos = guard.iter().position(|e| e.id == id).ok_or_else(|| anyhow!("no tab {id}"))?;
-            guard.remove(pos).tab
+            let closed = guard.remove(pos);
+            // Anything split off the closed tab takes its place in the
+            // arrangement. Without this they are orphans, and an orphan is
+            // reported standalone — so closing one pane of a split would
+            // scatter the panes below it into tabs of their own.
+            for entry in guard.iter_mut() {
+                if entry.split_of == id {
+                    entry.split_of = closed.split_of;
+                }
+            }
+            closed.tab
         };
         tab.kill()
     }
@@ -139,7 +149,21 @@ impl Workspace {
     /// read the last of its output yet.
     pub fn reap(&self) {
         if let Ok(mut guard) = self.tabs.lock() {
+            let gone: Vec<(u32, u32)> = guard
+                .iter()
+                .filter(|e| e.tab.is_finished() && e.tab.attached_clients() == 0)
+                .map(|e| (e.id, e.split_of))
+                .collect();
             guard.retain(|e| !(e.tab.is_finished() && e.tab.attached_clients() == 0));
+            // Same inheritance as `close_tab`: a pane whose own shell exited
+            // must not take the panes below it out of the arrangement.
+            for (id, parent) in gone {
+                for entry in guard.iter_mut() {
+                    if entry.split_of == id {
+                        entry.split_of = parent;
+                    }
+                }
+            }
         }
     }
 

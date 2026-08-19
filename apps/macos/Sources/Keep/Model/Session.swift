@@ -75,7 +75,6 @@ final class Session {
         let vanished = workspaces.map(\.name).filter { !liveNames.contains($0) }
         for name in vanished {
             SurfacePool.shared.discardAll(workspace: name)
-            sidebarStore.forgetAll(workspace: name)
             workspaces.removeAll { $0.name == name }
             changed = true
         }
@@ -91,9 +90,6 @@ final class Session {
             }
             let result = entity.reconcile(with: daemon)
             changed = changed || result.changed
-            for dead in result.dead {
-                sidebarStore.forget(dead)
-            }
 
             // Any surface whose tab the daemon no longer has, root or pane
             // alike. Keying this off dead *roots* left a pane that died on
@@ -111,18 +107,7 @@ final class Session {
             changed = true
         }
 
-        // Whoever ended up active — including a successor the reconcile
-        // promoted after a tab died — must have its sidebar hydrated, or the
-        // snapshot substitutes a default and the next write clobbers what was
-        // on disk.
-        hydrateActive()
         if changed { publish() }
-    }
-
-    /// Pull the active tab's persisted sidebar state if this is its first
-    /// activation. Idempotent.
-    private func hydrateActive() {
-        _ = activeWorkspace?.activeTab?.sidebarState(loading: sidebarStore, seed: nil)
     }
 
     // MARK: - intents
@@ -192,10 +177,30 @@ final class Session {
                 for pane in panes {
                     SurfacePool.shared.discard(workspace: id.workspace, tab: pane.tab)
                 }
-                sidebarStore.forget(id)
                 refreshFromDaemon()
-                hydrateActive()
                 publish()
+            } catch {
+                renderer?.present(error: error.localizedDescription)
+            }
+
+        case .closePane(let pane):
+            // Closing the *focused* pane, which for a tab with no splits is
+            // the tab itself. A root closed while panes remain is not a hole:
+            // the daemon promotes an orphaned pane to stand on its own, so
+            // what survives is the rest of the arrangement.
+            guard let workspace = activeWorkspace, let tab = workspace.activeTab else { return }
+            let target = pane ?? tab.focusedPane
+            do {
+                try Daemon.closeTab(target, in: workspace.name)
+                SurfacePool.shared.discard(workspace: workspace.name, tab: target)
+                refreshFromDaemon()
+                // Land the keyboard on something that still exists.
+                if let survivor = activeWorkspace?.activeTab {
+                    survivor.noteFocus(pane: survivor.panes.first(where: { $0.tab == survivor.focusedPane }) != nil
+                        ? survivor.focusedPane : survivor.id.root)
+                }
+                publish()
+                renderer?.focusActiveTerminal()
             } catch {
                 renderer?.present(error: error.localizedDescription)
             }
@@ -207,7 +212,6 @@ final class Session {
                 renderer?.present(error: error.localizedDescription)
             }
             SurfacePool.shared.discardAll(workspace: name)
-            sidebarStore.forgetAll(workspace: name)
             refreshFromDaemon()
             if activeWorkspace == nil || activeWorkspace?.tabs.isEmpty == true {
                 activeWorkspaceName = workspaces.first(where: { !$0.tabs.isEmpty })?.name
@@ -234,9 +238,7 @@ final class Session {
             publish()
 
         case .setSidebar(let state):
-            guard let tab = activeWorkspace?.activeTab else { return }
-            tab.setSidebar(state)
-            sidebarStore.save(state, for: tab.id)
+            sidebarStore.save(state)
             publish()
         }
     }
@@ -248,12 +250,8 @@ final class Session {
     private func activate(_ id: TabID?) {
         guard let id, let workspace = workspaces.first(where: { $0.name == id.workspace })
         else { return }
-        // Seed a first-time sidebar from whatever is on screen, so entering a
-        // new tab never jumps the sidebar.
-        let seed = activeWorkspace?.activeTab?.sidebarIfHydrated
         activeWorkspaceName = id.workspace
         workspace.activate(id)
-        _ = workspace.activeTab?.sidebarState(loading: sidebarStore, seed: seed)
     }
 
     /// Re-list and reconcile after any mutation the daemon took part in.
@@ -292,11 +290,12 @@ final class Session {
                 id: tab.id,
                 title: tab.title,
                 panes: tab.panes,
-                sidebar: tab.sidebarIfHydrated ?? .initial,
                 focusedPane: tab.focusedPane
             )
         }
         let universe = Set(workspaces.flatMap { $0.tabs.map(\.id) })
-        return SessionSnapshot(rows: rows, strip: strip, active: active, universe: universe)
+        return SessionSnapshot(
+            sidebar: sidebarStore.state, rows: rows, strip: strip,
+            active: active, universe: universe)
     }
 }

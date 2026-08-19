@@ -254,3 +254,28 @@ fn a_client_that_stops_reading_is_repainted_not_starved() {
     assert_eq!(session.attached_clients(), 1, "falling behind must not unsubscribe");
     session.kill().ok();
 }
+
+/// Closing one pane of a split must not scatter the panes below it.
+///
+/// Splits are a chain — each pane records the tab it was split from — so a
+/// pane closed in the middle leaves its children pointing at something that
+/// is gone. Reported standalone, they would become tabs of their own, and
+/// closing one pane would take the window apart.
+#[test]
+fn closing_a_pane_hands_its_children_to_its_parent() {
+    let workspace = keepd::Workspace::new("splits");
+    let (root, _) = workspace.new_tab(None, 80, 24, 0, 0).expect("root");
+    let (middle, _) = workspace.new_tab(None, 80, 24, root, 1).expect("middle pane");
+    let (leaf, _) = workspace.new_tab(None, 80, 24, middle, 1).expect("leaf pane");
+
+    workspace.close_tab(middle).expect("close the middle pane");
+
+    let tabs = workspace.tabs();
+    assert_eq!(tabs.len(), 2, "closing one pane closed more than one tab");
+    let leaf_entry = tabs.iter().find(|t| t.id == leaf).expect("leaf survived");
+    assert_eq!(
+        leaf_entry.split_of, root,
+        "the leaf was orphaned into a standalone tab instead of inheriting the root"
+    );
+    workspace.kill_all().ok();
+}

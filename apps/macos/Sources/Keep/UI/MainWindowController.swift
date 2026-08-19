@@ -134,6 +134,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
         sidebarHost.render(snapshot.rows)
         tabStrip.apply(snapshot.strip)
+        // The sidebar is one state for the whole app: applied here, once,
+        // rather than restored per tab. The user's own toggle animates.
+        if applied?.sidebar != snapshot.sidebar {
+            applySidebar(snapshot.sidebar, animated: applied != nil)
+        }
 
         guard let active = snapshot.active else {
             if let visible = container.visibleTab {
@@ -150,10 +155,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             // Same tab: apply what changed around it.
             let host = container.host(for: active)
             host.apply(panes: active.panes)
-            if applied?.active?.sidebar != active.sidebar {
-                // The user's own toggle animates; everything else is a fact.
-                applySidebar(active.sidebar, animated: true)
-            }
+            host.setFocusedPane(active.focusedPane)
             if applied?.active?.focusedPane != active.focusedPane,
                 let surface = host.surface(for: active.focusedPane),
                 window?.firstResponder !== surface
@@ -199,15 +201,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
 
-        // 1. Chrome geometry first: the incoming tab's frozen sidebar state
-        //    decides the terminal's width, and the frame about to be drawn
-        //    must be for the geometry the tab will actually have. A restore
-        //    is a fact, not a transition — never animated.
-        applySidebar(active.sidebar, animated: false)
-
         // 2. Arrangement and layout while still hidden (hidden views lay out
         //    fine; surface sizes flush on unhide).
         incoming.apply(panes: active.panes)
+        incoming.setFocusedPane(active.focusedPane)
         incoming.frame = container.bounds
         incoming.layoutSubtreeIfNeeded()
 
@@ -282,7 +279,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             guard let self else { return }
             self.dividerReportScheduled = false
             guard let state = self.currentSidebarGeometry(),
-                  state != self.applied?.active?.sidebar
+                  state != self.applied?.sidebar
             else { return }
             self.session.dispatch(.setSidebar(state))
         }

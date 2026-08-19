@@ -18,7 +18,7 @@ Nothing else moves.
 6  UI / render      MainWindowController, KeepWindow, TabStripView,
                     TabContentContainer, SidebarHost, WorkspaceSidebar
 5  Workspace        Session, WorkspaceEntity          which tab is active, order, focus
-4  Pane / Tab       TabEntity, SidebarState           per-tab state, frozen and restored
+4  Pane / Tab       TabEntity                         per-tab state: label, panes, focus
 3  Display          SurfacePool, TerminalSurfaceView, GhosttyApp
 2  Emulation        keepd + libghostty                (crates/, untouched by the app)
 1  PTY              keepd                             (crates/, untouched by the app)
@@ -71,8 +71,8 @@ apps/macos/Sources/Keep/
 /// tabs wearing the same number).
 struct TabID: Hashable, Codable { let workspace: String; let root: UInt32 }
 
-/// The whole of a tab's sidebar memory. Frozen on deactivation by simply not
-/// being touched; restored by being re-applied.
+/// The sidebar's collapsed state and width. ONE value for the whole app —
+/// see "The sidebar is furniture" below.
 struct SidebarState: Codable, Equatable { var isCollapsed: Bool; var width: CGFloat }
 
 /// The one downward channel. Every mutation in the app enters through here.
@@ -85,15 +85,14 @@ enum Intent {
     case nextTab, previousTab
 }
 
-/// Layer 4. Owns what is this tab's own business — title, busy, panes, its
-/// sidebar — and nothing about how any of it is drawn.
+/// Layer 4. Owns what is this tab's own business — title, busy, panes, which
+/// pane holds the keyboard — and nothing about how any of it is drawn.
 @MainActor final class TabEntity {
     let id: TabID
     private(set) var title: String, busy: Bool, panes: [PaneState]
     private(set) var focusedPane: UInt32
     func apply(root: Daemon.Tab, panes: [Daemon.Tab]) -> Bool   // reconciliation; true = changed
-    func sidebarState(loading: SidebarStateStore) -> SidebarState // lazy-hydrated once
-    func setSidebar(_ s: SidebarState)                           // single writer: Session
+    func noteFocus(pane: UInt32)                                 // single writer: Session
 }
 
 /// Layer 5 root. The UI holds a reference to this and to nothing else below.
@@ -151,23 +150,26 @@ first presentation — this is hydration, the one moment a surface and its
 `keep` client are created — then the pipeline above runs.
 
 **Collapse the sidebar**: toggle → `dispatch(.setSidebar(collapsed))` →
-Session writes it on the **active tab's entity** and persists it (debounced
-JSON, `~/Library/Application Support/Keep/sidebar-state.json`) → render
-applies it animated. A divider drag reports back the same way, debounced,
-guarded against echo. No other tab's state is touched: each tab keeps its own
-sidebar, frozen while inactive.
+Session stores it once, app-wide, and persists it (debounced JSON,
+`~/Library/Application Support/Keep/sidebar-state.json`) → render applies it
+animated. A divider drag reports back the same way, debounced, guarded
+against echo.
+
+**The sidebar is furniture.** It was per-tab at first, frozen and restored
+with each one. In use that reads as a glitch, not as memory: you collapse it,
+move to another tab, and it is back. So there is one state, and it stays
+where you put it no matter where you are. This is a deliberate reversal of
+the original per-tab spec, made after living with it.
 
 **Switch tab** (same flow for switch workspace): click → `dispatch(.activateTab)`
-→ Session freezes nothing explicitly — the outgoing entity was kept current by
-messages all along; deactivation is ceasing to be asked — hydrates the incoming
-tab's sidebar state if this is its first activation, updates active ids →
-`render` → pipeline. A workspace click resolves to that workspace's remembered
+→ Session updates the active ids — the outgoing entity needs no freezing,
+since nothing sends a deactivated entity messages → `render` → pipeline. A workspace click resolves to that workspace's remembered
 active tab and joins the identical path.
 
 **Return to the previous tab**: identical dispatch; every step is a cache hit.
 The host is still mounted, surfaces alive, Metal layers holding their last
-frame; the pipeline restores the tab's exact sidebar state and puts the
-keyboard back on the pane that had it.
+frame; the pipeline puts the keyboard back on the pane that had it, and the
+focus ring marks which one that is when the tab is split.
 
 ## Rules kept from the session's scars
 
@@ -176,7 +178,10 @@ keyboard back on the pane that had it.
 - The daemon is the source of truth for tabs; the poller reconciles every 2 s
   and only ever prunes or relabels — it cannot mount, present, or switch.
 - Closing the window quits the app; the daemon keeps everything running.
-  Closing a *tab* is only ever the explicit intent.
+  Closing a *tab* is only ever the explicit intent. ⌘W closes the focused
+  **pane** — for a tab with no splits the two are the same thing — and the
+  daemon hands a closed pane's children to its parent, so closing one pane
+  never takes the arrangement apart.
 - Unchanged values are silent: snapshots are Equatable and every applier
   diffs, so a quiet poll produces zero view churn (and zero accessibility
   noise for window managers to react to).
