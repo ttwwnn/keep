@@ -23,6 +23,7 @@ final class TerminalSurfaceView: NSView {
     private var surface: ghostty_surface_t?
     private var displayLink: CVDisplayLink?
     private var occlusionObserver: NSObjectProtocol?
+    private var backgroundObserver: NSObjectProtocol?
     private var drawCount = 0
     private var traceTimer: Timer?
     private let workspace: String
@@ -61,6 +62,9 @@ final class TerminalSurfaceView: NSView {
     deinit {
         if let observer = occlusionObserver {
             NotificationCenter.default.removeObserver(observer)
+        }
+        if let backgroundObserver {
+            NotificationCenter.default.removeObserver(backgroundObserver)
         }
         traceTimer?.invalidate()
         if let link = displayLink { CVDisplayLinkStop(link) }
@@ -107,6 +111,21 @@ final class TerminalSurfaceView: NSView {
 
         guard let surface else { return }
         GhosttyApp.shared.register(surface: surface, view: self)
+        backgroundObserver = NotificationCenter.default.addObserver(
+            forName: GhosttyApp.backgroundDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.paintVeil()
+                // A rest asked for before the colour was known did nothing;
+                // now that it is known, honour it.
+                if self.isResting, self.restingVeil == nil {
+                    let veil = self.veil()
+                    self.addSubview(veil, positioned: .below, relativeTo: nil)
+                    veil.alphaValue = Self.veilStrength
+                }
+            }
+        }
         settlingUntil = CACurrentMediaTime() + 0.7
         ghostty_surface_set_content_scale(surface, config.scale_factor, config.scale_factor)
         layer?.contentsScale = window?.backingScaleFactor ?? 2.0
@@ -408,15 +427,31 @@ final class TerminalSurfaceView: NSView {
     /// background is already this colour, so a veil of it changes nothing
     /// there and takes the text back — which is the part that was meant to
     /// step back in the first place.
-    private lazy var restingVeil: NSView = {
+    private var restingVeil: VeilView?
+
+    private func veil() -> VeilView {
+        if let restingVeil { return restingVeil }
         let veil = VeilView(frame: bounds)
         veil.wantsLayer = true
         veil.autoresizingMask = [.width, .height]
-        veil.layer?.backgroundColor = (GhosttyApp.shared.terminalBackground ?? .black).cgColor
         veil.alphaValue = 0
         addSubview(veil)
+        restingVeil = veil
+        paintVeil()
         return veil
-    }()
+    }
+
+    /// The veil is the terminal's own background colour, and that colour is
+    /// not known at launch — the config is read after the first surfaces are
+    /// already up. A veil painted then came out black, which is not a veil
+    /// but a shadow, and it stayed that way until something happened to
+    /// repaint it. So it is repainted when the colour arrives.
+    private func paintVeil() {
+        guard let restingVeil, let background = GhosttyApp.shared.terminalBackground else {
+            return
+        }
+        restingVeil.layer?.backgroundColor = background.cgColor
+    }
 
     /// How much of the text a pane keeps when the keyboard is elsewhere.
     private static let veilStrength: CGFloat = 0.5
@@ -424,14 +459,20 @@ final class TerminalSurfaceView: NSView {
     var isResting = false {
         didSet {
             guard isResting != oldValue else { return }
-            restingVeil.layer?.backgroundColor =
-                (GhosttyApp.shared.terminalBackground ?? .black).cgColor
-            // Kept on top: the size chip is added later and would otherwise
-            // end up underneath the veil that arrives after it.
-            addSubview(restingVeil, positioned: .below, relativeTo: nil)
+            // Nothing to rest under until the terminal's colour is known: a
+            // veil of no colour is a black one, and a pane that has merely
+            // lost the keyboard should not go dark.
+            guard GhosttyApp.shared.terminalBackground != nil || restingVeil != nil else {
+                return
+            }
+            let veil = veil()
+            paintVeil()
+            // Kept at the bottom of the subviews, which is still above the
+            // terminal: the handle and the size chip stay legible over it.
+            addSubview(veil, positioned: .below, relativeTo: nil)
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.12
-                restingVeil.animator().alphaValue = isResting ? Self.veilStrength : 0
+                veil.animator().alphaValue = isResting ? Self.veilStrength : 0
             }
         }
     }
