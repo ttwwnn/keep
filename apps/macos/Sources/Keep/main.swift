@@ -50,6 +50,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.createWorkspace(named: field.stringValue)
     }
 
+    @objc func toggleSidebar(_ sender: Any?) {
+        let window = NSApp.keyWindow ?? NSApp.mainWindow
+        (window as? KeepWindow)?.toggleSidebar(sender)
+    }
+
     private func buildMenu() {
         let main = NSMenu()
 
@@ -81,10 +86,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let viewItem = NSMenuItem()
         let viewMenu = NSMenu(title: "View")
-        viewMenu.addItem(
+        let toggleSidebarItem = viewMenu.addItem(
             withTitle: "Toggle Sidebar",
-            action: #selector(NSSplitViewController.toggleSidebar(_:)), keyEquivalent: "s")
-        viewMenu.items.last?.keyEquivalentModifierMask = [.command, .control]
+            action: #selector(toggleSidebar(_:)), keyEquivalent: "s")
+        toggleSidebarItem.target = self
+        toggleSidebarItem.keyEquivalentModifierMask = [.command, .control]
         viewItem.submenu = viewMenu
         main.addItem(viewItem)
 

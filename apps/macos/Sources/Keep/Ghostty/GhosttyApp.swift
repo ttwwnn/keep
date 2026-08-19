@@ -13,7 +13,7 @@ final class GhosttyApp {
     private(set) var app: ghostty_app_t?
     private(set) var failure: String?
 
-    /// Posted when `terminalBackground` becomes known or changes.
+    /// Posted when the resolved terminal background, opacity, or blur changes.
     static let backgroundDidChange = Notification.Name("keep.terminalBackgroundDidChange")
 
     /// The colour libghostty fills a surface with, so the strip above the
@@ -25,10 +25,20 @@ final class GhosttyApp {
     /// value arrives as an action instead, which is also how a theme change
     /// mid-session reaches us.
     private(set) var terminalBackground: NSColor?
+    private(set) var terminalBackgroundOpacity: Double = 1
+    private(set) var terminalBackgroundBlur: Int16 = 0
 
-    fileprivate func adopt(background: NSColor) {
-        guard background != terminalBackground else { return }
+    fileprivate func adopt(background: NSColor, opacity: Double, blur: Int16) {
+        let opacity = min(max(opacity, 0), 1)
+        let backgroundChanged = terminalBackground?.isEqual(background) != true
+        guard backgroundChanged
+            || opacity != terminalBackgroundOpacity
+            || blur != terminalBackgroundBlur
+        else { return }
+
         terminalBackground = background
+        terminalBackgroundOpacity = opacity
+        terminalBackgroundBlur = blur
         NotificationCenter.default.post(name: Self.backgroundDidChange, object: nil)
     }
 
@@ -50,6 +60,26 @@ final class GhosttyApp {
         return NSColor(color)
     }
 
+    fileprivate static func backgroundOpacity(of config: ghostty_config_t?) -> Double? {
+        guard let config else { return nil }
+        var opacity: Double = 1
+        let key = "background-opacity"
+        let found = key.withCString {
+            ghostty_config_get(config, &opacity, $0, UInt(key.utf8.count))
+        }
+        return found ? opacity : nil
+    }
+
+    fileprivate static func backgroundBlur(of config: ghostty_config_t?) -> Int16? {
+        guard let config else { return nil }
+        var blur: Int16 = 0
+        let key = "background-blur"
+        let found = key.withCString {
+            ghostty_config_get(config, &blur, $0, UInt(key.utf8.count))
+        }
+        return found ? blur : nil
+    }
+
     private init() {
         // libghostty wants the process argv before anything else.
         var argv: [UnsafeMutablePointer<CChar>?] = CommandLine.unsafeArgv[0].map { [$0] } ?? []
@@ -62,6 +92,12 @@ final class GhosttyApp {
             failure = "ghostty_config_new failed"
             return
         }
+        // These values do not depend on light/dark theme resolution, so make
+        // them available before the first window is constructed. The resolved
+        // config-change action below will keep all three appearance values in
+        // sync after startup and reloads.
+        terminalBackgroundOpacity = Self.backgroundOpacity(of: config) ?? 1
+        terminalBackgroundBlur = Self.backgroundBlur(of: config) ?? 0
 
         var runtime = ghostty_runtime_config_s()
         runtime.userdata = nil
@@ -81,9 +117,15 @@ final class GhosttyApp {
         runtime.action_cb = { _, _, action in
             switch action.tag {
             case GHOSTTY_ACTION_CONFIG_CHANGE:
-                guard let color = GhosttyApp.background(of: action.action.config_change.config)
+                let config = action.action.config_change.config
+                guard
+                    let color = GhosttyApp.background(of: config),
+                    let opacity = GhosttyApp.backgroundOpacity(of: config),
+                    let blur = GhosttyApp.backgroundBlur(of: config)
                 else { return true }
-                DispatchQueue.main.async { GhosttyApp.shared.adopt(background: color) }
+                DispatchQueue.main.async {
+                    GhosttyApp.shared.adopt(background: color, opacity: opacity, blur: blur)
+                }
                 return true
             case GHOSTTY_ACTION_RELOAD_CONFIG:
                 DispatchQueue.main.async { GhosttyApp.shared.reloadConfig() }
@@ -92,7 +134,14 @@ final class GhosttyApp {
                 let change = action.action.color_change
                 guard change.kind == GHOSTTY_ACTION_COLOR_KIND_BACKGROUND else { return false }
                 let color = NSColor(change)
-                DispatchQueue.main.async { GhosttyApp.shared.adopt(background: color) }
+                DispatchQueue.main.async {
+                    let app = GhosttyApp.shared
+                    app.adopt(
+                        background: color,
+                        opacity: app.terminalBackgroundOpacity,
+                        blur: app.terminalBackgroundBlur
+                    )
+                }
                 return true
             default:
                 return false
@@ -181,7 +230,14 @@ final class GhosttyApp {
             .appendingPathComponent("keep-app", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let file = dir.appendingPathComponent("command.conf")
-        let body = "command = \(clientBinary)\n"
+        // Keep's native toolbar already provides the outer breathing room.
+        // Use a tighter terminal-only inset than the user's standalone
+        // Ghostty window so the first prompt sits closer to the chrome.
+        let body = """
+            command = \(clientBinary)
+            window-padding-y = 0
+
+            """
         do {
             try body.write(to: file, atomically: true, encoding: .utf8)
             return file.path

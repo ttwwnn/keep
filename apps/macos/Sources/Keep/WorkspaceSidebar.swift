@@ -11,22 +11,42 @@ struct WorkspaceSidebar: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            List(selection: Binding(
-                get: { store.selectedWorkspace },
-                set: { if let name = $0 { store.select(workspace: name) } }
-            )) {
+            // No `List(selection:)`. That state belongs to SwiftUI, which
+            // writes it for reasons that have nothing to do with intent — a
+            // freshly revealed window's outline view takes focus and picks a
+            // row on its own. Every window carries its own sidebar, so the row
+            // it picks is rarely the workspace on screen, and with selection
+            // driving navigation each of those writes was a workspace switch
+            // nobody asked for. Entering a workspace is a thing you do, so it
+            // hangs off the tap and nothing else.
+            List {
                 Section("Workspaces") {
                     ForEach(store.workspaces) { workspace in
-                        row(for: workspace).tag(workspace.name)
+                        // A button rather than a tap gesture: a gesture on a
+                        // list row competes with the list's own hit testing and
+                        // offers neither keyboard activation nor accessibility.
+                        Button {
+                            store.select(workspace: workspace.name)
+                        } label: {
+                            row(for: workspace)
+                                // The whole row is the target, not just its text.
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .listRowBackground(
+                            workspace.name == store.selectedWorkspace
+                                ? Color.accentColor.opacity(0.18)
+                                : Color.clear
+                        )
                     }
                 }
             }
-            // AppKit already owns the sidebar surface. Applying SwiftUI's
-            // sidebar style here creates a second, rounded panel below the
-            // titlebar instead of one Finder-style full-height column.
+            // The AppKit host owns one flat, full-height surface. Applying
+            // SwiftUI's sidebar style here would create another rounded panel
+            // below the titlebar.
             .listStyle(.plain)
-            // Let the split view's sidebar material show through instead of
-            // the list painting its own opaque background.
+            // Let the terminal-tinted host show through instead of the list
+            // painting its own opaque background.
             .scrollContentBackground(.hidden)
 
             Divider()

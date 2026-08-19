@@ -10,6 +10,10 @@ import SwiftUI
 final class TerminalSurfaceView: NSView {
     private var surface: ghostty_surface_t?
     private var displayLink: CVDisplayLink?
+    private var occlusionObserver: NSObjectProtocol?
+    /// Frames drawn since the last trace tick, and the timer reporting them.
+    private var drawCount = 0
+    private var traceTimer: Timer?
     private let workspace: String
     let tab: UInt32
 
@@ -30,6 +34,10 @@ final class TerminalSurfaceView: NSView {
     required init?(coder: NSCoder) { fatalError("not supported") }
 
     deinit {
+        if let observer = occlusionObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        traceTimer?.invalidate()
         if let link = displayLink { CVDisplayLinkStop(link) }
         if let surface { ghostty_surface_free(surface) }
     }
@@ -38,6 +46,7 @@ final class TerminalSurfaceView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        observeOcclusion()
         guard window != nil, surface == nil else { return }
         createSurface()
         window?.makeFirstResponder(self)
@@ -104,15 +113,101 @@ final class TerminalSurfaceView: NSView {
             DispatchQueue.main.async {
                 guard let self, let surface = self.surface else { return }
                 ghostty_surface_draw(surface)
+                self.drawCount += 1
             }
             return kCVReturnSuccess
         }
-        CVDisplayLinkStart(link)
         displayLink = link
+        syncDisplayLink()
+        startTraceTimer()
+    }
+
+    /// Draw only while there is something to see.
+    ///
+    /// Switching workspace hides the windows of the one being left rather than
+    /// closing them, so that going back is immediate. Those surfaces are still
+    /// alive and would otherwise go on drawing at the display's refresh rate
+    /// for a window nobody can see — which is the whole cost of keeping them.
+    /// The same applies to a window the person minimised or buried.
+    private func syncDisplayLink() {
+        guard let link = displayLink else { return }
+        let visible = window?.occlusionState.contains(.visible) ?? false
+        if visible {
+            if !CVDisplayLinkIsRunning(link) { CVDisplayLinkStart(link) }
+        } else if CVDisplayLinkIsRunning(link) {
+            CVDisplayLinkStop(link)
+        }
+    }
+
+    /// Report the draw rate once a second while tracing.
+    ///
+    /// The number that matters is the rate for a surface whose window is not
+    /// visible: it should be zero. Anything else is the app rendering a
+    /// terminal nobody can see, at the display's refresh rate.
+    private func startTraceTimer() {
+        guard Trace.enabled else { return }
+        traceTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let drawn = self.drawCount
+                self.drawCount = 0
+                let visible = self.window?.occlusionState.contains(.visible) ?? false
+                let running = self.displayLink.map { CVDisplayLinkIsRunning($0) } ?? false
+                // Silence is the expected state for a hidden, stopped surface.
+                guard drawn > 0 || (visible != running) else { return }
+                Trace.log("render", "\(self.workspace)/\(self.tab) fps=\(drawn) "
+                    + "visible=\(visible) link=\(running ? "run" : "stop") "
+                    + "size=\(Int(self.bounds.width))x\(Int(self.bounds.height))")
+            }
+        }
+    }
+
+    /// Draw again, now, without waiting to be told the window is visible.
+    ///
+    /// `syncDisplayLink` follows `didChangeOcclusionStateNotification`, which
+    /// arrives a beat after the window is actually ordered front. Waiting for
+    /// it leaves the revealed window with nothing presented — and against a
+    /// transparent, blurred window that reads as a hole rather than as a stale
+    /// frame. The transitions the app drives itself do not need to wait to be
+    /// told about themselves.
+    func resumeDrawing() {
+        guard let surface else { return }
+        if let link = displayLink, !CVDisplayLinkIsRunning(link) {
+            CVDisplayLinkStart(link)
+        }
+        ghostty_surface_draw(surface)
+    }
+
+    /// Stop drawing for a surface that is still alive but off screen.
+    func suspendDrawing() {
+        guard let link = displayLink, CVDisplayLinkIsRunning(link) else { return }
+        CVDisplayLinkStop(link)
+    }
+
+    /// A window reports occlusion only while it has one to report against, so
+    /// this follows the view from window to window.
+    private func observeOcclusion() {
+        if let observer = occlusionObserver {
+            NotificationCenter.default.removeObserver(observer)
+            occlusionObserver = nil
+        }
+        guard let window else {
+            syncDisplayLink()
+            return
+        }
+        occlusionObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.syncDisplayLink() }
+        }
+        syncDisplayLink()
     }
 
     private func updateSize() {
         guard let surface else { return }
+        Trace.log("layout", "\(workspace)/\(tab) updateSize \(Int(bounds.width))x\(Int(bounds.height))")
         // libghostty wants the framebuffer size, so convert rather than
         // multiplying by a guessed scale.
         let backing = convertToBacking(bounds).size

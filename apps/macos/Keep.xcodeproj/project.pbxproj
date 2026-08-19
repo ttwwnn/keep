@@ -8,10 +8,12 @@
 
 /* Begin PBXBuildFile section */
 		1A4DF695AB0229E7D445A48A /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ADD16A5C6AADA495B3C279A /* main.swift */; };
+		1AF163BEF511A2C521D81738 /* SurfacePool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82867970DC7652724D6A98CF /* SurfacePool.swift */; };
 		36AC5CB945C55DDE11883769 /* WorkspaceSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41CA8971146B0A3AEFF8D292 /* WorkspaceSidebar.swift */; };
 		4C11E82F43E6FB91AC2D84D4 /* WindowManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C56562178AF5BFA11BB3ED2E /* WindowManager.swift */; };
 		6CF528E340D307EDC50914B8 /* Daemon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 468C7023FE758974CF463692 /* Daemon.swift */; };
 		833915A3B32536A749A3ED62 /* GhosttyKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1493E76B2245010775C7CC76 /* GhosttyKit.xcframework */; };
+		99DC485B8CB6DCE919022EEA /* Trace.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED8DFC3EABE20420339348F1 /* Trace.swift */; };
 		B60E09C5FD28BB81E35B01C7 /* GhosttyApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 617541C8882EDCC67701FB64 /* GhosttyApp.swift */; };
 		BE8688F3B9607B18598E4710 /* TerminalWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BA9D409D4CE86AC07D787E1 /* TerminalWindowController.swift */; };
 		BF1012E62BB7056EE7E7D3D4 /* SurfaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D420A752F15C72894CF7BC3 /* SurfaceView.swift */; };
@@ -28,8 +30,10 @@
 		617541C8882EDCC67701FB64 /* GhosttyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyApp.swift; sourceTree = "<group>"; };
 		78382D18A1C95D16A36057DF /* KeepWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepWindow.swift; sourceTree = "<group>"; };
 		7D420A752F15C72894CF7BC3 /* SurfaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurfaceView.swift; sourceTree = "<group>"; };
+		82867970DC7652724D6A98CF /* SurfacePool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurfacePool.swift; sourceTree = "<group>"; };
 		C56562178AF5BFA11BB3ED2E /* WindowManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowManager.swift; sourceTree = "<group>"; };
 		D8842845A7C137C580BE530A /* Store.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Store.swift; sourceTree = "<group>"; };
+		ED8DFC3EABE20420339348F1 /* Trace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Trace.swift; sourceTree = "<group>"; };
 		FEB4BBC629ECFAF569DEF4E7 /* Keep.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Keep.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -86,7 +90,9 @@
 				78382D18A1C95D16A36057DF /* KeepWindow.swift */,
 				3ADD16A5C6AADA495B3C279A /* main.swift */,
 				D8842845A7C137C580BE530A /* Store.swift */,
+				82867970DC7652724D6A98CF /* SurfacePool.swift */,
 				5BA9D409D4CE86AC07D787E1 /* TerminalWindowController.swift */,
+				ED8DFC3EABE20420339348F1 /* Trace.swift */,
 				C56562178AF5BFA11BB3ED2E /* WindowManager.swift */,
 				41CA8971146B0A3AEFF8D292 /* WorkspaceSidebar.swift */,
 				4FD48526C04EA48291064CA9 /* Ghostty */,
@@ -162,8 +168,10 @@
 				B60E09C5FD28BB81E35B01C7 /* GhosttyApp.swift in Sources */,
 				FA090A5227C37CD8E0FB206D /* KeepWindow.swift in Sources */,
 				F124B44B2BB9508A23F7D93F /* Store.swift in Sources */,
+				1AF163BEF511A2C521D81738 /* SurfacePool.swift in Sources */,
 				BF1012E62BB7056EE7E7D3D4 /* SurfaceView.swift in Sources */,
 				BE8688F3B9607B18598E4710 /* TerminalWindowController.swift in Sources */,
+				99DC485B8CB6DCE919022EEA /* Trace.swift in Sources */,
 				4C11E82F43E6FB91AC2D84D4 /* WindowManager.swift in Sources */,
 				36AC5CB945C55DDE11883769 /* WorkspaceSidebar.swift in Sources */,
 				1A4DF695AB0229E7D445A48A /* main.swift in Sources */,

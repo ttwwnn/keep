@@ -9,15 +9,22 @@ import AppKit
 final class WindowManager {
     static let shared = WindowManager()
 
-    /// How many windows may exist at once.
-    ///
-    /// A chrome experiment once drove window creation in a loop and opened
-    /// dozens of tab windows in seconds, which took the machine down. Every
-    /// window is created through `makeController`, so this is the only lever
-    /// that has to move to widen it again.
-    static let maxWindows = 1
-
     private(set) var controllers: [TerminalWindowController] = []
+
+    /// The workspace the pool is currently bound to.
+    private(set) var currentWorkspace: String?
+
+    /// Kept so the poller can rebuild the arrangement without being handed one.
+    weak var store: Store?
+
+    /// Windows built once and set aside when the pool shrinks.
+    ///
+    /// A window is expensive to make — a toolbar, a split view and a whole
+    /// SwiftUI sidebar — and workspaces differ in how many tabs they hold, so
+    /// switching between a one-tab workspace and a three-tab one would build
+    /// two windows from nothing every time. They are closed but not released,
+    /// so bringing one back is just showing it again.
+    private var reserve: [TerminalWindowController] = []
 
     /// Set while the app quits. Windows closed on quit are the app going
     /// away, not the user closing tabs: the daemon must keep everything.
@@ -25,103 +32,137 @@ final class WindowManager {
 
     private init() {}
 
-    /// The sole way a window comes into being. Returns nil at the cap, and
-    /// callers show whatever they already have instead.
-    private func makeController(
-        workspace: String, rootTab: UInt32, store: Store
-    ) -> TerminalWindowController? {
-        guard controllers.count < Self.maxWindows else { return nil }
-        let controller = TerminalWindowController(
-            workspace: workspace, rootTab: rootTab, store: store)
-        controllers.append(controller)
-        return controller
+    /// Keep AppKit's tab bar on screen, always — even for a lone tab.
+    ///
+    /// Letting it come and go is what makes a switch flash. The bar is part of
+    /// the window's height: when it appears, the terminal below gives up a row
+    /// and every surface is remeasured and repainted, which reads as the whole
+    /// content area blinking. That happens on the way into a workspace with
+    /// several tabs from one with a single tab, and not between two that both
+    /// have tabs — which is the shape of the report that led here.
+    ///
+    /// Holding it visible also settles the placement: the bar stops changing
+    /// hands between windows, so the one that owns it stays the one that put
+    /// it in the toolbar row.
+    ///
+    /// On Tahoe, `addTabbedWindow` can keep the group as a hidden window set
+    /// even with `.preferred` tabbing, so this waits a run-loop turn for the
+    /// group to finish forming.
+    private func revealTabBar(for window: NSWindow?) {
+        guard let window else { return }
+        DispatchQueue.main.async {
+            guard let group = window.tabGroup else { return }
+            Trace.log("tabbar", "reveal: windows=\(group.windows.count) visible=\(group.isTabBarVisible)")
+            guard !group.isTabBarVisible else { return }
+            window.toggleTabBar(nil)
+        }
     }
 
-    /// Show a workspace: one native tab per root daemon tab (panes render
-    /// inside their root's window), existing windows left untouched.
+    /// Put a workspace on screen.
+    ///
+    /// The windows are a pool, not a per-workspace set. Showing a workspace
+    /// resizes that pool to its root tabs and rebinds each window; it never
+    /// hides one set and reveals another. That distinction is the whole point:
+    /// a window that is ordered out and back in is animated by the system,
+    /// hands its key status to whatever the system picks next, has its frame
+    /// restored by its tab group, and is re-tiled by any window manager
+    /// watching. A window that simply changes what it shows does none of that.
+    ///
+    /// Tabs still belong to workspaces — the pool only ever holds the current
+    /// one's — and they are still native tabs, one window each, in one group.
     func show(workspace: Daemon.Workspace, store: Store) {
-        let mine = controllers.filter { $0.workspace == workspace.name }
+        let roots = workspace.rootTabs
+        guard !roots.isEmpty else { return }
+        Trace.log("show", "→ \(workspace.name) roots=\(roots.map(\.id)) pool=\(controllers.count)")
+        currentWorkspace = workspace.name
 
-        // Close windows of other workspaces: the window is a view of one
-        // workspace at a time, which is what "switching" means here.
-        for controller in controllers where controller.workspace != workspace.name {
-            controller.isClosingBecauseTabEnded = true
+        grow(to: roots.count, store: store)
+        shrink(to: roots.count)
+
+        for (index, root) in roots.enumerated() {
+            var wanted: [(tab: UInt32, direction: UInt8?)] = [(root.id, nil)]
+            wanted += workspace.panes(of: root.id).map { ($0.id, Optional($0.splitDir)) }
+            controllers[index].bind(
+                workspace: workspace.name, rootTab: root.id, panes: wanted)
+            controllers[index].updateTitle(root.title, busy: root.busy)
+        }
+
+        controllers.first?.window?.makeKeyAndOrderFront(nil)
+        revealTabBar(for: controllers.last?.window)
+
+        // The group's membership just changed, so whichever window now holds
+        // the one real tab bar has to place it. A turn later: AppKit hands the
+        // bar over as part of settling the group, not before.
+        DispatchQueue.main.async { [weak self] in
+            guard let window = self?.controllers.first?.window as? KeepWindow else { return }
+            window.refreshTabBar()
+        }
+    }
+
+    /// Add windows to the group until it can hold the workspace.
+    private func grow(to count: Int, store: Store) {
+        while controllers.count < count {
+            let controller = reserve.popLast() ?? TerminalWindowController(store: store)
+            controller.isRecycling = false
+            if let anchor = controllers.first?.window, let window = controller.window {
+                anchor.addTabbedWindow(window, ordered: .above)
+            } else if let window = controller.window {
+                window.setFrame(NSRect(x: 0, y: 0, width: 1040, height: 660), display: false)
+                window.center()
+            }
+            controllers.append(controller)
+            controller.showWindow(nil)
+            Trace.log("pool", "grew to \(controllers.count) reserve=\(reserve.count)")
+        }
+    }
+
+    /// Drop surplus windows. Their tabs keep running — the pool is smaller,
+    /// the work is not gone — so they close without touching the daemon.
+    private func shrink(to count: Int) {
+        while controllers.count > count {
+            let controller = controllers.removeLast()
+            controller.isRecycling = true
             controller.close()
+            reserve.append(controller)
+            Trace.log("pool", "shrank to \(controllers.count) reserve=\(reserve.count)")
         }
-
-        var previous: NSWindow? = nil
-        for root in workspace.rootTabs {
-            let controller: TerminalWindowController
-            if let existing = mine.first(where: { $0.rootTab == root.id }) {
-                controller = existing
-            } else {
-                // At the cap the remaining tabs keep running in the daemon,
-                // just unshown; later roots may still have a window already.
-                guard let made = makeController(
-                    workspace: workspace.name, rootTab: root.id, store: store)
-                else { continue }
-                controller = made
-                if let previous, let window = controller.window {
-                    previous.addTabbedWindow(window, ordered: .above)
-                } else if let window = controller.window {
-                    window.setFrame(
-                        NSRect(x: 0, y: 0, width: 1040, height: 660), display: false)
-                    window.center()
-                }
-                controller.showWindow(nil)
-            }
-            controller.updateTitle(root.title, busy: root.busy)
-            // Rebuild this window's panes from the daemon's layout.
-            for pane in workspace.panes(of: root.id) {
-                controller.addPane(tab: pane.id, direction: pane.splitDir)
-            }
-            previous = controller.window
-        }
-
-        controllers.first { $0.workspace == workspace.name }?
-            .window?.makeKeyAndOrderFront(nil)
     }
 
-    /// Open one new tab window without touching the others.
-    func openTab(workspace: String, tab: UInt32, store: Store) {
-        guard !controllers.contains(where: { $0.workspace == workspace && $0.rootTab == tab })
-        else { return }
-        guard let controller = makeController(workspace: workspace, rootTab: tab, store: store)
-        else { return }
-
-        if let sibling = controllers.first(where: { $0.workspace == workspace && $0 !== controller })?.window,
-           let window = controller.window {
-            sibling.addTabbedWindow(window, ordered: .above)
-        } else if let window = controller.window {
-            window.setFrame(NSRect(x: 0, y: 0, width: 1040, height: 660), display: false)
-            window.center()
-        }
-        controller.showWindow(nil)
-        controller.window?.makeKeyAndOrderFront(nil)
+    /// Open one more tab in the workspace on screen.
+    func openTab(workspace: Daemon.Workspace, store: Store) {
+        show(workspace: workspace, store: store)
     }
 
-    /// Refresh labels, drop panes and windows the daemon no longer has.
-    /// Never opens anything.
+    /// Refresh labels, and rebuild the arrangement if the daemon's changed.
+    /// Opens nothing on its own: it only follows what is already on screen.
     func sync(with workspaces: [Daemon.Workspace]) {
-        for controller in controllers {
-            guard
-                let workspace = workspaces.first(where: { $0.name == controller.workspace }),
-                let root = workspace.liveTabs.first(where: { $0.id == controller.rootTab })
-            else {
-                controller.isClosingBecauseTabEnded = true
-                controller.close()
-                continue
-            }
-            controller.updateTitle(root.title, busy: root.busy)
-            let live = Set(workspace.liveTabs.map(\.id))
-            for tab in controller.tabs where tab != controller.rootTab && !live.contains(tab) {
-                controller.removePane(tab: tab)
-            }
+        guard let name = currentWorkspace,
+              let workspace = workspaces.first(where: { $0.name == name })
+        else { return }
+
+        // A tab the daemon no longer has takes its surface with it, otherwise
+        // the client would linger attached to nothing.
+        let live = Set(workspace.liveTabs.map(\.id))
+        for tab in SurfacePool.shared.tabs(in: name) where !live.contains(tab) {
+            SurfacePool.shared.discard(workspace: name, tab: tab)
+        }
+
+        // Rebuild only when the arrangement actually moved: `show` is cheap
+        // now, but not free, and this runs on a timer.
+        let roots = workspace.rootTabs.map(\.id)
+        let shown = controllers.map(\.rootTab)
+        if roots != shown, let store = store {
+            show(workspace: workspace, store: store)
+            return
+        }
+
+        for (index, root) in workspace.rootTabs.enumerated() where index < controllers.count {
+            controllers[index].updateTitle(root.title, busy: root.busy)
         }
     }
 
     var frontWorkspace: String? {
-        frontController?.workspace ?? controllers.first?.workspace
+        currentWorkspace ?? frontController?.workspace
     }
 
     var frontController: TerminalWindowController? {
