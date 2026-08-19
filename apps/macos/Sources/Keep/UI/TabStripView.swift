@@ -1,18 +1,15 @@
 import AppKit
 
-/// The app-drawn tab bar, imitating the native macOS one: a 28 pt row of
-/// flat, equal-width tabs with hairline separators, centered titles, a close
-/// button on hover, and "+" pinned at the trailing edge.
+/// The tab bar, drawn to match Ghostty's.
 ///
-/// It exists because the native bar cannot be kept: AppKit's tab bar means
-/// AppKit's window-per-tab, and windows coming and going is the bug class
-/// this shell was rebuilt to remove. This view is plain content — selecting
-/// a tab is a message upward, not a window operation.
+/// The shape of it: the selected tab is a rounded fill sitting inside the
+/// titlebar row; the others are bare text on the chrome, with no separators
+/// between them. Each carries its ⌘-number on the right, so the shortcut is
+/// learned by being seen rather than by being looked up.
 ///
-/// It draws no base color: it sits on the existing terminal-tinted chrome,
-/// and its overlays resolve from the terminal background's luminance, so the
-/// selected tab reads as continuous with the content below it — which is
-/// exactly what the native selected tab does.
+/// It is the app's own view rather than AppKit's tab bar because AppKit's is
+/// not a bar — it is a consequence of one window per tab, and windows coming
+/// and going is the bug class this shell was rebuilt to remove.
 @MainActor
 final class TabStripView: NSView {
     var onSelect: ((TabID) -> Void)?
@@ -87,20 +84,22 @@ final class TabStripView: NSView {
 
     private func retint() {
         applyCells()
-        newTabButton.contentTintColor = Palette.current.title.withAlphaComponent(0.55)
+        newTabButton.contentTintColor = Palette.current.dimText
     }
 
     private func applyCells() {
         let palette = Palette.current
         for (index, cell) in cells.enumerated() {
-            let item = items[index]
-            // A separator belongs between two tabs, not at the ends of the
-            // row, and not beside the selected one — its own edge already
-            // reads as a boundary.
-            let next = index + 1 < items.count ? items[index + 1] : nil
-            let separator = next.map { !item.isActive && !$0.isActive } ?? false
-            cell.apply(item, palette: palette, trailingSeparator: separator)
+            cell.apply(items[index], palette: palette, shortcut: Self.shortcut(
+                index: index, count: items.count))
         }
+    }
+
+    /// ⌘1-8 by position and ⌘9 for the last, which is the rule the Window
+    /// menu uses and the convention macOS trained.
+    private static func shortcut(index: Int, count: Int) -> String? {
+        if index == count - 1 && count >= 9 { return "⌘9" }
+        return index < 8 ? "⌘\(index + 1)" : nil
     }
 
     override func layout() {
@@ -113,15 +112,11 @@ final class TabStripView: NSView {
         guard !cells.isEmpty else { return }
         let left = leadingClearance
         let available = max(0, bounds.width - left - plusWidth - 8)
-        // Tabs fill the row rather than sitting in a corner of it, which is
-        // what every native tab bar does and what made a lone tab look like a
-        // stray button. They only stop growing when there is more room than a
-        // title can use.
-        let width = max(60, min(available, available / CGFloat(cells.count)))
+        // Tabs fill the row rather than sitting in a corner of it.
+        let width = max(80, min(available, available / CGFloat(cells.count)))
         var x = left
         for cell in cells {
-            // Whole pixels: a hairline on a half-pixel boundary renders as a
-            // soft grey smear instead of a line.
+            // Whole pixels: a fill edge on a half pixel renders soft.
             let next = (x + width).rounded()
             cell.frame = NSRect(x: x.rounded(), y: 0, width: next - x.rounded(), height: height)
             x = next
@@ -132,12 +127,14 @@ final class TabStripView: NSView {
         onNewTab?()
     }
 
-    /// Colors resolved from the terminal background's luminance.
-    struct Palette {
-        let title: NSColor
-        let unselectedOverlay: NSColor
-        let hoverOverlay: NSColor
-        let hairline: NSColor
+    /// Colours resolved from the terminal background's luminance, so the bar
+    /// belongs to whatever theme the terminal is wearing.
+    struct Palette: Equatable {
+        let text: NSColor
+        let dimText: NSColor
+        /// The selected tab's fill. Nothing paints the unselected ones.
+        let selectedFill: NSColor
+        let hoverFill: NSColor
 
         static var current: Palette {
             let background = GhosttyApp.shared.terminalBackground ?? .black
@@ -146,19 +143,18 @@ final class TabStripView: NSView {
                 + 0.7152 * rgb.greenComponent
                 + 0.0722 * rgb.blueComponent
             let dark = luminance < 0.5
-            let title: NSColor = dark ? .white : .black
+            let ink: NSColor = dark ? .white : .black
             return Palette(
-                title: title.withAlphaComponent(0.85),
-                unselectedOverlay: NSColor.black.withAlphaComponent(dark ? 0.22 : 0.07),
-                hoverOverlay: NSColor.black.withAlphaComponent(dark ? 0.11 : 0.035),
-                hairline: title.withAlphaComponent(0.14)
+                text: ink.withAlphaComponent(dark ? 0.92 : 0.85),
+                dimText: ink.withAlphaComponent(0.45),
+                selectedFill: ink.withAlphaComponent(dark ? 0.10 : 0.07),
+                hoverFill: ink.withAlphaComponent(dark ? 0.05 : 0.035)
             )
         }
     }
 }
 
-/// One tab. The selected cell draws no overlay — it shows the chrome tint,
-/// i.e. the terminal's own color, continuous with the content below.
+/// One tab: a rounded fill when selected, bare text when not.
 @MainActor
 private final class TabCellView: NSView {
     var onSelect: ((TabID) -> Void)?
@@ -166,21 +162,38 @@ private final class TabCellView: NSView {
 
     private var item: SessionSnapshot.StripItem?
     private var palette: TabStripView.Palette?
-    private var showsSeparator = false
+    private var shortcut: String?
     private var hovered = false
+
+    private let fill = NSView()
     private let label = NSTextField(labelWithString: "")
+    private let shortcutLabel = NSTextField(labelWithString: "")
     private let closeButton = NSButton()
-    private let hairline = NSView()
+
+    /// How much of the row the fill leaves alone, so a tab reads as a shape
+    /// inside the titlebar rather than as a full-height block.
+    private let verticalInset: CGFloat = 10
+    private let horizontalInset: CGFloat = 3
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
 
-        label.font = .systemFont(ofSize: 11)
+        fill.wantsLayer = true
+        fill.layer?.cornerRadius = 6
+        fill.layer?.cornerCurve = .continuous
+        addSubview(fill)
+
+        label.font = .systemFont(ofSize: 12)
         label.alignment = .center
-        label.lineBreakMode = .byTruncatingMiddle
+        label.lineBreakMode = .byTruncatingTail
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)
+
+        shortcutLabel.font = .systemFont(ofSize: 11)
+        shortcutLabel.alignment = .right
+        shortcutLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(shortcutLabel)
 
         closeButton.image = NSImage(
             systemSymbolName: "xmark",
@@ -194,23 +207,19 @@ private final class TabCellView: NSView {
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(closeButton)
 
-        hairline.wantsLayer = true
-        hairline.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(hairline)
-
         NSLayoutConstraint.activate([
             label.centerXAnchor.constraint(equalTo: centerXAnchor),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
-            label.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 20),
-            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -20),
-            closeButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            label.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 28),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -36),
+
+            closeButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            closeButton.widthAnchor.constraint(equalToConstant: 16),
-            closeButton.heightAnchor.constraint(equalToConstant: 16),
-            hairline.trailingAnchor.constraint(equalTo: trailingAnchor),
-            hairline.topAnchor.constraint(equalTo: topAnchor, constant: 7),
-            hairline.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7),
-            hairline.widthAnchor.constraint(equalToConstant: 1),
+            closeButton.widthAnchor.constraint(equalToConstant: 14),
+            closeButton.heightAnchor.constraint(equalToConstant: 14),
+
+            shortcutLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            shortcutLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
 
         setAccessibilityElement(true)
@@ -220,43 +229,45 @@ private final class TabCellView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not supported") }
 
+    override func layout() {
+        super.layout()
+        fill.frame = bounds.insetBy(dx: horizontalInset, dy: verticalInset)
+        // The number is a hint, not a control: it steps aside when a tab is
+        // too narrow to carry both it and a readable title.
+        shortcutLabel.isHidden = shortcut == nil || bounds.width < 160
+    }
+
     func apply(
         _ item: SessionSnapshot.StripItem,
         palette: TabStripView.Palette,
-        trailingSeparator: Bool = false
+        shortcut: String?
     ) {
         self.item = item
         self.palette = palette
-        showsSeparator = trailingSeparator
-        var title = item.title
+        self.shortcut = shortcut
+
+        var title = item.title.isEmpty ? "untitled" : item.title
         if item.hasPanes { title += "  ⊞" }
         if item.busy { title = "✳ \(title)" }
         if label.stringValue != title { label.stringValue = title }
-        label.font = .systemFont(ofSize: 11, weight: item.isActive ? .medium : .regular)
-        label.textColor = item.isActive
-            ? palette.title
-            : palette.title.withAlphaComponent(0.55)
-        layer?.backgroundColor = item.isActive
-            ? nil
-            : (hovered ? palette.hoverOverlay : palette.unselectedOverlay).cgColor
-        hairline.isHidden = !showsSeparator
-        hairline.layer?.backgroundColor = palette.hairline.cgColor
-        closeButton.contentTintColor = palette.title.withAlphaComponent(0.7)
+        label.font = .systemFont(ofSize: 12, weight: item.isActive ? .medium : .regular)
+        label.textColor = item.isActive ? palette.text : palette.dimText
+
+        // Only the selected tab is painted. The rest are text on the chrome,
+        // and hovering one hints at it without claiming to be it.
+        let background: NSColor = item.isActive
+            ? palette.selectedFill
+            : (hovered ? palette.hoverFill : .clear)
+        fill.layer?.backgroundColor = background.cgColor
+
+        shortcutLabel.stringValue = shortcut ?? ""
+        shortcutLabel.textColor = palette.dimText
+        closeButton.contentTintColor = palette.text
         closeButton.isHidden = !hovered
+
         setAccessibilityLabel(title)
         toolTip = item.title
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        guard !hovered else { return }
-        hovered = true
-        refresh()
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        guard hovered else { return }
-        hovered = false
-        refresh()
+        needsLayout = true
     }
 
     /// Cells are reused and resized as tabs come and go, and a cell that
@@ -280,9 +291,21 @@ private final class TabCellView: NSView {
         }
     }
 
+    override func mouseEntered(with event: NSEvent) {
+        guard !hovered else { return }
+        hovered = true
+        refresh()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        guard hovered else { return }
+        hovered = false
+        refresh()
+    }
+
     private func refresh() {
         if let item, let palette {
-            apply(item, palette: palette, trailingSeparator: showsSeparator)
+            apply(item, palette: palette, shortcut: shortcut)
         }
     }
 
