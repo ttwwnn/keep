@@ -310,11 +310,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         //
         // The toggle ends at 120 in the strip's own coordinates — measured,
         // not guessed — so anything less puts the first tab underneath it.
-        // A tab's close button sits 12 points into its cell, which is the
-        // same gap the new-tab button keeps from the last tab at the other
-        // end: starting the row exactly where the toggle stops makes the two
-        // ends of the chrome breathe alike.
-        tabStrip.leadingClearance = state.isCollapsed ? 120 : 0
+        // Ten points further on, a tab's capsule (inset two from its cell)
+        // starts twelve points clear of the toggle, which is exactly the gap
+        // the new-tab button keeps from the last tab at the other end. The
+        // capsule is what the eye measures from, not the close button inside
+        // it, so it is the capsule the two ends are matched on.
+        tabStrip.leadingClearance = state.isCollapsed ? 130 : 0
     }
 
     private func dividerMoved() {
