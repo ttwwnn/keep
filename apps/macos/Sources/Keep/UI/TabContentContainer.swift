@@ -65,44 +65,30 @@ final class TabHostView: NSView {
     private var focusedPane: UInt32?
     private var splitViews: [NSSplitView] = []
     private var surfaces: [UInt32: TerminalSurfaceView] = [:]
-    /// The block API hands back a token, and only that token unregisters —
-    /// removeObserver(self) removes nothing, so every rebuild used to leave
-    /// its observers behind, still firing on split views nobody can see.
-    private var splitObservers: [NSObjectProtocol] = []
-
     /// A pane surface took the keyboard; forwarded up with this tab's identity
     /// so a report from a hidden tab cannot be mistaken for the active one's.
     var onPaneFocus: ((TabID, UInt32) -> Void)?
 
-    /// Which pane has the keyboard, drawn only when there is more than one.
+    /// How much of itself a pane keeps when the keyboard is elsewhere.
+    ///
     /// A split with no visible focus leaves you guessing where the next
-    /// keystroke — or the next split — is going to land.
-    private let focusRing: NSView = {
-        let ring = FocusRingView()
-        ring.wantsLayer = true
-        ring.layer?.borderWidth = 2
-        ring.layer?.cornerRadius = 3
-        ring.isHidden = true
-        return ring
-    }()
+    /// keystroke — or the next split — is going to land. Marking the one you
+    /// are in draws a line around it; stepping the others back says the same
+    /// thing without drawing anything, and the thing it says is true of the
+    /// whole pane rather than of its edge.
+    private static let restingOpacity: CGFloat = 0.65
 
     init(id: TabID) {
         self.id = id
         super.init(frame: .zero)
-        addSubview(focusRing)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not supported") }
 
-    deinit {
-        for observer in splitObservers { NotificationCenter.default.removeObserver(observer) }
-    }
-
     override func layout() {
         super.layout()
-        subviews.first { $0 !== focusRing }?.frame = bounds
-        positionFocusRing()
+        subviews.first?.frame = bounds
     }
 
     /// Rebuild the arrangement when its shape changed. Surfaces come from the
@@ -118,16 +104,14 @@ final class TabHostView: NSView {
         guard next != tree else { return false }
         tree = next
 
-        for observer in splitObservers { NotificationCenter.default.removeObserver(observer) }
-        splitObservers.removeAll()
         splitViews.removeAll()
         surfaces.removeAll()
-        for view in subviews where view !== focusRing { view.removeFromSuperview() }
+        for view in subviews { view.removeFromSuperview() }
 
         let content = build(next)
         content.frame = bounds
         content.autoresizingMask = [.width, .height]
-        addSubview(content, positioned: .below, relativeTo: focusRing)
+        addSubview(content)
 
         // Outermost first, laying out between levels: a nested split has no
         // size of its own until its parent has given it one, and halving zero
@@ -137,7 +121,7 @@ final class TabHostView: NSView {
             equalize(split)
             split.layoutSubtreeIfNeeded()
         }
-        positionFocusRing()
+        applyResting()
         return true
     }
 
@@ -161,16 +145,6 @@ final class TabHostView: NSView {
             splitViews.append(split)
             split.addArrangedSubview(build(first))
             split.addArrangedSubview(build(second))
-            // Dragging a divider resizes that split's own subviews, not this
-            // host, so nothing here lays out and the focus ring would stay on
-            // the pane's old edge. Every split in the tree reports.
-            splitObservers.append(NotificationCenter.default.addObserver(
-                forName: NSSplitView.didResizeSubviewsNotification,
-                object: split,
-                queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated { self?.positionFocusRing() }
-            })
             return split
         }
     }
@@ -185,20 +159,25 @@ final class TabHostView: NSView {
     func setFocusedPane(_ tab: UInt32) {
         guard focusedPane != tab else { return }
         focusedPane = tab
-        positionFocusRing()
+        applyResting()
     }
 
-    private func positionFocusRing() {
-        guard let tree, tree.leaves.count > 1,
-              let focusedPane, let surface = surfaces[focusedPane]
-        else {
-            focusRing.isHidden = true
-            return
+    /// Step every pane but the one you are in back a little.
+    ///
+    /// A lone pane is never dimmed: with nothing to tell it apart from, dim
+    /// would only mean the window is not in front, which the window says for
+    /// itself.
+    private func applyResting() {
+        let many = (tree?.leaves.count ?? 0) > 1
+        for (pane, surface) in surfaces {
+            let resting = many && pane != focusedPane
+            let target = resting ? Self.restingOpacity : 1
+            guard surface.alphaValue != target else { continue }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.12
+                surface.animator().alphaValue = target
+            }
         }
-        focusRing.layer?.borderColor = NSColor.controlAccentColor
-            .withAlphaComponent(0.9).cgColor
-        focusRing.frame = convert(surface.bounds, from: surface)
-        focusRing.isHidden = false
     }
 
     func surface(for tab: UInt32) -> TerminalSurfaceView? {
@@ -206,9 +185,4 @@ final class TabHostView: NSView {
     }
 
     var paneSurfaces: [TerminalSurfaceView] { Array(surfaces.values) }
-}
-
-/// The focus marker never takes a click: it sits over a terminal.
-private final class FocusRingView: NSView {
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
