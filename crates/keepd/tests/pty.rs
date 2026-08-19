@@ -332,3 +332,66 @@ fn snapshot_reports_how_far_back_it_reaches() {
     assert!(lines > 0, "snapshot came back empty");
     session.kill().ok();
 }
+
+/// A pane promoted into a departed pane's place must take its orientation too.
+///
+/// `split_dir` says how a pane sits against the tab it was split from, so a
+/// record kept from an old parent describes a division that no longer exists.
+/// The heir stands in for what left: it lands in that slot, oriented the way
+/// the slot was, instead of halving its new parent afresh.
+#[test]
+fn an_heir_takes_the_orientation_of_the_place_it_fills() {
+    let workspace = keepd::Workspace::new("orientation");
+    let (root, _) = workspace.new_tab(None, 80, 24, 0, 0).expect("root");
+    let (middle, _) = workspace.new_tab(None, 80, 24, root, 1).expect("middle pane");
+    let (leaf, _) = workspace.new_tab(None, 80, 24, middle, 2).expect("leaf pane");
+
+    workspace.close_tab(middle).expect("close the middle pane");
+
+    let tabs = workspace.tabs();
+    let leaf_entry = tabs.iter().find(|t| t.id == leaf).expect("leaf survived");
+    assert_eq!(leaf_entry.split_of, root, "the leaf did not inherit the root");
+    assert_eq!(
+        leaf_entry.split_dir, 1,
+        "the leaf kept an orientation measured against a pane that is gone"
+    );
+    workspace.kill_all().ok();
+}
+
+/// A whole chain finishing at once must leave one tab, not one tab per orphan.
+///
+/// Shells exit together — closing a split's root kills the panes under it — so
+/// a reap can carry away a pane and the pane it was split from in the same
+/// pass. Rehoming each against its own record hands one survivor the id of
+/// something else that just left, and a pane pointing at nothing is reported
+/// standalone. This is the scattering seen when panes are closed quickly.
+#[test]
+fn a_group_finishing_together_stays_one_tab() {
+    let workspace = keepd::Workspace::new("group");
+    let (root, root_tab) = workspace.new_tab(None, 80, 24, 0, 0).expect("root");
+    let (middle, middle_tab) = workspace.new_tab(None, 80, 24, root, 1).expect("middle pane");
+    let (deep, _) = workspace.new_tab(None, 80, 24, middle, 1).expect("pane of the middle");
+    let (shallow, _) = workspace.new_tab(None, 80, 24, root, 2).expect("pane of the root");
+
+    // The root and the pane below it finish together; the two panes hanging
+    // off them are still running.
+    root_tab.kill().expect("kill the root");
+    middle_tab.kill().expect("kill the middle pane");
+    assert!(
+        wait_for(Duration::from_secs(5), || root_tab.is_finished() && middle_tab.is_finished()),
+        "the shells never exited"
+    );
+    workspace.reap();
+
+    let tabs = workspace.tabs();
+    assert_eq!(tabs.len(), 2, "reaping took a running pane with it");
+    let roots: Vec<u32> = tabs.iter().filter(|t| t.split_of == 0).map(|t| t.id).collect();
+    assert_eq!(roots.len(), 1, "the survivors scattered into a tab each: {roots:?}");
+    let follower = tabs.iter().find(|t| t.id != roots[0]).expect("two survivors");
+    assert_eq!(follower.split_of, roots[0], "the other survivor is not in the same tab");
+    assert!(
+        roots[0] == deep || roots[0] == shallow,
+        "something that was not a survivor became the root"
+    );
+    workspace.kill_all().ok();
+}

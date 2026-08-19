@@ -5,6 +5,7 @@
 //! live here rather than in the app so that closing the window loses nothing:
 //! reopening finds the same tabs, still running.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -38,32 +39,76 @@ pub struct Workspace {
 
 /// Give a departed tab's panes somewhere to belong.
 ///
-/// A pane records which tab it was split from, and a pane whose record points
-/// at nothing is reported standalone — so without this, closing one pane
-/// would scatter the panes below it into tabs of their own.
+/// A pane records the tab it was split from, and a pane whose record points at
+/// nothing is reported standalone — so left alone, closing one pane would
+/// scatter everything below it into tabs of its own.
 ///
-/// Panes of a departed *pane* inherit its parent. Panes of a departed *root*
-/// have no parent to inherit, so the first of them takes the root's role and
-/// its siblings hang off it: the arrangement loses a pane instead of being
-/// taken apart. That distinction is the whole of this function, and it is
-/// what closing panes in quick succession kept getting wrong.
-fn inherit(tabs: &mut [Entry], departed: u32, parent: u32) {
-    if parent != 0 {
-        for entry in tabs.iter_mut() {
-            if entry.split_of == departed {
-                entry.split_of = parent;
-            }
-        }
-        return;
-    }
+/// One pane takes the departed's place: its parent and its orientation, so the
+/// survivor lands in the slot the arrangement already had rather than halving
+/// the parent afresh. The rest hang off that heir. A departed root has no slot
+/// to take, so the heir becomes the root.
+///
+/// Returns the heir, where there was one to promote.
+fn inherit(tabs: &mut [Entry], departed: u32, parent: u32, dir: u8) -> Option<u32> {
     // Creation order, so the oldest pane is the one promoted.
-    let Some(heir) = tabs.iter().position(|e| e.split_of == departed) else { return };
+    let heir = tabs.iter().position(|e| e.split_of == departed)?;
     let heir_id = tabs[heir].id;
-    tabs[heir].split_of = 0;
-    tabs[heir].split_dir = 0;
+    tabs[heir].split_of = parent;
+    tabs[heir].split_dir = dir;
     for entry in tabs.iter_mut() {
         if entry.split_of == departed && entry.id != heir_id {
             entry.split_of = heir_id;
+        }
+    }
+    Some(heir_id)
+}
+
+/// Rehome the panes of everything that left, in one pass.
+///
+/// Departures arrive in groups — a shell exiting takes the shells of its panes
+/// with it — and a group can hold both a pane and the pane it was split from.
+/// Rehoming each against the record it kept would hand a survivor the id of
+/// something else that left in the same pass, and a pane whose parent does not
+/// exist is reported standalone: the arrangement would come apart at exactly
+/// the moment a whole split finishes at once.
+///
+/// So each departed slot is resolved *through* the others first, up to the
+/// first tab that is actually still there. Everything whose chain ends at the
+/// same dead root is kept together under one heir instead of each orphan
+/// becoming a tab.
+fn rehome(tabs: &mut [Entry], departed: &HashMap<u32, (u32, u8)>) {
+    let mut ids: Vec<u32> = departed.keys().copied().collect();
+    ids.sort_unstable();
+
+    // Dead root -> the pane promoted to stand in for it.
+    let mut promoted: HashMap<u32, u32> = HashMap::new();
+
+    for id in ids {
+        let (own_parent, own_dir) = departed[&id];
+        let (mut parent, mut dir) = (own_parent, own_dir);
+        // The chain's last departed link, whose place the heir ends up taking.
+        let mut top = id;
+        // Ids only ever point backwards, so this cannot loop; bound it anyway
+        // rather than trust a record to be well formed.
+        let mut hops = departed.len();
+        while let Some(&(grandparent, grandparent_dir)) = departed.get(&parent) {
+            if hops == 0 {
+                break;
+            }
+            hops -= 1;
+            top = parent;
+            parent = grandparent;
+            dir = grandparent_dir;
+        }
+
+        if parent != 0 {
+            inherit(tabs, id, parent, dir);
+        } else if let Some(&heir) = promoted.get(&top) {
+            // The root of this chain already has a stand-in; join it there,
+            // keeping the orientation this pane was split with.
+            inherit(tabs, id, heir, own_dir);
+        } else if let Some(heir) = inherit(tabs, id, 0, 0) {
+            promoted.insert(top, heir);
         }
     }
 }
@@ -150,7 +195,7 @@ impl Workspace {
             let mut guard = self.tabs.lock().map_err(|_| anyhow!("workspace poisoned"))?;
             let pos = guard.iter().position(|e| e.id == id).ok_or_else(|| anyhow!("no tab {id}"))?;
             let closed = guard.remove(pos);
-            inherit(&mut guard, closed.id, closed.split_of);
+            rehome(&mut guard, &HashMap::from([(closed.id, (closed.split_of, closed.split_dir))]));
             closed.tab
         };
         tab.kill()
@@ -173,17 +218,19 @@ impl Workspace {
     /// read the last of its output yet.
     pub fn reap(&self) {
         if let Ok(mut guard) = self.tabs.lock() {
-            let gone: Vec<(u32, u32)> = guard
+            let departed: HashMap<u32, (u32, u8)> = guard
                 .iter()
                 .filter(|e| e.tab.is_finished() && e.tab.attached_clients() == 0)
-                .map(|e| (e.id, e.split_of))
+                .map(|e| (e.id, (e.split_of, e.split_dir)))
                 .collect();
-            guard.retain(|e| !(e.tab.is_finished() && e.tab.attached_clients() == 0));
-            // Same inheritance as `close_tab`: a pane whose own shell exited
-            // must not take the panes below it out of the arrangement.
-            for (id, parent) in gone {
-                inherit(&mut guard, id, parent);
+            if departed.is_empty() {
+                return;
             }
+            guard.retain(|e| !departed.contains_key(&e.id));
+            // The same inheritance as `close_tab`, resolved across the whole
+            // group: panes whose own shell exited must not take the panes
+            // below them out of the arrangement.
+            rehome(&mut guard, &departed);
         }
     }
 
