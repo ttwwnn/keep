@@ -19,6 +19,12 @@ final class TabStripView: NSView {
     var onClose: ((TabID) -> Void)?
     var onNewTab: (() -> Void)?
 
+    /// Points kept free at the left for chrome that overlaps this row when
+    /// the sidebar is collapsed (traffic lights, sidebar toggle).
+    var leadingClearance: CGFloat = 0 {
+        didSet { if leadingClearance != oldValue { needsLayout = true } }
+    }
+
     private var items: [SessionSnapshot.StripItem] = []
     private var cells: [TabCellView] = []
     private let newTabButton = NSButton()
@@ -96,10 +102,11 @@ final class TabStripView: NSView {
             x: bounds.width - plusWidth - 4, y: (height - 24) / 2, width: plusWidth, height: 24)
 
         guard !cells.isEmpty else { return }
-        let available = max(0, bounds.width - plusWidth - 8)
+        let left = leadingClearance
+        let available = max(0, bounds.width - left - plusWidth - 8)
         let width = min(220, max(60, available / CGFloat(cells.count)))
         for (index, cell) in cells.enumerated() {
-            cell.frame = NSRect(x: CGFloat(index) * width, y: 0, width: width, height: height)
+            cell.frame = NSRect(x: left + CGFloat(index) * width, y: 0, width: width, height: height)
         }
     }
 

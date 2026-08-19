@@ -35,13 +35,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         chromeBackdrop.wantsLayer = true
         chromeBackdrop.translatesAutoresizingMaskIntoConstraints = false
         container.translatesAutoresizingMaskIntoConstraints = false
+        tabStrip.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(chromeBackdrop)
         content.addSubview(container)
+        // The strip lives in the chrome row — the same region the backdrop
+        // tints, above the terminal, beside the sidebar. Plain content: no
+        // toolbar sizing, no private views, and empty regions still drag the
+        // window because the strip's hitTest passes them through.
+        content.addSubview(tabStrip)
         NSLayoutConstraint.activate([
             chromeBackdrop.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             chromeBackdrop.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             chromeBackdrop.topAnchor.constraint(equalTo: content.topAnchor),
             chromeBackdrop.bottomAnchor.constraint(equalTo: content.safeAreaLayoutGuide.topAnchor),
+            tabStrip.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            tabStrip.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            tabStrip.topAnchor.constraint(equalTo: content.topAnchor),
+            tabStrip.bottomAnchor.constraint(equalTo: content.safeAreaLayoutGuide.topAnchor),
             container.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             container.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             container.topAnchor.constraint(equalTo: content.safeAreaLayoutGuide.topAnchor),
@@ -79,7 +89,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
         window.installUnifiedToolbar(
             sidebarController: split,
-            tabStrip: tabStrip,
             chromeBackdrop: chromeBackdrop,
             sidebarBackdrop: sidebarHost.backdropView
         )
@@ -245,6 +254,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         if !state.isCollapsed, current?.width != state.width {
             splitView.setPosition(state.width, ofDividerAt: 0)
         }
+        // With the sidebar collapsed the content starts at the window's left
+        // edge, under the traffic lights and the toggle button; the strip
+        // clears them. Expanded, the sidebar itself is the clearance.
+        tabStrip.leadingClearance = state.isCollapsed ? 116 : 0
     }
 
     private func dividerMoved() {

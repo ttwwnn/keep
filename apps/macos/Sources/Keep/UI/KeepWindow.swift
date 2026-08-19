@@ -5,12 +5,13 @@ import GhosttyKit
 ///
 /// The tracking separator keeps the toolbar boundary aligned with the split
 /// while the custom, content-owned sidebar resizes or collapses. The tab
-/// strip is the app's own view living as a toolbar item — no private view
-/// hierarchy is hunted, moved, or constrained anywhere in this file anymore:
-/// the ~230 lines that relocated AppKit's NSTabBar died with native tabbing.
+/// strip is NOT a toolbar item — toolbar sizing pushed a flexible custom view
+/// into the overflow menu — it is plain content, constrained into the chrome
+/// row by the window controller. No private view hierarchy is hunted, moved,
+/// or constrained anywhere in this file: the ~230 lines that relocated
+/// AppKit's NSTabBar died with native tabbing.
 final class KeepWindow: NSWindow, NSToolbarDelegate {
     private static let toolbarIdentifier = NSToolbar.Identifier("keep-main-toolbar")
-    private static let tabStripItemIdentifier = NSToolbarItem.Identifier("keep-tab-strip")
     private static let toggleSidebarAccessoryIdentifier = NSUserInterfaceItemIdentifier(
         "keep-toggle-sidebar"
     )
@@ -20,7 +21,6 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
     var onToggleSidebar: (() -> Void)?
 
     private weak var sidebarSplitView: NSSplitView?
-    private weak var tabStrip: TabStripView?
     private weak var chromeBackdropView: NSView?
     private weak var sidebarBackdropView: NSView?
     private var terminalBackgroundObserver: NSObjectProtocol?
@@ -54,12 +54,10 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
 
     func installUnifiedToolbar(
         sidebarController: NSSplitViewController,
-        tabStrip: TabStripView,
         chromeBackdrop: NSView,
         sidebarBackdrop: NSView
     ) {
         sidebarSplitView = sidebarController.splitView
-        self.tabStrip = tabStrip
         chromeBackdropView = chromeBackdrop
         sidebarBackdropView = sidebarBackdrop
 
@@ -184,7 +182,7 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
     // MARK: - toolbar
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.sidebarTrackingSeparator, Self.tabStripItemIdentifier]
+        [.sidebarTrackingSeparator]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -204,21 +202,6 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
                 splitView: sidebarSplitView,
                 dividerIndex: 0
             )
-
-        case Self.tabStripItemIdentifier:
-            guard let tabStrip else { return nil }
-            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            item.view = tabStrip
-            // Absorb all free width: a huge preferred width at low priority,
-            // clamped by the toolbar. The tracking separator glues the left
-            // edge to the sidebar divider — the exact geometry the old
-            // NSTabBar relocation fought AppKit for, now free.
-            let width = tabStrip.widthAnchor.constraint(equalToConstant: 10_000)
-            width.priority = NSLayoutConstraint.Priority(240)
-            let minWidth = tabStrip.widthAnchor.constraint(greaterThanOrEqualToConstant: 120)
-            let height = tabStrip.heightAnchor.constraint(equalToConstant: 28)
-            NSLayoutConstraint.activate([width, minWidth, height])
-            return item
 
         default:
             return nil
