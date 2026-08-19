@@ -102,8 +102,12 @@ final class TabStripView: NSView {
     private func applyCells() {
         let palette = Palette.current
         for (index, cell) in cells.enumerated() {
-            cell.apply(items[index], palette: palette, shortcut: Self.shortcut(
-                index: index, count: items.count))
+            cell.apply(
+                items[index],
+                palette: palette,
+                shortcut: items.count == 1 ? nil : Self.shortcut(
+                    index: index, count: items.count),
+                alone: items.count == 1)
         }
     }
 
@@ -138,13 +142,21 @@ final class TabStripView: NSView {
         guard !cells.isEmpty else { return }
         let left = leadingClearance
         let available = max(0, bounds.width - left - plusWidth - 8)
-        // Tabs fill the row rather than sitting in a corner of it.
-        let width = max(80, min(available, available / CGFloat(cells.count)))
+        // Tabs fill the row rather than sitting in a corner of it, and they
+        // share what there is rather than insisting on a width. A floor here
+        // was a promise the row could not keep: past the point where the
+        // floor times the count exceeded the space, the last tabs ran under
+        // the new-tab button and off the end of the strip. Tabs give ground
+        // instead, and a cell narrow enough drops what it cannot show.
+        let width = available / CGFloat(cells.count)
         var x = left
         for cell in cells {
             // Whole pixels: a fill edge on a half pixel renders soft.
             let next = (x + width).rounded()
             cell.frame = NSRect(x: x.rounded(), y: 0, width: next - x.rounded(), height: height)
+            // A lone title is the window's title and belongs on the window's
+            // centre, not on the centre of what is left after the chrome.
+            cell.titleOffset = cells.count == 1 ? bounds.midX - cell.frame.midX : 0
             x = next
         }
     }
@@ -241,6 +253,15 @@ private final class TabCellView: NSView {
     private var palette: TabStripView.Palette?
     private var shortcut: String?
     private var hovered = false
+    /// Whether this is the only tab there is. One tab is not a choice between
+    /// tabs, so it is not drawn as one: no capsule, no number, no close
+    /// button — just the title, and a window that reads as one thing.
+    private var alone = false
+    /// How far the title has to move to sit on the window's centre rather
+    /// than on this cell's. Only a lone title asks for it.
+    var titleOffset: CGFloat = 0 {
+        didSet { if titleOffset != oldValue { needsLayout = true } }
+    }
 
     /// The selected tab's capsule, in glass where the system has it.
     ///
@@ -253,6 +274,14 @@ private final class TabCellView: NSView {
     private let fill: NSView = Glass.lozenge(cornerRadius: 12) ?? NSView()
     private let fillIsGlass = Glass.isAvailable
     private let label = NSTextField(labelWithString: "")
+    /// Kept, because how much room the title is owed changes with how much
+    /// room the tab has. As inequalities against a centred label they become
+    /// unsatisfiable in a narrow cell — 28 in from the left and 36 in from the
+    /// right do not both fit in 40 points — and AppKit resolves that by
+    /// breaking one and saying so.
+    private var labelCenter: NSLayoutConstraint!
+    private var labelLeading: NSLayoutConstraint!
+    private var labelTrailing: NSLayoutConstraint!
     private let shortcutLabel = NSTextField(labelWithString: "")
     private let closeButton = NSButton()
 
@@ -295,11 +324,17 @@ private final class TabCellView: NSView {
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(closeButton)
 
+        labelCenter = label.centerXAnchor.constraint(equalTo: centerXAnchor)
+        labelLeading = label.leadingAnchor.constraint(
+            greaterThanOrEqualTo: leadingAnchor, constant: 28)
+        labelTrailing = label.trailingAnchor.constraint(
+            lessThanOrEqualTo: trailingAnchor, constant: -36)
+
         NSLayoutConstraint.activate([
-            label.centerXAnchor.constraint(equalTo: centerXAnchor),
+            labelCenter,
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
-            label.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 28),
-            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -36),
+            labelLeading,
+            labelTrailing,
 
             closeButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -330,36 +365,45 @@ private final class TabCellView: NSView {
         } else {
             fill.layer?.cornerRadius = radius
         }
-        // The number is a hint, not a control: it steps aside when a tab is
-        // too narrow to carry both it and a readable title.
+        // What a tab shows is decided by how much of it there is. The number
+        // is a hint and steps aside first; the close button goes next, since
+        // a tab too narrow to name is not one to be closed by aim; the title
+        // is last, and truncates. Each thing that leaves gives its room back
+        // to the title.
         shortcutLabel.isHidden = shortcut == nil || bounds.width < 160
+        closeButton.isHidden = !hovered || alone || bounds.width < 96
+        labelLeading.constant = closeButton.isHidden ? 8 : 28
+        labelTrailing.constant = shortcutLabel.isHidden ? -8 : -36
+        labelCenter.constant = titleOffset
     }
 
     func apply(
         _ item: SessionSnapshot.StripItem,
         palette: TabStripView.Palette,
-        shortcut: String?
+        shortcut: String?,
+        alone: Bool
     ) {
         self.item = item
         self.palette = palette
         self.shortcut = shortcut
+        self.alone = alone
 
         var title = item.title.isEmpty ? "untitled" : item.title
         if item.hasPanes { title += "  ⊞" }
         if item.busy { title = "✳ \(title)" }
         if label.stringValue != title { label.stringValue = title }
         label.font = .systemFont(ofSize: 12, weight: item.isActive ? .medium : .regular)
-        label.textColor = item.isActive ? palette.text : palette.dimText
+        label.textColor = item.isActive || alone ? palette.text : palette.dimText
 
         // One capsule in the row: the tab you are in. The others are text on
         // the chrome, and hovering one brings its close button and nothing
         // else — glass under a hover refracts into a dark well, which reads
         // as a hole punched in the bar rather than as a tab being offered.
         if fillIsGlass {
-            fill.isHidden = !item.isActive
+            fill.isHidden = !item.isActive || alone
             Glass.tint(fill, palette.glassTint)
         } else {
-            fill.isHidden = !item.isActive
+            fill.isHidden = !item.isActive || alone
             fill.layer?.borderWidth = 1
             fill.layer?.borderColor = palette.edge.cgColor
             fill.layer?.backgroundColor = palette.selectedFill.cgColor
@@ -368,7 +412,6 @@ private final class TabCellView: NSView {
         shortcutLabel.stringValue = shortcut ?? ""
         shortcutLabel.textColor = palette.dimText
         closeButton.contentTintColor = palette.text
-        closeButton.isHidden = !hovered
 
         setAccessibilityLabel(title)
         toolTip = item.title
@@ -416,7 +459,7 @@ private final class TabCellView: NSView {
 
     private func refresh() {
         if let item, let palette {
-            apply(item, palette: palette, shortcut: shortcut)
+            apply(item, palette: palette, shortcut: shortcut, alone: alone)
         }
     }
 
