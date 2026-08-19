@@ -258,7 +258,7 @@ private final class TabCellView: NSView {
     /// How much of the row the fill leaves alone, so a tab reads as a shape
     /// inside the titlebar rather than as a full-height block. Taken off both
     /// edges, so the capsule is two points shorter than this number suggests.
-    private let verticalInset: CGFloat = 12
+    private let verticalInset: CGFloat = 13
     /// Half the gap between two capsules: each tab insets its own fill, so
     /// neighbours end up twice this far apart.
     private let horizontalInset: CGFloat = 2
