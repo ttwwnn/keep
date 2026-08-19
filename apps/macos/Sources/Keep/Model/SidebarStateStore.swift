@@ -46,15 +46,26 @@ final class SidebarStateStore {
         scheduleWrite()
     }
 
+    /// Write now, debounce or not.
+    func flush() {
+        writeScheduled = false
+        write()
+    }
+
+    private func write() {
+        try? FileManager.default.createDirectory(
+            at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? JSONEncoder().encode(states).write(to: file, options: .atomic)
+    }
+
     private func scheduleWrite() {
         guard !writeScheduled else { return }
         writeScheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self else { return }
+            guard self.writeScheduled else { return }
             self.writeScheduled = false
-            try? FileManager.default.createDirectory(
-                at: self.file.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? JSONEncoder().encode(self.states).write(to: self.file, options: .atomic)
+            self.write()
         }
     }
 }

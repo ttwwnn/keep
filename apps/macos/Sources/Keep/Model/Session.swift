@@ -30,6 +30,12 @@ final class Session {
 
     // MARK: - lifecycle
 
+    /// Write anything the debounce still owes. Called on quit: a sidebar the
+    /// person collapsed a moment before quitting must survive it.
+    func flush() {
+        sidebarStore.flush()
+    }
+
     func start() {
         do {
             try Daemon.ensureRunning()
@@ -79,12 +85,15 @@ final class Session {
             let result = entity.reconcile(with: daemon)
             changed = changed || result.changed
             for dead in result.dead {
-                // The dead root takes its panes' surfaces with it.
-                for tab in SurfacePool.shared.tabs(in: dead.workspace)
-                where !liveTabNumbers(in: dead.workspace, listing: listing).contains(tab) {
-                    SurfacePool.shared.discard(workspace: dead.workspace, tab: tab)
-                }
                 sidebarStore.forget(dead)
+            }
+
+            // Any surface whose tab the daemon no longer has, root or pane
+            // alike. Keying this off dead *roots* left a pane that died on
+            // its own holding a renderer and a client process forever.
+            let live = Set(daemon.liveTabs.map(\.id))
+            for tab in SurfacePool.shared.tabs(in: daemon.name) where !live.contains(tab) {
+                SurfacePool.shared.discard(workspace: daemon.name, tab: tab)
             }
         }
         workspaces.sort { $0.name < $1.name }
@@ -95,11 +104,18 @@ final class Session {
             changed = true
         }
 
+        // Whoever ended up active — including a successor the reconcile
+        // promoted after a tab died — must have its sidebar hydrated, or the
+        // snapshot substitutes a default and the next write clobbers what was
+        // on disk.
+        hydrateActive()
         if changed { publish() }
     }
 
-    private func liveTabNumbers(in workspace: String, listing: [Daemon.Workspace]) -> Set<UInt32> {
-        Set(listing.first { $0.name == workspace }?.liveTabs.map(\.id) ?? [])
+    /// Pull the active tab's persisted sidebar state if this is its first
+    /// activation. Idempotent.
+    private func hydrateActive() {
+        _ = activeWorkspace?.activeTab?.sidebarState(loading: sidebarStore, seed: nil)
     }
 
     // MARK: - intents
@@ -169,6 +185,7 @@ final class Session {
                 }
                 sidebarStore.forget(id)
                 refreshFromDaemon()
+                hydrateActive()
                 publish()
             } catch {
                 renderer?.present(error: error.localizedDescription)

@@ -22,6 +22,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// not echo model-driven changes back as user intents.
     private var isApplyingSnapshot = false
     private var dividerReportScheduled = false
+    private var lastExpandedWidth: CGFloat = SidebarState.initial.width
 
     init(session: Session) {
         self.session = session
@@ -104,6 +105,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             self.session.dispatch(.setSidebar(
                 SidebarState(isCollapsed: !state.isCollapsed, width: state.width)))
         }
+        container.onPaneFocus = { [weak self] pane in self?.session.dispatch(.focusPane(pane)) }
         tabStrip.onSelect = { [weak self] id in self?.session.dispatch(.activateTab(id)) }
         tabStrip.onClose = { [weak self] id in self?.session.dispatch(.closeTab(id)) }
         tabStrip.onNewTab = { [weak self] in self?.session.dispatch(.newTab(in: nil)) }
@@ -199,12 +201,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         incoming.frame = container.bounds
         incoming.layoutSubtreeIfNeeded()
 
-        // 3. Paint before reveal: display links on and ONE synchronous draw
-        //    per pane, landing fresh frames in still-hidden layers. At worst
-        //    the layer already held its last presented frame — either way,
-        //    never a hole.
+        // 3. Reveal. Unhiding runs `viewDidUnhide` on every pane synchronously,
+        //    inside this transaction: each flushes the size it deferred while
+        //    hidden and draws one frame at final geometry. So the fresh frame
+        //    lands before the commit, and at worst the layer still held its
+        //    last presented one — either way, never a hole.
         incoming.isHidden = false
-        for surface in incoming.paneSurfaces { surface.resumeDrawing() }
 
         // 4. Hide the outgoing LAST, in the same transaction: no commit ever
         //    has zero visible tabs. Its display links stop from viewDidHide.
@@ -227,13 +229,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - sidebar geometry
 
+    /// A collapsed sidebar has no width to read, and reading zero — then
+    /// substituting a default — would overwrite the width the tab actually
+    /// remembers. The last real expanded width is the only honest answer
+    /// while collapsed.
     private func currentSidebarGeometry() -> SidebarState? {
         guard let sidebarItem else { return nil }
         let width = sidebarItem.viewController.view.frame.width
-        return SidebarState(
-            isCollapsed: sidebarItem.isCollapsed,
-            width: width > 0 ? width : SidebarState.initial.width
-        )
+        if !sidebarItem.isCollapsed && width > 1 { lastExpandedWidth = width }
+        return SidebarState(isCollapsed: sidebarItem.isCollapsed, width: lastExpandedWidth)
     }
 
     private func applySidebar(_ state: SidebarState, animated: Bool) {
@@ -252,6 +256,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             sidebarItem.isCollapsed = state.isCollapsed
         }
         if !state.isCollapsed, current?.width != state.width {
+            lastExpandedWidth = state.width
             splitView.setPosition(state.width, ofDividerAt: 0)
         }
         // With the sidebar collapsed the content starts at the window's left

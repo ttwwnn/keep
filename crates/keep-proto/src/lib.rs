@@ -13,19 +13,27 @@ pub const MAX_FRAME: usize = 16 * 1024 * 1024;
 const T_LIST: u8 = 0x01;
 const T_ATTACH: u8 = 0x02;
 const T_NEW_TAB: u8 = 0x03;
-const T_INPUT: u8 = 0x04;
 const T_RESIZE: u8 = 0x05;
 const T_KILL: u8 = 0x06;
 const T_CLOSE_TAB: u8 = 0x07;
 
 const T_WORKSPACES: u8 = 0x81;
-const T_REPAINT: u8 = 0x82;
-const T_OUTPUT: u8 = 0x83;
 const T_ERROR: u8 = 0x84;
 const T_OK: u8 = 0x85;
 const T_ENDED: u8 = 0x86;
 const T_ATTACHED: u8 = 0x87;
 const T_TAB_CREATED: u8 = 0x88;
+
+// Blob frames carry their payload raw, with no length inside it — the frame
+// header already has one. They were renumbered when that redundant length was
+// dropped, and the numbers are the version gate: the daemon outlives every
+// client, so a client built before the change will meet a daemon built after
+// it. Reusing 0x04/0x82/0x83 would have had each side read the other's first
+// four payload bytes as a length and desynchronise the stream silently.
+// A tag nobody knows is refused at the frame, which is a clean failure.
+const T_INPUT: u8 = 0x14;
+const T_REPAINT: u8 = 0x92;
+const T_OUTPUT: u8 = 0x93;
 
 /// Ask for whichever tab the session lands on, rather than a specific one.
 pub const TAB_ANY: u32 = 0;
@@ -187,15 +195,20 @@ fn write_frame(w: &mut impl Write, tag: u8, payload: &[u8]) -> io::Result<()> {
     let total = head.len() + payload.len();
     let mut done = 0usize;
     while done < total {
-        let n = if done < head.len() {
-            w.write_vectored(&[IoSlice::new(&head[done..]), IoSlice::new(payload)])?
+        let result = if done < head.len() {
+            w.write_vectored(&[IoSlice::new(&head[done..]), IoSlice::new(payload)])
         } else {
-            w.write(&payload[done - head.len()..])?
+            w.write(&payload[done - head.len()..])
         };
-        if n == 0 {
-            return Err(io::ErrorKind::WriteZero.into());
+        match result {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(n) => done += n,
+            // `write_all` retries this and we replaced it, so retry it here
+            // too: a signal arriving mid-write must not tear the connection
+            // down.
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
         }
-        done += n;
     }
     w.flush()
 }
@@ -568,6 +581,21 @@ mod tests {
         let mut borrowed = Vec::new();
         ClientMsg::write_input(&mut borrowed, &[9u8; 40]).unwrap();
         assert_eq!(borrowed, buf);
+    }
+
+    /// The blob tags must never go back to the values that meant the old
+    /// layout. A daemon outlives its clients, so the two formats meet.
+    #[test]
+    fn blob_tags_do_not_reuse_the_old_numbers() {
+        for (new, old) in [(T_INPUT, 0x04), (T_REPAINT, 0x82), (T_OUTPUT, 0x83)] {
+            assert_ne!(new, old, "a blob tag was reset to its pre-change value");
+        }
+        // And an old peer's frame is refused rather than misread.
+        let mut buf = vec![0x04u8];
+        buf.extend_from_slice(&8u32.to_be_bytes());
+        buf.extend_from_slice(&[0, 0, 0, 4, b'a', b'b', b'c', b'd']);
+        let err = ClientMsg::read(&mut buf.as_slice()).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 
     /// Framing must survive several messages back to back on one stream.

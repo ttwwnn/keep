@@ -12,11 +12,17 @@ final class TabContentContainer: NSView {
     private(set) var hosts: [TabID: TabHostView] = [:]
     private(set) var visibleTab: TabID?
 
+    /// A pane took the keyboard. Wired by the controller into an intent, so
+    /// which pane has focus stays a model fact rather than something the UI
+    /// is asked for later.
+    var onPaneFocus: ((UInt32) -> Void)?
+
     /// Host for a tab, made on first use. Added hidden: presentation order
     /// is the switch pipeline's business.
     func host(for tab: SessionSnapshot.ActiveTab) -> TabHostView {
         if let existing = hosts[tab.id] { return existing }
         let host = TabHostView(id: tab.id)
+        host.onPaneFocus = { [weak self] pane in self?.onPaneFocus?(pane) }
         host.frame = bounds
         host.autoresizingMask = [.width, .height]
         host.isHidden = true

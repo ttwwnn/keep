@@ -34,6 +34,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        session.flush()
+    }
+
     // MARK: - menu actions (each one is an intent)
 
     @objc func newTab(_ sender: Any?) { session.dispatch(.newTab(in: nil)) }
