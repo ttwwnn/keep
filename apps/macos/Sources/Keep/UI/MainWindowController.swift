@@ -90,7 +90,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.center()
 
         window.installUnifiedToolbar(
-            sidebarController: split,
             chromeBackdrop: chromeBackdrop,
             sidebarBackdrop: sidebarHost.backdropView
         )

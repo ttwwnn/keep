@@ -20,7 +20,6 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
     /// the active tab's sidebar. The controller wires this to an intent.
     var onToggleSidebar: (() -> Void)?
 
-    private weak var sidebarSplitView: NSSplitView?
     private weak var chromeBackdropView: NSView?
     private weak var sidebarBackdropView: NSView?
     private var terminalBackgroundObserver: NSObjectProtocol?
@@ -52,12 +51,7 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
         return ok
     }
 
-    func installUnifiedToolbar(
-        sidebarController: NSSplitViewController,
-        chromeBackdrop: NSView,
-        sidebarBackdrop: NSView
-    ) {
-        sidebarSplitView = sidebarController.splitView
+    func installUnifiedToolbar(chromeBackdrop: NSView, sidebarBackdrop: NSView) {
         chromeBackdropView = chromeBackdrop
         sidebarBackdropView = sidebarBackdrop
 
@@ -181,8 +175,16 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
 
     // MARK: - toolbar
 
+    /// No items at all.
+    ///
+    /// The toolbar earns its place by giving the titlebar its unified height
+    /// and letting content run under it; it holds nothing. A tracking
+    /// separator used to live here to keep the toolbar's boundary on the
+    /// split divider, back when the tab bar was a toolbar item — all it does
+    /// now is draw a vertical line down the left of the tab strip, which is a
+    /// boundary this chrome does not want.
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.sidebarTrackingSeparator]
+        []
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -194,17 +196,6 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
         itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
-        switch itemIdentifier {
-        case .sidebarTrackingSeparator:
-            guard let sidebarSplitView else { return nil }
-            return NSTrackingSeparatorToolbarItem(
-                identifier: itemIdentifier,
-                splitView: sidebarSplitView,
-                dividerIndex: 0
-            )
-
-        default:
-            return nil
-        }
+        nil
     }
 }
