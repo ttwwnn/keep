@@ -191,20 +191,15 @@ final class Session {
             guard let workspace = activeWorkspace, let tab = workspace.activeTab else { return }
             let requested = pane ?? tab.focusedPane
             let target = tab.owns(pane: requested) ? requested : tab.id.root
-            do {
-                try Daemon.closeTab(target, in: workspace.name)
-                SurfacePool.shared.discard(workspace: workspace.name, tab: target)
-                refreshFromDaemon()
-                // Land the keyboard on something that still exists.
-                if let survivor = activeWorkspace?.activeTab {
-                    survivor.noteFocus(pane: survivor.panes.first(where: { $0.tab == survivor.focusedPane }) != nil
-                        ? survivor.focusedPane : survivor.id.root)
-                }
-                publish()
-                renderer?.focusActiveTerminal()
-            } catch {
-                renderer?.present(error: error.localizedDescription)
-            }
+            // Closing is idempotent on purpose. Pressing ⌘W faster than the
+            // daemon is re-listed asks twice for the same pane, and the second
+            // ask is not a failure worth an alert — it is the person being
+            // quicker than the round trip.
+            try? Daemon.closeTab(target, in: workspace.name)
+            SurfacePool.shared.discard(workspace: workspace.name, tab: target)
+            refreshFromDaemon()
+            publish()
+            renderer?.focusActiveTerminal()
 
         case .killWorkspace(let name):
             do {
@@ -234,8 +229,13 @@ final class Session {
                 let target = tab.owns(pane: tab.focusedPane) ? tab.focusedPane : tab.id.root
                 let pane = try Daemon.newTab(
                     in: workspace.name, splitOf: target, splitDir: direction)
-                tab.noteFocus(pane: pane)
+                // Re-list first: a tab only accepts focus on a pane it owns,
+                // and it does not own this one until the daemon has been
+                // asked again. Noting it earlier is a note that gets refused,
+                // which leaves focus on the root — and then every further
+                // split hangs off the root instead of off the pane you are in.
                 refreshFromDaemon()
+                activeWorkspace?.activeTab?.noteFocus(pane: pane)
                 publish()
             } catch {
                 renderer?.present(error: error.localizedDescription)

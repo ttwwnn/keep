@@ -279,3 +279,27 @@ fn closing_a_pane_hands_its_children_to_its_parent() {
     );
     workspace.kill_all().ok();
 }
+
+/// Closing the root of a split tab must not scatter its panes into tabs.
+///
+/// A pane records the tab it was split from, and a root has nothing to be
+/// split from — so panes of a closed root have no parent to inherit. Left
+/// alone they are each reported standalone, which is one tab per pane. One of
+/// them has to take the root's place instead.
+#[test]
+fn closing_a_root_promotes_one_pane_and_keeps_the_rest_with_it() {
+    let workspace = keepd::Workspace::new("roots");
+    let (root, _) = workspace.new_tab(None, 80, 24, 0, 0).expect("root");
+    let (first, _) = workspace.new_tab(None, 80, 24, root, 1).expect("first pane");
+    let (second, _) = workspace.new_tab(None, 80, 24, root, 2).expect("second pane");
+
+    workspace.close_tab(root).expect("close the root");
+
+    let tabs = workspace.tabs();
+    assert_eq!(tabs.len(), 2, "closing the root closed more than itself");
+    let roots: Vec<u32> = tabs.iter().filter(|t| t.split_of == 0).map(|t| t.id).collect();
+    assert_eq!(roots, vec![first], "the arrangement scattered into standalone tabs");
+    let sibling = tabs.iter().find(|t| t.id == second).expect("sibling survived");
+    assert_eq!(sibling.split_of, first, "the sibling did not follow the promoted pane");
+    workspace.kill_all().ok();
+}

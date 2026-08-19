@@ -36,6 +36,38 @@ pub struct Workspace {
     next_id: AtomicU32,
 }
 
+/// Give a departed tab's panes somewhere to belong.
+///
+/// A pane records which tab it was split from, and a pane whose record points
+/// at nothing is reported standalone — so without this, closing one pane
+/// would scatter the panes below it into tabs of their own.
+///
+/// Panes of a departed *pane* inherit its parent. Panes of a departed *root*
+/// have no parent to inherit, so the first of them takes the root's role and
+/// its siblings hang off it: the arrangement loses a pane instead of being
+/// taken apart. That distinction is the whole of this function, and it is
+/// what closing panes in quick succession kept getting wrong.
+fn inherit(tabs: &mut [Entry], departed: u32, parent: u32) {
+    if parent != 0 {
+        for entry in tabs.iter_mut() {
+            if entry.split_of == departed {
+                entry.split_of = parent;
+            }
+        }
+        return;
+    }
+    // Creation order, so the oldest pane is the one promoted.
+    let Some(heir) = tabs.iter().position(|e| e.split_of == departed) else { return };
+    let heir_id = tabs[heir].id;
+    tabs[heir].split_of = 0;
+    tabs[heir].split_dir = 0;
+    for entry in tabs.iter_mut() {
+        if entry.split_of == departed && entry.id != heir_id {
+            entry.split_of = heir_id;
+        }
+    }
+}
+
 impl Workspace {
     pub fn new(name: impl Into<String>) -> Self {
         Self { name: name.into(), tabs: Mutex::new(Vec::new()), next_id: AtomicU32::new(1) }
@@ -118,15 +150,7 @@ impl Workspace {
             let mut guard = self.tabs.lock().map_err(|_| anyhow!("workspace poisoned"))?;
             let pos = guard.iter().position(|e| e.id == id).ok_or_else(|| anyhow!("no tab {id}"))?;
             let closed = guard.remove(pos);
-            // Anything split off the closed tab takes its place in the
-            // arrangement. Without this they are orphans, and an orphan is
-            // reported standalone — so closing one pane of a split would
-            // scatter the panes below it into tabs of their own.
-            for entry in guard.iter_mut() {
-                if entry.split_of == id {
-                    entry.split_of = closed.split_of;
-                }
-            }
+            inherit(&mut guard, closed.id, closed.split_of);
             closed.tab
         };
         tab.kill()
@@ -158,11 +182,7 @@ impl Workspace {
             // Same inheritance as `close_tab`: a pane whose own shell exited
             // must not take the panes below it out of the arrangement.
             for (id, parent) in gone {
-                for entry in guard.iter_mut() {
-                    if entry.split_of == id {
-                        entry.split_of = parent;
-                    }
-                }
+                inherit(&mut guard, id, parent);
             }
         }
     }
