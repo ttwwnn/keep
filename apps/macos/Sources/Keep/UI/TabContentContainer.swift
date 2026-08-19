@@ -84,6 +84,22 @@ final class TabHostView: NSView {
         paneSplit.autoresizingMask = [.width, .height]
         addSubview(paneSplit)
         addSubview(focusRing)
+
+        // Dragging a divider resizes the split's arranged subviews, not this
+        // view, so nothing here lays out and the ring would stay behind on
+        // the pane's old edge. The split says when its panes moved.
+        NotificationCenter.default.addObserver(
+            forName: NSSplitView.didResizeSubviewsNotification,
+            object: paneSplit,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.positionFocusRing() }
+        }
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(
+            self, name: NSSplitView.didResizeSubviewsNotification, object: paneSplit)
     }
 
     @available(*, unavailable)
