@@ -349,26 +349,18 @@ private final class TabCellView: NSView {
         label.font = .systemFont(ofSize: 12, weight: item.isActive ? .medium : .regular)
         label.textColor = item.isActive ? palette.text : palette.dimText
 
-        // Only the selected tab is painted. The rest are text on the chrome,
-        // and hovering one hints at it without claiming to be it. On glass
-        // the lozenge is simply present or absent — refraction is the
-        // highlight, so painting a colour under it as well would muddy it.
+        // One capsule in the row: the tab you are in. The others are text on
+        // the chrome, and hovering one brings its close button and nothing
+        // else — glass under a hover refracts into a dark well, which reads
+        // as a hole punched in the bar rather than as a tab being offered.
         if fillIsGlass {
-            // Present or absent, tinted rather than painted: refraction is
-            // the highlight, and a tint is how it is aimed lighter.
-            // The same two states the "+" button has, and made of the same
-            // thing: untinted glass under the pointer, which refracts into a
-            // dark well, and tinted glass when selected, which is what aims
-            // it lighter than the bar.
-            fill.isHidden = !item.isActive && !hovered
-            Glass.tint(fill, item.isActive ? palette.glassTint : nil)
+            fill.isHidden = !item.isActive
+            Glass.tint(fill, palette.glassTint)
         } else {
-            fill.layer?.borderWidth = item.isActive ? 1 : 0
+            fill.isHidden = !item.isActive
+            fill.layer?.borderWidth = 1
             fill.layer?.borderColor = palette.edge.cgColor
-            let background: NSColor = item.isActive
-                ? palette.selectedFill
-                : (hovered ? palette.hoverFill : .clear)
-            fill.layer?.backgroundColor = background.cgColor
+            fill.layer?.backgroundColor = palette.selectedFill.cgColor
         }
 
         shortcutLabel.stringValue = shortcut ?? ""
