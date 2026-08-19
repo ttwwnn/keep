@@ -165,6 +165,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         applied = snapshot
     }
 
+    func focusActiveTerminal() {
+        guard let id = container.visibleTab,
+              let host = container.hosts[id],
+              let pane = applied?.active?.focusedPane,
+              let surface = host.surface(for: pane) ?? host.paneSurfaces.first,
+              window?.firstResponder !== surface
+        else { return }
+        window?.makeFirstResponder(surface)
+    }
+
     func present(error: String) {
         let alert = NSAlert()
         alert.messageText = "Keep"

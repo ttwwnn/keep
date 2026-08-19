@@ -6,6 +6,13 @@ import Foundation
 protocol SessionRendering: AnyObject {
     func render(_ snapshot: SessionSnapshot)
     func present(error: String)
+    /// Put the keyboard back in the active tab's focused pane.
+    ///
+    /// Asking to enter a workspace you are already in changes no state, so
+    /// the snapshot is identical and nothing renders — but the click that
+    /// asked has just left the keyboard in the sidebar. The request is real
+    /// even when the answer to it is "you are already there".
+    func focusActiveTerminal()
 }
 
 /// Layer 5's root, and the single writer of all selection state.
@@ -131,11 +138,13 @@ final class Session {
             } else {
                 activate(workspace.activeTabID ?? workspace.tabs.first?.id)
                 publish()
+                renderer?.focusActiveTerminal()
             }
 
         case .activateTab(let id):
             activate(id)
             publish()
+            renderer?.focusActiveTerminal()
 
         case .activateTabIndex(let index):
             guard let tabs = activeWorkspace?.tabs, !tabs.isEmpty else { return }
