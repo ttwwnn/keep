@@ -26,6 +26,9 @@ final class TabContentContainer: NSView {
     /// because the strip is not this view's to know about.
     var tabUnderPointer: ((NSPoint) -> TabID?)?
 
+    /// What is being carried, shown under the pointer while it is.
+    private var card: PaneCard?
+
     /// Host for a tab, made on first use. Added hidden: presentation order
     /// is the switch pipeline's business.
     func host(for tab: SessionSnapshot.ActiveTab) -> TabHostView {
@@ -54,6 +57,8 @@ final class TabContentContainer: NSView {
     /// belongs to the window, so it survives whatever happens underneath.
     private func carry(from source: TabID, pane: UInt32, beginning event: NSEvent) {
         guard let window else { return }
+        let start = event.locationInWindow
+        var carrying = false
         window.trackEvents(
             matching: [.leftMouseDragged, .leftMouseUp],
             timeout: .infinity,
@@ -65,9 +70,25 @@ final class TabContentContainer: NSView {
             }
             switch event.type {
             case .leftMouseDragged:
+                // A press on the handle is not yet a move. Until the pointer
+                // has gone somewhere, nothing is picked up and nothing is
+                // painted — otherwise a click on the dots would flash a card
+                // and a landing strip at somebody who only clicked.
+                let travelled = hypot(
+                    event.locationInWindow.x - start.x, event.locationInWindow.y - start.y)
+                if !carrying {
+                    guard travelled > 4 else { return }
+                    carrying = true
+                    self.card = PaneCard(workspace: source.workspace, pane: pane)
+                }
+                self.card?.follow(window.convertPoint(toScreen: event.locationInWindow))
                 self.carried(source: source, pane: pane, to: event.locationInWindow)
             case .leftMouseUp:
-                self.dropped(source: source, pane: pane, at: event.locationInWindow)
+                if carrying {
+                    self.dropped(source: source, pane: pane, at: event.locationInWindow)
+                }
+                self.card?.close()
+                self.card = nil
                 stop.pointee = true
             default:
                 break
@@ -361,4 +382,74 @@ final class TabHostView: NSView {
 /// The landing paint never takes a click: it sits over terminals.
 private final class LandingView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+/// The pane you are carrying, as a card under the pointer.
+///
+/// It shows the pane's text rather than a picture of it. A terminal is drawn
+/// by Metal, and a Metal layer cannot be read back into an image — the only
+/// way to photograph one is to photograph the screen, which would put this
+/// app behind a screen-recording prompt for the sake of a drag. The daemon
+/// already holds every tab's text, so the card asks it.
+@MainActor
+final class PaneCard {
+    private let window: NSWindow
+    private static let size = NSSize(width: 300, height: 190)
+
+    init(workspace: String, pane: UInt32) {
+        let background = GhosttyApp.shared.terminalBackground ?? .black
+        let text = (try? Daemon.preview(workspace: workspace, tab: pane)) ?? ""
+        // The screen, not the history: a card is a reminder of what you
+        // picked up, and the last lines are what you were looking at.
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).suffix(26)
+
+        let body = NSTextField(labelWithString: lines.joined(separator: "\n"))
+        body.font = GhosttyApp.shared.terminalFont(size: 7)
+        body.textColor = NSColor.white.withAlphaComponent(0.75)
+        body.maximumNumberOfLines = 0
+        body.lineBreakMode = .byClipping
+        body.translatesAutoresizingMaskIntoConstraints = false
+
+        let card = NSView(frame: NSRect(origin: .zero, size: Self.size))
+        card.wantsLayer = true
+        card.layer?.backgroundColor = background.cgColor
+        card.layer?.cornerRadius = 8
+        card.layer?.cornerCurve = .continuous
+        card.layer?.borderWidth = 1
+        card.layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        card.layer?.masksToBounds = true
+        card.addSubview(body)
+        NSLayoutConstraint.activate([
+            body.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 8),
+            body.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor, constant: -8),
+            body.topAnchor.constraint(equalTo: card.topAnchor, constant: 8),
+        ])
+
+        window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: Self.size),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false)
+        window.contentView = card
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = true
+        window.level = .floating
+        // It follows the pointer; it must never be in the way of it.
+        window.ignoresMouseEvents = true
+        window.alphaValue = 0.92
+        window.orderFront(nil)
+    }
+
+    /// Held below and right of the pointer, out from under it, the way a
+    /// dragged thing hangs off the hand carrying it.
+    func follow(_ screenPoint: NSPoint) {
+        window.setFrameOrigin(NSPoint(
+            x: (screenPoint.x - 24).rounded(),
+            y: (screenPoint.y - Self.size.height + 16).rounded()))
+    }
+
+    func close() {
+        window.orderOut(nil)
+    }
 }

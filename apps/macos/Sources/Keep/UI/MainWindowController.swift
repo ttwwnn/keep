@@ -143,12 +143,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             RunLoop.current.add(timer, forMode: .eventTracking)
             self.spring = timer
         }
+        // The tab a pane was picked up from, not the one on screen: carrying
+        // it over another tab opens that one, so by the time it is let go the
+        // source is no longer active. Only the workspace has to match — the
+        // model checks that the panes are really there.
         container.onPaneDrop = { [weak self] id, pane, target, side in
-            guard let self, self.applied?.active?.id == id else { return }
+            guard let self, id.workspace == self.applied?.active?.id.workspace else { return }
+            Trace.log("carry", "drop \(pane) onto \(target) \(side)")
             self.session.dispatch(.movePane(pane, to: target, side: side))
         }
         container.onPaneDetach = { [weak self] id, pane in
-            guard let self, self.applied?.active?.id == id else { return }
+            guard let self, id.workspace == self.applied?.active?.id.workspace else { return }
+            Trace.log("carry", "detach \(pane)")
             self.session.dispatch(.detachPane(pane))
         }
         tabStrip.onSelect = { [weak self] id in self?.session.dispatch(.activateTab(id)) }
