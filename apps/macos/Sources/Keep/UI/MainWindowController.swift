@@ -308,14 +308,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // edge, under the traffic lights and the toggle button; the strip
         // clears them. Expanded, the sidebar itself is the clearance.
         //
-        // The toggle ends at 120 in the strip's own coordinates — measured,
-        // not guessed — so anything less puts the first tab underneath it.
-        // Ten points further on, a tab's capsule (inset two from its cell)
-        // starts twelve points clear of the toggle, which is exactly the gap
-        // the new-tab button keeps from the last tab at the other end. The
-        // capsule is what the eye measures from, not the close button inside
-        // it, so it is the capsule the two ends are matched on.
-        tabStrip.leadingClearance = state.isCollapsed ? 130 : 0
+        // The toggle sits at 92 in the strip's own coordinates — measured,
+        // not guessed — and is 26 across, so it ends at 118. Ten points
+        // further on, a tab's capsule (inset two from its cell) starts twelve
+        // points clear of it, which is exactly the gap the new-tab button
+        // keeps from the last tab at the other end. The capsule is what the
+        // eye measures from, not the close button inside it, so it is the
+        // capsule the two ends are matched on.
+        tabStrip.leadingClearance = state.isCollapsed ? 128 : 0
     }
 
     private func dividerMoved() {

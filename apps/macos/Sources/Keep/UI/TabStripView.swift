@@ -118,8 +118,9 @@ final class TabStripView: NSView {
         super.layout()
         let height = bounds.height
         // A circle with a plus in it, not a bare glyph: it reads as a
-        // control, which is what it is.
-        let plusSide: CGFloat = 24
+        // control, which is what it is. The same across as a tab's capsule is
+        // tall, and as the sidebar toggle.
+        let plusSide: CGFloat = 26
         let plusWidth = plusSide + 12
         let plusRect = NSRect(
             x: bounds.width - plusSide - 10, y: (height - plusSide) / 2,

@@ -165,9 +165,12 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
         button.imageScaling = .scaleProportionallyDown
         button.toolTip = "Toggle Sidebar"
         button.contentTintColor = .secondaryLabelColor
-        // 28 is the height the titlebar centred the old bezelled button at;
-        // shrinking it to 24 moved the control down by the difference.
-        let side: CGFloat = 28
+        // The height of a tab's capsule, so the controls in the chrome are one
+        // family. It used to be 28 because that is where the titlebar centred
+        // the old bezelled button, and shrinking it moved the control down by
+        // the difference — the host below keeps it centred now, so the size is
+        // free to be chosen rather than inherited.
+        let side: CGFloat = 26
         button.frame = NSRect(x: 0, y: 0, width: side, height: side)
 
         // The same ground the new-tab button stands on, so the two controls
