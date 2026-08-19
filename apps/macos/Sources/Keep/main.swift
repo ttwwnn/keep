@@ -109,6 +109,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fileItem.submenu = fileMenu
         main.addItem(fileItem)
 
+        // The standard editing commands, routed through the responder chain
+        // to whichever terminal has focus. Without this menu, copy and paste
+        // depended entirely on libghostty's own key table seeing the event —
+        // a menu key equivalent is checked before the window and is the one
+        // path a Mac user can count on.
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(.separator())
+        editMenu.addItem(
+            withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = editMenu
+        main.addItem(editItem)
+
         let goItem = NSMenuItem()
         let goMenu = NSMenu(title: "Go")
         goMenu.addItem(withTitle: "Go To…", action: #selector(goTo(_:)), keyEquivalent: "p")

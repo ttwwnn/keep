@@ -83,6 +83,10 @@ final class TerminalSurfaceView: NSView {
         guard let app = GhosttyApp.shared.app else { return }
 
         var config = ghostty_surface_config_new()
+        // Callbacks that are not actions -- reading the clipboard, above all
+        // -- arrive with nothing but this pointer to say which surface asked.
+        // Unretained: the view owns the surface, never the other way round.
+        config.userdata = Unmanaged.passUnretained(self).toOpaque()
         config.platform_tag = GHOSTTY_PLATFORM_MACOS
         config.platform = ghostty_platform_u(
             macos: ghostty_platform_macos_s(nsview: Unmanaged.passUnretained(self).toOpaque())
@@ -310,7 +314,7 @@ final class TerminalSurfaceView: NSView {
     }
 
     @discardableResult
-    private func perform(_ action: String) -> Bool {
+    func perform(_ action: String) -> Bool {
         guard let surface else { return false }
         let done = action.withCString {
             ghostty_surface_binding_action(surface, $0, UInt(action.utf8.count))
@@ -485,12 +489,26 @@ final class TerminalSurfaceView: NSView {
     override func mouseDown(with event: NSEvent) {
         noteActivity()
         window?.makeFirstResponder(self)
+        // Where before whether. A press in a window that was not key arrives
+        // without any of the tracked movement that would have said where the
+        // pointer is, and a press at the wrong place selects from there.
+        reportMouse(event)
         mouseButton(event, action: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_LEFT)
     }
 
     override func mouseUp(with event: NSEvent) {
         noteActivity()
+        reportMouse(event)
         mouseButton(event, action: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT)
+    }
+
+    /// Dragging is how a selection is made, and AppKit does not call it
+    /// moving: while a button is down every motion arrives here and none
+    /// arrives at `mouseMoved`. Without this the terminal saw a press and a
+    /// release in the same place and selected nothing.
+    override func mouseDragged(with event: NSEvent) {
+        noteActivity()
+        reportMouse(event)
     }
 
     private func mouseButton(
@@ -503,9 +521,73 @@ final class TerminalSurfaceView: NSView {
     }
 
     override func mouseMoved(with event: NSEvent) {
+        reportMouse(event)
+    }
+
+    private func reportMouse(_ event: NSEvent) {
         guard let surface else { return }
         let p = convert(event.locationInWindow, from: nil)
-        ghostty_surface_mouse_pos(surface, p.x, bounds.height - p.y, Self.mods(from: event.modifierFlags))
+        ghostty_surface_mouse_pos(
+            surface, p.x, bounds.height - p.y, Self.mods(from: event.modifierFlags))
+    }
+
+    // MARK: - where this shell is
+
+    /// The directory the shell in this pane is in, as it last announced it.
+    ///
+    /// Shells say so with OSC 7 on each prompt, and the terminal reports it
+    /// on. Nil until the first prompt, and stale by exactly as long as a
+    /// program that changes directory without printing a prompt runs.
+    private(set) var currentDirectory: String?
+
+    func noteDirectory(_ raw: String) {
+        // Reported as a file URL — file://host/path — and wanted as a path.
+        let path = raw.hasPrefix("file://") ? (URL(string: raw)?.path ?? raw) : raw
+        guard !path.isEmpty, path != currentDirectory else { return }
+        currentDirectory = path
+        Trace.log("pwd", "\(workspace)/\(tab) \(path)")
+    }
+
+    // MARK: - the standard editing commands
+
+    /// Copy, paste and select-all arrive through the responder chain from the
+    /// Edit menu, which is where a Mac app is expected to keep them. Each is
+    /// the ghostty binding of the same name: the terminal owns the selection
+    /// and the scrollback, so it is the only thing that can answer.
+    @objc func copy(_ sender: Any?) { perform("copy_to_clipboard") }
+    @objc func paste(_ sender: Any?) { perform("paste_from_clipboard") }
+    @objc override func selectAll(_ sender: Any?) { perform("select_all") }
+
+    // MARK: - clipboard
+
+    /// Hand back what the terminal asked for.
+    ///
+    /// `state` is the runtime's own token for the request; it means nothing
+    /// here and must travel back untouched. Passing `confirmed` as false lets
+    /// ghostty judge the text first -- text with line breaks pasted outside
+    /// bracketed paste runs the moment it lands -- and ask again through
+    /// `confirmPaste` if it does not like what it sees.
+    func completeClipboardRequest(
+        _ text: String, state: UnsafeMutableRawPointer?, confirmed: Bool
+    ) {
+        guard let surface else { return }
+        text.withCString {
+            ghostty_surface_complete_clipboard_request(surface, $0, state, confirmed)
+        }
+    }
+
+    /// Ask before pasting something that would run itself.
+    func confirmPaste(_ text: String, state: UnsafeMutableRawPointer?) {
+        let alert = NSAlert()
+        alert.messageText = "Paste this?"
+        alert.informativeText = "What you are pasting has line breaks in it, "
+            + "and the program running here reads those as return: it will run "
+            + "as soon as it lands.\n\n" + String(text.prefix(400))
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Paste")
+        alert.addButton(withTitle: "Cancel")
+        let go = alert.runModal() == .alertFirstButtonReturn
+        completeClipboardRequest(go ? text : "", state: state, confirmed: true)
     }
 
     /// Scrolling, which is also how the scrollback becomes reachable at all:

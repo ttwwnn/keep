@@ -227,6 +227,19 @@ final class GhosttyApp {
                     GhosttyApp.shared.view(for: surface)?.runtimeRequestedDraw()
                 }
                 return true
+            case GHOSTTY_ACTION_PWD:
+                // Where a new tab or a new pane should start: whatever the
+                // shell you are in last said it was in.
+                guard target.tag == GHOSTTY_TARGET_SURFACE,
+                    let surface = target.target.surface,
+                    let raw = action.action.pwd.pwd
+                else { return false }
+                let pwd = String(cString: raw)
+                DispatchQueue.main.async {
+                    GhosttyApp.shared.view(for: surface)?.noteDirectory(pwd)
+                }
+                return true
+
             case GHOSTTY_ACTION_SCROLLBAR:
                 // Not handled as a scrollbar — this app draws none — but as
                 // the one thing the runtime does say when a terminal's
@@ -275,18 +288,45 @@ final class GhosttyApp {
             }
         }
 
-        // TODO: paste. Completing a read needs the surface handle, which
-        // arrives through surface userdata; wire that up with the surface
-        // registry rather than guessing here.
-        runtime.read_clipboard_cb = { _, _, _ in false }
-        runtime.confirm_read_clipboard_cb = { _, _, _, _ in }
-        runtime.write_clipboard_cb = { _, _, contents, count, _ in
+        // Reading is asked for by a surface and answered by one: the pointer
+        // is the view, put there as the surface's userdata when it was made.
+        runtime.read_clipboard_cb = { userdata, location, state in
+            guard let userdata else { return false }
+            // macOS has no selection clipboard, and `supports_selection_
+            // clipboard` stays false so nothing should ask for one.
+            guard location == GHOSTTY_CLIPBOARD_STANDARD else { return false }
+            let view = Unmanaged<TerminalSurfaceView>
+                .fromOpaque(userdata).takeUnretainedValue()
+            let text = NSPasteboard.general.string(forType: .string) ?? ""
+            // Not confirmed: let the terminal decide whether this text is the
+            // kind that runs itself, and ask below if it is.
+            view.completeClipboardRequest(text, state: state, confirmed: false)
+            return true
+        }
+        runtime.confirm_read_clipboard_cb = { userdata, string, state, _ in
+            guard let userdata, let string else { return }
+            let view = Unmanaged<TerminalSurfaceView>
+                .fromOpaque(userdata).takeUnretainedValue()
+            let text = String(cString: string)
+            DispatchQueue.main.async { view.confirmPaste(text, state: state) }
+        }
+        runtime.write_clipboard_cb = { _, location, contents, count, _ in
             guard count > 0, let contents else { return }
+            guard location == GHOSTTY_CLIPBOARD_STANDARD else { return }
+            // Find something to write before touching the pasteboard.
+            // Clearing first and then discovering there was nothing to put
+            // back destroys whatever the person had copied — which is what
+            // copy-on-select did every time a selection came back empty.
+            var text: String?
+            for i in 0..<Int(count) {
+                guard let data = contents[i].data else { continue }
+                let candidate = String(cString: data)
+                if !candidate.isEmpty { text = candidate; break }
+            }
+            guard let text else { return }
             let board = NSPasteboard.general
             board.clearContents()
-            if let data = contents.pointee.data {
-                board.setString(String(cString: data), forType: .string)
-            }
+            board.setString(text, forType: .string)
         }
         runtime.close_surface_cb = { _, _ in }
 

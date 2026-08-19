@@ -160,7 +160,7 @@ final class Session {
         case .newTab(let name):
             guard let name = name ?? activeWorkspaceName else { return }
             do {
-                let id = try Daemon.newTab(in: name)
+                let id = try Daemon.newTab(in: name, cwd: directory(of: name))
                 refreshFromDaemon()
                 activate(TabID(workspace: name, root: id))
                 publish()
@@ -238,7 +238,14 @@ final class Session {
                 // fallback: it is the one pane a tab always has.
                 let target = tab.owns(pane: tab.focusedPane) ? tab.focusedPane : tab.id.root
                 let pane = try Daemon.newTab(
-                    in: workspace.name, splitOf: target, splitDir: direction)
+                    in: workspace.name,
+                    // A pane splits off the work in front of you, so it opens
+                    // where that work is rather than at home.
+                    cwd: SurfacePool.shared
+                        .existing(workspace: workspace.name, tab: target)?
+                        .currentDirectory ?? "",
+                    splitOf: target,
+                    splitDir: direction)
                 // Re-list first: a tab only accepts focus on a pane it owns,
                 // and it does not own this one until the daemon has been
                 // asked again. Noting it earlier is a note that gets refused,
@@ -411,6 +418,22 @@ final class Session {
 
     /// THE switch. Workspace clicks, strip clicks, ⌘1–9 and empty-workspace
     /// entry all funnel here; there is exactly one switch path in the program.
+    /// Where a new tab in `workspace` should start: the directory of the pane
+    /// you are in there, if there is one to ask.
+    ///
+    /// Empty when nothing can be asked — a workspace with no tab open yet, or
+    /// a shell that has not reached a prompt. The daemon reads that as "your
+    /// home", which is the right thing to fall back to.
+    private func directory(of workspace: String) -> String {
+        guard let entity = workspaces.first(where: { $0.name == workspace }),
+              let tab = entity.activeTab
+        else { return "" }
+        let pane = tab.owns(pane: tab.focusedPane) ? tab.focusedPane : tab.id.root
+        return SurfacePool.shared
+            .existing(workspace: workspace, tab: pane)?
+            .currentDirectory ?? ""
+    }
+
     /// The tab a pane belongs to, which is the only thing that can be
     /// activated: panes are addressed by the daemon, tabs by the shell.
     private func tab(holding pane: UInt32, in workspace: String) -> TabID? {
