@@ -38,6 +38,8 @@ final class Session {
     /// *you* have been, not about the work.
     private var recentTabs: [TabID] = []
     private var destinations: [String] = []
+    /// Bumped per keystroke so a slow answer cannot overwrite a newer one.
+    private var searchGeneration = 0
 
     private var activeWorkspace: WorkspaceEntity? {
         workspaces.first { $0.name == activeWorkspaceName }
@@ -263,15 +265,60 @@ final class Session {
             publish()
 
         case .togglePicker:
-            guard picker == nil else {
+            guard picker?.mode != .goTo else {
                 dispatch(.closePicker)
                 return
             }
-            picker = PickerModel(items: pickerItems(), previewOf: nil, previewText: "")
+            picker = PickerModel(
+                mode: .goTo, query: "", items: pickerItems(),
+                previewOf: nil, previewText: "")
             publish()
             // zoxide is a process launch; the list opens on what is already
             // known and grows a moment later rather than waiting for it.
             loadDestinations()
+
+        case .toggleSearch:
+            guard picker?.mode != .search else {
+                dispatch(.closePicker)
+                return
+            }
+            picker = PickerModel(
+                mode: .search, query: "", items: [], previewOf: nil, previewText: "")
+            publish()
+
+        case .setPickerQuery(let query):
+            guard var open = picker else { return }
+            open.query = query
+            picker = open
+            guard open.mode == .search else { return }
+            searchGeneration += 1
+            let generation = searchGeneration
+            guard !query.isEmpty else {
+                picker?.items = []
+                publish()
+                return
+            }
+            // Blocking socket work, off the main thread, and only the newest
+            // answer is kept: typing produces a question per keystroke and
+            // they do not come back in order.
+            DispatchQueue.global(qos: .userInitiated).async {
+                let hits = (try? Daemon.search(query)) ?? []
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.searchGeneration == generation,
+                          self.picker?.mode == .search
+                    else { return }
+                    self.picker?.items = hits.map { hit in
+                        let tab = TabID(workspace: hit.workspace, root: hit.tab)
+                        return PickerModel.Item(
+                            kind: .hit(tab, line: hit.line),
+                            title: hit.text.isEmpty ? " " : hit.text,
+                            detail: "\(hit.workspace) › tab \(hit.tab)",
+                            busy: false
+                        )
+                    }
+                    self.publish()
+                }
+            }
 
         case .closePicker:
             picker = nil
@@ -285,7 +332,11 @@ final class Session {
             picker = open
             publish()
             guard let id, let item = open.items.first(where: { $0.id == id }) else { return }
-            if case .running(let tab) = item.kind { loadPreview(of: tab, for: id) }
+            switch item.kind {
+            case .running(let tab): loadPreview(of: tab, for: id)
+            case .hit(let tab, _): loadPreview(of: tab, for: id)
+            case .destination: break
+            }
 
         case .choosePickerItem(let id):
             guard let item = picker?.items.first(where: { $0.id == id }) else { return }
@@ -295,6 +346,11 @@ final class Session {
                 dispatch(.activateTab(tab))
             case .destination(let path):
                 openWorkspace(at: path)
+            case .hit(let tab, _):
+                // Land on the tab the line is in. Where in its history the
+                // line sits is the daemon's coordinate, not the surface's —
+                // scrolling the pane to it is a separate matter.
+                dispatch(.activateTab(tab))
             }
 
         case .dismissPickerItem(let id):

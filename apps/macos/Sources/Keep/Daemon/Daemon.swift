@@ -89,11 +89,13 @@ enum Daemon {
     private static let tagKill: UInt8 = 0x06
     private static let tagCloseTab: UInt8 = 0x07
     private static let tagPreview: UInt8 = 0x08
+    private static let tagSearch: UInt8 = 0x09
     private static let tagSessions: UInt8 = 0x81
     private static let tagError: UInt8 = 0x84
     private static let tagOk: UInt8 = 0x85
     private static let tagTabCreated: UInt8 = 0x88
     private static let tagPreviewText: UInt8 = 0x89
+    private static let tagSearchHits: UInt8 = 0x8a
 
     static var socketPath: String {
         if let override = ProcessInfo.processInfo.environment["KEEP_SOCKET"] {
@@ -221,6 +223,43 @@ enum Daemon {
         var r = Reader(payload)
         switch tag {
         case tagPreviewText: return try r.string()
+        case tagError: throw Failure.protocolError(try r.string())
+        default: throw Failure.protocolError("unexpected reply tag \(tag)")
+        }
+    }
+
+    struct Hit: Hashable {
+        var workspace: String
+        var tab: UInt32
+        var line: UInt32
+        var text: String
+    }
+
+    /// Lines of history matching `query`, across every tab the daemon has.
+    static func search(_ query: String, limit: UInt32 = 200) throws -> [Hit] {
+        let sock = try connect()
+        defer { close(sock) }
+        var w = Writer()
+        w.string(query)
+        w.u32(limit)
+        try send(sock, tag: tagSearch, payload: w.data)
+
+        let (tag, payload) = try recv(sock)
+        var r = Reader(payload)
+        switch tag {
+        case tagSearchHits:
+            let count = try r.u32()
+            var hits: [Hit] = []
+            hits.reserveCapacity(Int(min(count, 4096)))
+            for _ in 0..<count {
+                hits.append(Hit(
+                    workspace: try r.string(),
+                    tab: try r.u32(),
+                    line: try r.u32(),
+                    text: try r.string()
+                ))
+            }
+            return hits
         case tagError: throw Failure.protocolError(try r.string())
         default: throw Failure.protocolError("unexpected reply tag \(tag)")
         }

@@ -121,6 +121,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             self?.session.dispatch(.dismissPickerItem(id))
         }
         picker.onCancel = { [weak self] in self?.session.dispatch(.closePicker) }
+        picker.onFilter = { [weak self] query in
+            self?.session.dispatch(.setPickerQuery(query))
+        }
 
         // Divider drags become model facts, debounced; model-driven geometry
         // is guarded out so it cannot echo back as intent.

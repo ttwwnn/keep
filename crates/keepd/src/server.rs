@@ -130,6 +130,11 @@ fn handle(stream: UnixStream, registry: Arc<Registry>) -> Result<()> {
             ServerMsg::PreviewText(text).write(&mut writer)?;
             Ok(())
         }
+        ClientMsg::Search { query, limit } => {
+            let hits = registry.search(&query, limit as usize);
+            ServerMsg::SearchHits(hits).write(&mut writer)?;
+            Ok(())
+        }
         ClientMsg::Attach { workspace, tab, cols, rows } => {
             attach(reader, writer, registry, &workspace, tab, cols, rows)
         }

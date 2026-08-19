@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, anyhow};
-use keep_proto::{TabInfo, WorkspaceInfo};
+use keep_proto::{SearchHit, TabInfo, WorkspaceInfo};
 
 use crate::Workspace;
 
@@ -49,6 +49,51 @@ impl Registry {
             .collect();
         out.sort_by(|a, b| a.name.cmp(&b.name));
         out
+    }
+
+    /// Every line of every tab's history that contains `query`, case
+    /// insensitively, oldest tab first and oldest line first.
+    ///
+    /// The search runs here because this is where the text is: the daemon
+    /// holds each tab's whole screen, scrollback included, for tabs no client
+    /// has ever opened. Asking each client to search its own view would miss
+    /// most of what there is to find.
+    pub fn search(&self, query: &str, limit: usize) -> Vec<SearchHit> {
+        if query.is_empty() || limit == 0 {
+            return Vec::new();
+        }
+        let needle = query.to_lowercase();
+        let workspaces: Vec<(String, Arc<Workspace>)> = match self.workspaces.lock() {
+            Ok(g) => {
+                let mut all: Vec<_> = g.iter().map(|(n, w)| (n.clone(), Arc::clone(w))).collect();
+                all.sort_by(|a, b| a.0.cmp(&b.0));
+                all
+            }
+            Err(_) => return Vec::new(),
+        };
+
+        let mut hits = Vec::new();
+        for (name, workspace) in workspaces {
+            for entry in workspace.tabs() {
+                // Snapshot per tab, not per line: the lock is the tab's, and
+                // holding it while matching would stall its reader thread.
+                let Ok(text) = entry.tab.screen_text() else { continue };
+                for (index, line) in text.lines().enumerate() {
+                    if hits.len() >= limit {
+                        return hits;
+                    }
+                    if line.to_lowercase().contains(&needle) {
+                        hits.push(SearchHit {
+                            workspace: name.clone(),
+                            tab: entry.id,
+                            line: index as u32,
+                            text: line.trim_end().to_string(),
+                        });
+                    }
+                }
+            }
+        }
+        hits
     }
 
     pub fn get(&self, name: &str) -> Option<Arc<Workspace>> {

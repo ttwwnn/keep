@@ -29,6 +29,7 @@ final class PickerView: NSView {
     private var all: [PickerModel.Item] = []
     private var shown: [PickerModel.Item] = []
     private var query = ""
+    private var mode: PickerModel.Mode = .goTo
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -134,6 +135,12 @@ final class PickerView: NSView {
     }
 
     func apply(_ model: PickerModel) {
+        if mode != model.mode {
+            mode = model.mode
+            field.placeholderString = mode == .search ? "search history…" : "go to…"
+            field.stringValue = ""
+            query = ""
+        }
         if all != model.items {
             all = model.items
             refilter(preservingSelection: true)
@@ -158,7 +165,9 @@ final class PickerView: NSView {
 
     private func refilter(preservingSelection: Bool) {
         let previous = preservingSelection ? selectedItemID : nil
-        shown = Self.matches(all, query: query)
+        // In search the daemon has already decided what matches; filtering
+        // its answer again with a different rule would hide real hits.
+        shown = mode == .search ? all : Self.matches(all, query: query)
         table.reloadData()
         let index = previous.flatMap { id in shown.firstIndex { $0.id == id } } ?? 0
         select(row: shown.isEmpty ? -1 : index)
@@ -257,7 +266,11 @@ extension PickerView: NSTableViewDataSource, NSTableViewDelegate {
         let cell = NSView()
 
         let title = NSTextField(labelWithString: item.title)
-        title.font = .systemFont(ofSize: 13)
+        if case .hit = item.kind {
+            title.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        } else {
+            title.font = .systemFont(ofSize: 13)
+        }
         title.lineBreakMode = .byTruncatingTail
         title.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(title)
@@ -284,6 +297,10 @@ extension PickerView: NSTableViewDataSource, NSTableViewDelegate {
             badge.image = NSImage(
                 systemSymbolName: "folder", accessibilityDescription: "folder")
             badge.contentTintColor = .tertiaryLabelColor
+        case .hit:
+            badge.image = NSImage(
+                systemSymbolName: "text.magnifyingglass", accessibilityDescription: "match")
+            badge.contentTintColor = .secondaryLabelColor
         }
         badge.symbolConfiguration = .init(pointSize: 12, weight: .regular)
         badge.translatesAutoresizingMaskIntoConstraints = false

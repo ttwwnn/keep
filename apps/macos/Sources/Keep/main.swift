@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func newTab(_ sender: Any?) { session.dispatch(.newTab(in: nil)) }
     @objc func goTo(_ sender: Any?) { session.dispatch(.togglePicker) }
+    @objc func find(_ sender: Any?) { session.dispatch(.toggleSearch) }
     @objc func closePane(_ sender: Any?) { session.dispatch(.closePane(nil)) }
     @objc func closeTab(_ sender: Any?) { session.dispatch(.closeTab(nil)) }
     @objc func splitRight(_ sender: Any?) { session.dispatch(.split(1)) }
@@ -110,6 +111,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let goItem = NSMenuItem()
         let goMenu = NSMenu(title: "Go")
         goMenu.addItem(withTitle: "Go To…", action: #selector(goTo(_:)), keyEquivalent: "p")
+        goMenu.addItem(
+            withTitle: "Search History…", action: #selector(find(_:)), keyEquivalent: "f")
         goItem.submenu = goMenu
         main.addItem(goItem)
 

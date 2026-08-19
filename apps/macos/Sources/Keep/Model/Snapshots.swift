@@ -107,7 +107,13 @@ enum Intent {
     /// Open the picker, or put it away if it is already up: the key that
     /// summons it is the key that dismisses it.
     case togglePicker
+    /// Same overlay, other question: what is in the history rather than
+    /// where can I go.
+    case toggleSearch
     case closePicker
+    /// What was typed. Local filtering answers the "go to" list; searching
+    /// history is a question only the daemon can answer.
+    case setPickerQuery(String)
     /// Show what this row is; nil clears the preview.
     case previewPickerItem(String?)
     case choosePickerItem(String)
@@ -123,12 +129,25 @@ enum Intent {
 /// is one row, most recently visited first, and below it the places to start
 /// something new.
 struct PickerModel: Hashable {
+    /// Which question the overlay is asking. It is one overlay because it is
+    /// one gesture — type, move, choose — and splitting it in two would mean
+    /// two of everything to keep in step.
+    enum Mode: Hashable {
+        /// Filtering happens locally: the list is already in hand.
+        case goTo
+        /// Every keystroke is a question for the daemon, which is the only
+        /// one holding the history.
+        case search
+    }
+
     struct Item: Hashable, Identifiable {
         enum Kind: Hashable {
             /// A tab that exists, in some workspace.
             case running(TabID)
             /// A directory to open a new workspace in.
             case destination(path: String)
+            /// A line of history, and the tab it is in.
+            case hit(TabID, line: UInt32)
         }
         let kind: Kind
         /// "workspace › title", or the directory's name.
@@ -140,10 +159,13 @@ struct PickerModel: Hashable {
             switch kind {
             case .running(let tab): return "run:\(tab)"
             case .destination(let path): return "dir:\(path)"
+            case .hit(let tab, let line): return "hit:\(tab):\(line)"
             }
         }
     }
 
+    var mode: Mode
+    var query: String
     var items: [Item]
     var previewOf: String?
     var previewText: String

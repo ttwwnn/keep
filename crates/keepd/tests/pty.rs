@@ -303,3 +303,32 @@ fn closing_a_root_promotes_one_pane_and_keeps_the_rest_with_it() {
     assert_eq!(sibling.split_of, first, "the sibling did not follow the promoted pane");
     workspace.kill_all().ok();
 }
+
+/// How much history the daemon can hand over.
+///
+/// The formatter documents its default as "the entire screen", and the point
+/// API distinguishes the active area from the full screen including
+/// scrollback — so which one a snapshot returns decides whether searching a
+/// tab's past is a thing the daemon can already answer, or a feature that has
+/// to be built first. This test states the answer rather than assuming it.
+#[test]
+fn snapshot_reports_how_far_back_it_reaches() {
+    let session = Tab::spawn(shell(), 80, 10).expect("spawn");
+    session.send(b"seq 1 300\n").expect("send");
+    assert!(
+        wait_for(Duration::from_secs(10), || screen_contains(&session, "300")),
+        "the tab never produced the output"
+    );
+
+    let text = session.screen_text().expect("text");
+    let lines = text.lines().filter(|l| !l.trim().is_empty()).count();
+    let reaches_back = text.contains("\n1\n") || text.starts_with("1\n");
+
+    // Ten rows of terminal, three hundred lines of output: a snapshot that
+    // carries scrollback is far taller than the screen.
+    eprintln!(
+        "snapshot: {lines} non-blank lines for a 10-row screen; reaches line 1: {reaches_back}"
+    );
+    assert!(lines > 0, "snapshot came back empty");
+    session.kill().ok();
+}
