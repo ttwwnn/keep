@@ -46,9 +46,9 @@ apps/macos/Sources/Keep/
 ├── Model/                        layers 4–5 — no AppKit import
 │   ├── Snapshots.swift           TabID, SidebarState, PaneState, Intent, *Snapshot
 │   ├── TabEntity.swift           layer 4: one per daemon root tab
-│   ├── WorkspaceEntity.swift     layer 5: order, active tab, per-tab focus
+│   ├── WorkspaceEntity.swift     layer 5: tab order, active tab, status
 │   ├── Session.swift             layer-5 root: single writer, replaces Store
-│   └── SidebarStateStore.swift   per-tab sidebar persistence (JSON)
+│   └── SidebarStateStore.swift   sidebar persistence, one state (JSON)
 ├── Display/
 │   ├── SurfacePool.swift         surfaces created once, keyed workspace/tab
 │   └── Ghostty/
@@ -79,7 +79,7 @@ struct SidebarState: Codable, Equatable { var isCollapsed: Bool; var width: CGFl
 enum Intent {
     case activateWorkspace(String), activateTab(TabID), activateTabIndex(Int)
     case newTab(in: String?), newWorkspace(named: String)
-    case closeTab(TabID?), killWorkspace(String)
+    case closeTab(TabID?), closePane(UInt32?), killWorkspace(String)
     case split(UInt8), focusPane(UInt32)
     case setSidebar(SidebarState)
     case nextTab, previousTab
@@ -108,6 +108,10 @@ enum Intent {
 @MainActor protocol SessionRendering: AnyObject {
     func render(_ snapshot: SessionSnapshot)
     func present(error: String)
+    /// Entering the workspace you are already in changes no state, so nothing
+    /// renders — but the click that asked has just left the keyboard in the
+    /// sidebar. The request is real even when the answer is "already there".
+    func focusActiveTerminal()
 }
 ```
 
@@ -118,22 +122,26 @@ switch path in the program — sidebar clicks, strip clicks, ⌘1–9 and empty-
 workspace entry all funnel into it.
 
 ```
-1. sidebarHost.apply(incoming.sidebar, animated: false)  chrome geometry first:
-                                                         sidebar width decides
-                                                         terminal width
+1. incoming.apply(panes:) + setFocusedPane              arrangement and focus
+                                                         ring settle first
 2. incoming.layoutSubtreeIfNeeded()                      surfaces sized for the
                                                          geometry they will have
-3. incoming panes: resumeDrawing()                       display link on + ONE
-                                                         synchronous draw while
-                                                         still hidden
-4. CATransaction { incoming.isHidden = false             the swap commits as a
-                   outgoing.isHidden = true }            single compositor frame:
+3. CATransaction { incoming.isHidden = false             unhiding runs
+                   outgoing.isHidden = true }            viewDidUnhide on each
+                                                         pane synchronously: it
+                                                         flushes the size it
+                                                         deferred and draws one
+                                                         frame, inside this
+                                                         transaction. The swap
+                                                         commits as one frame —
                                                          never zero tabs visible
-5. outgoing panes: suspendDrawing()                      after hiding, never before
-6. makeFirstResponder(incoming.focusedPane surface)      intra-window move; the
+4. makeFirstResponder(incoming.focusedPane surface)      intra-window move; the
                                                          window never resigns key
-7. strip selection + guarded window.title                pure paints
+5. strip selection + guarded window.title                pure paints
 ```
+
+The sidebar is not in this list: it is app-wide, applied once by `render`
+when it changes, and a switch never touches it.
 
 Hidden surfaces draw zero frames (`viewDidHide` stops the link; occlusion
 observing remains the backstop for minimize/bury) and defer PTY resizes —
@@ -143,9 +151,8 @@ as one call on reveal.
 ## Data flows
 
 **Open a new tab** (⌘T or strip "+"): strip → `dispatch(.newTab(in: nil))` →
-Session resolves the active workspace, calls the daemon, re-lists, creates a
-`TabEntity` whose sidebar state is seeded from the active tab's (so ⌘T never
-jumps the sidebar) → activates it → `render`: the container mounts a host on
+Session resolves the active workspace, calls the daemon, re-lists, creates the
+`TabEntity` → activates it → `render`: the container mounts a host on
 first presentation — this is hydration, the one moment a surface and its
 `keep` client are created — then the pipeline above runs.
 
