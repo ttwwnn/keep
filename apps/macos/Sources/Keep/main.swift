@@ -41,7 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - menu actions (each one is an intent)
 
     @objc func newTab(_ sender: Any?) { session.dispatch(.newTab(in: nil)) }
-    @objc func goTo(_ sender: Any?) { session.dispatch(.openPicker) }
+    @objc func goTo(_ sender: Any?) { session.dispatch(.togglePicker) }
     @objc func closePane(_ sender: Any?) { session.dispatch(.closePane(nil)) }
     @objc func closeTab(_ sender: Any?) { session.dispatch(.closeTab(nil)) }
     @objc func splitRight(_ sender: Any?) { session.dispatch(.split(1)) }

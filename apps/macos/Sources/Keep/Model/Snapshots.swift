@@ -104,7 +104,9 @@ enum Intent {
     /// would be written to whichever tab happened to be active.
     case focusPane(TabID, UInt32)
     case setSidebar(SidebarState)     // from the toggle or a divider drag
-    case openPicker
+    /// Open the picker, or put it away if it is already up: the key that
+    /// summons it is the key that dismisses it.
+    case togglePicker
     case closePicker
     /// Show what this row is; nil clears the preview.
     case previewPickerItem(String?)

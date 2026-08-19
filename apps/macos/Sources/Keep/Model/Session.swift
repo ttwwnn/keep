@@ -262,7 +262,11 @@ final class Session {
             sidebarStore.save(state)
             publish()
 
-        case .openPicker:
+        case .togglePicker:
+            guard picker == nil else {
+                dispatch(.closePicker)
+                return
+            }
             picker = PickerModel(items: pickerItems(), previewOf: nil, previewText: "")
             publish()
             // zoxide is a process launch; the list opens on what is already
