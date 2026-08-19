@@ -233,8 +233,13 @@ final class Session {
                 renderer?.present(error: error.localizedDescription)
             }
 
-        case .focusPane(let pane):
-            activeWorkspace?.activeTab?.noteFocus(pane: pane)
+        case .focusPane(let tab, let pane):
+            // Only the tab on screen can report focus. A hidden tab's surface
+            // taking the responder is AppKit tidying up, not the person
+            // moving — and acting on it would aim the next split at a pane in
+            // another tab, which is where the new pane would then appear.
+            guard let active = activeWorkspace?.activeTab, active.id == tab else { return }
+            active.noteFocus(pane: pane)
             publish()
 
         case .setSidebar(let state):

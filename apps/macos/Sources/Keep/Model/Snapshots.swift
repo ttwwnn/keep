@@ -98,7 +98,11 @@ enum Intent {
     case closePane(UInt32?)           // nil = the focused pane (⌘W)
     case killWorkspace(String)
     case split(UInt8)                 // protocol values: 1 = right, 2 = down
-    case focusPane(UInt32)            // a surface of the active tab took focus
+    /// A surface took the keyboard. The tab travels with it: rebuilding an
+    /// arrangement makes AppKit reassign the first responder, and a surface
+    /// belonging to a hidden tab can pick it up — a report with no tab on it
+    /// would be written to whichever tab happened to be active.
+    case focusPane(TabID, UInt32)
     case setSidebar(SidebarState)     // from the toggle or a divider drag
 }
 

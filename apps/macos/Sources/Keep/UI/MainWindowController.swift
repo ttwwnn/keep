@@ -105,7 +105,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             self.session.dispatch(.setSidebar(
                 SidebarState(isCollapsed: !state.isCollapsed, width: state.width)))
         }
-        container.onPaneFocus = { [weak self] pane in self?.session.dispatch(.focusPane(pane)) }
+        container.onPaneFocus = { [weak self] id, pane in
+            self?.session.dispatch(.focusPane(id, pane))
+        }
         tabStrip.onSelect = { [weak self] id in self?.session.dispatch(.activateTab(id)) }
         tabStrip.onClose = { [weak self] id in self?.session.dispatch(.closeTab(id)) }
         tabStrip.onNewTab = { [weak self] in self?.session.dispatch(.newTab(in: nil)) }

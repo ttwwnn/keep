@@ -15,14 +15,14 @@ final class TabContentContainer: NSView {
     /// A pane took the keyboard. Wired by the controller into an intent, so
     /// which pane has focus stays a model fact rather than something the UI
     /// is asked for later.
-    var onPaneFocus: ((UInt32) -> Void)?
+    var onPaneFocus: ((TabID, UInt32) -> Void)?
 
     /// Host for a tab, made on first use. Added hidden: presentation order
     /// is the switch pipeline's business.
     func host(for tab: SessionSnapshot.ActiveTab) -> TabHostView {
         if let existing = hosts[tab.id] { return existing }
         let host = TabHostView(id: tab.id)
-        host.onPaneFocus = { [weak self] pane in self?.onPaneFocus?(pane) }
+        host.onPaneFocus = { [weak self] id, pane in self?.onPaneFocus?(id, pane) }
         host.frame = bounds
         host.autoresizingMask = [.width, .height]
         host.isHidden = true
@@ -66,8 +66,9 @@ final class TabHostView: NSView {
     private var splitViews: [NSSplitView] = []
     private var surfaces: [UInt32: TerminalSurfaceView] = [:]
 
-    /// A pane surface took the keyboard; forwarded up to become a model fact.
-    var onPaneFocus: ((UInt32) -> Void)?
+    /// A pane surface took the keyboard; forwarded up with this tab's identity
+    /// so a report from a hidden tab cannot be mistaken for the active one's.
+    var onPaneFocus: ((TabID, UInt32) -> Void)?
 
     /// Which pane has the keyboard, drawn only when there is more than one.
     /// A split with no visible focus leaves you guessing where the next
@@ -121,9 +122,14 @@ final class TabHostView: NSView {
         content.autoresizingMask = [.width, .height]
         addSubview(content, positioned: .below, relativeTo: focusRing)
 
-        // Equalize after the tree is in the hierarchy and has a size.
+        // Outermost first, laying out between levels: a nested split has no
+        // size of its own until its parent has given it one, and halving zero
+        // is how a pane ends up with no height at all.
         layoutSubtreeIfNeeded()
-        for split in splitViews { equalize(split) }
+        for split in splitViews {
+            equalize(split)
+            split.layoutSubtreeIfNeeded()
+        }
         positionFocusRing()
     }
 
@@ -131,7 +137,10 @@ final class TabHostView: NSView {
         switch node {
         case .leaf(let tab):
             let surface = SurfacePool.shared.surface(workspace: id.workspace, tab: tab)
-            surface.onFocusGained = { [weak self] in self?.onPaneFocus?(tab) }
+            surface.onFocusGained = { [weak self] in
+                guard let self else { return }
+                self.onPaneFocus?(self.id, tab)
+            }
             surfaces[tab] = surface
             return surface
 
@@ -139,9 +148,11 @@ final class TabHostView: NSView {
             let split = NSSplitView()
             split.dividerStyle = .thin
             split.isVertical = vertical
+            // Recorded before its children, so `splitViews` runs outermost
+            // first — the order the equalizing pass needs.
+            splitViews.append(split)
             split.addArrangedSubview(build(first))
             split.addArrangedSubview(build(second))
-            splitViews.append(split)
             // Dragging a divider resizes that split's own subviews, not this
             // host, so nothing here lays out and the focus ring would stay on
             // the pane's old edge. Every split in the tree reports.
