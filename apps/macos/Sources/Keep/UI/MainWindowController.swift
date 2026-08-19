@@ -108,6 +108,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         container.onPaneFocus = { [weak self] id, pane in
             self?.session.dispatch(.focusPane(id, pane))
         }
+        container.onPaneDrop = { [weak self] id, pane, target, side in
+            guard let self, self.applied?.active?.id == id else { return }
+            self.session.dispatch(.movePane(pane, to: target, side: side))
+        }
+        container.onPaneDetach = { [weak self] id, pane in
+            guard let self, self.applied?.active?.id == id else { return }
+            self.session.dispatch(.detachPane(pane))
+        }
         tabStrip.onSelect = { [weak self] id in self?.session.dispatch(.activateTab(id)) }
         tabStrip.onClose = { [weak self] id in self?.session.dispatch(.closeTab(id)) }
         tabStrip.onNewTab = { [weak self] in self?.session.dispatch(.newTab(in: nil)) }

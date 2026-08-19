@@ -86,6 +86,18 @@ indirect enum PaneTree: Hashable {
 /// The one downward channel. Every mutation in the app enters as one of
 /// these; nothing in the UI reaches past this into state.
 enum Intent {
+    /// Where a dragged pane was let go, relative to the pane under it.
+    enum DropSide {
+        case left, right, top, bottom
+        /// On the pane itself: the two trade places.
+        case onto
+    }
+
+    /// Move a pane next to another one, or trade places with it.
+    case movePane(UInt32, to: UInt32, side: DropSide)
+    /// Take a pane out of its arrangement and give it a tab of its own.
+    case detachPane(UInt32)
+
     case activateWorkspace(String)
     case activateTab(TabID)
     /// 0-based; -1 means the last tab (⌘9, per macOS convention).

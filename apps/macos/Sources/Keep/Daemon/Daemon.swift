@@ -95,6 +95,7 @@ enum Daemon {
     private static let tagOk: UInt8 = 0x85
     private static let tagTabCreated: UInt8 = 0x88
     private static let tagPreviewText: UInt8 = 0x89
+    private static let tagRearrange: UInt8 = 0x0a
     private static let tagSearchHits: UInt8 = 0x9a
 
     static var socketPath: String {
@@ -198,6 +199,35 @@ enum Daemon {
         w.string(workspace)
         w.u32(tab)
         try send(sock, tag: tagCloseTab, payload: w.data)
+
+        let (tag, payload) = try recv(sock)
+        if tag == tagError {
+            var r = Reader(payload)
+            throw Failure.protocolError(try r.string())
+        }
+    }
+
+    /// Where one pane should end up.
+    struct Move {
+        let tab: UInt32
+        let splitOf: UInt32
+        let splitDir: UInt8
+    }
+
+    /// Put panes somewhere else in the arrangement, all of them or none.
+    static func rearrange(_ moves: [Move], in workspace: String) throws {
+        guard !moves.isEmpty else { return }
+        let sock = try connect()
+        defer { close(sock) }
+        var w = Writer()
+        w.string(workspace)
+        w.u32(UInt32(moves.count))
+        for move in moves {
+            w.u32(move.tab)
+            w.u32(move.splitOf)
+            w.u8(move.splitDir)
+        }
+        try send(sock, tag: tagRearrange, payload: w.data)
 
         let (tag, payload) = try recv(sock)
         if tag == tagError {
@@ -412,6 +442,9 @@ enum Daemon {
 
 private struct Writer {
     var data = Data()
+    mutating func u8(_ v: UInt8) {
+        data.append(v)
+    }
     mutating func u16(_ v: UInt16) {
         data.append(contentsOf: withUnsafeBytes(of: v.bigEndian) { Array($0) })
     }

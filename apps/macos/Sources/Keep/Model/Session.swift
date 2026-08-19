@@ -359,6 +359,52 @@ final class Session {
                 }
             }
 
+        case .movePane(let pane, let target, let side):
+            guard let workspace = activeWorkspace, let tab = workspace.activeTab,
+                  tab.owns(pane: pane), tab.owns(pane: target), pane != target
+            else { return }
+            // A pane's place is its parent and the direction it sits in. To
+            // land on the right or below, the newcomer simply hangs off the
+            // pane it was dropped on — panes are always the second half of
+            // the split they make. To land on the left or above, the two
+            // change roles instead: the newcomer takes the other's place and
+            // the other becomes its pane. Both are the same thing said from
+            // opposite ends, which is why the daemon takes them together.
+            let mine = place(of: pane, in: tab)
+            let theirs = place(of: target, in: tab)
+            let moves: [Daemon.Move]
+            switch side {
+            case .right:
+                moves = [Daemon.Move(tab: pane, splitOf: target, splitDir: 1)]
+            case .bottom:
+                moves = [Daemon.Move(tab: pane, splitOf: target, splitDir: 2)]
+            case .left:
+                moves = [
+                    Daemon.Move(tab: pane, splitOf: theirs.parent, splitDir: theirs.dir),
+                    Daemon.Move(tab: target, splitOf: pane, splitDir: 1),
+                ]
+            case .top:
+                moves = [
+                    Daemon.Move(tab: pane, splitOf: theirs.parent, splitDir: theirs.dir),
+                    Daemon.Move(tab: target, splitOf: pane, splitDir: 2),
+                ]
+            case .onto:
+                moves = [
+                    Daemon.Move(tab: pane, splitOf: theirs.parent, splitDir: theirs.dir),
+                    Daemon.Move(tab: target, splitOf: mine.parent, splitDir: mine.dir),
+                ]
+            }
+            rearrange(moves, in: workspace.name, focusing: pane)
+
+        case .detachPane(let pane):
+            guard let workspace = activeWorkspace, let tab = workspace.activeTab,
+                  tab.owns(pane: pane), pane != tab.id.root
+            else { return }
+            rearrange(
+                [Daemon.Move(tab: pane, splitOf: 0, splitDir: 0)],
+                in: workspace.name,
+                focusing: pane)
+
         case .closePicker:
             picker = nil
             publish()
@@ -432,6 +478,31 @@ final class Session {
         return SurfacePool.shared
             .existing(workspace: workspace, tab: pane)?
             .currentDirectory ?? ""
+    }
+
+    /// Where a pane sits: what it hangs off and how.
+    private func place(of pane: UInt32, in tab: TabEntity) -> (parent: UInt32, dir: UInt8) {
+        guard let state = tab.panes.first(where: { $0.tab == pane }) else { return (0, 0) }
+        return (state.splitOf, state.splitDir)
+    }
+
+    /// Ask the daemon to move panes, then believe the daemon rather than
+    /// guessing what it did: the arrangement is its fact, and a rejected move
+    /// must leave the app showing what is actually there.
+    private func rearrange(_ moves: [Daemon.Move], in workspace: String, focusing pane: UInt32) {
+        do {
+            try Daemon.rearrange(moves, in: workspace)
+        } catch {
+            renderer?.present(error: error.localizedDescription)
+        }
+        refreshFromDaemon()
+        if let entity = workspaces.first(where: { $0.name == workspace }),
+           let holder = entity.tabs.first(where: { $0.owns(pane: pane) }) {
+            activate(holder.id)
+            holder.noteFocus(pane: pane)
+        }
+        publish()
+        renderer?.focusActiveTerminal()
     }
 
     /// The tab a pane belongs to, which is the only thing that can be

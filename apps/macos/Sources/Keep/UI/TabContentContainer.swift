@@ -16,6 +16,8 @@ final class TabContentContainer: NSView {
     /// which pane has focus stays a model fact rather than something the UI
     /// is asked for later.
     var onPaneFocus: ((TabID, UInt32) -> Void)?
+    var onPaneDrop: ((TabID, UInt32, UInt32, Intent.DropSide) -> Void)?
+    var onPaneDetach: ((TabID, UInt32) -> Void)?
 
     /// Host for a tab, made on first use. Added hidden: presentation order
     /// is the switch pipeline's business.
@@ -23,6 +25,10 @@ final class TabContentContainer: NSView {
         if let existing = hosts[tab.id] { return existing }
         let host = TabHostView(id: tab.id)
         host.onPaneFocus = { [weak self] id, pane in self?.onPaneFocus?(id, pane) }
+        host.onPaneDrop = { [weak self] id, pane, target, side in
+            self?.onPaneDrop?(id, pane, target, side)
+        }
+        host.onPaneDetach = { [weak self] id, pane in self?.onPaneDetach?(id, pane) }
         host.frame = bounds
         host.autoresizingMask = [.width, .height]
         host.isHidden = true
@@ -65,6 +71,22 @@ final class TabHostView: NSView {
     private var focusedPane: UInt32?
     private var splitViews: [NSSplitView] = []
     private var surfaces: [UInt32: TerminalSurfaceView] = [:]
+    /// A pane was dropped somewhere: on another pane, or out of the tab.
+    var onPaneDrop: ((TabID, UInt32, UInt32, Intent.DropSide) -> Void)?
+    var onPaneDetach: ((TabID, UInt32) -> Void)?
+
+    /// The pane being carried, and the paint that says where it would land.
+    private var carrying: UInt32?
+    private lazy var landing: NSView = {
+        let view = LandingView(frame: .zero)
+        view.wantsLayer = true
+        view.layer?.cornerRadius = 4
+        view.layer?.cornerCurve = .continuous
+        view.isHidden = true
+        addSubview(view)
+        return view
+    }()
+
     /// A pane surface took the keyboard; forwarded up with this tab's identity
     /// so a report from a hidden tab cannot be mistaken for the active one's.
     var onPaneFocus: ((TabID, UInt32) -> Void)?
@@ -124,6 +146,9 @@ final class TabHostView: NSView {
                 guard let self else { return }
                 self.onPaneFocus?(self.id, tab)
             }
+            surface.onGripEvent = { [weak self] event, phase in
+                self?.carry(tab, event: event, phase: phase)
+            }
             surfaces[tab] = surface
             return surface
 
@@ -162,6 +187,94 @@ final class TabHostView: NSView {
         let many = (tree?.leaves.count ?? 0) > 1
         for (pane, surface) in surfaces {
             surface.isResting = many && pane != focusedPane
+            // Nowhere to go, no handle: a lone pane cannot be rearranged, and
+            // taking it out of a tab it is the whole of does nothing.
+            surface.isDraggable = many
+        }
+    }
+
+    // MARK: - carrying a pane
+
+    private func carry(_ pane: UInt32, event: NSEvent, phase: GripView.Phase) {
+        let point = convert(event.locationInWindow, from: nil)
+        switch phase {
+        case .began:
+            carrying = pane
+            addSubview(landing, positioned: .above, relativeTo: nil)
+
+        case .moved:
+            guard carrying == pane else { return }
+            guard let (target, side) = drop(at: point, carrying: pane) else {
+                // Out of the tab: let go here and the pane becomes a tab.
+                landing.layer?.backgroundColor = NSColor.controlAccentColor
+                    .withAlphaComponent(0.14).cgColor
+                landing.frame = bounds.insetBy(dx: 3, dy: 3)
+                landing.isHidden = !bounds.contains(point) ? false : true
+                return
+            }
+            landing.layer?.backgroundColor = NSColor.controlAccentColor
+                .withAlphaComponent(0.28).cgColor
+            landing.frame = paint(side, over: target)
+            landing.isHidden = false
+
+        case .ended:
+            defer { carrying = nil; landing.isHidden = true }
+            guard carrying == pane else { return }
+            guard bounds.contains(point) else {
+                onPaneDetach?(id, pane)
+                return
+            }
+            guard let (target, side) = drop(at: point, carrying: pane) else { return }
+            guard let other = surfaces.first(where: { $0.value === target })?.key else { return }
+            onPaneDrop?(id, pane, other, side)
+        }
+    }
+
+    /// Which pane is under the point, and which of its sides was aimed at.
+    ///
+    /// Nil when the point is over the pane being carried, or over nothing:
+    /// dropping a pane on itself is not a move, and neither is dropping it on
+    /// a divider.
+    private func drop(
+        at point: NSPoint, carrying pane: UInt32
+    ) -> (TerminalSurfaceView, Intent.DropSide)? {
+        for (id, surface) in surfaces where id != pane {
+            let local = surface.convert(point, from: self)
+            guard surface.bounds.contains(local) else { continue }
+            let edge: CGFloat = 0.3
+            let x = local.x / max(1, surface.bounds.width)
+            let y = local.y / max(1, surface.bounds.height)
+            let side: Intent.DropSide
+            if x < edge {
+                side = .left
+            } else if x > 1 - edge {
+                side = .right
+            } else if y < edge {
+                // Not flipped: the origin is the bottom.
+                side = .bottom
+            } else if y > 1 - edge {
+                side = .top
+            } else {
+                side = .onto
+            }
+            return (surface, side)
+        }
+        return nil
+    }
+
+    /// The half of the target the pane would take, or all of it for a trade.
+    private func paint(_ side: Intent.DropSide, over target: NSView) -> NSRect {
+        let frame = convert(target.bounds, from: target)
+        switch side {
+        case .onto: return frame.insetBy(dx: 2, dy: 2)
+        case .left: return NSRect(
+            x: frame.minX, y: frame.minY, width: frame.width / 2, height: frame.height)
+        case .right: return NSRect(
+            x: frame.midX, y: frame.minY, width: frame.width / 2, height: frame.height)
+        case .top: return NSRect(
+            x: frame.minX, y: frame.midY, width: frame.width, height: frame.height / 2)
+        case .bottom: return NSRect(
+            x: frame.minX, y: frame.minY, width: frame.width, height: frame.height / 2)
         }
     }
 
@@ -170,4 +283,9 @@ final class TabHostView: NSView {
     }
 
     var paneSurfaces: [TerminalSurfaceView] { Array(surfaces.values) }
+}
+
+/// The landing paint never takes a click: it sits over terminals.
+private final class LandingView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

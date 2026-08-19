@@ -365,6 +365,38 @@ final class TerminalSurfaceView: NSView {
         reportGrid()
     }
 
+    // MARK: - being moved
+
+    private lazy var grip: GripView = {
+        let grip = GripView(frame: .zero)
+        grip.isHidden = true
+        grip.onEvent = { [weak self] event, phase in self?.onGripEvent?(event, phase) }
+        addSubview(grip)
+        return grip
+    }()
+
+    /// Whether this pane can be picked up at all. A pane with nowhere to go —
+    /// the only one in its tab — shows no handle.
+    var isDraggable = false {
+        didSet {
+            guard isDraggable != oldValue else { return }
+            grip.isHidden = !isDraggable
+            needsLayout = true
+        }
+    }
+
+    var onGripEvent: ((NSEvent, GripView.Phase) -> Void)?
+
+    private func positionGrip() {
+        guard isDraggable else { return }
+        let size = NSSize(width: 44, height: 14)
+        grip.frame = NSRect(
+            x: ((bounds.width - size.width) / 2).rounded(),
+            y: bounds.height - size.height - 4,
+            width: size.width,
+            height: size.height)
+    }
+
     // MARK: - resting
 
     /// A sheet of the terminal's own background colour, laid over the pane
@@ -518,6 +550,7 @@ final class TerminalSurfaceView: NSView {
         // setFrameSize alone misses the first pass; the dedupe above makes
         // the overlap free.
         updateSize()
+        positionGrip()
     }
 
     // MARK: - focus
@@ -776,4 +809,67 @@ private final class SizeBadgeView: NSView {
 /// The veil never takes a click: it sits over a terminal.
 private final class VeilView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+/// The handle a pane is moved by.
+///
+/// Three dots at the top of the pane, in the place a title bar would be if a
+/// pane had one. It is the only part of a terminal that is not the terminal:
+/// everywhere else the mouse belongs to the program inside, so a pane cannot
+/// be picked up by its middle without taking selection away.
+final class GripView: NSView {
+    var onEvent: ((NSEvent, Phase) -> Void)?
+    private var hovered = false { didSet { needsDisplay = true } }
+    private var dragging = false
+
+    enum Phase { case began, moved, ended }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self))
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovered = true }
+    override func mouseExited(with event: NSEvent) { hovered = false }
+
+    override func mouseDown(with event: NSEvent) {
+        dragging = true
+        onEvent?(event, .began)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard dragging else { return }
+        onEvent?(event, .moved)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard dragging else { return }
+        dragging = false
+        onEvent?(event, .ended)
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .openHand)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let strength: CGFloat = dragging ? 0.9 : (hovered ? 0.7 : 0.3)
+        NSColor.white.withAlphaComponent(strength * 0.12).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2)
+            .fill()
+        NSColor.white.withAlphaComponent(strength).setFill()
+        let dot: CGFloat = 3
+        let gap: CGFloat = 5
+        let total = dot * 3 + gap * 2
+        var x = (bounds.width - total) / 2
+        let y = (bounds.height - dot) / 2
+        for _ in 0..<3 {
+            NSBezierPath(ovalIn: NSRect(x: x, y: y, width: dot, height: dot)).fill()
+            x += dot + gap
+        }
+    }
 }
