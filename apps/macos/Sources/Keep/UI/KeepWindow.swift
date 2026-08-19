@@ -165,7 +165,9 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
         button.imageScaling = .scaleProportionallyDown
         button.toolTip = "Toggle Sidebar"
         button.contentTintColor = .secondaryLabelColor
-        let side: CGFloat = 24
+        // 28 is the height the titlebar centred the old bezelled button at;
+        // shrinking it to 24 moved the control down by the difference.
+        let side: CGFloat = 28
         button.frame = NSRect(x: 0, y: 0, width: side, height: side)
 
         // The same ground the new-tab button stands on, so the two controls
@@ -174,13 +176,14 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
         accessory.identifier = Self.toggleSidebarAccessoryIdentifier
         accessory.layoutAttribute = .left
         if let glass = Glass.lozenge(cornerRadius: side / 2) {
-            Glass.tint(glass, NSColor.white.withAlphaComponent(0.22))
-            glass.frame = NSRect(x: 0, y: 0, width: side, height: side)
+            // The titlebar stretches an accessory view to its full height,
+            // which a bezelled button tolerated and a glass capsule does not:
+            // it became a tall rounded slab. So the accessory is a host that
+            // stretches, holding a fixed circle it keeps centred.
+            // Untinted at rest, like the new-tab button: glass refracts
+            // darker than a dark bar, which is the quiet state this wants.
             glass.addSubview(button)
-            let host = NSView(frame: NSRect(x: 0, y: 0, width: side + 8, height: side))
-            glass.frame.origin.x = 4
-            host.addSubview(glass)
-            accessory.view = host
+            accessory.view = CenteringHost(child: glass, size: side, leading: 4)
         } else {
             button.bezelStyle = .circular
             button.isBordered = true
@@ -214,5 +217,41 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
         nil
+    }
+}
+
+
+/// Keeps one fixed-size child centred while itself being stretched.
+///
+/// The titlebar sizes an accessory view to the whole of its height, and a
+/// control that is a shape — a circle of glass, say — has to stay that shape
+/// rather than being stretched into a slab.
+private final class CenteringHost: NSView {
+    private let child: NSView
+    private let side: CGFloat
+    private let leading: CGFloat
+
+    init(child: NSView, size: CGFloat, leading: CGFloat) {
+        self.child = child
+        self.side = size
+        self.leading = leading
+        super.init(frame: NSRect(x: 0, y: 0, width: size + leading * 2, height: size))
+        addSubview(child)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: side + leading * 2, height: NSView.noIntrinsicMetric)
+    }
+
+    override func layout() {
+        super.layout()
+        child.frame = NSRect(
+            x: leading,
+            y: ((bounds.height - side) / 2).rounded(),
+            width: side,
+            height: side)
     }
 }

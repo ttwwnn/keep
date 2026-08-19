@@ -28,6 +28,7 @@ final class TabStripView: NSView {
     /// The button's ground: glass where the system has it.
     private let newTabBackground: NSView = Glass.lozenge(cornerRadius: 12) ?? NSView()
     private let newTabIsGlass = Glass.isAvailable
+    private var newTabHovered = false
     private var backgroundObserver: NSObjectProtocol?
 
     override init(frame: NSRect) {
@@ -92,7 +93,7 @@ final class TabStripView: NSView {
         applyCells()
         newTabButton.contentTintColor = Palette.current.dimText
         if newTabIsGlass {
-            Glass.tint(newTabBackground, Palette.current.glassTint)
+            tintNewTabButton()
         } else {
             newTabBackground.layer?.backgroundColor = Palette.current.controlFill.cgColor
         }
@@ -127,7 +128,7 @@ final class TabStripView: NSView {
         newTabBackground.frame = plusRect
         if newTabIsGlass {
             Glass.setCornerRadius(newTabBackground, plusSide / 2)
-            Glass.tint(newTabBackground, Palette.current.glassTint)
+            tintNewTabButton()
         } else {
             newTabBackground.layer?.cornerRadius = plusSide / 2
             newTabBackground.layer?.backgroundColor = Palette.current.controlFill.cgColor
@@ -145,6 +146,48 @@ final class TabStripView: NSView {
             cell.frame = NSRect(x: x.rounded(), y: 0, width: next - x.rounded(), height: height)
             x = next
         }
+    }
+
+    /// Untinted glass at rest, which refracts darker than the bar and reads
+    /// as a well rather than a lamp; tinted only under the pointer.
+    private func tintNewTabButton() {
+        Glass.tint(newTabBackground, newTabHovered ? Palette.current.glassTint : nil)
+        newTabButton.contentTintColor = newTabHovered
+            ? Palette.current.text
+            : Palette.current.dimText
+    }
+
+    /// One tracking area for the whole row.
+    ///
+    /// Per-cell areas alone left a close button showing after the pointer had
+    /// gone: a cell that is resized or reused out from under the mouse never
+    /// hears `mouseExited`. The row knows when the mouse has left it entirely,
+    /// and that is the only moment every cell can be told at once.
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
+            owner: self
+        ))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let overPlus = newTabBackground.frame.contains(point)
+        if overPlus != newTabHovered {
+            newTabHovered = overPlus
+            tintNewTabButton()
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        if newTabHovered {
+            newTabHovered = false
+            tintNewTabButton()
+        }
+        for cell in cells { cell.clearHover() }
     }
 
     @objc private func newTabPressed() {
@@ -215,7 +258,9 @@ private final class TabCellView: NSView {
     /// How much of the row the fill leaves alone, so a tab reads as a shape
     /// inside the titlebar rather than as a full-height block.
     private let verticalInset: CGFloat = 11
-    private let horizontalInset: CGFloat = 4
+    /// Half the gap between two capsules: each tab insets its own fill, so
+    /// neighbours end up twice this far apart.
+    private let horizontalInset: CGFloat = 2
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -311,8 +356,12 @@ private final class TabCellView: NSView {
         if fillIsGlass {
             // Present or absent, tinted rather than painted: refraction is
             // the highlight, and a tint is how it is aimed lighter.
+            // The same two states the "+" button has, and made of the same
+            // thing: untinted glass under the pointer, which refracts into a
+            // dark well, and tinted glass when selected, which is what aims
+            // it lighter than the bar.
             fill.isHidden = !item.isActive && !hovered
-            Glass.tint(fill, item.isActive ? palette.glassTint : palette.hoverFill)
+            Glass.tint(fill, item.isActive ? palette.glassTint : nil)
         } else {
             fill.layer?.borderWidth = item.isActive ? 1 : 0
             fill.layer?.borderColor = palette.edge.cgColor
@@ -360,6 +409,12 @@ private final class TabCellView: NSView {
     }
 
     override func mouseExited(with event: NSEvent) {
+        clearHover()
+    }
+
+    /// Told from the row that the pointer is gone, for the case AppKit does
+    /// not say so itself.
+    func clearHover() {
         guard hovered else { return }
         hovered = false
         refresh()
