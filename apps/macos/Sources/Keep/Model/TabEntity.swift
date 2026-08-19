@@ -41,7 +41,17 @@ final class TabEntity {
         return changed
     }
 
+    /// Whether a pane id belongs to this tab at all.
+    func owns(pane: UInt32) -> Bool {
+        pane == id.root || panes.contains { $0.tab == pane }
+    }
+
+    /// Remember which pane has the keyboard — but only a pane of this tab.
+    /// Focus arrives from views, and a view can be handed the responder by
+    /// AppKit while it belongs to a tab nobody is looking at; remembering
+    /// that would aim the next split or close at another tab's work.
     func noteFocus(pane: UInt32) {
+        guard owns(pane: pane) else { return }
         focusedPane = pane
     }
 }

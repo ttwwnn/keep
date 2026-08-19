@@ -189,7 +189,8 @@ final class Session {
             // the daemon promotes an orphaned pane to stand on its own, so
             // what survives is the rest of the arrangement.
             guard let workspace = activeWorkspace, let tab = workspace.activeTab else { return }
-            let target = pane ?? tab.focusedPane
+            let requested = pane ?? tab.focusedPane
+            let target = tab.owns(pane: requested) ? requested : tab.id.root
             do {
                 try Daemon.closeTab(target, in: workspace.name)
                 SurfacePool.shared.discard(workspace: workspace.name, tab: target)
@@ -224,8 +225,15 @@ final class Session {
         case .split(let direction):
             guard let workspace = activeWorkspace, let tab = workspace.activeTab else { return }
             do {
+                // Split off a pane of THIS tab or off nothing. Focus is
+                // reported by views, and views are moved, rebuilt and handed
+                // the responder by AppKit for reasons of its own — so the id
+                // that arrives is a claim, and a claim about another tab must
+                // not decide where new work is put. The root is the honest
+                // fallback: it is the one pane a tab always has.
+                let target = tab.owns(pane: tab.focusedPane) ? tab.focusedPane : tab.id.root
                 let pane = try Daemon.newTab(
-                    in: workspace.name, splitOf: tab.focusedPane, splitDir: direction)
+                    in: workspace.name, splitOf: target, splitDir: direction)
                 tab.noteFocus(pane: pane)
                 refreshFromDaemon()
                 publish()
