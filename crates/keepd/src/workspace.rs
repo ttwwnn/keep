@@ -190,6 +190,83 @@ impl Workspace {
             .collect()
     }
 
+    /// Put panes somewhere else in the arrangement.
+    ///
+    /// All of them or none: dropping a pane to the left of another is two
+    /// moves — the newcomer takes the other's place and the other becomes its
+    /// pane — and a layout that took only the first of those is one nobody
+    /// asked for. So the whole set is staged, checked, and only then kept.
+    ///
+    /// What is checked is that every pane named exists, and that no pane ends
+    /// up its own ancestor. A loop is not a layout: reading it back would
+    /// never terminate.
+    pub fn rearrange(&self, moves: &[(u32, u32, u8)]) -> Result<()> {
+        let mut guard = self.tabs.lock().map_err(|_| anyhow!("workspace poisoned"))?;
+
+        // Stage on the bare shape, so nothing is touched until it all holds.
+        let mut layout: Vec<(u32, u32, u8)> =
+            guard.iter().map(|e| (e.id, e.split_of, e.split_dir)).collect();
+        for &(tab, parent, dir) in moves {
+            if tab == parent {
+                return Err(anyhow!("a pane cannot be a pane of itself"));
+            }
+            if parent != 0 && !layout.iter().any(|e| e.0 == parent) {
+                return Err(anyhow!("no tab {parent} to hang {tab} off"));
+            }
+            let at = layout
+                .iter()
+                .position(|e| e.0 == tab)
+                .ok_or_else(|| anyhow!("no tab {tab} to move"))?;
+            layout[at].1 = parent;
+            layout[at].2 = dir;
+        }
+
+        let parent_of = |id: u32, layout: &[(u32, u32, u8)]| -> u32 {
+            layout.iter().find(|e| e.0 == id).map(|e| e.1).unwrap_or(0)
+        };
+        for &(id, _, _) in &layout {
+            let mut current = id;
+            for _ in 0..=layout.len() {
+                current = parent_of(current, &layout);
+                if current == 0 {
+                    break;
+                }
+                if current == id {
+                    return Err(anyhow!("that would make a pane its own pane"));
+                }
+            }
+        }
+
+        for entry in guard.iter_mut() {
+            if let Some(&(_, parent, dir)) = layout.iter().find(|e| e.0 == entry.id) {
+                entry.split_of = parent;
+                entry.split_dir = dir;
+            }
+        }
+
+        // A client rebuilds the arrangement by replaying this list in order,
+        // splitting each pane off one that is already there — so a pane must
+        // never come before the one it hangs off. Creation order guaranteed
+        // that for free; moving panes does not.
+        let mut ordered: Vec<Entry> = Vec::with_capacity(guard.len());
+        let mut placed: Vec<u32> = Vec::with_capacity(guard.len());
+        let mut rest: Vec<Entry> = guard.drain(..).collect();
+        while !rest.is_empty() {
+            let next = rest
+                .iter()
+                .position(|e| e.split_of == 0 || placed.contains(&e.split_of));
+            // Nothing placeable means a cycle got past the check above; keep
+            // the tabs rather than drop them, and let the client promote what
+            // it cannot place.
+            let at = next.unwrap_or(0);
+            let entry = rest.remove(at);
+            placed.push(entry.id);
+            ordered.push(entry);
+        }
+        *guard = ordered;
+        Ok(())
+    }
+
     pub fn close_tab(&self, id: u32) -> Result<()> {
         let tab = {
             let mut guard = self.tabs.lock().map_err(|_| anyhow!("workspace poisoned"))?;

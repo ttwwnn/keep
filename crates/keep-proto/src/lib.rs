@@ -18,6 +18,7 @@ const T_KILL: u8 = 0x06;
 const T_CLOSE_TAB: u8 = 0x07;
 const T_PREVIEW: u8 = 0x08;
 const T_SEARCH: u8 = 0x09;
+const T_REARRANGE: u8 = 0x0a;
 
 const T_WORKSPACES: u8 = 0x81;
 const T_ERROR: u8 = 0x84;
@@ -80,6 +81,11 @@ pub enum ClientMsg {
     /// the search to that pane, which is the difference between "find it
     /// anywhere" and "find it here".
     Search { query: String, limit: u32, workspace: String, tab: u32 },
+    /// Put panes somewhere else in the arrangement, all at once.
+    ///
+    /// The layout lives here rather than in the app so that it survives every
+    /// client, which means moving a pane is something only the daemon can do.
+    Rearrange { workspace: String, moves: Vec<PaneMove> },
     Input(Vec<u8>),
     Resize { cols: u16, rows: u16 },
     /// End a whole workspace, tabs and all.
@@ -126,6 +132,18 @@ pub struct SearchHit {
     pub after: Vec<String>,
 }
 
+/// Where one pane should end up: the tab it hangs off (0 = a tab of its own)
+/// and how it sits against it. The unit of rearranging, plural because a
+/// rearrangement that lands halfway is a layout nobody asked for — dropping a
+/// pane to the left of another moves both, and either both land or neither
+/// does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PaneMove {
+    pub tab: u32,
+    pub split_of: u32,
+    pub split_dir: u8,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceInfo {
     pub name: String,
@@ -170,6 +188,9 @@ struct Buf(Vec<u8>);
 impl Buf {
     fn new() -> Self {
         Self(Vec::new())
+    }
+    fn u8(&mut self, v: u8) {
+        self.0.push(v);
     }
     fn u16(&mut self, v: u16) {
         self.0.extend_from_slice(&v.to_be_bytes());
@@ -325,6 +346,16 @@ impl ClientMsg {
             // goes straight out instead of through `Buf`. That spare copy
             // would otherwise land on every byte typed or pasted.
             ClientMsg::Input(data) => return write_frame(w, T_INPUT, data),
+            ClientMsg::Rearrange { workspace, moves } => {
+                b.str(workspace);
+                b.u32(moves.len() as u32);
+                for m in moves {
+                    b.u32(m.tab);
+                    b.u32(m.split_of);
+                    b.u8(m.split_dir);
+                }
+                T_REARRANGE
+            }
             ClientMsg::Resize { cols, rows } => {
                 b.u16(*cols);
                 b.u16(*rows);
@@ -374,6 +405,19 @@ impl ClientMsg {
                 workspace: c.str()?,
                 tab: c.u32()?,
             },
+            T_REARRANGE => {
+                let workspace = c.str()?;
+                let count = c.u32()?;
+                let mut moves = Vec::with_capacity((count as usize).min(4096));
+                for _ in 0..count {
+                    moves.push(PaneMove {
+                        tab: c.u32()?,
+                        split_of: c.u32()?,
+                        split_dir: c.u8()?,
+                    });
+                }
+                ClientMsg::Rearrange { workspace, moves }
+            }
             T_RESIZE => ClientMsg::Resize { cols: c.u16()?, rows: c.u16()? },
             T_KILL => ClientMsg::Kill { workspace: c.str()? },
             _ => return Err(bad("unknown client tag")),
@@ -569,6 +613,14 @@ mod tests {
     #[test]
     fn client_messages_round_trip() {
         roundtrip_client(ClientMsg::List);
+        roundtrip_client(ClientMsg::Rearrange { workspace: "a".into(), moves: vec![] });
+        roundtrip_client(ClientMsg::Rearrange {
+            workspace: "b é".into(),
+            moves: vec![
+                PaneMove { tab: 4, split_of: 0, split_dir: 0 },
+                PaneMove { tab: 7, split_of: 4, split_dir: 2 },
+            ],
+        });
         roundtrip_client(ClientMsg::Attach {
             workspace: "www".into(),
             tab: 3,

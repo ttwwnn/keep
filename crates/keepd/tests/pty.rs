@@ -395,3 +395,85 @@ fn a_group_finishing_together_stays_one_tab() {
     );
     workspace.kill_all().ok();
 }
+
+/// Two panes trading places must stay two panes of one tab.
+#[test]
+fn rearranging_swaps_two_panes() {
+    let workspace = keepd::Workspace::new("swap");
+    let (root, _) = workspace.new_tab(None, 80, 24, 0, 0).expect("root");
+    let (left, _) = workspace.new_tab(None, 80, 24, root, 1).expect("left pane");
+    let (right, _) = workspace.new_tab(None, 80, 24, left, 1).expect("right pane");
+
+    // right takes left's place, left takes right's.
+    workspace.rearrange(&[(right, root, 1), (left, right, 1)]).expect("swap");
+
+    let tabs = workspace.tabs();
+    assert_eq!(tabs.len(), 3, "a swap changed how many tabs there are");
+    let roots: Vec<u32> = tabs.iter().filter(|t| t.split_of == 0).map(|t| t.id).collect();
+    assert_eq!(roots, vec![root], "the swap broke the tab apart");
+    let r = tabs.iter().find(|t| t.id == right).expect("right survived");
+    let l = tabs.iter().find(|t| t.id == left).expect("left survived");
+    assert_eq!(r.split_of, root);
+    assert_eq!(l.split_of, right);
+    workspace.kill_all().ok();
+}
+
+/// A client replays the list in order, splitting each pane off one already
+/// there, so a pane must never be listed before the pane it hangs off.
+/// Creation order gave that for free; moving panes does not.
+#[test]
+fn rearranging_keeps_parents_ahead_of_their_panes() {
+    let workspace = keepd::Workspace::new("order");
+    let (root, _) = workspace.new_tab(None, 80, 24, 0, 0).expect("root");
+    let (first, _) = workspace.new_tab(None, 80, 24, root, 1).expect("first pane");
+    let (second, _) = workspace.new_tab(None, 80, 24, root, 1).expect("second pane");
+
+    // Hang the older pane off the newer one, which inverts the listing order.
+    workspace.rearrange(&[(first, second, 2)]).expect("move");
+
+    let tabs = workspace.tabs();
+    let mut seen: Vec<u32> = Vec::new();
+    for entry in &tabs {
+        if entry.split_of != 0 {
+            assert!(
+                seen.contains(&entry.split_of),
+                "tab {} comes before the tab it hangs off",
+                entry.id
+            );
+        }
+        seen.push(entry.id);
+    }
+    workspace.kill_all().ok();
+}
+
+/// A loop is not a layout: reading it back would never end.
+#[test]
+fn rearranging_refuses_to_make_a_loop() {
+    let workspace = keepd::Workspace::new("loop");
+    let (root, _) = workspace.new_tab(None, 80, 24, 0, 0).expect("root");
+    let (pane, _) = workspace.new_tab(None, 80, 24, root, 1).expect("pane");
+
+    assert!(workspace.rearrange(&[(root, pane, 1)]).is_err(), "a loop was allowed");
+    assert!(workspace.rearrange(&[(pane, pane, 1)]).is_err(), "a self-loop was allowed");
+
+    // and nothing moved
+    let tabs = workspace.tabs();
+    assert_eq!(tabs.iter().find(|t| t.id == root).unwrap().split_of, 0);
+    assert_eq!(tabs.iter().find(|t| t.id == pane).unwrap().split_of, root);
+    workspace.kill_all().ok();
+}
+
+/// Dragging a pane out of the split makes it a tab of its own.
+#[test]
+fn rearranging_can_detach_a_pane_into_a_tab() {
+    let workspace = keepd::Workspace::new("detach");
+    let (root, _) = workspace.new_tab(None, 80, 24, 0, 0).expect("root");
+    let (pane, _) = workspace.new_tab(None, 80, 24, root, 1).expect("pane");
+
+    workspace.rearrange(&[(pane, 0, 0)]).expect("detach");
+
+    let tabs = workspace.tabs();
+    let roots: Vec<u32> = tabs.iter().filter(|t| t.split_of == 0).map(|t| t.id).collect();
+    assert_eq!(roots, vec![root, pane], "the pane did not become a tab of its own");
+    workspace.kill_all().ok();
+}

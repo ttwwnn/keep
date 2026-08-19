@@ -136,6 +136,21 @@ fn handle(stream: UnixStream, registry: Arc<Registry>) -> Result<()> {
             ServerMsg::SearchHits(hits).write(&mut writer)?;
             Ok(())
         }
+        ClientMsg::Rearrange { workspace, moves } => {
+            let reply = match registry.get(&workspace) {
+                None => ServerMsg::Error(format!("no such workspace: {workspace}")),
+                Some(space) => {
+                    let moves: Vec<(u32, u32, u8)> =
+                        moves.iter().map(|m| (m.tab, m.split_of, m.split_dir)).collect();
+                    match space.rearrange(&moves) {
+                        Ok(()) => ServerMsg::Ok,
+                        Err(e) => ServerMsg::Error(e.to_string()),
+                    }
+                }
+            };
+            reply.write(&mut writer)?;
+            Ok(())
+        }
         ClientMsg::Attach { workspace, tab, cols, rows } => {
             attach(reader, writer, registry, &workspace, tab, cols, rows)
         }
