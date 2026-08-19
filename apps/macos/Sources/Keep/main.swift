@@ -1,39 +1,51 @@
 import AppKit
 
-/// AppKit at the top: native tabbing lives on `NSWindow`, and driving it
-/// through SwiftUI's window management fights the framework. SwiftUI is still
-/// used where it earns its keep — the sidebar is a hosted SwiftUI view.
+/// AppKit at the top; SwiftUI only where it earns its keep (the sidebar).
+///
+/// Wiring, nothing else: the delegate builds the session, the one window,
+/// and the poller, and translates menu items into intents. Every action in
+/// the app funnels through `Session.dispatch`.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let store = Store()
+    let session = Session()
+    private var windowController: MainWindowController?
+    private var poller: DaemonPoller?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = GhosttyApp.shared
         buildMenu()
-        store.start()
+
+        let controller = MainWindowController(session: session)
+        windowController = controller
+        session.renderer = controller
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+
+        session.start()
+        let poller = DaemonPoller(session: session)
+        poller.start()
+        self.poller = poller
     }
 
+    /// The app is a viewer; the daemon keeps the work. Closing the window is
+    /// quitting — no code path closes daemon tabs on the way out, so quit
+    /// trivially leaves everything running.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        // The app is a viewer; the daemon keeps the work.
         true
     }
 
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        // Quit closes windows as a side effect; that must not close tabs.
-        WindowManager.shared.isQuitting = true
-        return .terminateNow
-    }
+    // MARK: - menu actions (each one is an intent)
 
-    @objc func newTab(_ sender: Any?) {
-        store.newTabInFront()
-    }
+    @objc func newTab(_ sender: Any?) { session.dispatch(.newTab(in: nil)) }
+    @objc func closeTab(_ sender: Any?) { session.dispatch(.closeTab(nil)) }
+    @objc func splitRight(_ sender: Any?) { session.dispatch(.split(1)) }
+    @objc func splitDown(_ sender: Any?) { session.dispatch(.split(2)) }
+    @objc func nextTab(_ sender: Any?) { session.dispatch(.nextTab) }
+    @objc func previousTab(_ sender: Any?) { session.dispatch(.previousTab) }
 
-    @objc func splitRight(_ sender: Any?) {
-        store.split(direction: 1)
-    }
-
-    @objc func splitDown(_ sender: Any?) {
-        store.split(direction: 2)
+    @objc func showTab(_ sender: Any?) {
+        guard let tag = (sender as? NSMenuItem)?.tag else { return }
+        session.dispatch(.activateTabIndex(tag == 9 ? -1 : tag - 1))
     }
 
     @objc func newWorkspace(_ sender: Any?) {
@@ -47,12 +59,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "Create")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        store.createWorkspace(named: field.stringValue)
+        session.dispatch(.newWorkspace(named: field.stringValue))
     }
 
     @objc func toggleSidebar(_ sender: Any?) {
-        let window = NSApp.keyWindow ?? NSApp.mainWindow
-        (window as? KeepWindow)?.toggleSidebar(sender)
+        (windowController?.window as? KeepWindow)?.toggleSidebar(sender)
     }
 
     private func buildMenu() {
@@ -80,7 +91,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fileMenu.addItem(splitDownItem)
         fileMenu.addItem(.separator())
         fileMenu.addItem(
-            withTitle: "Close Tab", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+            withTitle: "Close Tab", action: #selector(closeTab(_:)), keyEquivalent: "w")
         fileItem.submenu = fileMenu
         main.addItem(fileItem)
 
@@ -94,9 +105,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewItem.submenu = viewMenu
         main.addItem(viewItem)
 
-        // Native tabs put Show Next/Previous Tab and the overview here.
         let windowItem = NSMenuItem()
         let windowMenu = NSMenu(title: "Window")
+        let nextItem = NSMenuItem(
+            title: "Show Next Tab", action: #selector(nextTab(_:)), keyEquivalent: "\t")
+        nextItem.keyEquivalentModifierMask = [.control]
+        windowMenu.addItem(nextItem)
+        let previousItem = NSMenuItem(
+            title: "Show Previous Tab", action: #selector(previousTab(_:)), keyEquivalent: "\t")
+        previousItem.keyEquivalentModifierMask = [.control, .shift]
+        windowMenu.addItem(previousItem)
+        windowMenu.addItem(.separator())
+        // ⌘1–⌘8 select by position; ⌘9 is the last tab, per macOS convention.
+        for n in 1...9 {
+            let item = NSMenuItem(
+                title: n == 9 ? "Show Last Tab" : "Show Tab \(n)",
+                action: #selector(showTab(_:)),
+                keyEquivalent: String(n))
+            item.tag = n
+            windowMenu.addItem(item)
+        }
         windowItem.submenu = windowMenu
         main.addItem(windowItem)
 

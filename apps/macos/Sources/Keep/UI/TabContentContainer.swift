@@ -1,0 +1,129 @@
+import AppKit
+
+/// The stack of every visited tab's content, all mounted, exactly one
+/// visible.
+///
+/// Mounting is hydration: the first time a tab is presented, its host is
+/// built and its surfaces — each a renderer plus a `keep` client process —
+/// are borrowed from the pool. From then on the tab's cost of appearing is
+/// two `isHidden` flips. Nothing here ever touches a window.
+@MainActor
+final class TabContentContainer: NSView {
+    private(set) var hosts: [TabID: TabHostView] = [:]
+    private(set) var visibleTab: TabID?
+
+    /// Host for a tab, made on first use. Added hidden: presentation order
+    /// is the switch pipeline's business.
+    func host(for tab: SessionSnapshot.ActiveTab) -> TabHostView {
+        if let existing = hosts[tab.id] { return existing }
+        let host = TabHostView(id: tab.id)
+        host.frame = bounds
+        host.autoresizingMask = [.width, .height]
+        host.isHidden = true
+        addSubview(host)
+        hosts[tab.id] = host
+        Trace.log("mount", "\(tab.id) hosts=\(hosts.count)")
+        return host
+    }
+
+    func hide(_ id: TabID) {
+        hosts[id]?.isHidden = true
+    }
+
+    func markVisible(_ id: TabID) {
+        visibleTab = id
+    }
+
+    /// A tab the daemon no longer has. The surfaces' lifetime is the pool's
+    /// business; this only takes the host out of the hierarchy.
+    func unmount(_ id: TabID) {
+        guard let host = hosts.removeValue(forKey: id) else { return }
+        host.removeFromSuperview()
+        if visibleTab == id { visibleTab = nil }
+        Trace.log("mount", "unmounted \(id) hosts=\(hosts.count)")
+    }
+}
+
+/// One tab's pane arrangement: an NSSplitView of surfaces borrowed from the
+/// pool. The pane logic is the old window controller's, kept: orientation
+/// set by the first split, panes in daemon order, equalized on change.
+@MainActor
+final class TabHostView: NSView {
+    let id: TabID
+    private let paneSplit = NSSplitView()
+    private var panes: [(tab: UInt32, surface: TerminalSurfaceView)] = []
+    private var appliedPanes: [PaneState]?
+
+    /// A pane surface took the keyboard; forwarded up to become a model fact.
+    var onPaneFocus: ((UInt32) -> Void)?
+
+    init(id: TabID) {
+        self.id = id
+        super.init(frame: .zero)
+        paneSplit.dividerStyle = .thin
+        paneSplit.isVertical = true
+        paneSplit.autoresizingMask = [.width, .height]
+        addSubview(paneSplit)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    override func layout() {
+        super.layout()
+        paneSplit.frame = bounds
+    }
+
+    /// Bring the split in line with the daemon's arrangement. The root pane
+    /// is implicit; `wanted` is everything beyond it, in daemon order.
+    func apply(panes wanted: [PaneState]) {
+        guard wanted != appliedPanes else { return }
+        appliedPanes = wanted
+
+        // The first split orients the whole arrangement (2 = down).
+        if panes.count <= 1, let first = wanted.first {
+            paneSplit.isVertical = first.splitDir != 2
+        }
+
+        let keep = Set([id.root] + wanted.map(\.tab))
+        for pane in panes where !keep.contains(pane.tab) {
+            pane.surface.removeFromSuperview()
+        }
+        panes.removeAll { !keep.contains($0.tab) }
+
+        let order = [id.root] + wanted.map(\.tab)
+        for tab in order where !panes.contains(where: { $0.tab == tab }) {
+            let surface = SurfacePool.shared.surface(workspace: id.workspace, tab: tab)
+            surface.onFocusGained = { [weak self] in self?.onPaneFocus?(tab) }
+            panes.append((tab, surface))
+        }
+        panes.sort { (order.firstIndex(of: $0.tab) ?? 0) < (order.firstIndex(of: $1.tab) ?? 0) }
+
+        // Rebuild the arranged list when it disagrees — the split's visual
+        // order must match the daemon's, not just our array's.
+        let arranged = paneSplit.arrangedSubviews
+        let desired = panes.map(\.surface)
+        if arranged.count != desired.count || !zip(arranged, desired).allSatisfy({ $0 === $1 }) {
+            for view in arranged { paneSplit.removeArrangedSubview(view) }
+            for surface in desired { paneSplit.addArrangedSubview(surface) }
+            equalizePanes()
+        }
+    }
+
+    private func equalizePanes() {
+        guard panes.count > 1 else { return }
+        paneSplit.layoutSubtreeIfNeeded()
+        let total = paneSplit.isVertical ? paneSplit.bounds.width : paneSplit.bounds.height
+        guard total > 0 else { return }
+        for index in 1..<panes.count {
+            paneSplit.setPosition(
+                total * CGFloat(index) / CGFloat(panes.count), ofDividerAt: index - 1)
+        }
+    }
+
+    func surface(for tab: UInt32) -> TerminalSurfaceView? {
+        panes.first { $0.tab == tab }?.surface
+    }
+
+    var paneSurfaces: [TerminalSurfaceView] { panes.map(\.surface) }
+}

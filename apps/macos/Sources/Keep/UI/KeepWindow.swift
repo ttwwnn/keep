@@ -4,46 +4,46 @@ import GhosttyKit
 /// Native unified chrome with a ClearMic-style flat leading panel.
 ///
 /// The tracking separator keeps the toolbar boundary aligned with the split
-/// while the custom, content-owned sidebar resizes or collapses.
+/// while the custom, content-owned sidebar resizes or collapses. The tab
+/// strip is the app's own view living as a toolbar item — no private view
+/// hierarchy is hunted, moved, or constrained anywhere in this file anymore:
+/// the ~230 lines that relocated AppKit's NSTabBar died with native tabbing.
 final class KeepWindow: NSWindow, NSToolbarDelegate {
     private static let toolbarIdentifier = NSToolbar.Identifier("keep-main-toolbar")
+    private static let tabStripItemIdentifier = NSToolbarItem.Identifier("keep-tab-strip")
     private static let toggleSidebarAccessoryIdentifier = NSUserInterfaceItemIdentifier(
         "keep-toggle-sidebar"
     )
 
-    private weak var sidebarItem: NSSplitViewItem?
+    /// The sidebar toggle is chrome, but what it toggles is model state —
+    /// the active tab's sidebar. The controller wires this to an intent.
+    var onToggleSidebar: (() -> Void)?
+
     private weak var sidebarSplitView: NSSplitView?
-    private weak var contentAnchorView: NSView?
+    private weak var tabStrip: TabStripView?
     private weak var chromeBackdropView: NSView?
     private weak var sidebarBackdropView: NSView?
-    private weak var sidebarToggleButton: NSButton?
-    private weak var configuredTabBarView: NSView?
-    private weak var configuredTabClipView: NSView?
-    private var tabBarConstraints: [NSLayoutConstraint] = []
     private var terminalBackgroundObserver: NSObjectProtocol?
-    private var tabBarObserver: NSObjectProtocol? {
-        didSet {
-            guard let oldValue else { return }
-            NotificationCenter.default.removeObserver(oldValue)
-        }
-    }
+
+    // The last appearance actually applied, so becomeMain and repeated
+    // notifications reapply nothing. Reapplying invalidates the shadow and
+    // pokes the WindowServer — visible against a transparent, blurred window.
+    private var appliedAppearance: (color: NSColor?, opacity: Double, blur: Int16)?
 
     deinit {
         if let terminalBackgroundObserver {
             NotificationCenter.default.removeObserver(terminalBackgroundObserver)
         }
-        if let tabBarObserver {
-            NotificationCenter.default.removeObserver(tabBarObserver)
-        }
-        NSLayoutConstraint.deactivate(tabBarConstraints)
     }
 
     override func becomeKey() {
         super.becomeKey()
-        // Who holds the keyboard matters more than which window is key: if the
-        // sidebar list has it, navigation keys move the selection, and moving
-        // the selection is what switching workspace *is*.
         Trace.log("focus", "becomeKey responder=\(Trace.describe(firstResponder))")
+    }
+
+    override func resignKey() {
+        super.resignKey()
+        Trace.log("focus", "resignKey")
     }
 
     override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
@@ -52,31 +52,14 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
         return ok
     }
 
-    override func resignKey() {
-        super.resignKey()
-        Trace.log("focus", "resignKey \(title)")
-    }
-
-    override func becomeMain() {
-        super.becomeMain()
-        Trace.log("focus", "becomeMain \(title)")
-        applyTerminalAppearance()
-        // AppKit moves the one real tab bar between the windows in a group.
-        // Re-adopt it whenever this window becomes the selected tab.
-        setupTabBar()
-    }
-
     func installUnifiedToolbar(
         sidebarController: NSSplitViewController,
-        sidebarItem: NSSplitViewItem,
-        contentAnchor: NSView,
+        tabStrip: TabStripView,
         chromeBackdrop: NSView,
         sidebarBackdrop: NSView
     ) {
-        self.sidebarItem = sidebarItem
-        let splitView = sidebarController.splitView
-        sidebarSplitView = splitView
-        contentAnchorView = contentAnchor
+        sidebarSplitView = sidebarController.splitView
+        self.tabStrip = tabStrip
         chromeBackdropView = chromeBackdrop
         sidebarBackdropView = sidebarBackdrop
 
@@ -86,8 +69,6 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
         toolbar.allowsUserCustomization = false
         toolbar.autosavesConfiguration = false
 
-        // Keep the full-height leading section. The tab bar itself is moved
-        // upward below; `.unifiedCompact` would inset the whole panel again.
         toolbarStyle = .unified
         titleVisibility = .hidden
         titlebarAppearsTransparent = true
@@ -107,29 +88,27 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
 
     /// The flat split item deliberately does not have AppKit's `.sidebar`
     /// behavior, so `NSSplitViewController.toggleSidebar` would be a no-op.
-    /// Keeping the standard selector on the window also makes the View menu
-    /// resolve against the currently selected native tab instead of another
-    /// backing window in the tab group.
     @objc func toggleSidebar(_ sender: Any?) {
-        // AppKit moves one toolbar between the backing windows in a native tab
-        // group, but a custom button keeps the target it was created with. The
-        // visible button can therefore belong to an unselected KeepWindow.
-        // Always mutate the window that is actually selected in the group.
-        let activeWindow = (tabGroup?.selectedWindow as? KeepWindow) ?? self
-        guard
-            let sidebarItem = activeWindow.sidebarItem,
-            sidebarItem.canCollapse
-        else { return }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.2
-            sidebarItem.animator().isCollapsed = !sidebarItem.isCollapsed
-        }
+        onToggleSidebar?()
     }
 
     private func applyTerminalAppearance() {
         let ghostty = GhosttyApp.shared
-        let isTransparent = ghostty.terminalBackgroundOpacity < 1
+        let next = (
+            color: ghostty.terminalBackground,
+            opacity: ghostty.terminalBackgroundOpacity,
+            blur: ghostty.terminalBackgroundBlur
+        )
+        if let applied = appliedAppearance,
+            applied.color?.isEqual(next.color) ?? (next.color == nil),
+            applied.opacity == next.opacity,
+            applied.blur == next.blur
+        {
+            return
+        }
+        appliedAppearance = next
 
+        let isTransparent = next.opacity < 1
         if isTransparent {
             // The renderer already draws the configured background colour at
             // `background-opacity`. Keep the host window effectively clear so
@@ -140,12 +119,10 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
 
             // The Metal surface starts below the toolbar. Continue the exact
             // same colour and alpha through that clear strip so the titlebar
-            // does not reveal an un-tinted (often bright) desktop behind it.
-            // This view lives only in the terminal split item. The flat
-            // leading panel has its own matching regional backdrop.
-            if let terminalBackground = ghostty.terminalBackground {
+            // does not reveal an un-tinted desktop behind it.
+            if let terminalBackground = next.color {
                 let tint = terminalBackground
-                    .withAlphaComponent(CGFloat(ghostty.terminalBackgroundOpacity))
+                    .withAlphaComponent(CGFloat(next.opacity))
                     .cgColor
                 chromeBackdropView?.layer?.backgroundColor = tint
                 sidebarBackdropView?.layer?.backgroundColor = tint
@@ -156,9 +133,9 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
                 sidebarBackdropView?.isHidden = true
             }
 
-            // This is the same libghostty hook used by Ghostty's macOS host.
-            // It reads `background-blur` from the active app config and applies
-            // the requested WindowServer blur to this NSWindow.
+            // The same libghostty hook Ghostty's own macOS host uses: reads
+            // `background-blur` from the app config and applies WindowServer
+            // blur to this NSWindow.
             if let app = ghostty.app {
                 ghostty_set_window_background_blur(
                     app,
@@ -169,7 +146,7 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
             isOpaque = true
             chromeBackdropView?.isHidden = true
             sidebarBackdropView?.isHidden = true
-            if let terminalBackground = ghostty.terminalBackground {
+            if let terminalBackground = next.color {
                 backgroundColor = terminalBackground.withAlphaComponent(1)
             }
         }
@@ -177,166 +154,10 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
         invalidateShadow()
     }
 
-    // AppKit creates its tab bar as a titlebar accessory below the toolbar.
-    // Move only that system-owned accessory into the toolbar row. If Apple's
-    // private view hierarchy changes, the guard in `setupTabBar` simply leaves
-    // the normal tab row in place instead of breaking the window.
-    override func addTitlebarAccessoryViewController(
-        _ childViewController: NSTitlebarAccessoryViewController
-    ) {
-        guard isTabBar(childViewController) else {
-            super.addTitlebarAccessoryViewController(childViewController)
-            return
-        }
-        clearTabBarLayout()
-        childViewController.layoutAttribute = .right
-        super.addTitlebarAccessoryViewController(childViewController)
-        DispatchQueue.main.async { [weak self] in self?.setupTabBar() }
-    }
-
-    override func removeTitlebarAccessoryViewController(at index: Int) {
-        if let child = titlebarAccessoryViewControllers[safe: index], isTabBar(child) {
-            clearTabBarLayout()
-        }
-        super.removeTitlebarAccessoryViewController(at: index)
-    }
-
-    private func isTabBar(_ child: NSTitlebarAccessoryViewController) -> Bool {
-        guard child.identifier == nil else { return false }
-        if child.view.contains(className: "NSTabBar") { return true }
-        // A window joining an existing group receives the accessory before
-        // AppKit attaches NSTabBar to its initially empty view.
-        return child.layoutAttribute == .bottom
-            && child.view.className == "NSView"
-            && child.view.subviews.isEmpty
-    }
-
-    /// Re-place the tab bar after the group's membership changed.
-    ///
-    /// AppKit keeps one real tab bar and moves it between the windows of a
-    /// group, so only the selected one has it to find. When the group grows or
-    /// shrinks, the window that ends up holding it may never have run the
-    /// placement — which leaves the bar sitting in AppKit's own row instead of
-    /// in the toolbar line the rest of this chrome lives on.
-    func refreshTabBar() {
-        (tabGroup?.selectedWindow as? KeepWindow ?? self).setupTabBar()
-    }
-
-    private func setupTabBar() {
-        Trace.log("tabbar", "setup: titlebar=\(titlebarView != nil) tabBar=\(tabBarView != nil) "
-            + "groupWindows=\(tabGroup?.windows.count ?? 0) barVisible=\(tabGroup?.isTabBarVisible ?? false)")
-        guard
-            let titlebarView,
-            let tabBarView,
-            let clipView = tabBarView.firstSuperview(withClassName: "NSTitlebarAccessoryClipView")
-                ?? tabBarView.firstSuperview(withClassName: "NSTitlebarAccessoryContainerView"),
-            let accessoryView = clipView.subviews[safe: 0],
-            let toolbarView = titlebarView.firstDescendant(withClassName: "NSToolbarView")
-        else { return }
-
-        if configuredTabBarView === tabBarView,
-            configuredTabClipView === clipView,
-            !tabBarConstraints.isEmpty,
-            tabBarConstraints.allSatisfy(\.isActive)
-        {
-            Trace.log("tabbar", "setup: already configured, skipped")
-            return
-        }
-        Trace.log("tabbar", "setup: relocating into the toolbar row")
-        clearTabBarLayout()
-
-        // Preserve AppKit's native 28 pt tab size. The clip is shifted below
-        // so these controls share the toolbar items' vertical center.
-        if let newTabButton = titlebarView.firstDescendant(withClassName: "NSTabBarNewTabButton") {
-            tabBarView.frame.size.height = newTabButton.frame.width
-        }
-
-        clipView.translatesAutoresizingMaskIntoConstraints = false
-        accessoryView.translatesAutoresizingMaskIntoConstraints = false
-        titlebarView.layoutSubtreeIfNeeded()
-
-        // Expanded: the content edge wins, leaving the whole leading section
-        // to the sidebar. Collapsed: the tabs begin just after the real toggle.
-        var leftConstraints: [NSLayoutConstraint] = []
-        if let sidebarToggleButton {
-            // Titlebar accessories and the tab clip use separate Auto Layout
-            // engines. Convert the button edge to a toolbar-local constant
-            // instead of creating an illegal cross-engine constraint.
-            let buttonFrame = sidebarToggleButton.convert(
-                sidebarToggleButton.bounds,
-                to: toolbarView
-            )
-            let clearance = buttonFrame.maxX > 0
-                && buttonFrame.maxX < toolbarView.bounds.width
-                ? buttonFrame.maxX + 8
-                : 140
-            leftConstraints.append(
-                clipView.leftAnchor.constraint(
-                    greaterThanOrEqualTo: toolbarView.leftAnchor,
-                    constant: clearance
-                )
-            )
-        } else {
-            leftConstraints.append(
-                clipView.leftAnchor.constraint(
-                    greaterThanOrEqualTo: toolbarView.leftAnchor,
-                    constant: 140
-                )
-            )
-        }
-        if let contentAnchorView {
-            leftConstraints.append(
-                clipView.leftAnchor.constraint(
-                    greaterThanOrEqualTo: contentAnchorView.leftAnchor
-                )
-            )
-            let hugContentEdge = clipView.leftAnchor.constraint(
-                equalTo: contentAnchorView.leftAnchor
-            )
-            hugContentEdge.priority = .defaultLow
-            leftConstraints.append(hugContentEdge)
-        }
-
-        tabBarConstraints = leftConstraints + [
-            clipView.rightAnchor.constraint(equalTo: toolbarView.rightAnchor),
-            // AppKit otherwise leaves 16 pt above and 8 pt below its 28 pt
-            // tab bar. Raising the accessory by 4 pt centers it at 12/12.
-            clipView.topAnchor.constraint(
-                equalTo: titlebarView.topAnchor,
-                constant: -4
-            ),
-            clipView.heightAnchor.constraint(equalTo: toolbarView.heightAnchor),
-            accessoryView.leftAnchor.constraint(equalTo: clipView.leftAnchor),
-            accessoryView.rightAnchor.constraint(equalTo: clipView.rightAnchor),
-            accessoryView.topAnchor.constraint(equalTo: clipView.topAnchor),
-            accessoryView.heightAnchor.constraint(equalTo: clipView.heightAnchor),
-        ]
-        configuredTabBarView = tabBarView
-        configuredTabClipView = clipView
-        NSLayoutConstraint.activate(tabBarConstraints)
-
-        tabBarView.postsFrameChangedNotifications = true
-        tabBarObserver = NotificationCenter.default.addObserver(
-            forName: NSView.frameDidChangeNotification,
-            object: tabBarView,
-            queue: .main
-        ) { [weak self] _ in
-            DispatchQueue.main.async { [weak self] in self?.setupTabBar() }
-        }
-    }
-
-    private func clearTabBarLayout() {
-        tabBarObserver = nil
-        NSLayoutConstraint.deactivate(tabBarConstraints)
-        tabBarConstraints.removeAll()
-        configuredTabBarView = nil
-        configuredTabClipView = nil
-    }
-
     /// The tracking separator follows the split divider all the way to x = 0
-    /// when the sidebar collapses. Any toolbar item before it is therefore
-    /// moved into the overflow menu. A leading titlebar accessory is laid out
-    /// independently, so the real toggle remains available in both states.
+    /// when the sidebar collapses, which would push any toolbar item before
+    /// it into the overflow menu. A leading titlebar accessory is laid out
+    /// independently, so the toggle stays available in both states.
     private func installSidebarToggleAccessory() {
         let button = NSButton(
             image: NSImage(
@@ -358,11 +179,12 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
         accessory.layoutAttribute = .left
         accessory.view = button
         addTitlebarAccessoryViewController(accessory)
-        sidebarToggleButton = button
     }
 
+    // MARK: - toolbar
+
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.sidebarTrackingSeparator]
+        [.sidebarTrackingSeparator, Self.tabStripItemIdentifier]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -383,49 +205,23 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
                 dividerIndex: 0
             )
 
+        case Self.tabStripItemIdentifier:
+            guard let tabStrip else { return nil }
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.view = tabStrip
+            // Absorb all free width: a huge preferred width at low priority,
+            // clamped by the toolbar. The tracking separator glues the left
+            // edge to the sidebar divider — the exact geometry the old
+            // NSTabBar relocation fought AppKit for, now free.
+            let width = tabStrip.widthAnchor.constraint(equalToConstant: 10_000)
+            width.priority = NSLayoutConstraint.Priority(240)
+            let minWidth = tabStrip.widthAnchor.constraint(greaterThanOrEqualToConstant: 120)
+            let height = tabStrip.heightAnchor.constraint(equalToConstant: 28)
+            NSLayoutConstraint.activate([width, minWidth, height])
+            return item
+
         default:
             return nil
         }
-    }
-}
-
-// MARK: - Native tab bar placement
-
-private extension NSWindow {
-    var titlebarView: NSView? {
-        guard let frame = contentView?.superview else { return nil }
-        guard frame.responds(to: Selector(("titlebarView"))) else { return nil }
-        return frame.value(forKey: "titlebarView") as? NSView
-    }
-
-    var tabBarView: NSView? {
-        titlebarView?.firstDescendant(withClassName: "NSTabBar")
-    }
-}
-
-private extension NSView {
-    func firstSuperview(withClassName name: String) -> NSView? {
-        guard let superview else { return nil }
-        if String(describing: type(of: superview)) == name { return superview }
-        return superview.firstSuperview(withClassName: name)
-    }
-
-    func firstDescendant(withClassName name: String) -> NSView? {
-        for subview in subviews {
-            if String(describing: type(of: subview)) == name { return subview }
-            if let found = subview.firstDescendant(withClassName: name) { return found }
-        }
-        return nil
-    }
-
-    func contains(className name: String) -> Bool {
-        if String(describing: type(of: self)) == name { return true }
-        return subviews.contains { $0.contains(className: name) }
-    }
-}
-
-private extension Array {
-    subscript(safe index: Int) -> Element? {
-        indices.contains(index) ? self[index] : nil
     }
 }

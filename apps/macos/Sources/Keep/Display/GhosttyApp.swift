@@ -13,6 +13,23 @@ final class GhosttyApp {
     private(set) var app: ghostty_app_t?
     private(set) var failure: String?
 
+    /// Which view each surface renders into, so a runtime action addressed to
+    /// a surface can reach its view. Weak: the view's deinit unregisters and
+    /// frees the surface, so a stale pointer is never dereferenced.
+    private var surfaceViews: [ghostty_surface_t: Weak<TerminalSurfaceView>] = [:]
+
+    func register(surface: ghostty_surface_t, view: TerminalSurfaceView) {
+        surfaceViews[surface] = Weak(view)
+    }
+
+    func unregister(surface: ghostty_surface_t) {
+        surfaceViews[surface] = nil
+    }
+
+    func view(for surface: ghostty_surface_t) -> TerminalSurfaceView? {
+        surfaceViews[surface]?.value
+    }
+
     /// Posted when the resolved terminal background, opacity, or blur changes.
     static let backgroundDidChange = Notification.Name("keep.terminalBackgroundDidChange")
 
@@ -114,8 +131,20 @@ final class GhosttyApp {
         // default for everything this app does not implement yet. The ones
         // handled here settle the terminal's background, which the titlebar
         // matches so chrome and content read as one surface.
-        runtime.action_cb = { _, _, action in
+        runtime.action_cb = { _, target, action in
             switch action.tag {
+            case GHOSTTY_ACTION_RENDER:
+                // The runtime asking for a frame is the signal the display
+                // link only ever approximated: draw this surface, now, and
+                // nothing else. Actions can arrive off the main thread; the
+                // registry lookup on main guards against a surface freed in
+                // between.
+                guard target.tag == GHOSTTY_TARGET_SURFACE,
+                    let surface = target.target.surface else { return false }
+                DispatchQueue.main.async {
+                    GhosttyApp.shared.view(for: surface)?.runtimeRequestedDraw()
+                }
+                return true
             case GHOSTTY_ACTION_CONFIG_CHANGE:
                 let config = action.action.config_change.config
                 guard
@@ -278,4 +307,11 @@ extension NSColor {
             alpha: 1
         )
     }
+}
+
+
+/// A weak reference that can live in a dictionary value.
+private final class Weak<T: AnyObject> {
+    weak var value: T?
+    init(_ value: T) { self.value = value }
 }

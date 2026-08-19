@@ -14,10 +14,10 @@ import AppKit
 enum Trace {
     static let enabled = ProcessInfo.processInfo.environment["KEEP_TRACE"] != nil
 
-    /// True while `WindowManager.show` is running, so geometry changes can be
+    /// True while the switch pipeline is running, so geometry changes can be
     /// attributed. A resize logged with `bySelf=false` came from outside the
     /// app — the person dragging an edge, or their window manager re-tiling.
-    static var insideShow = false
+    static var insideSwitch = false
 
     private static let formatter: DateFormatter = {
         let f = DateFormatter()

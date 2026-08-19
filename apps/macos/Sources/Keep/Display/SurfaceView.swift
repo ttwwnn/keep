@@ -1,29 +1,53 @@
 import AppKit
 import GhosttyKit
-import SwiftUI
 
 /// An `NSView` that libghostty renders a terminal into.
 ///
 /// Drawing does not happen in SwiftUI: a character grid at frame rate needs a
 /// real view with a Metal layer, which is exactly how Ghostty itself is built.
-/// SwiftUI composes this through `NSViewRepresentable`.
+///
+/// Surfaces are expensive — each owns a renderer and a `keep` client process —
+/// so they are created once (see SurfacePool) and then mounted forever inside
+/// the one window, mostly hidden. Visibility, not existence, is what changes
+/// on a switch, and everything here is built around that:
+///
+/// - A hidden surface draws zero frames and defers PTY resizes; its Metal
+///   layer keeps the last presented frame, so revealing it never shows a hole
+///   even before the fresh draw lands.
+/// - Drawing is on-demand where the runtime allows: the first
+///   `GHOSTTY_ACTION_RENDER` a surface receives proves this build asks for
+///   draws, and the free-running display link retires for good. Until that
+///   proof, the link runs while visible — the conservative fallback.
 final class TerminalSurfaceView: NSView {
     private var surface: ghostty_surface_t?
     private var displayLink: CVDisplayLink?
     private var occlusionObserver: NSObjectProtocol?
-    /// Frames drawn since the last trace tick, and the timer reporting them.
     private var drawCount = 0
     private var traceTimer: Timer?
     private let workspace: String
     let tab: UInt32
 
+    /// Set once the runtime sends this surface a render request. From then on
+    /// draws happen only when asked for, and the display link stays off.
+    private var renderDriven = false
+
+    /// The framebuffer size last actually sent, so layout passes that change
+    /// nothing send nothing (they used to send everything twice).
+    private var sentSize: CGSize?
+
+    /// A resize that arrived while hidden. Only the visible tab's sessions
+    /// re-wrap live during a window resize; the rest catch up in one call
+    /// when revealed.
+    private var pendingSize: CGSize?
+
+    /// The active pane reports focus upward; the model owns the fact.
+    var onFocusGained: (() -> Void)?
+
     init(workspace: String, tab: UInt32) {
         self.workspace = workspace
         self.tab = tab
-        super.init(frame: NSRect(x: 0, y: 0, width: 900, height: 560))
+        super.init(frame: .zero)
         wantsLayer = true
-        // As a window's contentView this must track the window, and the size
-        // it reports is the geometry the remote session is told to use.
         autoresizingMask = [.width, .height]
         // Without this the view keeps its own backing store and libghostty
         // draws into something the window never composites.
@@ -39,7 +63,10 @@ final class TerminalSurfaceView: NSView {
         }
         traceTimer?.invalidate()
         if let link = displayLink { CVDisplayLinkStop(link) }
-        if let surface { ghostty_surface_free(surface) }
+        if let surface {
+            GhosttyApp.shared.unregister(surface: surface)
+            ghostty_surface_free(surface)
+        }
     }
 
     override var acceptsFirstResponder: Bool { true }
@@ -49,7 +76,6 @@ final class TerminalSurfaceView: NSView {
         observeOcclusion()
         guard window != nil, surface == nil else { return }
         createSurface()
-        window?.makeFirstResponder(self)
     }
 
     private func createSurface() {
@@ -62,17 +88,12 @@ final class TerminalSurfaceView: NSView {
         )
         config.scale_factor = Double(window?.backingScaleFactor ?? 2.0)
 
-        // `command` in the surface config is ignored by this build of
-        // libghostty — the surface spawns the default login shell regardless.
-        // `initial_input` is honoured (the runtime copies it into its own
-        // arena), so hand the shell an `exec` line instead: the shell replaces
-        // itself with our client and no stray shell is left behind.
-        // The client to run is fixed app-wide (see GhosttyApp). Which workspace
-        // and tab it should attach to travels through the working directory:
-        // of the per-surface fields, that is the only one this build of
-        // libghostty honours. `command`, `env_vars` and `initial_input` are
-        // all accepted by the API and then ignored, which is why the target
-        // is written to a file the client reads and deletes.
+        // Which workspace and tab this surface should attach to travels
+        // through the working directory: of the per-surface fields, that is
+        // the only one this build of libghostty honours. `command`,
+        // `env_vars` and `initial_input` are accepted by the API and then
+        // ignored, which is why the client is fixed app-wide (GhosttyApp)
+        // and the target is a file the client reads and deletes.
         guard let dir = Self.makeTargetDirectory(workspace: workspace, tab: tab) else { return }
         dir.withCString { wd in
             config.working_directory = wd
@@ -80,6 +101,7 @@ final class TerminalSurfaceView: NSView {
         }
 
         guard let surface else { return }
+        GhosttyApp.shared.register(surface: surface, view: self)
         ghostty_surface_set_content_scale(surface, config.scale_factor, config.scale_factor)
         layer?.contentsScale = window?.backingScaleFactor ?? 2.0
         applyColorScheme()
@@ -105,6 +127,24 @@ final class TerminalSurfaceView: NSView {
         }
     }
 
+    // MARK: - drawing
+
+    /// The runtime asked for a frame (GHOSTTY_ACTION_RENDER). The first one
+    /// is also the proof that this build drives its own drawing, which
+    /// retires the free-running display link permanently.
+    func runtimeRequestedDraw() {
+        guard let surface else { return }
+        if !renderDriven {
+            renderDriven = true
+            Trace.log("render", "\(workspace)/\(tab) render-driven; display link retired")
+        }
+        if let link = displayLink, CVDisplayLinkIsRunning(link) {
+            CVDisplayLinkStop(link)
+        }
+        ghostty_surface_draw(surface)
+        drawCount += 1
+    }
+
     private func startDisplayLink() {
         var link: CVDisplayLink?
         CVDisplayLinkCreateWithActiveCGDisplays(&link)
@@ -122,70 +162,66 @@ final class TerminalSurfaceView: NSView {
         startTraceTimer()
     }
 
-    /// Draw only while there is something to see.
-    ///
-    /// Switching workspace hides the windows of the one being left rather than
-    /// closing them, so that going back is immediate. Those surfaces are still
-    /// alive and would otherwise go on drawing at the display's refresh rate
-    /// for a window nobody can see — which is the whole cost of keeping them.
-    /// The same applies to a window the person minimised or buried.
+    /// Whether anyone can currently see this surface. With one window, being
+    /// in a visible window is not enough — most mounted surfaces are hidden.
+    private var isEffectivelyVisible: Bool {
+        !isHiddenOrHasHiddenAncestor
+            && (window?.occlusionState.contains(.visible) ?? false)
+    }
+
+    /// The passive backstop: keep the link's running state matched to
+    /// visibility. The switch pipeline uses the explicit fast path below
+    /// instead of waiting for notifications.
     private func syncDisplayLink() {
         guard let link = displayLink else { return }
-        let visible = window?.occlusionState.contains(.visible) ?? false
-        if visible {
+        let shouldRun = isEffectivelyVisible && !renderDriven
+        if shouldRun {
             if !CVDisplayLinkIsRunning(link) { CVDisplayLinkStart(link) }
         } else if CVDisplayLinkIsRunning(link) {
             CVDisplayLinkStop(link)
         }
     }
 
-    /// Report the draw rate once a second while tracing.
-    ///
-    /// The number that matters is the rate for a surface whose window is not
-    /// visible: it should be zero. Anything else is the app rendering a
-    /// terminal nobody can see, at the display's refresh rate.
-    private func startTraceTimer() {
-        guard Trace.enabled else { return }
-        traceTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let drawn = self.drawCount
-                self.drawCount = 0
-                let visible = self.window?.occlusionState.contains(.visible) ?? false
-                let running = self.displayLink.map { CVDisplayLinkIsRunning($0) } ?? false
-                // Silence is the expected state for a hidden, stopped surface.
-                guard drawn > 0 || (visible != running) else { return }
-                Trace.log("render", "\(self.workspace)/\(self.tab) fps=\(drawn) "
-                    + "visible=\(visible) link=\(running ? "run" : "stop") "
-                    + "size=\(Int(self.bounds.width))x\(Int(self.bounds.height))")
-            }
-        }
-    }
-
-    /// Draw again, now, without waiting to be told the window is visible.
-    ///
-    /// `syncDisplayLink` follows `didChangeOcclusionStateNotification`, which
-    /// arrives a beat after the window is actually ordered front. Waiting for
-    /// it leaves the revealed window with nothing presented — and against a
-    /// transparent, blurred window that reads as a hole rather than as a stale
-    /// frame. The transitions the app drives itself do not need to wait to be
-    /// told about themselves.
+    /// Draw now, without waiting to be told the view is visible. The switch
+    /// pipeline calls this while the view is still hidden, so its layer holds
+    /// a fresh frame at final geometry before the reveal commits.
     func resumeDrawing() {
         guard let surface else { return }
-        if let link = displayLink, !CVDisplayLinkIsRunning(link) {
+        flushPendingSize()
+        ghostty_surface_set_occlusion(surface, true)
+        if !renderDriven, let link = displayLink, !CVDisplayLinkIsRunning(link) {
             CVDisplayLinkStart(link)
         }
         ghostty_surface_draw(surface)
+        drawCount += 1
     }
 
-    /// Stop drawing for a surface that is still alive but off screen.
+    /// Stop drawing for a surface that is alive but off screen.
     func suspendDrawing() {
+        if let surface { ghostty_surface_set_occlusion(surface, false) }
         guard let link = displayLink, CVDisplayLinkIsRunning(link) else { return }
         CVDisplayLinkStop(link)
     }
 
-    /// A window reports occlusion only while it has one to report against, so
-    /// this follows the view from window to window.
+    /// AppKit calls these on every descendant when an ancestor's isHidden
+    /// flips — the automatic half of the visibility policy. The pipeline's
+    /// explicit resume/suspend still runs first; these make the invariant
+    /// hold no matter who toggled what.
+    override func viewDidHide() {
+        super.viewDidHide()
+        suspendDrawing()
+    }
+
+    override func viewDidUnhide() {
+        super.viewDidUnhide()
+        flushPendingSize()
+        if let surface {
+            ghostty_surface_set_occlusion(surface, true)
+            ghostty_surface_draw(surface)
+        }
+        syncDisplayLink()
+    }
+
     private func observeOcclusion() {
         if let observer = occlusionObserver {
             NotificationCenter.default.removeObserver(observer)
@@ -205,12 +241,41 @@ final class TerminalSurfaceView: NSView {
         syncDisplayLink()
     }
 
+    /// Report the draw rate once a second while tracing. Silence is the
+    /// expected state for anything hidden.
+    private func startTraceTimer() {
+        guard Trace.enabled else { return }
+        traceTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let drawn = self.drawCount
+                self.drawCount = 0
+                let visible = self.isEffectivelyVisible
+                let running = self.displayLink.map { CVDisplayLinkIsRunning($0) } ?? false
+                guard drawn > 0 || (visible && running) else { return }
+                Trace.log("render", "\(self.workspace)/\(self.tab) fps=\(drawn) "
+                    + "visible=\(visible) mode=\(self.renderDriven ? "on-demand" : "link")")
+            }
+        }
+    }
+
+    // MARK: - geometry
+
+    /// Push the view's size to the session — deduplicated, and deferred
+    /// entirely while hidden.
     private func updateSize() {
         guard let surface else { return }
-        Trace.log("layout", "\(workspace)/\(tab) updateSize \(Int(bounds.width))x\(Int(bounds.height))")
         // libghostty wants the framebuffer size, so convert rather than
         // multiplying by a guessed scale.
         let backing = convertToBacking(bounds).size
+        guard backing != sentSize || pendingSize != nil else { return }
+        if isHiddenOrHasHiddenAncestor {
+            pendingSize = backing
+            return
+        }
+        pendingSize = nil
+        sentSize = backing
+        Trace.log("layout", "\(workspace)/\(tab) size \(Int(backing.width))x\(Int(backing.height))")
         ghostty_surface_set_size(
             surface,
             UInt32(max(1, backing.width)),
@@ -218,33 +283,37 @@ final class TerminalSurfaceView: NSView {
         )
     }
 
-    /// Keep the layer from being rescaled by the compositor.
-    ///
-    /// We already render at the display's resolution, so the layer must be
-    /// told its contents are that dense. Leaving `contentsScale` at 1 makes
-    /// Core Animation scale the drawable again, and the terminal ends up
-    /// drawn into a corner of its own view.
+    private func flushPendingSize() {
+        guard let surface, let pending = pendingSize else { return }
+        pendingSize = nil
+        sentSize = pending
+        Trace.log("layout", "\(workspace)/\(tab) size \(Int(pending.width))x\(Int(pending.height)) (deferred)")
+        ghostty_surface_set_size(
+            surface,
+            UInt32(max(1, pending.width)),
+            UInt32(max(1, pending.height))
+        )
+    }
+
+    /// Keep the layer from being rescaled by the compositor: we render at the
+    /// display's density and Core Animation must know it.
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
         guard let window else { return }
-
         CATransaction.begin()
-        // Otherwise Core Animation animates the scale change, which looks janky.
         CATransaction.setDisableActions(true)
         layer?.contentsScale = window.backingScaleFactor
         CATransaction.commit()
-
         if let surface {
             let scale = window.backingScaleFactor
             ghostty_surface_set_content_scale(surface, scale, scale)
         }
+        sentSize = nil   // scale changed: the same points are new pixels
         updateSize()
     }
 
-    /// Tell libghostty whether we are dark or light.
-    ///
-    /// Without this it assumes light, so a config with a `dark:`/`light:`
-    /// theme pair renders the wrong half against a dark app.
+    /// Tell libghostty whether we are dark or light, or a `dark:`/`light:`
+    /// theme pair renders its wrong half.
     private func applyColorScheme() {
         guard let surface else { return }
         let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
@@ -266,12 +335,41 @@ final class TerminalSurfaceView: NSView {
 
     override func layout() {
         super.layout()
-        // setFrameSize alone misses the first pass, when the view is still
-        // at its placeholder size and the session would be told it is tiny.
+        // setFrameSize alone misses the first pass; the dedupe above makes
+        // the overlap free.
         updateSize()
     }
 
+    // MARK: - focus
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted {
+            if let surface { ghostty_surface_set_focus(surface, true) }
+            onFocusGained?()
+        }
+        return accepted
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned, let surface { ghostty_surface_set_focus(surface, false) }
+        return resigned
+    }
+
     // MARK: - input
+
+    /// Mouse-move reports go to the surface under the pointer, not to
+    /// whichever surface last held the keyboard.
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect],
+            owner: self
+        ))
+    }
 
     override func keyDown(with event: NSEvent) {
         send(event, action: GHOSTTY_ACTION_PRESS)
@@ -330,16 +428,4 @@ final class TerminalSurfaceView: NSView {
         let p = convert(event.locationInWindow, from: nil)
         ghostty_surface_mouse_pos(surface, p.x, bounds.height - p.y, Self.mods(from: event.modifierFlags))
     }
-}
-
-/// Bridges the AppKit surface into SwiftUI.
-struct TerminalSurface: NSViewRepresentable {
-    let workspace: String
-    let tab: UInt32
-
-    func makeNSView(context: Context) -> TerminalSurfaceView {
-        TerminalSurfaceView(workspace: workspace, tab: tab)
-    }
-
-    func updateNSView(_ nsView: TerminalSurfaceView, context: Context) {}
 }
