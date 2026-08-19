@@ -227,6 +227,18 @@ final class GhosttyApp {
                     GhosttyApp.shared.view(for: surface)?.runtimeRequestedDraw()
                 }
                 return true
+            case GHOSTTY_ACTION_SCROLLBAR:
+                // Not handled as a scrollbar — this app draws none — but as
+                // the one thing the runtime does say when a terminal's
+                // contents move. It is what puts an idle surface back at full
+                // rate the instant output arrives.
+                guard target.tag == GHOSTTY_TARGET_SURFACE,
+                    let surface = target.target.surface else { return false }
+                DispatchQueue.main.async {
+                    GhosttyApp.shared.view(for: surface)?.noteActivity()
+                }
+                return false
+
             case GHOSTTY_ACTION_CONFIG_CHANGE:
                 let config = action.action.config_change.config
                 guard
@@ -258,6 +270,7 @@ final class GhosttyApp {
                 }
                 return true
             default:
+                Trace.log("action", "tag \(action.tag.rawValue) target \(target.tag.rawValue)")
                 return false
             }
         }

@@ -1,5 +1,6 @@
 import AppKit
 import GhosttyKit
+import QuartzCore
 
 /// An `NSView` that libghostty renders a terminal into.
 ///
@@ -145,6 +146,30 @@ final class TerminalSurfaceView: NSView {
         drawCount += 1
     }
 
+    // MARK: - how often to draw
+
+    /// Frames are cheap to ask for and expensive to make. Nothing else paints
+    /// this view — the runtime never asks for a frame in this build, so the
+    /// link cannot be retired — but drawing an idle terminal at the display's
+    /// own rate costs a tenth of a core to show the same thing 120 times a
+    /// second. So the link keeps running and the drawing follows activity:
+    /// every frame while something is happening, ten a second when not, which
+    /// is still prompt for output and still blinks a cursor.
+    ///
+    /// "Something is happening" means input from the keyboard or mouse, or the
+    /// runtime reporting that the terminal's contents moved.
+    private var busyUntil: CFTimeInterval = 0
+    private var lastDraw: CFTimeInterval = 0
+    /// How long an event keeps the surface at full rate.
+    private static let busyFor: CFTimeInterval = 0.75
+    /// The idle rate: ten frames a second.
+    private static let idleInterval: CFTimeInterval = 0.1
+
+    /// Draw at full rate for a moment, because something just happened.
+    func noteActivity() {
+        busyUntil = CACurrentMediaTime() + Self.busyFor
+    }
+
     private func startDisplayLink() {
         var link: CVDisplayLink?
         CVDisplayLinkCreateWithActiveCGDisplays(&link)
@@ -152,6 +177,12 @@ final class TerminalSurfaceView: NSView {
         CVDisplayLinkSetOutputHandler(link) { [weak self] _, _, _, _, _ in
             DispatchQueue.main.async {
                 guard let self, let surface = self.surface else { return }
+                let now = CACurrentMediaTime()
+                // Every frame while something is happening; a tenth of a
+                // second apart when nothing is.
+                guard now < self.busyUntil || now - self.lastDraw >= Self.idleInterval
+                else { return }
+                self.lastDraw = now
                 ghostty_surface_draw(surface)
                 self.drawCount += 1
             }
@@ -425,6 +456,7 @@ final class TerminalSurfaceView: NSView {
     }
 
     private func send(_ event: NSEvent, action: ghostty_input_action_e) {
+        noteActivity()
         guard let surface else { return }
         let text = event.characters ?? ""
         var key = ghostty_input_key_s()
@@ -451,11 +483,13 @@ final class TerminalSurfaceView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        noteActivity()
         window?.makeFirstResponder(self)
         mouseButton(event, action: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_LEFT)
     }
 
     override func mouseUp(with event: NSEvent) {
+        noteActivity()
         mouseButton(event, action: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT)
     }
 
@@ -478,6 +512,7 @@ final class TerminalSurfaceView: NSView {
     /// the surface keeps the history, and until these events were forwarded
     /// there was simply no way to move the viewport into it.
     override func scrollWheel(with event: NSEvent) {
+        noteActivity()
         guard let surface else { return }
         var x = event.scrollingDeltaX
         var y = event.scrollingDeltaY
