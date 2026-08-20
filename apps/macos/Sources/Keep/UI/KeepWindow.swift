@@ -117,7 +117,13 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
                     .withAlphaComponent(CGFloat(next.opacity))
                     .cgColor
                 chromeBackdropView?.layer?.backgroundColor = tint
-                sidebarBackdropView?.layer?.backgroundColor = tint
+                // The sidebar sits a step behind the terminal rather than
+                // level with it. The chrome row above the content keeps the
+                // content's own colour, because it is the content's row.
+                sidebarBackdropView?.layer?.backgroundColor = Self
+                    .recessed(terminalBackground)
+                    .withAlphaComponent(CGFloat(next.opacity))
+                    .cgColor
                 chromeBackdropView?.isHidden = false
                 sidebarBackdropView?.isHidden = false
             } else {
@@ -137,13 +143,39 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
         } else {
             isOpaque = true
             chromeBackdropView?.isHidden = true
-            sidebarBackdropView?.isHidden = true
             if let terminalBackground = next.color {
                 backgroundColor = terminalBackground.withAlphaComponent(1)
+                // Opaque or not, the sidebar is a step behind: the window's
+                // own colour paints the content, and the sidebar paints over
+                // it with the recessed one.
+                sidebarBackdropView?.layer?.backgroundColor = Self
+                    .recessed(terminalBackground).cgColor
+                sidebarBackdropView?.isHidden = false
+            } else {
+                sidebarBackdropView?.isHidden = true
             }
         }
 
+        Trace.log(
+            "chrome",
+            "appearance opacity=\(next.opacity) sidebar=\(sidebarBackdropView?.isHidden == false ? "recessed" : "hidden")")
         invalidateShadow()
+    }
+
+    /// A panel's colour: the terminal's, a step further back.
+    ///
+    /// Taken toward black rather than toward grey, so a terminal with a warm
+    /// or cool background keeps its cast instead of washing out — the sidebar
+    /// should read as the same room with less light in it, not as a different
+    /// surface stuck to the side.
+    private static func recessed(_ color: NSColor) -> NSColor {
+        guard let rgb = color.usingColorSpace(.sRGB) else { return color }
+        let factor: CGFloat = 0.72
+        return NSColor(
+            srgbRed: rgb.redComponent * factor,
+            green: rgb.greenComponent * factor,
+            blue: rgb.blueComponent * factor,
+            alpha: rgb.alphaComponent)
     }
 
     /// The tracking separator follows the split divider all the way to x = 0

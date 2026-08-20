@@ -17,7 +17,7 @@ struct TabID: Hashable, Codable, CustomStringConvertible {
 struct SidebarState: Hashable, Codable {
     var isCollapsed: Bool
     var width: CGFloat
-    static let initial = SidebarState(isCollapsed: false, width: 220)
+    static let initial = SidebarState(isCollapsed: false, width: 250)
 }
 
 /// One pane beyond a tab's root, in daemon (creation) order.

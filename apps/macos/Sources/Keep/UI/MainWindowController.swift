@@ -27,6 +27,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private var isApplyingSnapshot = false
     private var dividerReportScheduled = false
     private var lastExpandedWidth: CGFloat = SidebarState.initial.width
+    /// Whether the remembered width has been put on a split view that had a
+    /// size to put it on.
+    private var hasPlacedDivider = false
 
     init(session: Session) {
         self.session = session
@@ -67,12 +70,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
         let split = NSSplitViewController()
         let sidebarSplitItem = NSSplitViewItem(viewController: sidebarHost)
-        sidebarSplitItem.minimumThickness = 180
+        sidebarSplitItem.minimumThickness = 200
         sidebarSplitItem.maximumThickness = 320
         sidebarSplitItem.canCollapse = true
         sidebarSplitItem.canCollapseFromWindowResize = false
         sidebarSplitItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
-        sidebarSplitItem.holdingPriority = .defaultHigh
+        // Just above the terminal item's 250, and deliberately not
+        // `.defaultHigh`. Holding priority is the priority of the constraint
+        // that keeps this item's thickness, so it decides two things at once:
+        // who absorbs a window resize, and whether anything else may set the
+        // width. At 500 the sidebar held its thickness against `setPosition`
+        // too, and every remembered width was silently discarded — the
+        // sidebar came up at its minimum every launch and looked like it had
+        // simply been left there. At 260 the terminal still absorbs the
+        // window, measured at 1400 and 900 wide, and the width can be placed.
+        sidebarSplitItem.holdingPriority = NSLayoutConstraint.Priority(rawValue: 260)
         split.addSplitViewItem(sidebarSplitItem)
         split.addSplitViewItem(NSSplitViewItem(viewController: terminal))
 
@@ -349,9 +361,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         } else {
             sidebarItem.isCollapsed = state.isCollapsed
         }
-        if !state.isCollapsed, current?.width != state.width {
+        if !state.isCollapsed, current?.width != state.width || !hasPlacedDivider {
             lastExpandedWidth = state.width
             splitView.setPosition(state.width, ofDividerAt: 0)
+            hasPlacedDivider = splitView.bounds.width > 1
+            Trace.log(
+                "sidebar",
+                "width \(Int(state.width)) → \(Int(sidebarItem.viewController.view.frame.width))")
         }
         // With the sidebar collapsed the content starts at the window's left
         // edge, under the traffic lights and the toggle button; the strip
@@ -374,6 +390,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func dividerMoved() {
+        // A remembered width has to be put in place before a measured one is
+        // believed. The split view lays out at its own natural size first,
+        // and reporting that as though somebody had dragged there overwrites
+        // the width they actually left it at — which is how a sidebar sized
+        // by hand came back at the minimum, one launch later.
+        guard hasPlacedDivider else { return }
         guard !isApplyingSnapshot, !dividerReportScheduled else { return }
         dividerReportScheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in

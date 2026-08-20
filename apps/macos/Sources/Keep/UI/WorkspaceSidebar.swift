@@ -40,32 +40,29 @@ struct WorkspaceSidebar: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if rows.isEmpty {
-                empty
-            } else {
-                List {
-                    ForEach(rows) { row in
-                        rowButton(row)
-                    }
-                    // Dragging a row rearranges the list. The order is a
-                    // preference about looking, so it is the app that keeps
-                    // it; the daemon knows which workspaces exist and nothing
-                    // about which one you want at the top.
-                    .onMove { from, to in
-                        dispatch(.reorderWorkspaces(from: from, to: to))
-                    }
-                }
-                // The AppKit host owns one flat, full-height surface; the
-                // plain style avoids a second rounded panel below the
-                // titlebar, and the hidden scroll background lets the
-                // terminal tint show through.
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
+        List {
+            ForEach(rows) { row in
+                rowButton(row)
+            }
+            // Dragging a row rearranges the list. The order is a preference
+            // about looking, so it is the app that keeps it; the daemon knows
+            // which workspaces exist and nothing about which one you want at
+            // the top.
+            .onMove { from, to in
+                dispatch(.reorderWorkspaces(from: from, to: to))
             }
 
-            footer
+            // Under the last workspace, not pinned to the floor. Starting one
+            // is the next thing after the ones you have, and a row at the
+            // bottom of a tall empty column reads as a different control than
+            // the list it belongs to.
+            newRow
         }
+        // The AppKit host owns one flat, full-height surface; the plain style
+        // avoids a second rounded panel below the titlebar, and the hidden
+        // scroll background lets the terminal tint show through.
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
     }
 
     private func rowButton(_ row: SessionSnapshot.SidebarRow) -> some View {
@@ -146,57 +143,40 @@ struct WorkspaceSidebar: View {
         return .clear
     }
 
-    /// Nothing running yet. It says what to do, in the place where doing it
-    /// is: the field below, which is the only thing on screen.
-    private var empty: some View {
-        VStack(spacing: 0) {
-            Spacer()
-            Text("No workspaces")
-                .font(.system(size: 12))
-                .foregroundStyle(Palette.inkResting)
-            Text("Name one below to start it")
-                .font(.system(size: 11))
-                .foregroundStyle(Palette.inkFaint)
-                .padding(.top, 2)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity)
-    }
-
+    /// Starting one: the same shape as the workspaces above it, because it
+    /// does the same kind of thing.
+    ///
     /// One affordance, not a field beside a button: typing a name and
     /// pressing return is the whole gesture, and the plus is there for the
-    /// people who look for a plus.
-    ///
-    /// It looks like a row until you are typing in it. A box drawn around an
-    /// empty field competes with the list for attention, and it was the only
-    /// thing in the sidebar outlined all the time. What you type there becomes
-    /// a workspace name, so it is set in the face names are set in.
-    private var footer: some View {
-        VStack(spacing: 0) {
-            Divider().opacity(0.4)
-            HStack(spacing: 8) {
-                Image(systemName: "plus")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(fieldFocused ? Palette.inkResting : Palette.inkFaint)
-                    .frame(width: 7)
-                TextField("New workspace", text: $newName)
-                    .textFieldStyle(.plain)
-                    .font(identifier)
-                    .focused($fieldFocused)
-                    .onSubmit(create)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(fieldFocused ? Color.white.opacity(0.09) : .clear)
-            )
-            .animation(.easeOut(duration: 0.16), value: fieldFocused)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 6)
-            .contentShape(Rectangle())
-            .onTapGesture { fieldFocused = true }
+    /// people who look for a plus. It stays unoutlined until you are typing
+    /// in it — a box around an empty field competes with the list, and it was
+    /// the only thing in here outlined all the time. What you type becomes a
+    /// workspace name, so it is set in the face names are set in.
+    private var newRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "plus")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(fieldFocused ? Palette.inkResting : Palette.inkFaint)
+                .frame(width: 7)
+            TextField(rows.isEmpty ? "Name your first workspace" : "New workspace", text: $newName)
+                .textFieldStyle(.plain)
+                .font(identifier)
+                .foregroundStyle(Palette.inkResting)
+                .focused($fieldFocused)
+                .onSubmit(create)
         }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(fieldFocused ? Color.white.opacity(0.09) : .clear)
+        )
+        .animation(.easeOut(duration: 0.16), value: fieldFocused)
+        .listRowInsets(EdgeInsets(top: 3, leading: 6, bottom: 1, trailing: 6))
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture { fieldFocused = true }
     }
 
     private func create() {
