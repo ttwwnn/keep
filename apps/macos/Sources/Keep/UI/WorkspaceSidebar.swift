@@ -82,13 +82,23 @@ struct WorkspaceSidebar: View {
                 // changes while you are not looking at it, so that is what
                 // the end of the row is for; when nothing is running it goes
                 // back to saying how many tabs are waiting.
-                if let running = row.running, !running.isEmpty {
-                    Text(running)
-                        .font(counter)
-                        .foregroundStyle(Palette.busy)
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                        .layoutPriority(-1)
+                if let first = row.running.first {
+                    HStack(spacing: 4) {
+                        Text(first)
+                            .foregroundStyle(Palette.busy)
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                            .layoutPriority(-1)
+                        // One name and a count, not a list: a row this wide
+                        // can carry a name, and three names truncated to five
+                        // characters each carry nothing. The rest are in the
+                        // tooltip, which is where a list belongs.
+                        if row.running.count > 1 {
+                            Text("+\(row.running.count - 1)")
+                                .foregroundStyle(Palette.busy.opacity(0.7))
+                        }
+                    }
+                    .font(counter)
                 } else if row.tabs > 0 {
                     Text("\(row.tabs)")
                         .font(counter)
@@ -102,7 +112,7 @@ struct WorkspaceSidebar: View {
         .buttonStyle(.plain)
         .background(rowBackground(for: row))
         .animation(.easeOut(duration: 0.16), value: row.isActive)
-        .help(row.subtitle)
+        .help(tooltip(for: row))
         .padding(.horizontal, 5)
         // Zero, and the gutter above instead: the plain list keeps insets of
         // its own that a row cannot see, and a block that stops short of both
@@ -129,6 +139,16 @@ struct WorkspaceSidebar: View {
                 dispatch(.killWorkspace(row.name))
             }
         }
+    }
+
+    /// Everything running here, one per line, or what the workspace is
+    /// otherwise. The row shows one; this is where the rest live.
+    private func tooltip(for row: SessionSnapshot.SidebarRow) -> String {
+        guard !row.running.isEmpty else { return row.subtitle }
+        let heading = row.running.count == 1
+            ? "1 running"
+            : "\(row.running.count) running"
+        return ([heading] + row.running.map { "· \($0)" }).joined(separator: "\n")
     }
 
     private func index(of row: SessionSnapshot.SidebarRow) -> Int {

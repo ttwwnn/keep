@@ -125,8 +125,9 @@ final class Session {
 
         if changed {
             let busy = workspaces.compactMap { space -> String? in
-                guard let title = space.tabs.compactMap(\.busyTitle).first else { return nil }
-                return "\(space.name)=\(title)"
+                let titles = space.tabs.flatMap(\.busyTitles)
+                guard !titles.isEmpty else { return nil }
+                return "\(space.name)=\(titles.joined(separator: "|"))"
             }
             Trace.log(
                 "sidebar",
@@ -672,7 +673,7 @@ final class Session {
                 name: workspace.name,
                 subtitle: workspace.subtitle,
                 tabs: workspace.tabs.count,
-                running: workspace.tabs.compactMap(\.busyTitle).first,
+                running: workspace.tabs.flatMap(\.busyTitles),
                 dot: workspace.dot,
                 isActive: workspace.name == activeWorkspaceName
             )

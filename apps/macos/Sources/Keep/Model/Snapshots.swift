@@ -207,10 +207,10 @@ struct SessionSnapshot: Hashable {
         let name: String
         let subtitle: String            // "3 tabs · running", kept for the tooltip
         let tabs: Int
-        /// What a tab here is doing, when one is doing something. The title a
-        /// busy tab wears, which is the command for shells that rename their
+        /// What is running here, one entry per busy pane. The title a busy
+        /// pane wears, which is the command for shells that rename their
         /// window while one runs.
-        let running: String?
+        let running: [String]
         let dot: Dot
         let isActive: Bool
         var id: String { name }

@@ -13,8 +13,10 @@ final class TabEntity {
 
     private(set) var title: String = ""
     private(set) var busy: Bool = false
-    /// The title of whichever pane here is busy, when one is.
-    private(set) var busyTitle: String?
+    /// The title of every pane here that is busy, root included. Plural
+    /// because a tab can have three things running in it, and knowing about
+    /// one of them is knowing the wrong amount.
+    private(set) var busyTitles: [String] = []
     private(set) var panes: [PaneState] = []
     private(set) var focusedPane: UInt32
 
@@ -29,20 +31,19 @@ final class TabEntity {
     func apply(root: Daemon.Tab, panes daemonPanes: [Daemon.Tab]) -> Bool {
         let newTitle = root.label
         let newBusy = root.busy || daemonPanes.contains { $0.busy }
-        // Whose title to show while something runs: the one it is running in.
-        // Reading the root's would name a shell sitting at a prompt whenever
-        // the work is happening in a pane beside it.
-        let newBusyTitle: String? = root.busy
-            ? root.label
-            : daemonPanes.first(where: { $0.busy })?.label
+        // Whose titles to show while something runs: the ones it is running
+        // in. Reading the root's would name a shell sitting at a prompt
+        // whenever the work is happening in a pane beside it.
+        var newBusyTitles: [String] = root.busy ? [root.label] : []
+        newBusyTitles += daemonPanes.filter(\.busy).map(\.label)
         let newPanes = daemonPanes.map {
             PaneState(tab: $0.id, splitOf: $0.splitOf, splitDir: $0.splitDir)
         }
         let changed = newTitle != title || newBusy != busy || newPanes != panes
-            || newBusyTitle != busyTitle
+            || newBusyTitles != busyTitles
         title = newTitle
         busy = newBusy
-        busyTitle = newBusyTitle
+        busyTitles = newBusyTitles
         panes = newPanes
         // A focused pane that died falls back to the root.
         if focusedPane != id.root && !newPanes.contains(where: { $0.tab == focusedPane }) {
