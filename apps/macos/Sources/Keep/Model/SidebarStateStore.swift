@@ -93,3 +93,45 @@ final class WorkspaceOrderStore {
         return placed + rest
     }
 }
+
+/// The order the tabs of each workspace are listed in.
+///
+/// App-side, like the workspaces' own order: the daemon knows which tabs
+/// exist and nothing about which one you want first. What it does own is the
+/// numbers — so this remembers ids, and ids are only meaningful while the
+/// daemon that issued them is alive. A daemon restarted hands out fresh ones
+/// and the remembered order quietly stops applying, which is the right way
+/// for it to fail.
+@MainActor
+final class TabOrderStore {
+    private(set) var order: [String: [UInt32]]
+    private let file: URL
+
+    init(directory: URL? = nil) {
+        let dir = directory ?? FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        )[0].appendingPathComponent("Keep", isDirectory: true)
+        file = dir.appendingPathComponent("tab-order.json")
+        order = (try? JSONDecoder().decode(
+            [String: [UInt32]].self, from: Data(contentsOf: file)
+        )) ?? [:]
+    }
+
+    func save(_ tabs: [UInt32], in workspace: String) {
+        guard order[workspace] != tabs else { return }
+        order[workspace] = tabs
+        try? FileManager.default.createDirectory(
+            at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? JSONEncoder().encode(order).write(to: file, options: .atomic)
+    }
+
+    /// Sort ids into the remembered order, with anything unheard-of kept where
+    /// the daemon had it — a tab made a moment ago appears where it was made,
+    /// at the end, rather than at the front of a row somebody arranged.
+    func arrange(_ ids: [UInt32], in workspace: String) -> [UInt32] {
+        guard let remembered = order[workspace] else { return ids }
+        let placed = remembered.filter(ids.contains)
+        let rest = ids.filter { !remembered.contains($0) }
+        return placed + rest
+    }
+}

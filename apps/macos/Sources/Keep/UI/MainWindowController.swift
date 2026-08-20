@@ -172,6 +172,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         tabStrip.onSelect = { [weak self] id in self?.session.dispatch(.activateTab(id)) }
         tabStrip.onClose = { [weak self] id in self?.session.dispatch(.closeTab(id)) }
         tabStrip.onNewTab = { [weak self] in self?.session.dispatch(.newTab(in: nil)) }
+        tabStrip.onReorder = { [weak self] ids in self?.session.dispatch(.reorderTabs(ids)) }
 
         picker.onHighlight = { [weak self] id in
             self?.session.dispatch(.previewPickerItem(id))

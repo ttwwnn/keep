@@ -93,6 +93,9 @@ enum Intent {
         case onto
     }
 
+    /// Put the tabs of the active workspace in this order, by hand.
+    case reorderTabs([UInt32])
+
     /// Put the workspaces in a different order, by hand.
     case reorderWorkspaces(from: IndexSet, to: Int)
 

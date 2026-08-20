@@ -30,6 +30,7 @@ final class Session {
     private var activeWorkspaceName: String?
     private let sidebarStore = SidebarStateStore()
     private let orderStore = WorkspaceOrderStore()
+    private let tabOrderStore = TabOrderStore()
     private var lastSnapshot: SessionSnapshot?
 
     // MARK: picker state
@@ -96,6 +97,9 @@ final class Session {
                 entity = existing
             } else {
                 entity = WorkspaceEntity(name: daemon.name)
+                entity.arrangement = { [weak self] ids in
+                    self?.tabOrderStore.arrange(ids, in: daemon.name) ?? ids
+                }
                 workspaces.append(entity)
                 changed = true
             }
@@ -419,6 +423,12 @@ final class Session {
             var moves = vacating(pane, in: source)
             moves.append(Daemon.Move(tab: pane, splitOf: 0, splitDir: 0))
             rearrange(moves, in: workspace.name, focusing: pane)
+
+        case .reorderTabs(let ids):
+            guard let workspace = activeWorkspace, !ids.isEmpty else { return }
+            tabOrderStore.save(ids, in: workspace.name)
+            workspace.reorder(ids)
+            publish()
 
         case .reorderWorkspaces(let from, let to):
             var names = workspaces.map(\.name)

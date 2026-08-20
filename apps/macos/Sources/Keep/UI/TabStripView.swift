@@ -15,6 +15,8 @@ final class TabStripView: NSView {
     var onSelect: ((TabID) -> Void)?
     var onClose: ((TabID) -> Void)?
     var onNewTab: (() -> Void)?
+    /// The row, in the order somebody just put it in.
+    var onReorder: (([UInt32]) -> Void)?
 
     /// Points kept free at the left for chrome that overlaps this row when
     /// the sidebar is collapsed (traffic lights, sidebar toggle).
@@ -91,6 +93,7 @@ final class TabStripView: NSView {
         while cells.count < items.count {
             let cell = TabCellView()
             cell.onSelect = { [weak self] id in self?.onSelect?(id) }
+            cell.onPress = { [weak self] cell, event in self?.carry(cell, from: event) }
             cell.onClose = { [weak self] id in self?.onClose?(id) }
             addSubview(cell)
             cells.append(cell)
@@ -163,12 +166,108 @@ final class TabStripView: NSView {
         for cell in cells {
             // Whole pixels: a fill edge on a half pixel renders soft.
             let next = (x + width).rounded()
-            cell.frame = NSRect(x: x.rounded(), y: 0, width: next - x.rounded(), height: height)
+            let place = NSRect(x: x.rounded(), y: 0, width: next - x.rounded(), height: height)
+            // The one being carried follows the pointer, not the row. Its
+            // width still comes from here, so the row it is being dropped
+            // into is the row it will belong to.
+            if cell === carried {
+                cell.frame.size = place.size
+            } else if animating {
+                cell.animator().frame = place
+            } else {
+                cell.frame = place
+            }
             // A lone title is the window's title and belongs on the window's
             // centre, not on the centre of what is left after the chrome.
             cell.titleOffset = cells.count == 1 ? bounds.midX - cell.frame.midX : 0
             x = next
         }
+    }
+
+    // MARK: - carrying a tab along the row
+
+    /// The tab under the pointer, while it is being moved.
+    private var carried: TabCellView?
+    /// Whether the others should slide to their new places rather than jump.
+    private var animating = false
+
+    /// Run a tab's drag to its end.
+    ///
+    /// A press on a tab is not yet a move: below the threshold it is the click
+    /// that selects, and a row that rearranged itself every time somebody
+    /// picked a tab would be unusable. Past it, the tab follows the pointer
+    /// and the rest of the row opens a place for it.
+    func carry(_ cell: TabCellView, from event: NSEvent) {
+        guard let item = cell.tabID else { return }
+        // Nothing to rearrange, or nowhere to run a drag: the press is a
+        // click and must still select. A tab that stops selecting because the
+        // code that moves tabs bailed out early is worse than one that cannot
+        // be moved.
+        guard let window, cells.count > 1 else {
+            onSelect?(item)
+            return
+        }
+        let start = convert(event.locationInWindow, from: nil)
+        let originX = cell.frame.minX
+        var moved = false
+
+        window.trackEvents(
+            matching: [.leftMouseDragged, .leftMouseUp],
+            timeout: .infinity,
+            mode: .eventTracking
+        ) { [weak self] event, stop in
+            guard let self, let event else {
+                stop.pointee = true
+                return
+            }
+            let point = self.convert(event.locationInWindow, from: nil)
+            switch event.type {
+            case .leftMouseDragged:
+                if !moved {
+                    guard abs(point.x - start.x) > 4 else { return }
+                    moved = true
+                    self.carried = cell
+                    // Above the others, so it passes over them rather than
+                    // through them.
+                    self.addSubview(cell, positioned: .above, relativeTo: nil)
+                }
+                cell.frame.origin.x = originX + (point.x - start.x)
+                self.settle(cell)
+
+            case .leftMouseUp:
+                defer { stop.pointee = true }
+                self.carried = nil
+                if moved {
+                    self.needsLayout = true
+                    self.onReorder?(self.cells.compactMap(\.tabID?.root))
+                } else {
+                    self.onSelect?(item)
+                }
+
+            default:
+                break
+            }
+        }
+    }
+
+    /// Move the carried tab into the place its middle is over, and let the
+    /// others slide.
+    private func settle(_ cell: TabCellView) {
+        guard let at = cells.firstIndex(of: cell) else { return }
+        let width = cell.frame.width
+        guard width > 0 else { return }
+        let target = min(
+            cells.count - 1,
+            max(0, Int(((cell.frame.midX - leadingClearance) / width).rounded(.down))))
+        guard target != at else { return }
+        cells.remove(at: at)
+        cells.insert(cell, at: target)
+        animating = true
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.14
+            layout()
+        }
+        animating = false
     }
 
     /// Untinted glass at rest, which refracts darker than the bar and reads
@@ -255,7 +354,7 @@ final class TabStripView: NSView {
 
 /// One tab: a rounded fill when selected, bare text when not.
 @MainActor
-private final class TabCellView: NSView {
+final class TabCellView: NSView {
     var onSelect: ((TabID) -> Void)?
     var onClose: ((TabID) -> Void)?
 
@@ -473,9 +572,21 @@ private final class TabCellView: NSView {
         }
     }
 
+    /// Which tab this cell is showing, for the row that reorders them.
+    var tabID: TabID? { item?.id }
+
+    /// The press is handed to the row rather than answered here: it might be
+    /// a click that selects, or the start of a move, and only the row knows
+    /// what the others should do while that is being decided.
     override func mouseDown(with event: NSEvent) {
-        if let item { onSelect?(item.id) }
+        guard let onPress else {
+            if let item { onSelect?(item.id) }
+            return
+        }
+        onPress(self, event)
     }
+
+    var onPress: ((TabCellView, NSEvent) -> Void)?
 
     override func accessibilityPerformPress() -> Bool {
         if let item { onSelect?(item.id); return true }

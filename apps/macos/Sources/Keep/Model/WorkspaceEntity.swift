@@ -9,6 +9,9 @@ import Foundation
 final class WorkspaceEntity {
     let name: String
     private(set) var tabs: [TabEntity] = []
+    /// How the tabs should be ordered, asked of whoever remembers it. Nil
+    /// while nobody does, which is the daemon's order.
+    var arrangement: (([UInt32]) -> [UInt32])?
     private(set) var activeTabID: TabID?
 
     // Cached from the daemon listing for the sidebar row.
@@ -21,6 +24,14 @@ final class WorkspaceEntity {
 
     var activeTab: TabEntity? {
         tabs.first { $0.id == activeTabID }
+    }
+
+    /// Put the tabs in this order. Ids not named keep their places at the end.
+    func reorder(_ ids: [UInt32]) {
+        tabs.sort {
+            (ids.firstIndex(of: $0.id.root) ?? Int.max)
+                < (ids.firstIndex(of: $1.id.root) ?? Int.max)
+        }
     }
 
     func activate(_ id: TabID) {
@@ -61,8 +72,9 @@ final class WorkspaceEntity {
                 tabs.append(entity)
             }
         }
-        // Daemon order is presentation order.
-        let order = rootIDs
+        // Daemon order unless somebody arranged one.
+        let order = arrangement?(rootIDs.map(\.root)).map { TabID(workspace: name, root: $0) }
+            ?? rootIDs
         tabs.sort {
             (order.firstIndex(of: $0.id) ?? 0) < (order.firstIndex(of: $1.id) ?? 0)
         }
