@@ -86,18 +86,20 @@ struct WorkspaceSidebar: View {
                         .foregroundStyle(row.isActive ? Palette.inkResting : Palette.inkFaint)
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .fill(background(for: row))
-        )
+        .background(rowBackground(for: row))
         .animation(.easeOut(duration: 0.16), value: row.isActive)
         .help(row.subtitle)
-        .listRowInsets(EdgeInsets(top: 1, leading: 6, bottom: 1, trailing: 6))
+        .padding(.horizontal, 5)
+        // Zero, and the gutter above instead: the plain list keeps insets of
+        // its own that a row cannot see, and a block that stops short of both
+        // edges by an amount nobody chose looks like a mistake rather than a
+        // margin.
+        .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 0))
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
         .onHover { inside in
@@ -135,6 +137,25 @@ struct WorkspaceSidebar: View {
         dispatch(.reorderWorkspaces(from: [from], to: to))
     }
 
+    /// The current row is glass, lit in its own colour. Everything else is
+    /// the ground it sits on, or a breath of white under the pointer.
+    ///
+    /// Glass rather than a painted rectangle because that is what the rest of
+    /// this window's controls are made of, and a sidebar whose selection is
+    /// the only flat thing in the app reads as a part that was made
+    /// separately. Only the current row gets one: a pane of glass per row,
+    /// appearing and disappearing on hover, is a lot of glass for a highlight
+    /// that means "the pointer is here".
+    @ViewBuilder
+    private func rowBackground(for row: SessionSnapshot.SidebarRow) -> some View {
+        if row.isActive {
+            GlassRow(cornerRadius: 7, tint: Palette.lit(for: row.name))
+        } else if hovered == row.name {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.white.opacity(0.055))
+        }
+    }
+
     /// The current row is washed in its own colour; everything else is the
     /// ground it sits on.
     private func background(for row: SessionSnapshot.SidebarRow) -> Color {
@@ -165,14 +186,15 @@ struct WorkspaceSidebar: View {
                 .focused($fieldFocused)
                 .onSubmit(create)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
         .background(
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(fieldFocused ? Color.white.opacity(0.09) : .clear)
         )
         .animation(.easeOut(duration: 0.16), value: fieldFocused)
-        .listRowInsets(EdgeInsets(top: 3, leading: 6, bottom: 1, trailing: 6))
+        .padding(.horizontal, 5)
+        .listRowInsets(EdgeInsets(top: 3, leading: 0, bottom: 1, trailing: 0))
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
         .contentShape(Rectangle())
@@ -239,6 +261,13 @@ private enum Palette {
         OKLCH.color(0.72, 0.13, hue(of: name), opacity: 0.17)
     }
 
+    /// What glass is aimed at for a workspace. Refraction alone comes out
+    /// darker than the ground it sits on; a tint is how it is made to read as
+    /// lit, and this one is lit in the workspace's own colour.
+    static func lit(for name: String) -> NSColor {
+        OKLCH.appKitColor(0.72, 0.15, hue(of: name), alpha: 0.5)
+    }
+
     private static func hue(of name: String) -> Double {
         15 + Double(anchor(of: name)) * 30
     }
@@ -264,6 +293,37 @@ private enum Palette {
     }
 }
 
+/// A pane of the window's own glass, behind a SwiftUI row.
+///
+/// SwiftUI has no glass in this SDK — the module interface has no
+/// `glassEffect` in it — so the row borrows the same `NSGlassEffectView` the
+/// tab strip and the chrome buttons are built from. Bridged rather than
+/// imitated: an imitation would drift away from the real thing the first time
+/// the system changed what glass looks like.
+private struct GlassRow: NSViewRepresentable {
+    let cornerRadius: CGFloat
+    let tint: NSColor
+
+    func makeNSView(context: Context) -> NSView {
+        let view = Glass.lozenge(cornerRadius: cornerRadius) ?? NSView()
+        view.wantsLayer = true
+        view.layer?.cornerCurve = .continuous
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        if Glass.isAvailable {
+            Glass.setCornerRadius(view, cornerRadius)
+            Glass.tint(view, tint)
+        } else {
+            // Before glass: the flat fill this used to be, in the same colour
+            // glass would have been aimed at.
+            view.layer?.cornerRadius = cornerRadius
+            view.layer?.backgroundColor = tint.withAlphaComponent(0.34).cgColor
+        }
+    }
+}
+
 /// Colour named the way this project reasons about it.
 ///
 /// Lightness and chroma are held while the hue moves, which is the whole point
@@ -271,9 +331,24 @@ private enum Palette {
 /// yellow blazing and blue sunk, and a set of workspace colours chosen that way
 /// would have one row shouting and another invisible.
 private enum OKLCH {
+    /// The same colour, for the AppKit half of the window.
+    static func appKitColor(
+        _ lightness: Double, _ chroma: Double, _ hue: Double, alpha: Double = 1
+    ) -> NSColor {
+        let (red, green, blue) = components(lightness, chroma, hue)
+        return NSColor(srgbRed: red, green: green, blue: blue, alpha: alpha)
+    }
+
     static func color(
         _ lightness: Double, _ chroma: Double, _ hue: Double, opacity: Double = 1
     ) -> Color {
+        let (red, green, blue) = components(lightness, chroma, hue)
+        return Color(.sRGB, red: red, green: green, blue: blue, opacity: opacity)
+    }
+
+    private static func components(
+        _ lightness: Double, _ chroma: Double, _ hue: Double
+    ) -> (Double, Double, Double) {
         let radians = hue * .pi / 180
         let a = chroma * cos(radians)
         let b = chroma * sin(radians)
@@ -282,13 +357,11 @@ private enum OKLCH {
         let m = pow(lightness - 0.1055613458 * a - 0.0638541728 * b, 3)
         let s = pow(lightness - 0.0894841775 * a - 1.2914855480 * b, 3)
 
-        let red = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s
-        let green = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s
-        let blue = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
-
-        return Color(
-            .sRGB,
-            red: encode(red), green: encode(green), blue: encode(blue), opacity: opacity)
+        return (
+            encode(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+            encode(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+            encode(-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s)
+        )
     }
 
     /// Linear light to sRGB, clamped: a hue and chroma that fall outside what
