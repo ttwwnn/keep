@@ -25,6 +25,7 @@ final class SidebarRows: ObservableObject {
 @MainActor
 final class SidebarHost: NSViewController {
     let backdropView = TerminalTintBackdropView()
+    private var listTop: NSLayoutConstraint!
     private let hosting: NSHostingController<WorkspaceSidebar>
     private let model = SidebarRows()
 
@@ -53,6 +54,11 @@ final class SidebarHost: NSViewController {
 
         container.addSubview(backdropView)
         container.addSubview(content)
+        // Measured off the window rather than taken from the safe-area guide.
+        // The guide gives this container nothing — the list began at the very
+        // top of the sidebar and its first row sat behind the traffic lights
+        // — and the titlebar is the only thing that knows how tall it is.
+        listTop = content.topAnchor.constraint(equalTo: container.topAnchor, constant: 52)
         NSLayoutConstraint.activate([
             backdropView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             backdropView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
@@ -60,9 +66,22 @@ final class SidebarHost: NSViewController {
             backdropView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             content.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            content.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor),
+            listTop,
             content.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
         view = container
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        guard let window = view.window else { return }
+        // The titlebar's height, asked of the window: its frame less the part
+        // it says is content. Plus a little, so the first row is under the
+        // traffic lights rather than against them.
+        let titlebar = window.frame.height - window.contentLayoutRect.height
+        let wanted = (titlebar > 1 ? titlebar : 52) + 4
+        if abs(listTop.constant - wanted) > 0.5 {
+            listTop.constant = wanted
+        }
     }
 }
