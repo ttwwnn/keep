@@ -29,6 +29,7 @@ final class Session {
     private var workspaces: [WorkspaceEntity] = []
     private var activeWorkspaceName: String?
     private let sidebarStore = SidebarStateStore()
+    private let orderStore = WorkspaceOrderStore()
     private var lastSnapshot: SessionSnapshot?
 
     // MARK: picker state
@@ -109,7 +110,12 @@ final class Session {
                 SurfacePool.shared.discard(workspace: daemon.name, tab: tab)
             }
         }
-        workspaces.sort { $0.name < $1.name }
+        // The order somebody arranged by hand, not the alphabet.
+        let arranged = orderStore.arrange(workspaces.map(\.name))
+        workspaces.sort {
+            (arranged.firstIndex(of: $0.name) ?? .max)
+                < (arranged.firstIndex(of: $1.name) ?? .max)
+        }
 
         // The active workspace vanished: fall to the first remaining.
         if activeWorkspaceName != nil, activeWorkspace == nil {
@@ -117,7 +123,10 @@ final class Session {
             changed = true
         }
 
-        if changed { publish() }
+        if changed {
+            Trace.log("sidebar", "order \(workspaces.map(\.name).joined(separator: " "))")
+            publish()
+        }
     }
 
     // MARK: - intents
@@ -402,6 +411,18 @@ final class Session {
             var moves = vacating(pane, in: source)
             moves.append(Daemon.Move(tab: pane, splitOf: 0, splitDir: 0))
             rearrange(moves, in: workspace.name, focusing: pane)
+
+        case .reorderWorkspaces(let from, let to):
+            var names = workspaces.map(\.name)
+            names.move(fromOffsets: from, toOffset: to)
+            // Saved whole: the arrangement is the list, not a diff against
+            // the alphabet, so a workspace that disappears and comes back
+            // lands where it was left.
+            orderStore.save(names)
+            workspaces.sort {
+                (names.firstIndex(of: $0.name) ?? .max) < (names.firstIndex(of: $1.name) ?? .max)
+            }
+            publish()
 
         case .closePicker:
             picker = nil

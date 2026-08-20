@@ -93,6 +93,9 @@ enum Intent {
         case onto
     }
 
+    /// Put the workspaces in a different order, by hand.
+    case reorderWorkspaces(from: IndexSet, to: Int)
+
     /// Move a pane next to another one, or trade places with it.
     case movePane(UInt32, to: UInt32, side: DropSide)
     /// Take a pane out of its arrangement and give it a tab of its own.

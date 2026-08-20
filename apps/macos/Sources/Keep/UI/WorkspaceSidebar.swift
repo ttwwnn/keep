@@ -48,6 +48,13 @@ struct WorkspaceSidebar: View {
                     ForEach(rows) { row in
                         rowButton(row)
                     }
+                    // Dragging a row rearranges the list. The order is a
+                    // preference about looking, so it is the app that keeps
+                    // it; the daemon knows which workspaces exist and nothing
+                    // about which one you want at the top.
+                    .onMove { from, to in
+                        dispatch(.reorderWorkspaces(from: from, to: to))
+                    }
                 }
                 // The AppKit host owns one flat, full-height surface; the
                 // plain style avoids a second rounded panel below the
@@ -102,10 +109,33 @@ struct WorkspaceSidebar: View {
         .contextMenu {
             Button("New Tab") { dispatch(.newTab(in: row.name)) }
             Divider()
+            // Also in the menu, not only under the pointer. A list you can
+            // only rearrange by dragging is a list most people never learn
+            // can be rearranged.
+            Button("Move Up") { move(row, by: -1) }
+                .disabled(index(of: row) == 0)
+            Button("Move Down") { move(row, by: 1) }
+                .disabled(index(of: row) == rows.count - 1)
+            Divider()
             Button("Close Workspace", role: .destructive) {
                 dispatch(.killWorkspace(row.name))
             }
         }
+    }
+
+    private func index(of row: SessionSnapshot.SidebarRow) -> Int {
+        rows.firstIndex(where: { $0.name == row.name }) ?? 0
+    }
+
+    /// One place up or down.
+    ///
+    /// `move(fromOffsets:toOffset:)` counts the destination in the list as it
+    /// was before the row left it, so going down one lands two along.
+    private func move(_ row: SessionSnapshot.SidebarRow, by step: Int) {
+        let from = index(of: row)
+        let to = step < 0 ? from - 1 : from + 2
+        guard from + step >= 0, from + step < rows.count else { return }
+        dispatch(.reorderWorkspaces(from: [from], to: to))
     }
 
     /// The current row is washed in its own colour; everything else is the
