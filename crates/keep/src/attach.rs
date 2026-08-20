@@ -226,8 +226,12 @@ enum Step {
 
 impl Legacy {
     fn sequence(bytes: &[u8]) -> Step {
+        // An escape on its own is a key somebody pressed, not the start of
+        // something yet to arrive. Held back waiting for a sequence that never
+        // came, it took with it the escape key and every key this terminal
+        // chooses to write as a bare escape.
         if bytes.len() < 2 {
-            return Step::Incomplete;
+            return Step::Untouched(1);
         }
         if bytes[1] != b'[' {
             return Step::Untouched(1);
@@ -328,6 +332,15 @@ mod legacy_tests {
         let mut legacy = Legacy::new();
         assert_eq!(legacy.decode(b"abc\x1b[3"), b"abc".to_vec());
         assert_eq!(legacy.decode(b";5u!"), vec![0x03, b'!']);
+    }
+
+    /// A relay may translate what it understands. It may never eat a key.
+    #[test]
+    fn an_escape_on_its_own_is_passed_on_at_once() {
+        let mut legacy = Legacy::new();
+        assert_eq!(legacy.decode(b"\x1b"), vec![0x1b], "the escape key was swallowed");
+        assert_eq!(legacy.decode(b"\x1b\x1b"), vec![0x1b, 0x1b]);
+        assert_eq!(legacy.decode(b"vi\x1b"), b"vi\x1b".to_vec());
     }
 
     #[test]
