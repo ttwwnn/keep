@@ -76,11 +76,20 @@ struct WorkspaceSidebar: View {
                     .foregroundStyle(row.isActive ? Palette.ink : Palette.inkResting)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Spacer(minLength: 6)
-                // How many tabs, as a number. The dot already says how the
-                // workspace is doing, and a second line of prose per row made
-                // three workspaces look like six things.
-                if row.tabs > 0 {
+                Spacer(minLength: 8)
+                // News if there is news, inventory otherwise. A workspace
+                // running something is the only thing in this list that
+                // changes while you are not looking at it, so that is what
+                // the end of the row is for; when nothing is running it goes
+                // back to saying how many tabs are waiting.
+                if let running = row.running, !running.isEmpty {
+                    Text(running)
+                        .font(counter)
+                        .foregroundStyle(Palette.busy)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                        .layoutPriority(-1)
+                } else if row.tabs > 0 {
                     Text("\(row.tabs)")
                         .font(counter)
                         .foregroundStyle(row.isActive ? Palette.inkResting : Palette.inkFaint)

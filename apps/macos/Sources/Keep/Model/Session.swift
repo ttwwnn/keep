@@ -124,7 +124,14 @@ final class Session {
         }
 
         if changed {
-            Trace.log("sidebar", "order \(workspaces.map(\.name).joined(separator: " "))")
+            let busy = workspaces.compactMap { space -> String? in
+                guard let tab = space.tabs.first(where: { $0.busy }) else { return nil }
+                return "\(space.name)=\(tab.title)"
+            }
+            Trace.log(
+                "sidebar",
+                "order \(workspaces.map(\.name).joined(separator: " "))"
+                    + (busy.isEmpty ? "" : " busy \(busy.joined(separator: ", "))"))
             publish()
         }
     }
@@ -665,6 +672,7 @@ final class Session {
                 name: workspace.name,
                 subtitle: workspace.subtitle,
                 tabs: workspace.tabs.count,
+                running: workspace.tabs.first(where: { $0.busy })?.title,
                 dot: workspace.dot,
                 isActive: workspace.name == activeWorkspaceName
             )
