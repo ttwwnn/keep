@@ -195,7 +195,7 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
         button.controlSize = .small
         button.imagePosition = .imageOnly
         button.imageScaling = .scaleProportionallyDown
-        button.toolTip = "Toggle Sidebar"
+        button.toolTip = "Toggle Sidebar (⌘B)"
         button.contentTintColor = .secondaryLabelColor
         // The height of a tab's capsule, so the controls in the chrome are one
         // family. It used to be 28 because that is where the titlebar centred

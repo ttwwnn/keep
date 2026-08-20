@@ -361,7 +361,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         } else {
             sidebarItem.isCollapsed = state.isCollapsed
         }
-        if !state.isCollapsed, current?.width != state.width || !hasPlacedDivider {
+        // Coming back from collapsed counts as needing the width placed even
+        // when the remembered one has not changed: the split view reopens at
+        // its own natural size, and without this the sidebar reappears at its
+        // minimum and that minimum is then saved as though it were a choice.
+        let reopening = current?.isCollapsed == true && !state.isCollapsed
+        if !state.isCollapsed, reopening || current?.width != state.width || !hasPlacedDivider {
             lastExpandedWidth = state.width
             splitView.setPosition(state.width, ofDividerAt: 0)
             hasPlacedDivider = splitView.bounds.width > 1
