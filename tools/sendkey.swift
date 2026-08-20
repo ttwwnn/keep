@@ -72,6 +72,39 @@ case "key":
         post(event)
     }
 
+case "drag":
+    // drag <x1> <y1> <x2> <y2> [modifiers...] in screen coordinates.
+    guard args.count >= 7,
+        let x1 = Double(args[3]), let y1 = Double(args[4]),
+        let x2 = Double(args[5]), let y2 = Double(args[6])
+    else { exit(2) }
+    var flags: CGEventFlags = []
+    for name in args.dropFirst(7) {
+        switch name {
+        case "ctrl": flags.insert(.maskControl)
+        case "alt": flags.insert(.maskAlternate)
+        case "shift": flags.insert(.maskShift)
+        case "cmd": flags.insert(.maskCommand)
+        default: exit(2)
+        }
+    }
+    func mouse(_ type: CGEventType, _ point: CGPoint) {
+        let event = CGEvent(
+            mouseEventSource: source, mouseType: type,
+            mouseCursorPosition: point, mouseButton: .left)
+        event?.flags = flags
+        post(event)
+    }
+    mouse(.leftMouseDown, CGPoint(x: x1, y: y1))
+    // Several steps, because a selection is made by moving: one jump from
+    // start to end is a press and a release with nothing in between, which is
+    // what a click looks like.
+    for step in 1...8 {
+        let t = Double(step) / 8
+        mouse(.leftMouseDragged, CGPoint(x: x1 + (x2 - x1) * t, y: y1 + (y2 - y1) * t))
+    }
+    mouse(.leftMouseUp, CGPoint(x: x2, y: y2))
+
 default:
     exit(2)
 }

@@ -45,6 +45,9 @@ final class TerminalSurfaceView: NSView {
     /// The active pane reports focus upward; the model owns the fact.
     var onFocusGained: (() -> Void)?
 
+    /// Whether the pointer is currently showing the column-selection shape.
+    private var showingColumnCursor = false
+
     init(workspace: String, tab: UInt32) {
         self.workspace = workspace
         self.tab = tab
@@ -75,6 +78,16 @@ final class TerminalSurfaceView: NSView {
     }
 
     override var acceptsFirstResponder: Bool { true }
+
+    /// A click on a window that is not in front reaches the terminal, rather
+    /// than only bringing the window forward.
+    ///
+    /// AppKit's default is to spend that click on activation and deliver
+    /// nothing, which is right for a button — you would not want to press one
+    /// by accident on the way past — and wrong for a terminal, where the click
+    /// is where you want the cursor or where a selection starts. Without this
+    /// every visit to an unfocused window cost a click.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -666,6 +679,49 @@ final class TerminalSurfaceView: NSView {
         return ghostty_input_mods_e(raw)
     }
 
+    // MARK: - selecting a column
+
+    /// Whether the chord that means "select a column" is being held.
+    static func isColumnChord(_ flags: NSEvent.ModifierFlags) -> Bool {
+        flags.contains(.option) && flags.contains(.shift)
+            && !flags.contains(.command) && !flags.contains(.control)
+    }
+
+    /// The modifiers a mouse event carries into the terminal.
+    ///
+    /// Option and shift together are this app's gesture for selecting a
+    /// column, and the terminal's own gesture for it is option. Shift is
+    /// dropped on the way rather than passed along, because to a terminal
+    /// shift on a drag means "widen what is already selected" — the two would
+    /// be asking for different things at once.
+    private static func mouseMods(from flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
+        guard isColumnChord(flags) else { return mods(from: flags) }
+        return ghostty_input_mods_e(GHOSTTY_MODS_ALT.rawValue)
+    }
+
+    /// A crosshair while the chord is held, an I-beam the rest of the time.
+    ///
+    /// The pointer is the only thing that can say a different kind of
+    /// selection is about to happen, since nothing is on screen yet when the
+    /// keys go down.
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        let held = NSEvent.modifierFlags
+        addCursorRect(bounds, cursor: Self.isColumnChord(held) ? .crosshair : .iBeam)
+    }
+
+    override func flagsChanged(with event: NSEvent) {
+        super.flagsChanged(with: event)
+        let chord = Self.isColumnChord(event.modifierFlags)
+        guard chord != showingColumnCursor else { return }
+        showingColumnCursor = chord
+        window?.invalidateCursorRects(for: self)
+        // The rects only take effect the next time the pointer moves over
+        // them, and the pointer is not moving: the person is holding keys and
+        // waiting to see whether anything changed.
+        (chord ? NSCursor.crosshair : NSCursor.iBeam).set()
+    }
+
     override func mouseDown(with event: NSEvent) {
         noteActivity()
         window?.makeFirstResponder(self)
@@ -680,6 +736,18 @@ final class TerminalSurfaceView: NSView {
         noteActivity()
         reportMouse(event)
         mouseButton(event, action: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT)
+        traceSelection()
+    }
+
+    /// What ended up selected, for the test that asks whether a drag with a
+    /// modifier selects a column or a run of lines.
+    private func traceSelection() {
+        guard Trace.enabled, let surface, ghostty_surface_has_selection(surface) else { return }
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_selection(surface, &text), let value = text.text else { return }
+        let selected = String(cString: value).replacingOccurrences(of: "\n", with: "|")
+        Trace.log("select", selected)
+        ghostty_surface_free_text(surface, &text)
     }
 
     /// Dragging is how a selection is made, and AppKit does not call it
@@ -697,7 +765,8 @@ final class TerminalSurfaceView: NSView {
         button: ghostty_input_mouse_button_e
     ) {
         guard let surface else { return }
-        _ = ghostty_surface_mouse_button(surface, action, button, Self.mods(from: event.modifierFlags))
+        _ = ghostty_surface_mouse_button(
+            surface, action, button, Self.mouseMods(from: event.modifierFlags))
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -708,7 +777,7 @@ final class TerminalSurfaceView: NSView {
         guard let surface else { return }
         let p = convert(event.locationInWindow, from: nil)
         ghostty_surface_mouse_pos(
-            surface, p.x, bounds.height - p.y, Self.mods(from: event.modifierFlags))
+            surface, p.x, bounds.height - p.y, Self.mouseMods(from: event.modifierFlags))
     }
 
     // MARK: - where this shell is
