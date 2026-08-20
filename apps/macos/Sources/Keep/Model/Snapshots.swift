@@ -202,7 +202,8 @@ struct PickerModel: Hashable {
 struct SessionSnapshot: Hashable {
     struct SidebarRow: Hashable, Identifiable {
         let name: String
-        let subtitle: String            // "3 tabs · running"
+        let subtitle: String            // "3 tabs · running", kept for the tooltip
+        let tabs: Int
         let dot: Dot
         let isActive: Bool
         var id: String { name }

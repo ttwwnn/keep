@@ -643,6 +643,7 @@ final class Session {
             SessionSnapshot.SidebarRow(
                 name: workspace.name,
                 subtitle: workspace.subtitle,
+                tabs: workspace.tabs.count,
                 dot: workspace.dot,
                 isActive: workspace.name == activeWorkspaceName
             )
