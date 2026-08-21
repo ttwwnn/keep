@@ -187,6 +187,91 @@ final class TabHostView: NSView {
     /// so a report from a hidden tab cannot be mistaken for the active one's.
     var onPaneFocus: ((TabID, UInt32) -> Void)?
 
+    /// Which way to look for a neighbouring pane.
+    enum Direction { case left, right, up, down }
+
+    /// Give the keyboard to the pane beside the one that has it.
+    ///
+    /// Answered from where the panes are on screen rather than from where
+    /// they sit in the tree. The two are not the same question: a pane is the
+    /// left child of some split, but what is *to the left of it* may be two
+    /// levels up the tree and one across, and the answer changes as splits
+    /// nest. Geometry is asked the question that was actually asked.
+    @discardableResult
+    func moveFocus(_ direction: Direction) -> Bool {
+        guard let from = focusedPane, let next = pane(beside: from, going: direction),
+              let view = surfaces[next]
+        else { return false }
+        // Becoming first responder is what tells the model, through the
+        // surface's own `onFocusGained` — so nothing is announced twice.
+        window?.makeFirstResponder(view)
+        return true
+    }
+
+    /// Move the divider the focused pane sits against.
+    ///
+    /// A pane can be inside several splits at once — that is what nesting
+    /// them means — and only one of those has a divider that runs the way
+    /// this asks. So the tree is walked outward from the pane until a split
+    /// facing the right way is found, and it is that one's divider that
+    /// moves. Nothing is asked of the daemon: how a tab is divided on screen
+    /// is the window's business, and the daemon holds the shells.
+    @discardableResult
+    func resizeSplit(_ direction: Direction, by amount: CGFloat) -> Bool {
+        guard let pane = focusedPane, let view = surfaces[pane] else { return false }
+        let wantsVertical = direction == .left || direction == .right
+        var node: NSView = view
+        while let parent = node.superview {
+            defer { node = parent }
+            guard let split = parent as? NSSplitView,
+                  split.isVertical == wantsVertical,
+                  split.arrangedSubviews.count == 2
+            else { continue }
+            let total = split.isVertical ? split.bounds.width : split.bounds.height
+            guard total > 0 else { return false }
+            // The divider's position is the near side's extent: the width of
+            // the left pane, or the height of the top one.
+            let near = split.arrangedSubviews[0]
+            let position = split.isVertical ? near.frame.width : near.frame.height
+            let step = (direction == .right || direction == .down) ? amount : -amount
+            split.setPosition(min(max(0, position + step), total), ofDividerAt: 0)
+            return true
+        }
+        return false
+    }
+
+    private func pane(beside origin: UInt32, going direction: Direction) -> UInt32? {
+        guard let from = surfaces[origin] else { return nil }
+        let source = from.convert(from.bounds, to: self)
+        var best: (pane: UInt32, gap: CGFloat, offset: CGFloat)?
+        for (id, view) in surfaces where id != origin {
+            let frame = view.convert(view.bounds, to: self)
+            let gap: CGFloat
+            let alongside: Bool
+            // AppKit's y grows upward, so "down" is toward smaller y.
+            switch direction {
+            case .left:
+                gap = source.minX - frame.maxX
+                alongside = frame.minY < source.maxY && frame.maxY > source.minY
+            case .right:
+                gap = frame.minX - source.maxX
+                alongside = frame.minY < source.maxY && frame.maxY > source.minY
+            case .down:
+                gap = source.minY - frame.maxY
+                alongside = frame.minX < source.maxX && frame.maxX > source.minX
+            case .up:
+                gap = frame.minY - source.maxY
+                alongside = frame.minX < source.maxX && frame.maxX > source.minX
+            }
+            // A divider is a point or two wide, so touching counts as beside.
+            guard alongside, gap >= -1 else { continue }
+            let offset = abs(frame.midX - source.midX) + abs(frame.midY - source.midY)
+            let better = best.map { gap < $0.gap || (gap == $0.gap && offset < $0.offset) } ?? true
+            if better { best = (id, gap, offset) }
+        }
+        return best?.pane
+    }
+
     init(id: TabID) {
         self.id = id
         super.init(frame: .zero)

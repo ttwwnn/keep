@@ -240,6 +240,57 @@ final class GhosttyApp {
                 }
                 return true
 
+            case GHOSTTY_ACTION_GOTO_SPLIT:
+                // The keybinds for this are the person's own, in their
+                // ghostty config — `super+alt+h=goto_split:left` and the rest
+                // of vim's four. libghostty reads them, resolves the chord and
+                // hands the direction over; every one of them used to arrive
+                // here, fall through to the default arm, and be traced as an
+                // action nobody implemented — which from the keyboard is a
+                // shortcut that does nothing at all.
+                guard target.tag == GHOSTTY_TARGET_SURFACE,
+                    let surface = target.target.surface
+                else { return false }
+                let towards: TabHostView.Direction?
+                switch action.action.goto_split {
+                case GHOSTTY_GOTO_SPLIT_LEFT: towards = .left
+                case GHOSTTY_GOTO_SPLIT_RIGHT: towards = .right
+                case GHOSTTY_GOTO_SPLIT_UP: towards = .up
+                case GHOSTTY_GOTO_SPLIT_DOWN: towards = .down
+                // Previous and next walk the tree's order rather than the
+                // screen's, and nothing in this app asks for them yet.
+                default: towards = nil
+                }
+                guard let towards else { return false }
+                DispatchQueue.main.async {
+                    GhosttyApp.shared.view(for: surface)?.tabHost?.moveFocus(towards)
+                }
+                return true
+
+            case GHOSTTY_ACTION_RESIZE_SPLIT:
+                // The other half of the person's own vim keybinds, alongside
+                // goto_split: `super+ctrl+j=resize_split:down,20`. This is the
+                // action that showed up in the trace as tag 33, arriving over
+                // and over and being answered by nobody.
+                guard target.tag == GHOSTTY_TARGET_SURFACE,
+                    let surface = target.target.surface
+                else { return false }
+                let resize = action.action.resize_split
+                let way: TabHostView.Direction?
+                switch resize.direction {
+                case GHOSTTY_RESIZE_SPLIT_LEFT: way = .left
+                case GHOSTTY_RESIZE_SPLIT_RIGHT: way = .right
+                case GHOSTTY_RESIZE_SPLIT_UP: way = .up
+                case GHOSTTY_RESIZE_SPLIT_DOWN: way = .down
+                default: way = nil
+                }
+                guard let way else { return false }
+                let amount = CGFloat(resize.amount)
+                DispatchQueue.main.async {
+                    GhosttyApp.shared.view(for: surface)?.tabHost?.resizeSplit(way, by: amount)
+                }
+                return true
+
             case GHOSTTY_ACTION_SCROLLBAR:
                 // Not handled as a scrollbar — this app draws none — but as
                 // the one thing the runtime does say when a terminal's

@@ -50,6 +50,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func splitDown(_ sender: Any?) { session.dispatch(.split(2)) }
     @objc func nextTab(_ sender: Any?) { session.dispatch(.nextTab) }
     @objc func previousTab(_ sender: Any?) { session.dispatch(.previousTab) }
+    @objc func nextWorkspace(_ sender: Any?) { session.dispatch(.nextWorkspace) }
+    @objc func previousWorkspace(_ sender: Any?) { session.dispatch(.previousWorkspace) }
 
     @objc func showTab(_ sender: Any?) {
         guard let tag = (sender as? NSMenuItem)?.tag else { return }
@@ -155,6 +157,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             title: "Show Previous Tab", action: #selector(previousTab(_:)), keyEquivalent: "\t")
         previousItem.keyEquivalentModifierMask = [.control, .shift]
         windowMenu.addItem(previousItem)
+        windowMenu.addItem(.separator())
+        // A step out from ⌃Tab, because ⌃Tab is already the tabs' and a menu
+        // key equivalent is matched before anything else can answer for it —
+        // a second one here would simply never win.
+        let nextSpaceItem = NSMenuItem(
+            title: "Show Next Workspace",
+            action: #selector(nextWorkspace(_:)),
+            keyEquivalent: "\t")
+        nextSpaceItem.keyEquivalentModifierMask = [.control, .option]
+        windowMenu.addItem(nextSpaceItem)
+        let previousSpaceItem = NSMenuItem(
+            title: "Show Previous Workspace",
+            action: #selector(previousWorkspace(_:)),
+            keyEquivalent: "\t")
+        previousSpaceItem.keyEquivalentModifierMask = [.control, .option, .shift]
+        windowMenu.addItem(previousSpaceItem)
         windowMenu.addItem(.separator())
         // ⌘1–⌘8 select by position; ⌘9 is the last tab, per macOS convention.
         for n in 1...9 {

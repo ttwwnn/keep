@@ -222,6 +222,32 @@ final class PickerView: NSView {
         }
     }
 
+    /// ⌃J and ⌃K move down and up the list.
+    ///
+    /// Caught here rather than in `doCommandBy:`, where the arrows are
+    /// handled, because by the time the field editor has had them they are no
+    /// longer distinguishable from keys they share a meaning with: the system
+    /// binds ⌃K to deleting the rest of the line and ⌃J to inserting a
+    /// newline, which arrives as the same selector Return does — so a picker
+    /// reading them there would open an item when asked to move down one.
+    ///
+    /// ⌃N and ⌃P need nothing: the system already turns them into the same
+    /// two selectors the arrows arrive as.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let held = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard held == .control else { return super.performKeyEquivalent(with: event) }
+        switch event.charactersIgnoringModifiers {
+        case "j":
+            select(row: min(table.selectedRow + 1, shown.count - 1))
+            return true
+        case "k":
+            select(row: max(table.selectedRow - 1, 0))
+            return true
+        default:
+            return super.performKeyEquivalent(with: event)
+        }
+    }
+
     private func select(row: Int) {
         defer { updateCounter() }
         guard row >= 0, row < shown.count else {

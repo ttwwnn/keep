@@ -110,6 +110,8 @@ enum Intent {
     case activateTabIndex(Int)
     case nextTab
     case previousTab
+    case nextWorkspace
+    case previousWorkspace
     case newTab(in: String?)          // nil = the active workspace
     case newWorkspace(named: String)
     case closeTab(TabID?)             // nil = the active tab, panes and all
