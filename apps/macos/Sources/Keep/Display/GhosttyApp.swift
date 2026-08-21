@@ -397,12 +397,26 @@ final class GhosttyApp {
             .appendingPathComponent("keep-app", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let file = dir.appendingPathComponent("command.conf")
+        // `alt+backspace` is spelled out because the encoder does not send it.
+        //
+        // Measured, not guessed: with the kitty keyboard protocol in force —
+        // proven in the same capture, by asking the terminal for its flags
+        // and catching the reply — a plain backspace writes 0x7f and an
+        // option-backspace writes nothing at all. Every field of the event is
+        // by then identical to the one libghostty's own test says must
+        // produce `CSI 127;3u`, and unbinding the chord changes nothing, so
+        // this is not a binding eating it. Naming the bytes is the one thing
+        // that does get them sent, and a word-delete that does nothing is the
+        // difference between this being a terminal somebody can work in and
+        // not.
+        //
         // Keep's native toolbar already provides the outer breathing room.
         // Use a tighter terminal-only inset than the user's standalone
         // Ghostty window so the first prompt sits closer to the chrome.
         let body = """
             command = \(clientBinary)
             window-padding-y = 0
+            keybind = alt+backspace=text:\\x1b\\x7f
 
             """
         do {

@@ -638,6 +638,20 @@ final class TerminalSurfaceView: NSView {
         ))
     }
 
+    /// The tab this pane is laid out in, found by walking up.
+    ///
+    /// Not held as a reference: a pane is moved between hosts when somebody
+    /// carries it into another tab, and a stored answer would be the previous
+    /// tab's the moment that happened.
+    var tabHost: TabHostView? {
+        var view: NSView? = superview
+        while let current = view {
+            if let host = current as? TabHostView { return host }
+            view = current.superview
+        }
+        return nil
+    }
+
     override func keyDown(with event: NSEvent) {
         send(event, action: GHOSTTY_ACTION_PRESS)
     }
@@ -649,25 +663,132 @@ final class TerminalSurfaceView: NSView {
     private func send(_ event: NSEvent, action: ghostty_input_action_e) {
         noteActivity()
         guard let surface else { return }
-        let text = event.characters ?? ""
+        let text = Self.text(of: event)
         var key = ghostty_input_key_s()
         key.action = action
         let mods = Self.mods(from: event.modifierFlags)
         key.mods = mods
-        // Nothing declared as consumed, and the platform's own key code
-        // rather than a translation of it. Both were "improved" and both
-        // improvements broke keys — backspace, escape and the arrows all
-        // arrived as other keys entirely — because this field wants what the
-        // platform reports, not what the enum next to it is named after.
-        key.consumed_mods = ghostty_input_mods_e(0)
+        key.consumed_mods = Self.consumedMods(from: event.modifierFlags)
         key.keycode = UInt32(event.keyCode)
-        key.unshifted_codepoint = event.charactersIgnoringModifiers?.unicodeScalars.first?.value ?? 0
+        // The character this key makes with nothing held down, and only if
+        // that is a character at all.
+        //
+        // Asked for with no modifiers rather than read from
+        // `charactersIgnoringModifiers`, which is not the same question: with
+        // control held that property answers with the control code, so ctrl-h
+        // reported itself as 8 where the kitty protocol wants 104 — the key
+        // "h", which is what was pressed.
+        //
+        // And a key that makes no character says so by saying nothing. The
+        // platform answers for backspace with U+007F, which is the byte that
+        // key sends, not a character it types — and the terminal already
+        // knows backspace from its key code. Passing the byte on as though it
+        // were the key's letter is the one thing this event carried that a
+        // working one does not.
+        key.unshifted_codepoint = Self.unshiftedCodepoint(of: event)
         key.composing = false
 
-        text.withCString { ptr in
-            key.text = ptr
-            _ = ghostty_surface_key(surface, key)
+        // What the terminal made of it, which is one bit and the only account
+        // there is of a key that produced nothing: true means something
+        // claimed the press — a keybinding, usually — and false means the
+        // encoder was handed the key and wrote no bytes for it. From the far
+        // end the two are identical, and they want opposite repairs.
+        let taken: Bool
+        if text.isEmpty {
+            key.text = nil
+            taken = ghostty_surface_key(surface, key)
+        } else {
+            taken = text.withCString { ptr in
+                key.text = ptr
+                return ghostty_surface_key(surface, key)
+            }
         }
+        Trace.log(
+            "key",
+            "\(action == GHOSTTY_ACTION_PRESS ? "down" : "up  ") code=\(event.keyCode)"
+                + " mods=\(mods.rawValue) carried=\(text.isEmpty ? "nothing" : "text")"
+                + " \(taken ? "taken" : "IGNORED")")
+    }
+
+    /// The text a key press should put into the terminal, if any.
+    ///
+    /// Three things are not text, and each was found by reading what Ghostty
+    /// itself does with the same library.
+    ///
+    /// A function key is reported with a codepoint out of the private use
+    /// area — U+F702 for the left arrow, and so on through the function row,
+    /// home and end. Those are the platform's markers for "this key", not
+    /// anything a person typed, and handing one on gives the terminal a
+    /// character to print beside the escape sequence the key actually meant.
+    ///
+    /// A control character is the terminal's to make. libghostty encodes
+    /// those itself, from the physical key and its modifiers, precisely so
+    /// that both survive into protocols that want to report them separately —
+    /// hand it the finished byte instead and the key is spent.
+    ///
+    /// And a press with option held is composed by AppKit before anyone sees
+    /// it: option-slash arrives as "÷", because that is what option does on a
+    /// Mac keyboard. It is not what it does here. So the key is asked again
+    /// with option taken out of the modifiers, which is the character the
+    /// chord is actually about, rather than being asked to ignore *all* of
+    /// them — shift is still shift, and a capital is still a capital.
+    private static func text(of event: NSEvent) -> String {
+        // Only a press with option held is asked again. `byApplyingModifiers`
+        // re-derives the character from the key code and the layout, which is
+        // the right answer for a key somebody pressed and the wrong one for
+        // an event that carries text without a key behind it — those arrive
+        // with a key code of zero, which is the letter "a", so every
+        // character a text expander or dictation sent became one. The plain
+        // path keeps taking the event at its word.
+        let source: String?
+        if event.modifierFlags.contains(.option) {
+            var translation = event.modifierFlags
+            translation.remove(.option)
+            source = event.characters(byApplyingModifiers: translation)
+        } else {
+            source = event.characters
+        }
+        guard let characters = source, let first = characters.unicodeScalars.first
+        else { return "" }
+        if (0xF700...0xF8FF).contains(first.value) { return "" }
+        if first.value < 0x20 || first.value == 0x7F { return "" }
+        return characters
+    }
+
+    /// The character a key makes on its own, or nothing if it makes none.
+    private static func unshiftedCodepoint(of event: NSEvent) -> UInt32 {
+        guard let scalar = event.characters(byApplyingModifiers: [])?.unicodeScalars.first
+        else { return 0 }
+        if scalar.value < 0x20 || scalar.value == 0x7F { return 0 }
+        if (0xF700...0xF8FF).contains(scalar.value) { return 0 }
+        return scalar.value
+    }
+
+    /// Which modifiers went into making the character, as opposed to being
+    /// held alongside it.
+    ///
+    /// macOS does not say, so this is the heuristic Ghostty has used for
+    /// years: control and command never contribute to a character, and
+    /// whatever is left did. Option comes out first because here it is alt —
+    /// a modifier, not a compose key — so it contributed nothing either.
+    ///
+    /// Dead weight for a key carrying no text, and decisive for one that
+    /// does. libghostty subtracts these from the modifiers before encoding,
+    /// so a shift never declared consumed stays live, and shift-slash — which
+    /// is simply "?" — reaches the program as a shifted slash rather than as
+    /// the character that was typed. A plain shell shrugs that off; a program
+    /// using the kitty keyboard protocol takes it at its word, and the
+    /// question mark never arrives.
+    ///
+    /// Declaring it wrongly is how this broke before: the whole modifier set
+    /// was handed over, which cancels modifiers that really were held and
+    /// left backspace, escape and the arrows arriving as other keys.
+    private static func consumedMods(from flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
+        var translation = flags
+        translation.remove(.option)
+        translation.remove(.control)
+        translation.remove(.command)
+        return mods(from: translation)
     }
 
     private static func mods(from flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
