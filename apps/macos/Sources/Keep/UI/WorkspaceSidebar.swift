@@ -82,8 +82,8 @@ struct WorkspaceSidebar: View {
                 // changes while you are not looking at it, so that is what
                 // the end of the row is for; when nothing is running it goes
                 // back to saying how many tabs are waiting.
-                if let first = row.running.first {
-                    HStack(spacing: 4) {
+                HStack(spacing: 6) {
+                    if let first = row.running.first {
                         Text(first)
                             .foregroundStyle(Palette.busy)
                             .lineLimit(1)
@@ -106,12 +106,19 @@ struct WorkspaceSidebar: View {
                                 .foregroundStyle(Palette.busy.opacity(0.7))
                         }
                     }
-                    .font(counter)
-                } else if row.tabs > 0 {
-                    Text("\(row.tabs)")
-                        .font(counter)
-                        .foregroundStyle(row.isActive ? Palette.inkResting : Palette.inkFaint)
+                    // Kept whether or not something is running. How many tabs
+                    // are waiting is the one fact about a workspace that is
+                    // always true, and it used to be the thing that stepped
+                    // aside the moment there was news — so the row said least
+                    // about a workspace exactly when there was most to say.
+                    // It sits last, so the number stays where the eye left
+                    // it while the name beside it comes and goes.
+                    if row.tabs > 0 {
+                        Text("\(row.tabs)")
+                            .foregroundStyle(row.isActive ? Palette.inkResting : Palette.inkFaint)
+                    }
                 }
+                .font(counter)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
@@ -186,19 +193,11 @@ struct WorkspaceSidebar: View {
     @ViewBuilder
     private func rowBackground(for row: SessionSnapshot.SidebarRow) -> some View {
         if row.isActive {
-            GlassRow(cornerRadius: 7, tint: Palette.lit(for: row.name))
+            GlassRow(cornerRadius: 7, tint: Palette.litRow)
         } else if hovered == row.name {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(Color.white.opacity(0.055))
         }
-    }
-
-    /// The current row is washed in its own colour; everything else is the
-    /// ground it sits on.
-    private func background(for row: SessionSnapshot.SidebarRow) -> Color {
-        if row.isActive { return Palette.selection(for: row.name) }
-        if hovered == row.name { return Color.white.opacity(0.055) }
-        return .clear
     }
 
     /// Starting one: the same shape as the workspaces above it, because it
@@ -294,40 +293,8 @@ private enum Palette {
     /// same colour, which is honest. Sharing is common with few workspaces and
     /// costs nothing: only the current row is washed, so two washes are never
     /// on screen together to be compared.
-    static func selection(for name: String) -> Color {
-        OKLCH.color(0.72, 0.13, hue(of: name), opacity: 0.17)
-    }
+    static let litRow = NSColor.white.withAlphaComponent(0.30)
 
-    /// What glass is aimed at for a workspace. Refraction alone comes out
-    /// darker than the ground it sits on; a tint is how it is made to read as
-    /// lit, and this one is lit in the workspace's own colour.
-    static func lit(for name: String) -> NSColor {
-        OKLCH.appKitColor(0.72, 0.15, hue(of: name), alpha: 0.5)
-    }
-
-    private static func hue(of name: String) -> Double {
-        15 + Double(anchor(of: name)) * 30
-    }
-
-    /// Which of the twelve a name lands on.
-    ///
-    /// Deliberately not `hashValue`, which is seeded per process: a workspace
-    /// would be a different colour every launch. FNV-1a is stable, but its low
-    /// bits carry almost none of the string — taken straight to a remainder it
-    /// put ten sample names in six of the twelve. The finalizer is what makes
-    /// the bits it is asked for the bits the whole name touched.
-    private static func anchor(of name: String) -> UInt32 {
-        var hash: UInt32 = 2_166_136_261
-        for byte in name.utf8 {
-            hash = (hash ^ UInt32(byte)) &* 16_777_619
-        }
-        hash ^= hash >> 16
-        hash = hash &* 0x85eb_ca6b
-        hash ^= hash >> 13
-        hash = hash &* 0xc2b2_ae35
-        hash ^= hash >> 16
-        return hash % 12
-    }
 }
 
 /// A pane of the window's own glass, behind a SwiftUI row.
