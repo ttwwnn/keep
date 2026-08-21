@@ -87,7 +87,15 @@ struct WorkspaceSidebar: View {
                         Text(first)
                             .foregroundStyle(Palette.busy)
                             .lineLimit(1)
-                            .truncationMode(.head)
+                            // From the front. Only a tab that is actually
+                            // running something reaches this line — a shell
+                            // sitting at a prompt never does — so what is
+                            // here is the name of a piece of work, and a name
+                            // is read from its beginning. Cutting the head
+                            // off is what you do to a path, where the end is
+                            // the part that identifies it, and there are no
+                            // paths in this field.
+                            .truncationMode(.tail)
                             .layoutPriority(-1)
                         // One name and a count, not a list: a row this wide
                         // can carry a name, and three names truncated to five
