@@ -119,28 +119,30 @@ SLOT=$(sed -E 's/.*slot=([0-9]+).*/\1/' <<<"$SHAPE")
 COUNT=$(sed -E 's/.*tabs=([0-9]+).*/\1/' <<<"$SHAPE")
 [ "${COUNT:-0}" = 3 ] || { say "wanted three tabs, the row has '${COUNT:-none}'"; exit 1; }
 
-# Swept rather than aimed. `clear` is measured in the row's own coordinates
-# and the row begins where the content does — which is past the sidebar when
-# there is one — so a first press computed from the window's left edge lands
-# on the sidebar and never reaches a tab. Where the row starts is precisely
-# what this is trying to find out, so it cannot be assumed to find it.
+# Worked out rather than hunted for. `clear` is measured in the row's own
+# coordinates and the row begins where the content does — past the sidebar,
+# when there is one — so a press computed from the window's left edge lands
+# on the sidebar instead. But the row ends at the window's right edge, and
+# its shape is traced, so where it starts is arithmetic: the window's right
+# edge less the row's whole width.
+#
+# Clicking about to find it, which is what this did before, walks the
+# pointer along a row of tabs and eventually presses one of their close
+# buttons — and a test that quietly closes a tab it is about to count is
+# worse than one that cannot find the row at all.
+STRIP_WIDTH=$((CLEAR + SLOT * COUNT + 46))
+LEFT=$((WX + WW - STRIP_WIDTH))
+
+# The middle of the first tab: far from the close button, which sits within
+# fourteen points of a cell's leading edge.
 for DY in 22 30 16; do
     PROBE_Y=$((WY + DY))
-    for DX in $(seq 40 60 $((WW - 60))); do
-        BEFORE=$(trace | grep -c "press on")
-        "$MOUSE" drag $((WX + DX)) "$PROBE_Y" $((WX + DX)) "$PROBE_Y" 2 20
-        sleep 0.7
-        if [ "$(trace | grep -c "press on")" -gt "$BEFORE" ]; then
-            ROW_Y=$PROBE_Y
-            PROBE_X=$((WX + DX))
-            break 2
-        fi
-    done
+    BEFORE=$(trace | grep -c "press on")
+    "$MOUSE" drag $((LEFT + CLEAR + SLOT / 2)) "$PROBE_Y" $((LEFT + CLEAR + SLOT / 2)) "$PROBE_Y" 2 20
+    sleep 0.8
+    [ "$(trace | grep -c "press on")" -gt "$BEFORE" ] && { ROW_Y=$PROBE_Y; break; }
 done
-[ -n "${ROW_Y:-}" ] || { say "no press reached a tab anywhere along the row"; exit 1; }
-
-LOCAL=$(trace | grep "press on" | tail -1 | sed -E 's/.*at ([0-9-]+).*/\1/')
-LEFT=$((PROBE_X - LOCAL))
+[ -n "${ROW_Y:-}" ] || { say "no press reached a tab; the row is not where the arithmetic says"; exit 1; }
 say ""
 say "the row: ${SLOT}pt a tab, ${CLEAR}pt of chrome before the first, at y=$ROW_Y"
 

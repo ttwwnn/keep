@@ -219,9 +219,17 @@ final class TabStripView: NSView {
 
         if window != nil {
             let edge = convert(NSPoint.zero, to: nil).x
-            if edge != lastLeadingEdge {
+            // Remembered only once it has actually been said to somebody.
+            //
+            // This row lays out before the window is wired up, so the first
+            // edge it measures has no one to tell. Recording it anyway meant
+            // recording that it had been reported, and every later layout
+            // measured the same edge, found it unchanged, and stayed quiet —
+            // so a window opened with the sidebar out kept its toggle beside
+            // the traffic lights until something moved the sidebar.
+            if edge != lastLeadingEdge, let onLeadingEdgeMoved {
                 lastLeadingEdge = edge
-                onLeadingEdgeMoved?(edge)
+                onLeadingEdgeMoved(edge)
             }
         }
 
