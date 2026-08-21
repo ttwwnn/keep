@@ -113,6 +113,39 @@ fn rehome(tabs: &mut [Entry], departed: &HashMap<u32, (u32, u8)>) {
     }
 }
 
+/// The terminal to call ourselves, if the system can look it up.
+///
+/// Checked rather than assumed: ghostty's description is installed with
+/// ghostty, and on a machine without it every program that consults terminfo
+/// would fail to find the terminal it was just told it is in.
+fn term_name() -> &'static str {
+    const GHOSTTY: &str = "xterm-ghostty";
+    static RESOLVED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let installed = *RESOLVED.get_or_init(|| {
+        let mut roots: Vec<std::path::PathBuf> = Vec::new();
+        if let Ok(dir) = std::env::var("TERMINFO") {
+            roots.push(dir.into());
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            roots.push(std::path::Path::new(&home).join(".terminfo"));
+        }
+        for dir in [
+            "/usr/share/terminfo",
+            "/opt/homebrew/share/terminfo",
+            "/usr/local/share/terminfo",
+        ] {
+            roots.push(dir.into());
+        }
+        // ncurses files a description under the first letter of its name, as
+        // the letter itself or as that letter's hex — both are in the wild.
+        roots.iter().any(|root| {
+            root.join("x").join(GHOSTTY).exists() || root.join("78").join(GHOSTTY).exists()
+        })
+    });
+    if installed { GHOSTTY } else { "xterm-256color" }
+}
+
+
 impl Workspace {
     pub fn new(name: impl Into<String>) -> Self {
         Self { name: name.into(), tabs: Mutex::new(Vec::new()), next_id: AtomicU32::new(1) }
@@ -140,8 +173,39 @@ impl Workspace {
             cmd.cwd(dir);
         }
         // Programs expect these; without TERM many refuse to draw at all.
-        cmd.env("TERM", "xterm-256color");
+        //
+        // What is drawing is ghostty, so that is what a program is told it is
+        // talking to. Saying `xterm-256color` was describing a different
+        // terminal: a program looks its keys and capabilities up under this
+        // name, and one told it is in a plain xterm asks for, and handles,
+        // a plain xterm's keyboard. The name is only worth giving if the
+        // description behind it is installed, which is not something a daemon
+        // may assume — a terminal nobody can look up is worse than a modest
+        // one that everybody can.
+        cmd.env("TERM", term_name());
+        // Said outright rather than inherited. What renders here is ghostty,
+        // and it renders in twenty-four bit colour — but a daemon is started
+        // once and may be started from anywhere, including somewhere with no
+        // terminal at all, so nothing about the terminal can be picked up
+        // from the environment it happened to be launched in. Left to
+        // inheritance, these are right until the day the daemon is started
+        // from a login script, and then every colour in every shell is wrong.
+        cmd.env("COLORTERM", "truecolor");
+        cmd.env("TERM_PROGRAM", "ghostty");
         cmd.env("KEEP_WORKSPACE", &self.name);
+
+        // Whatever started this daemon does not get to introduce itself to
+        // every shell it opens.
+        //
+        // A daemon outlives the shell that launched it — that is the whole
+        // point of it — and it inherits that shell's environment whole,
+        // session markers and credentials included. Anything downstream then
+        // believes it is a child of a session that may have ended hours ago.
+        for (key, _) in std::env::vars() {
+            if key == "CLAUDECODE" || key.starts_with("CLAUDE_CODE_") {
+                cmd.env_remove(&key);
+            }
+        }
 
         let tab = Arc::new(Tab::spawn(cmd, cols, rows)?);
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
