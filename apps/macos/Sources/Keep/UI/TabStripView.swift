@@ -17,11 +17,42 @@ final class TabStripView: NSView {
     var onNewTab: (() -> Void)?
     /// The row, in the order somebody just put it in.
     var onReorder: (([UInt32]) -> Void)?
+    /// Told when this row's leading edge moves.
+    ///
+    /// Which is the sidebar's trailing edge, since the row begins where the
+    /// content does. Reported from here because this is the one place that
+    /// already hears about it at every frame of the sidebar's animation —
+    /// a laid-out view is told its new geometry; a view watching a
+    /// notification is told a story about it afterwards.
+    var onLeadingEdgeMoved: ((CGFloat) -> Void)?
+    private var lastLeadingEdge: CGFloat?
 
-    /// Points kept free at the left for chrome that overlaps this row when
-    /// the sidebar is collapsed (traffic lights, sidebar toggle).
-    var leadingClearance: CGFloat = 0 {
-        didSet { if leadingClearance != oldValue { needsLayout = true } }
+    /// Where the window's own chrome ends, in the window's coordinates.
+    ///
+    /// The toggle sits at 92 and is 26 across, so it ends at 118 — measured,
+    /// not guessed. Ten points further on, a tab's capsule (inset two from its
+    /// cell) starts twelve points clear of it, which is exactly the gap the
+    /// new-tab button keeps from the last tab at the other end. The capsule is
+    /// what the eye measures from, not the close button inside it, so it is
+    /// the capsule the two ends are matched on.
+    private static let chromeWidth: CGFloat = 128
+
+    /// Points kept free at the leading edge for the chrome that overlaps this
+    /// row — traffic lights, sidebar toggle.
+    ///
+    /// Measured from where this row actually begins rather than announced by
+    /// whoever last toggled the sidebar. The two agree once things have
+    /// settled and they do not agree while the sidebar is moving: the row is
+    /// handed its new width over two tenths of a second, and a clearance
+    /// flipped in a single instant is wrong for every frame in between. Told,
+    /// it went to zero the moment the sidebar began to open — while the row
+    /// was still the full width of the window — and the tabs spread out under
+    /// the traffic lights and the toggle before sliding back. Measured, the
+    /// row simply starts wherever the chrome has stopped, at every frame,
+    /// because the chrome is not going anywhere and this row is.
+    private var leadingClearance: CGFloat {
+        guard window != nil else { return 0 }
+        return max(0, Self.chromeWidth - convert(NSPoint.zero, to: nil).x)
     }
 
     private var items: [SessionSnapshot.StripItem] = []
@@ -80,6 +111,40 @@ final class TabStripView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         let hit = super.hitTest(point)
         return hit === self ? nil : hit
+    }
+
+    /// Whether the window may be dragged by its titlebar right now, decided
+    /// by what the pointer is over.
+    ///
+    /// The window server runs a titlebar drag itself, without waking the app,
+    /// and the titlebar is a handle unconditionally: `mouseDownCanMoveWindow`
+    /// is not consulted there, and neither the row nor a cell can refuse on
+    /// its own behalf. What the window server does honour is `isMovable` —
+    /// but only the answer it already has. Refusing from `mouseDown` is too
+    /// late by then: the drag is underway, the window is travelling with the
+    /// pointer, and a pointer that keeps its place *within* the window looks
+    /// to this row exactly like a finger that never moved, which is why no
+    /// tab would change place however far it was dragged.
+    ///
+    /// So the answer is given in advance, on hover. Over a tab the window
+    /// holds still and the drag is the tab's; over the bare stretches of the
+    /// row it is a titlebar again, which is what those stretches are for.
+    private func updateWindowDragging(pointerAt point: NSPoint) {
+        // A lone tab is not a tab, it is the window's title — drawn without a
+        // capsule for exactly that reason — and there is nowhere to reorder it
+        // to. Holding the window still under it would take the title bar away
+        // from a window whose title bar is all this row is.
+        guard cells.count > 1 else {
+            setWindowDraggable(true)
+            return
+        }
+        setWindowDraggable(!cells.contains { $0.frame.contains(point) })
+    }
+
+    private func setWindowDraggable(_ draggable: Bool) {
+        guard let window, window.isMovable != draggable else { return }
+        window.isMovable = draggable
+        Trace.log("strip", "window is \(draggable ? "draggable" : "held still")")
     }
 
     func apply(_ newItems: [SessionSnapshot.StripItem]) {
@@ -152,6 +217,14 @@ final class TabStripView: NSView {
             newTabBackground.layer?.backgroundColor = Palette.current.controlFill.cgColor
         }
 
+        if window != nil {
+            let edge = convert(NSPoint.zero, to: nil).x
+            if edge != lastLeadingEdge {
+                lastLeadingEdge = edge
+                onLeadingEdgeMoved?(edge)
+            }
+        }
+
         guard !cells.isEmpty else { return }
         let left = leadingClearance
         let available = max(0, bounds.width - left - plusWidth - 8)
@@ -162,6 +235,14 @@ final class TabStripView: NSView {
         // the new-tab button and off the end of the strip. Tabs give ground
         // instead, and a cell narrow enough drops what it cannot show.
         let width = available / CGFloat(cells.count)
+        // The row's arithmetic, said once each time it changes. Where the
+        // tabs are is the first thing anybody asks when a press lands on the
+        // wrong one, and it is not otherwise recoverable from outside.
+        let shape = "row clear=\(Int(left)) slot=\(Int(width)) tabs=\(cells.count)"
+        if shape != lastShape {
+            lastShape = shape
+            Trace.log("strip", shape)
+        }
         var x = left
         for cell in cells {
             // Whole pixels: a fill edge on a half pixel renders soft.
@@ -190,6 +271,9 @@ final class TabStripView: NSView {
     private var carried: TabCellView?
     /// Whether the others should slide to their new places rather than jump.
     private var animating = false
+    /// The last row geometry traced, so a relayout that changes nothing is
+    /// not worth a line.
+    private var lastShape = ""
 
     /// Run a tab's drag to its end.
     ///
@@ -207,9 +291,18 @@ final class TabStripView: NSView {
             onSelect?(item)
             return
         }
+        // Hovering the tab said this already. Said again because a press that
+        // arrives without one — the app activated by this very click, the
+        // pointer never having moved since — would otherwise leave the window
+        // movable for the whole drag. Too late for this press, in time for
+        // the next.
+        setWindowDraggable(false)
+
         let start = convert(event.locationInWindow, from: nil)
         let originX = cell.frame.minX
         var moved = false
+        var sawDrag = 0
+        Trace.log("strip", "press on \(item.root) at \(Int(start.x))")
 
         window.trackEvents(
             matching: [.leftMouseDragged, .leftMouseUp],
@@ -223,9 +316,11 @@ final class TabStripView: NSView {
             let point = self.convert(event.locationInWindow, from: nil)
             switch event.type {
             case .leftMouseDragged:
+                sawDrag += 1
                 if !moved {
                     guard abs(point.x - start.x) > 4 else { return }
                     moved = true
+                    Trace.log("strip", "carrying \(item.root)")
                     self.carried = cell
                     // Above the others, so it passes over them rather than
                     // through them.
@@ -239,8 +334,11 @@ final class TabStripView: NSView {
                 self.carried = nil
                 if moved {
                     self.needsLayout = true
-                    self.onReorder?(self.cells.compactMap(\.tabID?.root))
+                    let order = self.cells.compactMap(\.tabID?.root)
+                    Trace.log("strip", "dropped, order now \(order)")
+                    self.onReorder?(order)
                 } else {
+                    Trace.log("strip", "released after \(sawDrag) drag events; treated as a click")
                     self.onSelect?(item)
                 }
 
@@ -248,10 +346,20 @@ final class TabStripView: NSView {
                 break
             }
         }
+        // `trackEvents` returns only once the drag is over, however it ended.
+        // Where the pointer came to rest decides, not where it started: a tab
+        // dropped under the pointer should still be holding the window.
+        updateWindowDragging(
+            pointerAt: convert(window.mouseLocationOutsideOfEventStream, from: nil))
     }
 
     /// Move the carried tab into the place its middle is over, and let the
     /// others slide.
+    ///
+    /// The place, not a fixed distance. A tab is as wide as the row allows,
+    /// which is a third of a wide window and a ninth of a narrow one, so any
+    /// number of points chosen here would be several places in one window and
+    /// a fraction of one in the next.
     private func settle(_ cell: TabCellView) {
         guard let at = cells.firstIndex(of: cell) else { return }
         let width = cell.frame.width
@@ -262,6 +370,7 @@ final class TabStripView: NSView {
         guard target != at else { return }
         cells.remove(at: at)
         cells.insert(cell, at: target)
+        Trace.log("strip", "moved to place \(target)")
         animating = true
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.14
@@ -293,10 +402,19 @@ final class TabStripView: NSView {
             options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
             owner: self
         ))
+        // Where the pointer is, rather than where it was last seen moving.
+        // Tabs open and close and the row relays itself under a pointer that
+        // is holding still, and a window's movability decided only on motion
+        // would keep answering for a tab that is no longer there.
+        if let window {
+            updateWindowDragging(
+                pointerAt: convert(window.mouseLocationOutsideOfEventStream, from: nil))
+        }
     }
 
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        updateWindowDragging(pointerAt: point)
         let overPlus = newTabBackground.frame.contains(point)
         if overPlus != newTabHovered {
             newTabHovered = overPlus
@@ -305,11 +423,19 @@ final class TabStripView: NSView {
     }
 
     override func mouseExited(with event: NSEvent) {
+        setWindowDraggable(true)
         if newTabHovered {
             newTabHovered = false
             tintNewTabButton()
         }
         for cell in cells { cell.clearHover() }
+    }
+
+    /// A row taken out of its window leaves that window movable, whatever the
+    /// pointer was over when it went.
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow !== window { setWindowDraggable(true) }
+        super.viewWillMove(toWindow: newWindow)
     }
 
     @objc private func newTabPressed() {
@@ -321,8 +447,13 @@ final class TabStripView: NSView {
     struct Palette: Equatable {
         let text: NSColor
         let dimText: NSColor
+        /// A title under the pointer. Between the two above on purpose: a tab
+        /// being offered should answer, and still not answer as loudly as the
+        /// tab you are actually in.
+        let hoverText: NSColor
         /// The selected tab's fill. Nothing paints the unselected ones.
         let selectedFill: NSColor
+        /// The faint capsule an unselected tab wears under the pointer.
         let hoverFill: NSColor
         /// The hairline around the selected tab, and the "+" button's ground.
         let edge: NSColor
@@ -342,6 +473,7 @@ final class TabStripView: NSView {
             return Palette(
                 text: ink.withAlphaComponent(dark ? 0.92 : 0.85),
                 dimText: ink.withAlphaComponent(0.45),
+                hoverText: ink.withAlphaComponent(dark ? 0.72 : 0.66),
                 selectedFill: ink.withAlphaComponent(dark ? 0.14 : 0.09),
                 hoverFill: ink.withAlphaComponent(dark ? 0.05 : 0.035),
                 edge: ink.withAlphaComponent(dark ? 0.16 : 0.10),
@@ -382,6 +514,17 @@ final class TabCellView: NSView {
     /// edge; it does not want one drawn on.
     private let fill: NSView = Glass.lozenge(cornerRadius: 12) ?? NSView()
     private let fillIsGlass = Glass.isAvailable
+    /// The capsule an unselected tab wears under the pointer.
+    ///
+    /// Flat, and its own view rather than the selected tab's. That one is
+    /// glass, and glass under a hover refracts into a dark well: it reads as a
+    /// hole punched in the bar rather than as a tab being offered, which is
+    /// why hovering used to paint nothing at all. A plain tint is what being
+    /// offered looks like, and it is what the palette named this colour for.
+    private let hoverFill = NSView()
+    /// Whether the capsule is currently being offered, so that a poll which
+    /// only changed a title does not restart the fade.
+    private var offering = false
     private let label = NSTextField(labelWithString: "")
     /// Kept, because how much room the title is owed changes with how much
     /// room the tab has. As inequalities against a centred label they become
@@ -405,6 +548,13 @@ final class TabCellView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
+
+        // Under everything, including the selected tab's glass: the two are
+        // never shown together, but the order says which is the ground.
+        hoverFill.wantsLayer = true
+        hoverFill.layer?.cornerCurve = .continuous
+        hoverFill.alphaValue = 0
+        addSubview(hoverFill)
 
         fill.wantsLayer = true
         if !fillIsGlass { fill.layer?.cornerCurve = .continuous }
@@ -464,8 +614,6 @@ final class TabCellView: NSView {
     override func layout() {
         super.layout()
         fill.frame = bounds.insetBy(dx: horizontalInset, dy: verticalInset)
-        // A capsule, not a rounded rectangle: the radius is half the height,
-        // which is the shape a tab lozenge has.
         // A capsule: the radius is half the height, which is the shape a tab
         // lozenge has.
         let radius = fill.frame.height / 2
@@ -474,6 +622,10 @@ final class TabCellView: NSView {
         } else {
             fill.layer?.cornerRadius = radius
         }
+        // The same shape in the same place, so that hovering a tab and then
+        // choosing it is one capsule firming up rather than two capsules.
+        hoverFill.frame = fill.frame
+        hoverFill.layer?.cornerRadius = radius
         // What a tab shows is decided by how much of it there is. The number
         // is a hint and steps aside first; the close button goes next, since
         // a tab too narrow to name is not one to be closed by aim; the title
@@ -502,12 +654,19 @@ final class TabCellView: NSView {
         if item.busy { title = "✳ \(title)" }
         if label.stringValue != title { label.stringValue = title }
         label.font = .systemFont(ofSize: 12, weight: item.isActive ? .medium : .regular)
-        label.textColor = item.isActive || alone ? palette.text : palette.dimText
+
+        // The tab you are in already answers, and a lone tab is a window
+        // title with nothing to choose between — neither is an offer, so
+        // neither takes one.
+        let offering = hovered && !item.isActive && !alone
+        label.textColor = item.isActive || alone
+            ? palette.text
+            : (offering ? palette.hoverText : palette.dimText)
+        hoverFill.layer?.backgroundColor = palette.hoverFill.cgColor
+        offer(offering)
 
         // One capsule in the row: the tab you are in. The others are text on
-        // the chrome, and hovering one brings its close button and nothing
-        // else — glass under a hover refracts into a dark well, which reads
-        // as a hole punched in the bar rather than as a tab being offered.
+        // the chrome until the pointer is over them.
         if fillIsGlass {
             fill.isHidden = !item.isActive || alone
             Glass.tint(fill, palette.glassTint)
@@ -558,6 +717,19 @@ final class TabCellView: NSView {
         clearHover()
     }
 
+    /// Fade the capsule in or out, and only when the answer has changed: a
+    /// poll arrives every so often and would otherwise restart the fade from
+    /// the top while the pointer sits perfectly still.
+    private func offer(_ offering: Bool) {
+        guard offering != self.offering else { return }
+        self.offering = offering
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.12
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            hoverFill.animator().alphaValue = offering ? 1 : 0
+        }
+    }
+
     /// Told from the row that the pointer is gone, for the case AppKit does
     /// not say so itself.
     func clearHover() {
@@ -574,6 +746,20 @@ final class TabCellView: NSView {
 
     /// Which tab this cell is showing, for the row that reorders them.
     var tabID: TabID? { item?.id }
+
+    /// Every press inside a tab is the tab's, wherever it lands.
+    ///
+    /// A cell is made of a pane of glass and two labels, and a press that
+    /// lands on one of those is that view's press, not the cell's — which
+    /// meant it never reached the code that moves tabs at all. The close
+    /// button is a control and keeps its clicks; everything else in here is
+    /// decoration.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let local = convert(point, from: superview)
+        guard bounds.contains(local) else { return nil }
+        if !closeButton.isHidden, closeButton.frame.contains(local) { return closeButton }
+        return self
+    }
 
     /// The press is handed to the row rather than answered here: it might be
     /// a click that selects, or the start of a move, and only the row knows

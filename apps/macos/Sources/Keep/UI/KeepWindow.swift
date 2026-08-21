@@ -21,6 +21,9 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
     var onToggleSidebar: (() -> Void)?
 
     private weak var chromeBackdropView: NSView?
+    /// Kept so the toggle can be re-tinted when the terminal's colours move
+    /// under it, the same as everything else in this row.
+    private weak var sidebarToggleHost: CenteringHost?
     private weak var sidebarBackdropView: NSView?
     private var terminalBackgroundObserver: NSObjectProtocol?
 
@@ -78,6 +81,11 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
         }
     }
 
+    /// The sidebar's trailing edge moved; the toggle rides it.
+    func trackSidebarEdge(_ edge: CGFloat) {
+        sidebarToggleHost?.followSidebar(to: edge)
+    }
+
     /// The flat split item deliberately does not have AppKit's `.sidebar`
     /// behavior, so `NSSplitViewController.toggleSidebar` would be a no-op.
     @objc func toggleSidebar(_ sender: Any?) {
@@ -99,6 +107,7 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
             return
         }
         appliedAppearance = next
+        sidebarToggleHost?.retint()
 
         let isTransparent = next.opacity < 1
         if isTransparent {
@@ -196,7 +205,6 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
         button.imagePosition = .imageOnly
         button.imageScaling = .scaleProportionallyDown
         button.toolTip = "Toggle Sidebar (⌘B)"
-        button.contentTintColor = .secondaryLabelColor
         // The height of a tab's capsule, so the controls in the chrome are one
         // family. It used to be 28 because that is where the titlebar centred
         // the old bezelled button, and shrinking it moved the control down by
@@ -218,8 +226,18 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
             // Untinted at rest, like the new-tab button: glass refracts
             // darker than a dark bar, which is the quiet state this wants.
             glass.addSubview(button)
-            accessory.view = CenteringHost(child: glass, size: side, leading: 4)
+            // The host answers the pointer as well as centring: at rest this
+            // is untinted glass and a dim glyph, and under the pointer it
+            // lights, which is what the new-tab button at the far end of the
+            // row does. Two controls in one chrome that behave differently
+            // read as two kinds of thing, and only one of them as a control.
+            let host = CenteringHost(child: glass, control: button, size: side, leading: 4)
+            sidebarToggleHost = host
+            accessory.view = host
         } else {
+            // A bordered button carries its own ground and its own states.
+            // Nothing here is glass to light up, so nothing is asked to.
+            button.contentTintColor = .secondaryLabelColor
             button.bezelStyle = .circular
             button.isBordered = true
             button.setFrameSize(NSSize(width: 28, height: 28))
@@ -263,30 +281,140 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
 /// rather than being stretched into a slab.
 private final class CenteringHost: NSView {
     private let child: NSView
+    /// The control inside the child, whose glyph brightens under the pointer.
+    private weak var control: NSButton?
     private let side: CGFloat
     private let leading: CGFloat
+    private var hovered = false
 
-    init(child: NSView, size: CGFloat, leading: CGFloat) {
+    /// How far the button can be asked to travel.
+    ///
+    /// The sidebar stops widening at 320, and the button rides its edge, so
+    /// the host has to be at least that long to carry it there. Being longer
+    /// costs nothing: everything but the button itself is passed straight
+    /// through to the row underneath, which is the only reason a strip of
+    /// titlebar this wide can belong to a control this small.
+    private static let reach: CGFloat = 380
+    /// Between the button and the divider it sits against — the same twelve
+    /// points a tab's capsule keeps from the new-tab button at the far end.
+    private static let dividerGap: CGFloat = 12
+
+    /// Where the sidebar ends, in the window's coordinates. Zero until told,
+    /// and zero whenever the sidebar is collapsed, which is the same thing:
+    /// nothing to ride, so the button stays home.
+    private var sidebarEdge: CGFloat = 0
+
+    init(child: NSView, control: NSButton? = nil, size: CGFloat, leading: CGFloat) {
         self.child = child
+        self.control = control
         self.side = size
         self.leading = leading
-        super.init(frame: NSRect(x: 0, y: 0, width: size + leading * 2, height: size))
+        super.init(frame: NSRect(x: 0, y: 0, width: Self.reach, height: size))
         addSubview(child)
+        retint()
+    }
+
+    /// Follow the sidebar's trailing edge, and stop where the sidebar stops.
+    ///
+    /// Collapsing does not take the button with it: it rides the edge inward
+    /// until the edge passes its home beside the traffic lights, and then it
+    /// stays there while the sidebar goes on without it.
+    func followSidebar(to edge: CGFloat) {
+        guard edge != sidebarEdge else { return }
+        sidebarEdge = edge
+        needsLayout = true
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: Self.reach, height: NSView.noIntrinsicMetric)
+    }
+
+    /// Everything but the button belongs to whatever is underneath.
+    ///
+    /// This view is as long as the sidebar can be wide, and for most of that
+    /// length it is empty titlebar lying over the tab row. A press there is
+    /// the row's — a tab to be chosen or carried — and it would never reach
+    /// it if this view answered for the whole of itself.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard childFrame.contains(convert(point, from: superview)) else { return nil }
+        return super.hitTest(point)
+    }
+
+    /// Where the child sits. Worked out rather than read back, so that the
+    /// pointer is tracked over the same circle the eye sees whether or not a
+    /// layout pass has happened yet.
+    private var childFrame: NSRect {
+        NSRect(
+            x: childX,
+            y: ((bounds.height - side) / 2).rounded(),
+            width: side,
+            height: side)
+    }
+
+    /// Home is `leading` — hard against the traffic lights, where the button
+    /// has always been and where a collapsed sidebar leaves it. Past that it
+    /// is wherever the sidebar's edge has got to, measured in this view's own
+    /// coordinates so that no one has to know where the titlebar put it.
+    private var childX: CGFloat {
+        guard window != nil, sidebarEdge > 0 else { return leading }
+        let originInWindow = convert(NSPoint.zero, to: nil).x
+        return max(leading, sidebarEdge - Self.dividerGap - side - originInWindow)
+    }
+
+    /// Untinted glass at rest, which refracts darker than the bar and reads
+    /// as a well rather than a lamp; tinted only under the pointer. The same
+    /// two states, from the same palette, as the new-tab button.
+    func retint() {
+        let palette = TabStripView.Palette.current
+        Glass.tint(child, hovered ? palette.glassTint : nil)
+        control?.contentTintColor = hovered ? palette.text : palette.dimText
+    }
+
+    /// The circle, not the whole accessory. The titlebar stretches this view
+    /// to its full height, and lighting the button up for a pointer passing
+    /// well above or below it would be answering for something it is not.
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: childFrame,
+            options: [.mouseEnteredAndExited, .activeAlways],
+            owner: self))
+        // A control resized or reordered out from under a stationary pointer
+        // is never sent `mouseExited`; asking where the mouse is settles it.
+        let inside = window.map { window in
+            childFrame.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
+        } ?? false
+        if inside != hovered {
+            hovered = inside
+            retint()
+        }
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        guard !hovered else { return }
+        hovered = true
+        retint()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        guard hovered else { return }
+        hovered = false
+        retint()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not supported") }
 
-    override var intrinsicContentSize: NSSize {
-        NSSize(width: side + leading * 2, height: NSView.noIntrinsicMetric)
-    }
-
     override func layout() {
         super.layout()
-        child.frame = NSRect(
-            x: leading,
-            y: ((bounds.height - side) / 2).rounded(),
-            width: side,
-            height: side)
+        let place = childFrame
+        guard child.frame != place else { return }
+        child.frame = place
+        // The button moved, so the circle the pointer is watched over moved
+        // with it. Nothing else invalidates it: this view's own frame never
+        // changed.
+        updateTrackingAreas()
+        Trace.log("chrome", "toggle at \(Int(convert(place.origin, to: nil).x))")
     }
 }

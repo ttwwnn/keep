@@ -173,6 +173,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         tabStrip.onClose = { [weak self] id in self?.session.dispatch(.closeTab(id)) }
         tabStrip.onNewTab = { [weak self] in self?.session.dispatch(.newTab(in: nil)) }
         tabStrip.onReorder = { [weak self] ids in self?.session.dispatch(.reorderTabs(ids)) }
+        // The row's leading edge is the sidebar's trailing edge, and the
+        // toggle above the sidebar rides it.
+        tabStrip.onLeadingEdgeMoved = { [weak self] edge in
+            (self?.window as? KeepWindow)?.trackSidebarEdge(edge)
+        }
 
         picker.onHighlight = { [weak self] id in
             self?.session.dispatch(.previewPickerItem(id))
@@ -356,7 +361,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
         if animated {
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.2
+                // Short, because every frame of it costs: the terminal is
+                // re-laid out and the shell is told its new size at each one.
+                context.duration = 0.12
                 sidebarItem.animator().isCollapsed = state.isCollapsed
             }
         } else {
@@ -375,18 +382,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 "sidebar",
                 "width \(Int(state.width)) → \(Int(sidebarItem.viewController.view.frame.width))")
         }
-        // With the sidebar collapsed the content starts at the window's left
-        // edge, under the traffic lights and the toggle button; the strip
-        // clears them. Expanded, the sidebar itself is the clearance.
-        //
-        // The toggle sits at 92 in the strip's own coordinates — measured,
-        // not guessed — and is 26 across, so it ends at 118. Ten points
-        // further on, a tab's capsule (inset two from its cell) starts twelve
-        // points clear of it, which is exactly the gap the new-tab button
-        // keeps from the last tab at the other end. The capsule is what the
-        // eye measures from, not the close button inside it, so it is the
-        // capsule the two ends are matched on.
-        tabStrip.leadingClearance = state.isCollapsed ? 128 : 0
+        // Nothing is said to the strip about the chrome it has to clear. It
+        // can see where it starts, and while the sidebar is animating that is
+        // the only account of the matter that is true at every frame.
     }
 
     private func cancelSpring() {
