@@ -14,6 +14,15 @@ final class WorkspaceEntity {
     var arrangement: (([UInt32]) -> [UInt32])?
     private(set) var activeTabID: TabID?
 
+    /// Where this workspace last was, for the sidebar row.
+    ///
+    /// Remembered rather than read each time. A tab titles itself after
+    /// whatever it is running, so the moment work starts the place stops
+    /// being on offer — and that is exactly when it is worth knowing, since a
+    /// row that has said the same path for an hour is a row you can leave
+    /// alone. It is only ever replaced by another place, never by a command.
+    private(set) var place: String = ""
+
     // Cached from the daemon listing for the sidebar row.
     private(set) var subtitle: String = "empty"
     private(set) var dot: SessionSnapshot.SidebarRow.Dot = .empty
@@ -32,6 +41,25 @@ final class WorkspaceEntity {
             (ids.firstIndex(of: $0.id.root) ?? Int.max)
                 < (ids.firstIndex(of: $1.id.root) ?? Int.max)
         }
+    }
+
+    /// The path out of a tab's title, when the title has one.
+    ///
+    /// Shells differ: some title the tab `user@host:/some/path`, others just
+    /// the path. The user is always the same user and the host is this
+    /// machine, so where a prefix like that is present it is dropped.
+    ///
+    /// What is left has to look like a path to count. A title that does not
+    /// is a program that renamed the tab — it is saying something, and the
+    /// row shows that too, but it is not saying where.
+    static func place(in title: String) -> String? {
+        var text = title
+        if let colon = text.firstIndex(of: ":"),
+           text[text.startIndex..<colon].contains("@") {
+            text = String(text[text.index(after: colon)...])
+        }
+        guard text.hasPrefix("/") || text.hasPrefix("~") else { return nil }
+        return text
     }
 
     func activate(_ id: TabID) {
@@ -86,6 +114,11 @@ final class WorkspaceEntity {
         }
         if activeTabID == nil, let first = tabs.first {
             activeTabID = first.id
+            changed = true
+        }
+
+        if let found = Self.place(in: activeTab?.title ?? ""), found != place {
+            place = found
             changed = true
         }
 

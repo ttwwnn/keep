@@ -697,6 +697,7 @@ final class Session {
                 subtitle: workspace.subtitle,
                 tabs: workspace.tabs.count,
                 running: workspace.tabs.flatMap(\.busyTitles),
+                place: workspace.place,
                 dot: workspace.dot,
                 isActive: workspace.name == activeWorkspaceName
             )

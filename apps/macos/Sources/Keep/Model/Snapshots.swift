@@ -216,6 +216,13 @@ struct SessionSnapshot: Hashable {
         /// pane wears, which is the command for shells that rename their
         /// window while one runs.
         let running: [String]
+        /// Where the workspace is, as its active tab last said so.
+        ///
+        /// Taken from the tab's title rather than from the surface that is
+        /// showing it, because a workspace nobody has opened yet has no
+        /// surface and would have nothing to say — and the one row that
+        /// most needs a word about itself is the one you have not been to.
+        let place: String
         let dot: Dot
         let isActive: Bool
         var id: String { name }

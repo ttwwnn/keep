@@ -69,6 +69,7 @@ struct WorkspaceSidebar: View {
         Button {
             dispatch(.activateWorkspace(row.name))
         } label: {
+            VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 8) {
                 StateDot(state: row.dot)
                 Text(row.name)
@@ -119,6 +120,19 @@ struct WorkspaceSidebar: View {
                     }
                 }
                 .font(counter)
+            }
+            // Where the workspace is. The name above is what somebody called
+            // it and this is what it turned out to be, which for a row that
+            // has not been opened in a while is the more useful of the two.
+            // Cut from the front, because a path is identified by its end.
+            if !row.place.isEmpty {
+                Text(row.place)
+                    .font(counter)
+                    .foregroundStyle(row.isActive ? Palette.inkFaint : Palette.inkFaint.opacity(0.75))
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .padding(.leading, 16)
+            }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
