@@ -192,14 +192,14 @@ check() {  # check <what> <wanted> <got>
 }
 # Same reason as `reorder`: a window that a tiling manager puts back before
 # the sampler notices has not disproved anything.
-moved_window() {   # moved_window <what> <x> <y> <dx> <dy>
-    local attempt
-    for attempt in 1 2 3; do
+moved_window() {   # moved_window <what> <x> <y> <dy>
+    local step
+    for step in $STEPS $STEPS; do
         window_travelled && { check "$1" "it moved" "it moved"; return; }
-        say "        (attempt $attempt saw it still, trying again)"
+        say "        (still there; pushing $step across)"
         "$MOUSE" watch 4 >"$WORK/window.log" 2>&1 &
         local watcher=$!
-        "$MOUSE" drag "$2" "$3" $(( $2 + $4 )) $(( $3 + $5 )) 25 18
+        "$MOUSE" drag "$2" "$3" $(( $2 + step )) $(( $3 + $4 )) 25 18
         wait "$watcher" 2>/dev/null
         sleep 1
     done
@@ -216,20 +216,15 @@ check_still() {
     fi
 }
 
-# Dragged inward, never outward.
+# Which way a window can actually be pushed is not knowable in advance.
 #
-# A window sitting against the right edge of the screen cannot be dragged
-# further right — the system holds it — so a test that always pushed right
-# reported "the window would not move" about a window that was merely already
-# there. Aim at the middle of the screen instead, whichever side that is on.
-inward() {
-    local from=$1 width=$2
-    local screen
-    screen=$(osascript -e 'tell application "Finder" to get bounds of window of desktop' 2>/dev/null \
-        | awk -F', ' '{print $3}')
-    screen=${screen:-1440}
-    if [ "$((from + width / 2))" -gt "$((screen / 2))" ]; then echo -160; else echo 160; fi
-}
+# A window against the right edge of the screen will not go further right, and
+# on a second display — where the coordinates are negative and the desktop
+# bounds do not describe the screen the window is on — working out which edge
+# it is against gets it wrong. So the direction is not computed: the first
+# attempt goes one way and the retry goes the other, and a window that moves
+# either way has proved the point.
+STEPS="160 -160"
 
 # ------------------------------------------------------------ moving a tab
 
@@ -268,12 +263,11 @@ say "what the rest of the row is still for"
 read -r WX WY WW WH < <("$MOUSE" frame); ROW_Y=$((WY + (ROW_Y - WY)))
 "$MOUSE" watch 4 >"$WORK/window.log" 2>&1 &
 WATCHER=$!
-STEP=$(inward "$WX" "$WW")
-"$MOUSE" drag $((WX + WW - 4)) "$ROW_Y" $((WX + WW - 4 + STEP)) $((ROW_Y + 40)) 25 18
+"$MOUSE" drag $((WX + WW - 4)) "$ROW_Y" $((WX + WW - 164)) $((ROW_Y + 40)) 25 18
 wait "$WATCHER" 2>/dev/null
 sleep 1
 moved_window "the bare end of the row drags the window" \
-    $((WX + WW - 4)) "$ROW_Y" "$STEP" 40
+    $((WX + WW - 4)) "$ROW_Y" 40
 
 say ""
 say "a window with one tab"
@@ -283,12 +277,11 @@ read -r WX WY WW WH < <("$MOUSE" frame)
 "$MOUSE" watch 4 >"$WORK/window.log" 2>&1 &
 WATCHER=$!
 # Squarely on the title, which with one tab is the whole row.
-STEP=$(inward "$WX" "$WW")
-"$MOUSE" drag $((WX + WW / 2)) $((WY + 22)) $((WX + WW / 2 + STEP)) $((WY + 62)) 25 18
+"$MOUSE" drag $((WX + WW / 2)) $((WY + 22)) $((WX + WW / 2 - 160)) $((WY + 62)) 25 18
 wait "$WATCHER" 2>/dev/null
 sleep 1
 moved_window "a lone title is still a title bar" \
-    $((WX + WW / 2)) $((WY + 22)) "$STEP" 40
+    $((WX + WW / 2)) $((WY + 22)) 40
 
 # ---------------------------------------------------------------------- done
 
