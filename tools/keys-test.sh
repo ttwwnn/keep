@@ -80,6 +80,7 @@ say() { printf '%s\n' "$*"; }
 
 say "building the client and the daemon"
 cargo build --release -p keep -p keepd >/dev/null 2>&1 || { say "cargo build failed"; exit 1; }
+bundle_binaries "$APP" || { say "could not put the fresh binaries in the bundle"; exit 1; }
 swiftc -O tools/sendkey.swift -o "$SENDKEY" 2>/dev/null || { say "could not build sendkey"; exit 1; }
 
 export KEEP_SOCKET=$SOCKET

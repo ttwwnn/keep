@@ -534,3 +534,45 @@ fn a_size_change_repaints_the_other_viewer() {
     let seen = read_until(&mut big, "before7", Duration::from_secs(5));
     assert!(seen.contains("before7"), "no repaint reached the viewer that did not ask: {seen:?}");
 }
+
+/// A viewer that has looked away stops voting on the size.
+///
+/// The app keeps every tab a window has visited mounted, with a live client
+/// on it, so a narrow window that once visited this tab would otherwise clamp
+/// it forever while showing something else entirely. Zero means "not looking",
+/// which `Tab::resize` already ignores, so it falls out of the minimum for
+/// free.
+#[test]
+fn a_hidden_viewer_does_not_throttle_the_other() {
+    let path = start_daemon("size-hidden");
+    let _big = attach(&path, "hidden", 200, 50);
+    let mut small = attach(&path, "hidden", 80, 24);
+    assert_eq!(size_settles(&path, "hidden", (80, 24)), (80, 24));
+
+    // The small window switched to another tab. Its client stays connected.
+    ClientMsg::Resize { cols: 0, rows: 0 }.write(&mut small).unwrap();
+    assert_eq!(
+        size_settles(&path, "hidden", (200, 50)),
+        (200, 50),
+        "a viewer nobody can see is still clamping the tab"
+    );
+
+    // And it counts again the moment it is shown.
+    ClientMsg::Resize { cols: 80, rows: 24 }.write(&mut small).unwrap();
+    assert_eq!(size_settles(&path, "hidden", (80, 24)), (80, 24));
+}
+
+/// With everyone looking away the tab keeps the size it had.
+///
+/// Not a detail: reflowing to some default for an audience of nobody would
+/// scramble the scrollback of a build the user comes back to read.
+#[test]
+fn nobody_looking_leaves_the_size_alone() {
+    let path = start_daemon("size-nobody");
+    let mut only = attach(&path, "nobody", 120, 40);
+    assert_eq!(size_settles(&path, "nobody", (120, 40)), (120, 40));
+
+    ClientMsg::Resize { cols: 0, rows: 0 }.write(&mut only).unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(size_of(&path, "nobody"), (120, 40), "an unwatched tab reflowed itself");
+}

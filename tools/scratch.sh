@@ -61,3 +61,17 @@ restore_app() {
     local bundle=$1
     ( unset KEEP_SOCKET KEEP_TRACE; open "$bundle" >/dev/null 2>&1 ) &
 }
+
+# Put the client and daemon that were just built inside the app bundle.
+#
+# The app runs `Contents/Resources/keep`, not the one in `target/`, and
+# nothing in the Xcode build copies it there. So a test that carefully builds
+# the client and then starts the app is testing whichever client was last
+# copied in by hand — which, when this was written, was three days old and had
+# none of the behaviour under test. The copy invalidates the bundle's
+# signature, hence the re-sign.
+bundle_binaries() {
+    local bundle=$1
+    cp target/release/keep target/release/keepd "$bundle/Contents/Resources/" || return 1
+    codesign --force --deep --sign - "$bundle" >/dev/null 2>&1
+}

@@ -29,14 +29,14 @@ fn run() -> Result<()> {
             // An embedder (the macOS app) launches this with no arguments and
             // leaves the target in the working directory. Read it exactly
             // once: the read consumes the file.
-            if let Some((name, tab)) = embedded_target() {
-                return enter(&socket, &name, tab);
+            if let Some(target) = embedded_target() {
+                return enter(&socket, &target.workspace, target.tab, target.watching);
             }
 
             let workspaces = list(&socket)?;
             match picker::pick(&workspaces)? {
                 picker::Choice::Workspace(name) | picker::Choice::New(name) => {
-                    enter(&socket, &name, TAB_ANY)
+                    enter(&socket, &name, TAB_ANY, None)
                 }
                 picker::Choice::Cancelled => Ok(()),
             }
@@ -98,13 +98,18 @@ fn run() -> Result<()> {
                 Some(i) => args.get(i + 1).and_then(|v| v.parse().ok()).unwrap_or(TAB_ANY),
                 None => TAB_ANY,
             };
-            enter(&socket, name, tab)
+            enter(&socket, name, tab, None)
         }
     }
 }
 
-fn enter(socket: &Path, name: &str, tab: u32) -> Result<()> {
-    match attach::attach(socket, name, tab)? {
+fn enter(
+    socket: &Path,
+    name: &str,
+    tab: u32,
+    watching: Option<std::path::PathBuf>,
+) -> Result<()> {
+    match attach::attach(socket, name, tab, watching)? {
         attach::Outcome::Detached => {
             println!("detached from {name}");
         }
@@ -203,22 +208,37 @@ const TARGET_FILE: &str = ".keep-attach";
 ///
 /// The file is consumed on read: a session that later runs `cd` into the same
 /// directory must not be treated as a fresh attach request.
-fn embedded_target() -> Option<(String, u32)> {
+///
+/// A third line, if present, names a file the embedder keeps updated with
+/// whether its surface is on screen. That one is *not* consumed — it is read
+/// for as long as this client runs.
+struct Target {
+    workspace: String,
+    tab: u32,
+    watching: Option<std::path::PathBuf>,
+}
+
+fn embedded_target() -> Option<Target> {
     embedded_target_in(&std::env::current_dir().ok()?)
 }
 
-fn embedded_target_in(dir: &Path) -> Option<(String, u32)> {
+fn embedded_target_in(dir: &Path) -> Option<Target> {
     let path = dir.join(TARGET_FILE);
     let body = std::fs::read_to_string(&path).ok()?;
     std::fs::remove_file(&path).ok();
 
     let mut lines = body.lines();
-    let name = lines.next()?.trim().to_string();
-    if name.is_empty() {
+    let workspace = lines.next()?.trim().to_string();
+    if workspace.is_empty() {
         return None;
     }
     let tab = lines.next().and_then(|v| v.trim().parse().ok()).unwrap_or(TAB_ANY);
-    Some((name, tab))
+    let watching = lines
+        .next()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from);
+    Some(Target { workspace, tab, watching })
 }
 
 /// Look for `keepd` next to this binary first, so a build tree and an
@@ -273,14 +293,29 @@ mod embedded {
     fn reads_session_and_tab() {
         let dir = scratch("pair");
         std::fs::write(dir.join(TARGET_FILE), "orion\n7\n").unwrap();
-        assert_eq!(embedded_target_in(&dir), Some(("orion".into(), 7)));
+        let target = embedded_target_in(&dir).expect("target");
+        assert_eq!((target.workspace.as_str(), target.tab), ("orion", 7));
+        assert!(target.watching.is_none(), "no third line means nobody is watching");
     }
 
     #[test]
     fn a_missing_tab_means_any_tab() {
         let dir = scratch("notab");
         std::fs::write(dir.join(TARGET_FILE), "orion\n").unwrap();
-        assert_eq!(embedded_target_in(&dir), Some(("orion".into(), TAB_ANY)));
+        let target = embedded_target_in(&dir).expect("target");
+        assert_eq!((target.workspace.as_str(), target.tab), ("orion", TAB_ANY));
+    }
+
+    /// A third line names a file that says whether the surface is on screen.
+    /// It is a path, not a state: the state changes while this client runs.
+    #[test]
+    fn a_third_line_names_the_file_that_says_if_we_are_seen() {
+        let dir = scratch("watch");
+        let flag = dir.join("showing");
+        std::fs::write(dir.join(TARGET_FILE), format!("orion\n7\n{}\n", flag.display()))
+            .unwrap();
+        let target = embedded_target_in(&dir).expect("target");
+        assert_eq!(target.watching.as_deref(), Some(flag.as_path()));
     }
 
     /// Reading consumes the file. Calling twice must not resurrect the target,
@@ -292,7 +327,7 @@ mod embedded {
         std::fs::write(dir.join(TARGET_FILE), "orion\n1\n").unwrap();
 
         assert!(embedded_target_in(&dir).is_some(), "first read should find it");
-        assert_eq!(embedded_target_in(&dir), None, "second read should find nothing");
+        assert!(embedded_target_in(&dir).is_none(), "second read should find nothing");
         assert!(!dir.join(TARGET_FILE).exists(), "file should be gone");
     }
 
@@ -300,6 +335,6 @@ mod embedded {
     fn no_file_is_not_an_error() {
         let dir = scratch("empty");
         std::fs::remove_file(dir.join(TARGET_FILE)).ok();
-        assert_eq!(embedded_target_in(&dir), None);
+        assert!(embedded_target_in(&dir).is_none());
     }
 }

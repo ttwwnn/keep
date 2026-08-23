@@ -75,6 +75,9 @@ final class TerminalSurfaceView: NSView {
             GhosttyApp.shared.unregister(surface: surface)
             ghostty_surface_free(surface)
         }
+        if let watchFile {
+            try? FileManager.default.removeItem(at: watchFile.deletingLastPathComponent())
+        }
     }
 
     override var acceptsFirstResponder: Bool { true }
@@ -116,8 +119,10 @@ final class TerminalSurfaceView: NSView {
         // `env_vars` and `initial_input` are accepted by the API and then
         // ignored, which is why the client is fixed app-wide (GhosttyApp)
         // and the target is a file the client reads and deletes.
-        guard let dir = Self.makeTargetDirectory(workspace: workspace, tab: tab) else { return }
-        dir.withCString { wd in
+        guard let target = Self.makeTargetDirectory(workspace: workspace, tab: tab) else { return }
+        watchFile = target.watch
+        noteShowing()  // a surface born into a hidden host is never told it is hidden
+        target.path.withCString { wd in
             config.working_directory = wd
             surface = ghostty_surface_new(app, &config)
         }
@@ -147,22 +152,50 @@ final class TerminalSurfaceView: NSView {
         startDisplayLink()
     }
 
-    /// A private directory holding this surface's attach target.
-    private static func makeTargetDirectory(workspace: String, tab: UInt32) -> String? {
+    /// Where this surface says whether it is on screen.
+    ///
+    /// Named on the third line of the attach file and, unlike the first two,
+    /// read for as long as the client runs. A tab is fitted to its smallest
+    /// viewer, and every tab a window has ever shown stays mounted here with a
+    /// live client — merely hidden. Without this, a narrow window that visited
+    /// a tab once would keep voting on its size forever, throttling a wide
+    /// window showing that same tab, for a reason nothing on screen explains.
+    private var watchFile: URL?
+
+    /// A private directory holding this surface's attach target, and the file
+    /// it will keep answering through.
+    private static func makeTargetDirectory(
+        workspace: String, tab: UInt32
+    ) -> (path: String, watch: URL)? {
         let base = FileManager.default.temporaryDirectory
             .appendingPathComponent("keep-attach", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let watch = base.appendingPathComponent("showing")
         do {
             try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-            try "\(workspace)\n\(tab)\n".write(
+            try "1".write(to: watch, atomically: true, encoding: .utf8)
+            try "\(workspace)\n\(tab)\n\(watch.path)\n".write(
                 to: base.appendingPathComponent(".keep-attach"),
                 atomically: true,
                 encoding: .utf8
             )
-            return base.path
+            return (base.path, watch)
         } catch {
             return nil
         }
+    }
+
+    /// Say whether this surface is on screen, for the client to read.
+    ///
+    /// Deliberately about layout, not occlusion: a window buried behind
+    /// another app still has a real size and comes back in a second, and
+    /// dropping its vote every time you switch apps would resize the shell
+    /// back and forth for nothing. What counts is being mounted and not
+    /// hidden — the state the tab switch flips.
+    private func noteShowing() {
+        guard let watchFile else { return }
+        let showing = window != nil && !isHiddenOrHasHiddenAncestor
+        try? (showing ? "1" : "0").write(to: watchFile, atomically: true, encoding: .utf8)
     }
 
     // MARK: - drawing
@@ -278,10 +311,12 @@ final class TerminalSurfaceView: NSView {
     override func viewDidHide() {
         super.viewDidHide()
         suspendDrawing()
+        noteShowing()
     }
 
     override func viewDidUnhide() {
         super.viewDidUnhide()
+        noteShowing()
         flushPendingSize()
         if let surface {
             ghostty_surface_set_occlusion(surface, true)

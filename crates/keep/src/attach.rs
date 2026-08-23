@@ -35,12 +35,37 @@ impl Drop for RawGuard {
     }
 }
 
+/// Whether the embedder says its surface is on screen. Anything unreadable
+/// counts as showing: a viewer that cannot be asked should be given room,
+/// not silently dropped from the reckoning.
+fn is_showing(path: &std::path::Path) -> bool {
+    match std::fs::read_to_string(path) {
+        Ok(body) => body.trim() != "0",
+        Err(_) => true,
+    }
+}
+
 pub enum Outcome {
     Detached,
     Ended,
 }
 
-pub fn attach(socket: &std::path::Path, name: &str, tab: u32) -> Result<Outcome> {
+/// Attach to a tab and pump it until the person detaches or the shell ends.
+///
+/// `watching` names a file an embedder may keep beside this client, holding
+/// `1` while the surface is on screen and `0` while it is not. A terminal
+/// multiplexer fits a tab to its smallest viewer, and this app mounts every
+/// tab a window has ever shown and merely hides the ones you are not looking
+/// at — so without this a narrow window that visited a tab once would go on
+/// voting on its size for as long as the app ran, throttling a wide window
+/// showing that same tab for a reason nobody could see. A hidden viewer
+/// reports no size at all, and the daemon leaves it out of the reckoning.
+pub fn attach(
+    socket: &std::path::Path,
+    name: &str,
+    tab: u32,
+    watching: Option<std::path::PathBuf>,
+) -> Result<Outcome> {
     let (cols, rows) = terminal::size().unwrap_or((80, 24));
 
     let mut sock = UnixStream::connect(socket).context("connect to daemon")?;
@@ -96,13 +121,16 @@ pub fn attach(socket: &std::path::Path, name: &str, tab: u32) -> Result<Outcome>
             let mut last = (cols, rows);
             while !resize_flag.load(Ordering::Acquire) {
                 std::thread::sleep(Duration::from_millis(200));
-                if let Ok(now) = terminal::size() {
-                    if now != last {
-                        last = now;
-                        let msg = ClientMsg::Resize { cols: now.0, rows: now.1 };
-                        if msg.write(&mut resize_sock).is_err() {
-                            break;
-                        }
+                // Zero means "not looking", which the daemon leaves out of
+                // the minimum. Read in the same tick as the size, since the
+                // two answer one question: how big is this viewer, if at all.
+                let showing = watching.as_ref().map(|p| is_showing(p)).unwrap_or(true);
+                let now = if showing { terminal::size().unwrap_or(last) } else { (0, 0) };
+                if now != last {
+                    last = now;
+                    let msg = ClientMsg::Resize { cols: now.0, rows: now.1 };
+                    if msg.write(&mut resize_sock).is_err() {
+                        break;
                     }
                 }
             }
@@ -349,5 +377,39 @@ mod legacy_tests {
         let junk = [0x1b; 200];
         let out = legacy.decode(&junk);
         assert!(!out.is_empty(), "a flood of escapes was swallowed whole");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_showing;
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("keep-showing-{name}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("showing")
+    }
+
+    #[test]
+    fn a_zero_means_nobody_can_see_us() {
+        let p = scratch("off");
+        std::fs::write(&p, "0").unwrap();
+        assert!(!is_showing(&p));
+    }
+
+    #[test]
+    fn anything_else_means_we_are_on_screen() {
+        let p = scratch("on");
+        std::fs::write(&p, "1\n").unwrap();
+        assert!(is_showing(&p));
+    }
+
+    /// The safe direction when we cannot tell. A client that wrongly says it
+    /// is hidden drops out of the size vote and lets the tab reflow under a
+    /// window that is looking right at it; one that wrongly says it is visible
+    /// just behaves the way every client did before this existed.
+    #[test]
+    fn no_file_means_we_assume_we_are_seen() {
+        assert!(is_showing(&scratch("gone").with_file_name("never-written")));
     }
 }
