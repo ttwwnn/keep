@@ -189,13 +189,13 @@ fn attach(
         }
     };
 
-    // The client's geometry wins: it is the thing actually displaying this.
-    tab.resize(cols, rows).ok();
-
     // Tell the client which tab it landed on — it may have asked for TAB_ANY.
     ServerMsg::Attached { tab: tab_id }.write(&mut writer)?;
 
-    let (repaint, attachment) = tab.attach()?;
+    // The client's geometry joins the reckoning rather than winning it: the
+    // tab fits whichever viewer is smallest, and this may be it.
+    let (repaint, attachment) = tab.attach(cols, rows)?;
+    let viewer = attachment.id();
     ServerMsg::Repaint(repaint).write(&mut writer)?;
 
     // Pump: session output to the socket. Sole writer for the rest of the
@@ -262,7 +262,7 @@ fn attach(
                 }
             }
             ClientMsg::Resize { cols, rows } => {
-                tab.resize(cols, rows).ok();
+                tab.set_viewer_size(viewer, cols, rows).ok();
             }
             _ => break,
         }
@@ -271,6 +271,10 @@ fn attach(
     // The client is gone. The workspace is not: that is the whole point.
     stop.store(true, Ordering::Release);
     drop(reader);
+    // After the join, not before: the attachment is dropped on the pump
+    // thread, and rebalancing while this viewer is still counted would leave
+    // the tab fitted to somebody who has already gone.
     pump.join().ok();
+    tab.rebalance();
     Ok(())
 }

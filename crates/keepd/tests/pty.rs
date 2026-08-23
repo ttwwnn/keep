@@ -127,7 +127,7 @@ fn attach_has_no_gap_and_no_duplicate() {
         "setup output never appeared"
     );
 
-    let (repaint_bytes, attachment) = session.attach().expect("attach");
+    let (repaint_bytes, attachment) = session.attach(60, 20).expect("attach");
     let repaint = String::from_utf8_lossy(&repaint_bytes).into_owned();
     assert!(repaint.contains("before2"), "repaint missed prior output");
 
@@ -164,7 +164,7 @@ fn detaching_stops_counting_the_client_right_away() {
     let session = Tab::spawn(shell(), 40, 10).expect("spawn");
     assert_eq!(session.attached_clients(), 0, "fresh session has no clients");
 
-    let (_repaint, attachment) = session.attach().expect("attach");
+    let (_repaint, attachment) = session.attach(40, 10).expect("attach");
     assert_eq!(session.attached_clients(), 1, "attach was not counted");
 
     drop(attachment);
@@ -221,7 +221,7 @@ fn a_client_that_stops_reading_is_repainted_not_starved() {
 
     // Attach and then never touch `output`: this stands in for a client whose
     // socket has stopped draining.
-    let (_repaint, attachment) = session.attach().expect("attach");
+    let (_repaint, attachment) = session.attach(60, 20).expect("attach");
     assert!(!attachment.overflowed(), "a fresh attachment has dropped nothing");
 
     // Far more output than the backlog can hold.

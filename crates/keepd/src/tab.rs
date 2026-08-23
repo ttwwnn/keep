@@ -39,6 +39,10 @@ struct Subscriber {
     /// Set when this client was too far behind to be handed a chunk. It is
     /// repaid with the whole screen rather than a stream missing a piece.
     overflowed: Arc<AtomicBool>,
+    /// The size this client is showing, which is a request and not a verdict.
+    /// A tab has one size and may have several viewers; see `negotiate`.
+    /// Zero in either direction means "not looking" and is left out.
+    size: (u16, u16),
 }
 
 struct Inner {
@@ -75,6 +79,11 @@ pub struct Attachment {
 }
 
 impl Attachment {
+    /// Which viewer this is, for telling the tab how big it is.
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
     /// Whether the daemon had to drop output because this client fell behind.
     pub fn overflowed(&self) -> bool {
         self.overflowed.load(Ordering::Acquire)
@@ -185,19 +194,92 @@ impl Tab {
     ///
     /// Returns the screen as it stands now, plus a feed of everything after
     /// it. Both come from one locked section so no output can slip between.
-    pub fn attach(&self) -> Result<(Vec<u8>, Attachment)> {
-        let mut guard = self.inner.lock().map_err(|_| anyhow::anyhow!("tab poisoned"))?;
-        let repaint = guard
-            .terminal
-            .snapshot(Format::Vt)
-            .map_err(|e| anyhow::anyhow!("snapshot: {e}"))?;
-        let (tx, rx) = sync_channel(CLIENT_BACKLOG);
-        let id = guard.next_id;
-        guard.next_id += 1;
-        let overflowed = Arc::new(AtomicBool::new(false));
-        guard.subscribers.push(Subscriber { id, tx, overflowed: Arc::clone(&overflowed) });
-        drop(guard);
-        Ok((repaint, Attachment { output: rx, inner: Arc::clone(&self.inner), id, overflowed }))
+    pub fn attach(&self, cols: u16, rows: u16) -> Result<(Vec<u8>, Attachment)> {
+        let attachment = {
+            let mut guard = self.inner.lock().map_err(|_| anyhow::anyhow!("tab poisoned"))?;
+            let (tx, rx) = sync_channel(CLIENT_BACKLOG);
+            let id = guard.next_id;
+            guard.next_id += 1;
+            let overflowed = Arc::new(AtomicBool::new(false));
+            guard.subscribers.push(Subscriber {
+                id,
+                tx,
+                overflowed: Arc::clone(&overflowed),
+                size: (cols, rows),
+            });
+            Attachment { output: rx, inner: Arc::clone(&self.inner), id, overflowed }
+        };
+        // Size first, screen second. `resync` drains this client's queue and
+        // photographs the grid under one lock, so the screen it returns is the
+        // one the new size produced and nothing can slip between the two —
+        // which is the same atomicity the old order got by snapshotting before
+        // anyone else could write.
+        self.negotiate(Some(attachment.id))?;
+        let repaint = attachment.resync()?;
+        Ok((repaint, attachment))
+    }
+
+    /// Fit the tab to the smallest viewer watching it.
+    ///
+    /// A pty has one size and a tab may have several viewers, so somebody has
+    /// to lose. The smallest wins because the two directions are not equally
+    /// bad: a viewer *larger* than the grid shows blank margin, while a viewer
+    /// *smaller* than it garbles — rows laid out for 200 columns wrap at 80,
+    /// absolute cursor moves land on the wrong line, and no repaint fixes it
+    /// because the repaint arrives the same shape. Under the minimum, nobody
+    /// is ever smaller than the grid.
+    ///
+    /// `caused_by` is the viewer that asked, and is not repaid: it already
+    /// knows. Everyone else is holding a screen drawn for the old size, so
+    /// they are marked overflowed, which is how they are already told to ask
+    /// for a whole screen — no new message, and the machinery has a test.
+    fn negotiate(&self, caused_by: Option<u64>) -> Result<()> {
+        let (wanted, viewers) = {
+            let guard = self.inner.lock().map_err(|_| anyhow::anyhow!("tab poisoned"))?;
+            let looking: Vec<(u16, u16)> = guard
+                .subscribers
+                .iter()
+                .map(|s| s.size)
+                .filter(|(c, r)| *c > 0 && *r > 0)
+                .collect();
+            let Some(cols) = looking.iter().map(|(c, _)| *c).min() else { return Ok(()) };
+            let rows = looking.iter().map(|(_, r)| *r).min().unwrap_or(0);
+            ((cols, rows), guard.subscribers.len())
+        };
+        // Nobody looking leaves the size alone: a tab nobody is watching
+        // should not snap to some default and reflow itself for no one.
+        if wanted == self.size() {
+            return Ok(());
+        }
+        self.resize(wanted.0, wanted.1)?;
+        if viewers > 1 {
+            if let Ok(guard) = self.inner.lock() {
+                for s in guard.subscribers.iter().filter(|s| Some(s.id) != caused_by) {
+                    s.overflowed.store(true, Ordering::Release);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// One viewer says how big it is now. The tab still fits the smallest.
+    pub fn set_viewer_size(&self, viewer: u64, cols: u16, rows: u16) -> Result<()> {
+        {
+            let mut guard = self.inner.lock().map_err(|_| anyhow::anyhow!("tab poisoned"))?;
+            let Some(s) = guard.subscribers.iter_mut().find(|s| s.id == viewer) else {
+                return Ok(());
+            };
+            if s.size == (cols, rows) {
+                return Ok(());
+            }
+            s.size = (cols, rows);
+        }
+        self.negotiate(Some(viewer))
+    }
+
+    /// A viewer has gone. Whoever is left may have room they did not have.
+    pub fn rebalance(&self) {
+        let _ = self.negotiate(None);
     }
 
     /// Forward client input to the child.

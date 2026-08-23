@@ -427,3 +427,110 @@ fn tabs_of(path: &std::path::Path, workspace: &str) -> Vec<keep_proto::TabInfo> 
         _ => Vec::new(),
     }
 }
+
+/// The size of a workspace's first tab, as the daemon reports it.
+fn size_of(path: &std::path::Path, workspace: &str) -> (u16, u16) {
+    tabs_of(path, workspace).first().map(|t| (t.cols, t.rows)).unwrap_or((0, 0))
+}
+
+/// Wait for a size, so a test does not race the negotiation.
+fn size_settles(path: &std::path::Path, workspace: &str, want: (u16, u16)) -> (u16, u16) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut seen = size_of(path, workspace);
+    while Instant::now() < deadline && seen != want {
+        std::thread::sleep(Duration::from_millis(50));
+        seen = size_of(path, workspace);
+    }
+    seen
+}
+
+fn attach(path: &std::path::Path, workspace: &str, cols: u16, rows: u16) -> UnixStream {
+    let mut sock = UnixStream::connect(path).unwrap();
+    ClientMsg::Attach { workspace: workspace.into(), tab: TAB_ANY, cols, rows }
+        .write(&mut sock)
+        .unwrap();
+    sock.set_read_timeout(Some(Duration::from_secs(5))).ok();
+    ServerMsg::read(&mut sock).unwrap();
+    sock
+}
+
+/// One viewer still gets exactly what it asks for.
+///
+/// The guard on everything below: a minimum computed over a stale or default
+/// entry would clamp the ordinary single-client case, and every other test
+/// here would still pass.
+#[test]
+fn one_viewer_gets_what_it_asks_for() {
+    let path = start_daemon("size-one");
+    let mut a = attach(&path, "solo", 100, 30);
+    assert_eq!(size_settles(&path, "solo", (100, 30)), (100, 30));
+
+    ClientMsg::Resize { cols: 132, rows: 43 }.write(&mut a).unwrap();
+    assert_eq!(size_settles(&path, "solo", (132, 43)), (132, 43));
+}
+
+/// Two viewers, and the tab fits the smaller — in both directions, whichever
+/// order they arrive in.
+#[test]
+fn the_smallest_viewer_decides() {
+    let path = start_daemon("size-min");
+
+    let _big = attach(&path, "both", 200, 50);
+    assert_eq!(size_settles(&path, "both", (200, 50)), (200, 50));
+
+    // A smaller one joining shrinks the tab: the big viewer letterboxes,
+    // which is the harmless direction.
+    let _small = attach(&path, "both", 80, 24);
+    assert_eq!(size_settles(&path, "both", (80, 24)), (80, 24));
+
+    // And a bigger one joining does not stretch it back.
+    let _bigger = attach(&path, "both", 300, 60);
+    assert_eq!(size_settles(&path, "both", (80, 24)), (80, 24));
+}
+
+/// A resize from one viewer is still bounded by the other.
+#[test]
+fn a_resize_is_still_bounded_by_the_other_viewer() {
+    let path = start_daemon("size-bound");
+    let mut big = attach(&path, "bound", 200, 50);
+    let _small = attach(&path, "bound", 80, 24);
+    assert_eq!(size_settles(&path, "bound", (80, 24)), (80, 24));
+
+    ClientMsg::Resize { cols: 300, rows: 70 }.write(&mut big).unwrap();
+    assert_eq!(size_settles(&path, "bound", (80, 24)), (80, 24), "the big viewer stretched it");
+}
+
+/// When the small viewer leaves, the room it was taking comes back.
+#[test]
+fn the_size_returns_when_the_small_viewer_leaves() {
+    let path = start_daemon("size-leave");
+    let _big = attach(&path, "leave", 200, 50);
+    let small = attach(&path, "leave", 80, 24);
+    assert_eq!(size_settles(&path, "leave", (80, 24)), (80, 24));
+
+    drop(small);
+    assert_eq!(
+        size_settles(&path, "leave", (200, 50)),
+        (200, 50),
+        "the tab stayed clamped to a viewer that left"
+    );
+}
+
+/// A viewer that did not ask for the change is handed a whole screen.
+///
+/// It is holding one drawn for the old size, and there is no message that
+/// says so — the daemon repays it the same way it repays a client that fell
+/// behind, which is machinery that already exists and is already tested.
+#[test]
+fn a_size_change_repaints_the_other_viewer() {
+    let path = start_daemon("size-repaint");
+    let mut big = attach(&path, "repaint", 200, 50);
+    ClientMsg::Input(b"echo before$((3+4))\n".to_vec()).write(&mut big).unwrap();
+    assert!(read_until(&mut big, "before7", Duration::from_secs(10)).contains("before7"));
+
+    let _small = attach(&path, "repaint", 80, 24);
+
+    // The big viewer asked for nothing and must still be sent a screen.
+    let seen = read_until(&mut big, "before7", Duration::from_secs(5));
+    assert!(seen.contains("before7"), "no repaint reached the viewer that did not ask: {seen:?}");
+}
