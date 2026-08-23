@@ -128,3 +128,71 @@ final class TabOrderStore {
         return placed + rest
     }
 }
+
+/// One window, as it was when the app last looked.
+///
+/// The frame is four numbers rather than an `NSRect` because this is the
+/// model layer and because JSON has no rectangles. Screens change between
+/// launches — a laptop comes back without its monitor — so a restored frame
+/// is a request, not a promise; `MainWindowController` puts it back on a
+/// screen that exists.
+struct WindowRecord: Codable, Equatable {
+    var x: Double
+    var y: Double
+    var width: Double
+    var height: Double
+    /// The workspaces this window carried, in its sidebar's order.
+    var workspaces: [String]
+    var tab: TabID?
+}
+
+/// Which windows were open, and what each was pointed at.
+///
+/// The app turns restoration off (`isRestorable = false`) and does this
+/// itself, because the two things a tiling window manager reacts to are how
+/// many windows there are and where they are — and those have to be ours to
+/// decide, in one turn of the run loop, rather than AppKit's to reopen at
+/// whatever moment suits it.
+///
+/// Written when a window closes and when the app is asked to quit, rather
+/// than continuously: those are the two moments the set of windows actually
+/// changes, and reading the frames live at each of them is simpler than
+/// keeping a copy in step with every drag. A crash loses the arrangement,
+/// which is the honest trade — nothing here is work, only furniture.
+@MainActor
+final class WindowStateStore {
+    private(set) var records: [Int: WindowRecord]
+    private let file: URL
+
+    init(directory: URL? = nil) {
+        let dir = directory ?? stateDirectory()
+        file = dir.appendingPathComponent("windows.json")
+        records = (try? JSONDecoder().decode(
+            [Int: WindowRecord].self, from: Data(contentsOf: file)
+        )) ?? [:]
+    }
+
+    /// The slots to open, lowest first. Slot 0 is always among them: the app
+    /// has a window whatever the file says, and an empty file is what a first
+    /// run and a clean quit both look like.
+    var slots: [WindowID] {
+        let known = Set(records.keys).union([WindowID.first.slot])
+        return known.sorted().map { WindowID(slot: $0) }
+    }
+
+    func record(for window: WindowID) -> WindowRecord? { records[window.slot] }
+
+    /// Replace the lot. Windows that are gone are gone: this is called with
+    /// everything that is open, so anything missing from it was closed.
+    func save(_ newRecords: [Int: WindowRecord]) {
+        guard records != newRecords else { return }
+        records = newRecords
+        write()
+    }
+
+    private func write() {
+        try? FileManager.default.createDirectory(
+            at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? JSONEncoder().encode(records).write(to: file, options: .atomic)
+    }
+}

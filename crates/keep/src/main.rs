@@ -146,14 +146,19 @@ fn print_list(workspaces: &[WorkspaceInfo]) {
         };
         println!("{:<24} {:>2} tab(s)  {}", s.name, live, state);
         for t in &s.tabs {
+            // How many are watching, once that can be more than one: two
+            // windows on one tab is a thing you do on purpose, and a thing
+            // you can forget you did.
             let mark = if t.finished {
-                "exited"
+                "exited".to_string()
             } else if t.busy {
-                "running"
-            } else if t.clients > 0 {
-                "attached"
+                "running".to_string()
+            } else if t.clients > 1 {
+                format!("attached \u{d7}{}", t.clients)
+            } else if t.clients == 1 {
+                "attached".to_string()
             } else {
-                "idle"
+                "idle".to_string()
             };
             let mut label = if t.title.is_empty() {
                 format!("tab {}", t.id)

@@ -48,15 +48,32 @@ and no font handling to build.
 - [x] workspaces hold tabs; tabs persist with the workspace
 
 **Phase 2 — native macOS app.** Working. One line of chrome: traffic lights,
-a sidebar toggle, the native macOS tab bar and its "+" button all share the
-titlebar row (the tab bar is constrained in there, an approach adapted from
-Ghostty's titlebar tabs). The workspace sidebar runs the full height of the
-window Finder-style and the tab bar starts at its edge — collapse it and the
-tabs slide over to the toggle. Each tab is a real libghostty surface (Metal
-rendering, your own Ghostty fonts and theme) running the `keep` client, and
-tabs are windows sharing a `tabbingIdentifier`, so ⌘1…⌘9, drag to reorder
-and the overview come from the system. Closing a tab closes it; quitting the
-app leaves every tab running in the daemon.
+a sidebar toggle and the tab row all share the titlebar (an approach adapted
+from Ghostty's titlebar tabs). The workspace sidebar runs the full height of
+the window Finder-style and the tab row starts at its edge — collapse it and
+the tabs slide over to the toggle. Each tab is a real libghostty surface
+(Metal rendering, your own Ghostty fonts and theme) running the `keep` client.
+
+The tab row is drawn by the app rather than by AppKit. Native tabs are windows
+sharing a `tabbingIdentifier`, which made every workspace switch a matter of
+creating and closing windows — the source of every flicker, focus loss and
+fight with a tiling window manager the app ever had. Switching is now a
+visibility flip between mounted views, and ⌘1–⌘9, drag-to-reorder and the
+close buttons are ours.
+
+**Windows are yours to ask for.** ⌘⇧N opens another, ⌥⌘W closes one, and
+nothing else in the app makes or unmakes a window. Each carries its own list
+of workspaces — a new one starts empty, and ⌘P reaches every workspace there
+is and brings it into that window. Two windows can show the same tab; it is
+the same shell with two viewers, the way two clients attach to one tmux
+session, and the daemon fits the tab to the smaller of them. Closing a window
+kills nothing; closing the last one quits, and everything keeps running in the
+daemon.
+
+Splits are a tree (⌘D right, ⌘⇧D down) and the daemon hands a closed pane's
+children to its parent, so closing one pane never takes the arrangement apart.
+There is a picker (⌘P) over every workspace and tab, search (⌘F, ⌘⇧F), and
+keyboard motion between panes, workspaces and picker rows.
 
 Tabs are labelled with the title the program inside sets (OSC 0/2), which
 shells and editors do on their own, so a tab says what it is without anyone
@@ -70,13 +87,13 @@ ignores them. Only `working_directory` survives, so the app fixes the client
 app-wide and hands each surface its target through a file in a private
 working directory, which the client reads and deletes.
 
-Not done yet: keyboard shortcuts, split views, scrollback (the repaint covers
-the visible screen only), and workspaces do not survive a reboot.
+Another, this one by design: a tab shown in two windows answers a program's
+questions twice. When something asks the terminal where the cursor is or what
+it is, the daemon passes the question to every client and each replies on the
+one PTY. Mirroring a tab costs you that.
 
-**Phase 2 — native macOS client.** SwiftUI for chrome, `NSView` + Metal for the
-grid, talking to the same daemon. Ghostty itself is built this way: its terminal
-surface is an `NSView`, bridged into SwiftUI with `NSViewRepresentable`, because
-SwiftUI cannot draw a character grid at frame rate.
+Not done yet: scrollback (the repaint covers the visible screen only), and
+workspaces do not survive a reboot.
 
 ## Building
 

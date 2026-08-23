@@ -102,8 +102,7 @@ sleep 2
 # the way out, pointed back at their own daemon — which itself is never
 # touched: it goes on holding their sessions throughout.
 say "starting the app on its own daemon (yours comes back at the end)"
-pkill -x Keep 2>/dev/null
-sleep 2
+stop_app
 KEEP_TRACE=1 "$BIN" >"$WORK/app.log" 2>&1 &
 APP_PID=$!
 sleep 11

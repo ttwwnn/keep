@@ -10,6 +10,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let session = Session()
     private var controllers: [MainWindowController] = []
     private var poller: DaemonPoller?
+    private let windowStore = WindowStateStore()
+    /// Set the moment quitting becomes certain. On the way out AppKit closes
+    /// every window, and each of those is indistinguishable — from here —
+    /// from somebody closing a window on purpose. Without this the last
+    /// thing written down before the app died was "no windows were open",
+    /// and it came back with one, every time.
+    private var quitting = false
 
     /// The window a menu item means.
     ///
@@ -44,15 +51,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return WindowID(slot: slot)
     }
 
-    /// Open one, on purpose. This is the only path that makes a window, and
-    /// it runs when somebody asks for one — never on a switch, a poll or a
-    /// render.
-    @objc func newWindow(_ sender: Any?) {
-        let controller = MainWindowController(session: session, id: freeSlot())
+    /// One place that builds a window, so the two callers — somebody asking
+    /// for one, and the restore at launch — cannot drift apart.
+    private func makeController(id: WindowID) -> MainWindowController {
+        let controller = MainWindowController(session: session, id: id)
         controller.onClose = { [weak self] gone in
             self?.controllers.removeAll { $0 === gone }
+            // After the removal: what is written down is what is still open.
+            self?.rememberWindows()
         }
         controllers.append(controller)
+        return controller
+    }
+
+    /// Write down every window that is open, as it is at this moment.
+    ///
+    /// Called when a window closes and when the app is asked to quit — the
+    /// two moments the set changes — rather than on every drag. The frames
+    /// are read from the windows themselves, so there is no second copy to
+    /// keep in step.
+    private func rememberWindows() {
+        guard !quitting else { return }
+        var records: [Int: WindowRecord] = [:]
+        for controller in controllers {
+            guard let frame = controller.window?.frame,
+                  let placement = session.placement(of: controller.windowID)
+            else { continue }
+            records[controller.windowID.slot] = WindowRecord(
+                x: frame.origin.x,
+                y: frame.origin.y,
+                width: frame.width,
+                height: frame.height,
+                workspaces: placement.workspaces,
+                tab: placement.tab
+            )
+        }
+        Trace.log("window", "remembered \(records.count)")
+        windowStore.save(records)
+    }
+
+    /// Open one, on purpose. Along with the restore at launch this is the
+    /// only path that makes a window, and it runs when somebody asks for one
+    /// — never on a switch, a poll or a render.
+    @objc func newWindow(_ sender: Any?) {
+        let controller = makeController(id: freeSlot())
 
         // The same size as the window it was opened from, stepped down and
         // across. Matching the size matters beyond looking tidy: two windows
@@ -67,24 +109,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Empty on purpose: a new window carries no workspaces, and every one
         // there is remains a ⌘P away.
         session.addWindow(controller.windowID, renderer: controller, carrying: [])
+        rememberWindows()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = GhosttyApp.shared
         buildMenu()
 
-        let controller = MainWindowController(session: session, id: .first)
-        controller.onClose = { [weak self] gone in
-            self?.controllers.removeAll { $0 === gone }
-        }
-        controllers.append(controller)
-        controller.showWindow(nil)
-        controller.window?.makeKeyAndOrderFront(nil)
+        // Every window this run will have, made here, in one turn of the run
+        // loop. A tiling window manager reacts to each window that appears;
+        // making them all now costs it one re-tile at launch instead of a
+        // series of them as windows trickle in. Slot 0 is always first and
+        // always present, and it is the one that brings the session up.
+        for id in windowStore.slots {
+            let record = windowStore.record(for: id)
+            let controller = makeController(id: id)
+            if let record {
+                controller.place(at: NSRect(
+                    x: record.x, y: record.y, width: record.width, height: record.height))
+            }
+            controller.showWindow(nil)
 
-        // The first window carries everything that already exists. A window
-        // opened later starts empty on purpose; this one starting empty would
-        // just look like the app had lost the lot.
-        session.start(firstWindow: controller.windowID, renderer: controller)
+            if id == .first {
+                // Carrying everything only when there is nothing remembered:
+                // see `Session.start`.
+                session.start(
+                    firstWindow: id,
+                    renderer: controller,
+                    carrying: record?.workspaces,
+                    showing: record?.tab
+                )
+            } else {
+                session.addWindow(id, renderer: controller, carrying: record?.workspaces ?? [])
+                if let tab = record?.tab { session.dispatch(.activateTab(tab), from: id) }
+            }
+        }
+        controllers.first?.window?.makeKeyAndOrderFront(nil)
         let poller = DaemonPoller(session: session)
         poller.start()
         self.poller = poller
@@ -95,6 +155,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// trivially leaves everything running.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    /// The last chance to look at the windows while they are still open:
+    /// by `applicationWillTerminate` there may be nothing left to read.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        rememberWindows()
+        quitting = true
+        return .terminateNow
     }
 
     func applicationWillTerminate(_ notification: Notification) {

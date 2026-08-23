@@ -63,6 +63,13 @@ final class Session {
         publish()
     }
 
+    /// What this window is carrying and showing, for whoever writes it down.
+    /// Read-only: `Session` remains the only writer of a `WindowView`.
+    func placement(of id: WindowID) -> (workspaces: [String], tab: TabID?)? {
+        guard let view = views[id] else { return nil }
+        return (view.workspaces, view.tab)
+    }
+
     func removeWindow(_ id: WindowID) {
         views[id] = nil
         renderers[id] = nil
@@ -108,7 +115,16 @@ final class Session {
         sidebarStore.flush()
     }
 
-    func start(firstWindow: WindowID, renderer: SessionRendering) {
+    /// Bring the app up. `carrying` is what the first window had last time,
+    /// or nil on a first run — which is not the same as an empty list, and
+    /// the difference is the whole point: a remembered empty window opens
+    /// empty, an unremembered one opens holding everything.
+    func start(
+        firstWindow: WindowID,
+        renderer: SessionRendering,
+        carrying: [String]? = nil,
+        showing: TabID? = nil
+    ) {
         renderers[firstWindow] = WeakRenderer(value: renderer)
         if !windowOrder.contains(firstWindow) { windowOrder.append(firstWindow) }
         if views[firstWindow] == nil { views[firstWindow] = WindowView() }
@@ -126,11 +142,26 @@ final class Session {
             _ = try? Daemon.newTab(in: NSUserName())
             refreshFromDaemon()
         }
-        // The first window carries everything there is. A window opened later
-        // starts empty on purpose — this one starting empty would read as the
-        // app having lost the lot.
-        views[firstWindow]?.workspaces = workspaces.map(\.name)
-        if let first = workspaces.first(where: { !$0.tabs.isEmpty }) {
+        // The first window carries what it carried, pruned to what the daemon
+        // still has. Never having been asked, it carries everything there is:
+        // a window opened later starts empty on purpose, but this one starting
+        // empty would read as the app having lost the lot.
+        let live = workspaces.map(\.name)
+        views[firstWindow]?.workspaces = carrying.map { remembered in
+            remembered.filter(live.contains)
+        } ?? live
+        // The tab it was left on, if that tab is still there. Chosen here
+        // rather than switched to afterwards: a second activation would build
+        // a surface, and a client, for a tab nobody asked to see.
+        let carried = views[firstWindow]?.workspaces ?? []
+        let remembered = showing.flatMap { id in
+            carried.contains(id.workspace)
+                ? workspaces.first { $0.name == id.workspace }?.tabs.first { $0.id == id }?.id
+                : nil
+        }
+        if let remembered {
+            activate(remembered, in: firstWindow)
+        } else if let first = workspaces.first(where: { !$0.tabs.isEmpty }) {
             activate(first.lastTabID ?? first.tabs.first?.id, in: firstWindow)
         }
         publish()

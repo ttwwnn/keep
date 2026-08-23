@@ -81,8 +81,7 @@ sleep 2
 # Yours steps aside for the one under test and is started again at the end.
 # Your daemon is never touched: it holds your sessions throughout.
 say "starting the app on its own daemon (yours comes back at the end)"
-pkill -x Keep 2>/dev/null
-sleep 2
+stop_app
 KEEP_TRACE=1 "$BIN" >"$WORK/app.log" 2>&1 &
 APP_PID=$!
 sleep 11
@@ -131,7 +130,13 @@ collapse_sidebar() {
     done
     [ "$(sed -E 's/.*clear=([0-9]+).*/\1/' <<<"$(shape)")" != 0 ]
 }
-collapse_sidebar || { say "could not collapse the sidebar; the row is still behind it"; exit 1; }
+collapse_sidebar || {
+    say "could not collapse the sidebar; the row is still behind it"
+    say "  last row traced: $(shape)"
+    say "  intents that arrived:"
+    grep -a "  intent " "$WORK/app.log" | tail -4 | sed 's/^/    /'
+    exit 1
+}
 
 read -r WX WY WW WH < <("$MOUSE" frame) || { say "no Keep window on screen"; exit 1; }
 SHAPE=$(shape)

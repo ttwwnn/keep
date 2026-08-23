@@ -400,6 +400,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // the only account of the matter that is true at every frame.
     }
 
+    /// Put the window back where it was.
+    ///
+    /// Only if that is still somewhere it can be seen: a frame remembered on
+    /// a second monitor, restored on a laptop that no longer has one, puts
+    /// the window off the edge of everything — visible in Mission Control and
+    /// nowhere else. When the screen it wants is gone it keeps the centred
+    /// default it was built with.
+    func place(at frame: NSRect) {
+        guard let window,
+              NSScreen.screens.contains(where: { $0.visibleFrame.intersects(frame) })
+        else { return }
+        window.setFrame(frame, display: false)
+    }
+
     /// Closing a window puts away what that window was showing, and nothing
     /// else. No path here closes a daemon tab, which is what makes "closing a
     /// window kills no sessions" true by construction rather than by care:
