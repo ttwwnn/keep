@@ -165,6 +165,18 @@ final class TabStripView: NSView {
         }
         applyCells()
         needsLayout = true
+        // The row changed under whatever the pointer is doing. It may have
+        // been over a tab when the window was last told to hold still, and
+        // tabs closing down to one — or opening past one — changes the
+        // answer without the pointer moving an inch. Nothing else asks
+        // again: `mouseMoved` needs motion and `updateTrackingAreas` needs
+        // the visible rect to change, and neither happens when a tab simply
+        // goes away. Left unasked, a window that was holding still for a
+        // drag stays unmovable afterwards.
+        if let window {
+            updateWindowDragging(
+                pointerAt: convert(window.mouseLocationOutsideOfEventStream, from: nil))
+        }
     }
 
     private func retint() {
