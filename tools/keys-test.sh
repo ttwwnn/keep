@@ -83,6 +83,11 @@ cargo build --release -p keep -p keepd >/dev/null 2>&1 || { say "cargo build fai
 swiftc -O tools/sendkey.swift -o "$SENDKEY" 2>/dev/null || { say "could not build sendkey"; exit 1; }
 
 export KEEP_SOCKET=$SOCKET
+# What the app remembers between launches goes in here too, so this test
+# neither reads the arrangement of whoever is running it nor leaves its
+# own behind.
+export KEEP_STATE_DIR=$WORK/state
+mkdir -p "$KEEP_STATE_DIR"
 require_scratch_socket
 rm -f "$SOCKET"
 ./target/release/keepd >"$WORK/daemon.log" 2>&1 &

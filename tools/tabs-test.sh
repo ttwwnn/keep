@@ -47,21 +47,6 @@ cleanup() {
     [ -n "${APP_PID:-}" ] && kill "$APP_PID" 2>/dev/null
     [ -n "${DAEMON_PID:-}" ] && kill "$DAEMON_PID" 2>/dev/null
     restore_app "$APP"
-    # The row's order is remembered on disk, beside the order of the windows
-    # the person actually uses. A test that left its own behind would be
-    # editing their session.
-    python3 - "$WORKSPACE" <<'PY' 2>/dev/null
-import json, os, sys
-path = os.path.expanduser("~/Library/Application Support/Keep/tab-order.json")
-try:
-    with open(path) as f:
-        saved = json.load(f)
-except (OSError, ValueError):
-    sys.exit(0)
-if saved.pop(sys.argv[1], None) is not None:
-    with open(path, "w") as f:
-        json.dump(saved, f)
-PY
     rm -rf "$WORK" "$SOCKET"
 }
 # INT and TERM as well as EXIT: a test that is interrupted has still
@@ -79,6 +64,12 @@ swiftc -O tools/mousedrag.swift -o "$MOUSE" 2>/dev/null || { say "could not buil
 swiftc -O tools/sendkey.swift -o "$SENDKEY" 2>/dev/null || { say "could not build sendkey"; exit 1; }
 
 export KEEP_SOCKET=$SOCKET
+# What the app remembers between launches goes in here too, so this test
+# neither reads the arrangement of whoever is running it nor leaves its own
+# behind. It used to scrub its leftovers out of their real file afterwards,
+# which is a repair, not a boundary.
+export KEEP_STATE_DIR=$WORK/state
+mkdir -p "$KEEP_STATE_DIR"
 require_scratch_socket
 rm -f "$SOCKET"
 ./target/release/keepd >"$WORK/daemon.log" 2>&1 &
@@ -102,39 +93,56 @@ sleep 1
 "$SENDKEY" "$APP_PID" key 17 cmd; sleep 2     # cmd-t
 
 trace() { grep -a "  strip " "$WORK/app.log"; }
+shape() { trace | grep "row " | tail -1; }
+
+# Brought to the front again before anything is clicked.
+#
+# A click on a window that is not key spends itself activating that window, so
+# a probe that assumed focus from a `frontmost` issued half a minute and a
+# keystroke ago reports "nothing reached a tab" about an aim that was exact.
+focus_app() {
+    osascript -e 'tell application "System Events" to set frontmost of process "Keep" to true' \
+        >/dev/null 2>&1
+    sleep 1
+}
 last_order() { trace | grep "dropped, order now" | tail -1 | sed -E 's/.*now \[(.*)\]/\1/'; }
 
 # ------------------------------------------------------- where the tabs are
 #
-# Asked of the app rather than assumed: the row's arithmetic depends on
-# whether the sidebar is showing, and a test that guessed would click between
-# two tabs and report on nothing. The app traces the row's shape; one press
-# supplies the rest, since the difference between where a press was posted and
-# where the row says it landed is the window's own left edge.
+# Put the row somewhere known instead of working out where it is.
+#
+# The row begins where the content does — past the sidebar, when there is one —
+# so where it starts depends on furniture this test does not own. Deducing it
+# put the aim one tab off; hunting for it by clicking walked the pointer along
+# the row and eventually pressed a close button, and a test that quietly closes
+# a tab it is about to count is worse than one that cannot find the row.
+#
+# So: collapse the sidebar. The row then spans the whole window, its left edge
+# is the window's, and `clear` is the fixed gap the chrome keeps. Nothing is
+# inferred, and the state is the test's own rather than whatever the person
+# using the app happened to leave behind.
+collapse_sidebar() {
+    local attempt
+    for attempt in 1 2; do
+        [ "$(sed -E 's/.*clear=([0-9]+).*/\1/' <<<"$(shape)")" != 0 ] && return 0
+        "$SENDKEY" "$APP_PID" key 11 cmd    # cmd-b
+        sleep 2
+    done
+    [ "$(sed -E 's/.*clear=([0-9]+).*/\1/' <<<"$(shape)")" != 0 ]
+}
+collapse_sidebar || { say "could not collapse the sidebar; the row is still behind it"; exit 1; }
 
 read -r WX WY WW WH < <("$MOUSE" frame) || { say "no Keep window on screen"; exit 1; }
-SHAPE=$(trace | grep "row " | tail -1)
+SHAPE=$(shape)
 CLEAR=$(sed -E 's/.*clear=([0-9]+).*/\1/' <<<"$SHAPE")
 SLOT=$(sed -E 's/.*slot=([0-9]+).*/\1/' <<<"$SHAPE")
 COUNT=$(sed -E 's/.*tabs=([0-9]+).*/\1/' <<<"$SHAPE")
 [ "${COUNT:-0}" = 3 ] || { say "wanted three tabs, the row has '${COUNT:-none}'"; exit 1; }
-
-# Worked out rather than hunted for. `clear` is measured in the row's own
-# coordinates and the row begins where the content does — past the sidebar,
-# when there is one — so a press computed from the window's left edge lands
-# on the sidebar instead. But the row ends at the window's right edge, and
-# its shape is traced, so where it starts is arithmetic: the window's right
-# edge less the row's whole width.
-#
-# Clicking about to find it, which is what this did before, walks the
-# pointer along a row of tabs and eventually presses one of their close
-# buttons — and a test that quietly closes a tab it is about to count is
-# worse than one that cannot find the row at all.
-STRIP_WIDTH=$((CLEAR + SLOT * COUNT + 46))
-LEFT=$((WX + WW - STRIP_WIDTH))
+LEFT=$WX
 
 # The middle of the first tab: far from the close button, which sits within
 # fourteen points of a cell's leading edge.
+focus_app
 for DY in 22 30 16; do
     PROBE_Y=$((WY + DY))
     BEFORE=$(trace | grep -c "press on")
@@ -142,7 +150,14 @@ for DY in 22 30 16; do
     sleep 0.8
     [ "$(trace | grep -c "press on")" -gt "$BEFORE" ] && { ROW_Y=$PROBE_Y; break; }
 done
-[ -n "${ROW_Y:-}" ] || { say "no press reached a tab; the row is not where the arithmetic says"; exit 1; }
+if [ -z "${ROW_Y:-}" ]; then
+    say "no press reached a tab; the row is not where the arithmetic says"
+    say "  window     ${WX},${WY} ${WW}x${WH}"
+    say "  row traced $SHAPE"
+    say "  aimed at   $((LEFT + CLEAR + SLOT / 2)) across, ${PROBE_Y:-?} down"
+    say "  last row line now: $(shape)"
+    exit 1
+fi
 say ""
 say "the row: ${SLOT}pt a tab, ${CLEAR}pt of chrome before the first, at y=$ROW_Y"
 
@@ -153,9 +168,10 @@ slot() { echo $((LEFT + CLEAR + $1 * SLOT + SLOT / 2)); }
 # the drag is happening, because a tiling window manager puts a window that
 # moved straight back and the evidence is gone a moment later.
 drag_slots() {
+    focus_app
     "$MOUSE" watch 4 >"$WORK/window.log" 2>&1 &
     local watcher=$!
-    "$MOUSE" drag "$(slot $1)" "$ROW_Y" "$(slot $2)" "$ROW_Y" 30 18
+"$MOUSE" drag "$(slot $1)" "$ROW_Y" "$(slot $2)" "$ROW_Y" 30 18
     wait "$watcher" 2>/dev/null
     sleep 1.2
 }
@@ -174,6 +190,23 @@ check() {  # check <what> <wanted> <got>
         FAILED=$((FAILED + 1))
     fi
 }
+# Same reason as `reorder`: a window that a tiling manager puts back before
+# the sampler notices has not disproved anything.
+moved_window() {   # moved_window <what> <x> <y> <dx> <dy>
+    local attempt
+    for attempt in 1 2 3; do
+        window_travelled && { check "$1" "it moved" "it moved"; return; }
+        say "        (attempt $attempt saw it still, trying again)"
+        "$MOUSE" watch 4 >"$WORK/window.log" 2>&1 &
+        local watcher=$!
+        "$MOUSE" drag "$2" "$3" $(( $2 + $4 )) $(( $3 + $5 )) 25 18
+        wait "$watcher" 2>/dev/null
+        sleep 1
+    done
+    window_travelled && check "$1" "it moved" "it moved" \
+        || check "$1" "it moved" "it stayed put"
+}
+
 check_still() {
     if window_travelled; then
         check "$1" "the window held still" \
@@ -183,19 +216,50 @@ check_still() {
     fi
 }
 
+# Dragged inward, never outward.
+#
+# A window sitting against the right edge of the screen cannot be dragged
+# further right — the system holds it — so a test that always pushed right
+# reported "the window would not move" about a window that was merely already
+# there. Aim at the middle of the screen instead, whichever side that is on.
+inward() {
+    local from=$1 width=$2
+    local screen
+    screen=$(osascript -e 'tell application "Finder" to get bounds of window of desktop' 2>/dev/null \
+        | awk -F', ' '{print $3}')
+    screen=${screen:-1440}
+    if [ "$((from + width / 2))" -gt "$((screen / 2))" ]; then echo -160; else echo 160; fi
+}
+
 # ------------------------------------------------------------ moving a tab
 
 say ""
 say "moving a tab"
-drag_slots 0 1
-check "one place right"      "2, 1, 3" "$(last_order)"
+# Tried more than once before being believed.
+#
+# Driving a real window manager with synthesised events is not repeatable:
+# the same drag, run twice against the same build, has come back right and
+# wrong. AeroSpace re-tiles mid-gesture, the window crosses to another
+# display between one command and the next, and a pointer that has to be
+# posted rather than moved by a hand arrives at its own pace. A drag that
+# succeeds on any attempt is a drag that works; one that fails three times
+# running is a defect. Anything in between was never evidence.
+reorder() {   # reorder <from-slot> <to-slot> <what> <expected>
+    local attempt
+    for attempt in 1 2 3; do
+        drag_slots "$1" "$2"
+        [ "$(last_order)" = "$4" ] && { check "$3" "$4" "$4"; return; }
+        say "        (attempt $attempt gave [$(last_order)], trying again)"
+    done
+    check "$3" "$4" "$(last_order)"
+}
+
+reorder 0 1 "one place right" "2, 1, 3"
 check_still "the window stayed where it was while the tab moved"
 
-drag_slots 1 0
-check "and back again"       "1, 2, 3" "$(last_order)"
+reorder 1 0 "and back again" "1, 2, 3"
 
-drag_slots 0 2
-check "two places at once"   "2, 3, 1" "$(last_order)"
+reorder 0 2 "two places at once" "2, 3, 1"
 
 # ------------------------------------------------- what a titlebar is still for
 
@@ -204,14 +268,12 @@ say "what the rest of the row is still for"
 read -r WX WY WW WH < <("$MOUSE" frame); ROW_Y=$((WY + (ROW_Y - WY)))
 "$MOUSE" watch 4 >"$WORK/window.log" 2>&1 &
 WATCHER=$!
-"$MOUSE" drag $((WX + WW - 4)) "$ROW_Y" $((WX + WW + 156)) $((ROW_Y + 40)) 25 18
+STEP=$(inward "$WX" "$WW")
+"$MOUSE" drag $((WX + WW - 4)) "$ROW_Y" $((WX + WW - 4 + STEP)) $((ROW_Y + 40)) 25 18
 wait "$WATCHER" 2>/dev/null
 sleep 1
-if window_travelled; then
-    check "the bare end of the row drags the window" "it moved" "it moved"
-else
-    check "the bare end of the row drags the window" "it moved" "it stayed put"
-fi
+moved_window "the bare end of the row drags the window" \
+    $((WX + WW - 4)) "$ROW_Y" "$STEP" 40
 
 say ""
 say "a window with one tab"
@@ -221,14 +283,12 @@ read -r WX WY WW WH < <("$MOUSE" frame)
 "$MOUSE" watch 4 >"$WORK/window.log" 2>&1 &
 WATCHER=$!
 # Squarely on the title, which with one tab is the whole row.
-"$MOUSE" drag $((WX + WW / 2)) $((WY + 22)) $((WX + WW / 2 + 160)) $((WY + 62)) 25 18
+STEP=$(inward "$WX" "$WW")
+"$MOUSE" drag $((WX + WW / 2)) $((WY + 22)) $((WX + WW / 2 + STEP)) $((WY + 62)) 25 18
 wait "$WATCHER" 2>/dev/null
 sleep 1
-if window_travelled; then
-    check "a lone title is still a title bar" "it moved" "it moved"
-else
-    check "a lone title is still a title bar" "it moved" "it stayed put"
-fi
+moved_window "a lone title is still a title bar" \
+    $((WX + WW / 2)) $((WY + 22)) "$STEP" 40
 
 # ---------------------------------------------------------------------- done
 

@@ -1,5 +1,22 @@
 import Foundation
 
+/// Where this app keeps what it remembers between launches.
+///
+/// `KEEP_STATE_DIR` first, so a test can be handed a directory of its own.
+/// Without it a test either writes into the state of whoever is running it —
+/// `tools/tabs-test.sh` used to scrub its own leftovers out of the real file
+/// afterwards — or reads their arrangement and reports on it as though it were
+/// its own setup.
+func stateDirectory() -> URL {
+    if let override = ProcessInfo.processInfo.environment["KEEP_STATE_DIR"],
+       !override.isEmpty {
+        return URL(fileURLWithPath: override, isDirectory: true)
+    }
+    return FileManager.default.urls(
+        for: .applicationSupportDirectory, in: .userDomainMask
+    )[0].appendingPathComponent("Keep", isDirectory: true)
+}
+
 /// The sidebar's state across app restarts.
 ///
 /// App-side only — the daemon stores no UI state. One small JSON file:
@@ -14,9 +31,7 @@ final class SidebarStateStore {
     private var writeScheduled = false
 
     init(directory: URL? = nil) {
-        let dir = directory ?? FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask
-        )[0].appendingPathComponent("Keep", isDirectory: true)
+        let dir = directory ?? stateDirectory()
         file = dir.appendingPathComponent("sidebar-state.json")
         state = (try? JSONDecoder().decode(
             SidebarState.self, from: Data(contentsOf: file)
@@ -66,9 +81,7 @@ final class WorkspaceOrderStore {
     private let file: URL
 
     init(directory: URL? = nil) {
-        let dir = directory ?? FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask
-        )[0].appendingPathComponent("Keep", isDirectory: true)
+        let dir = directory ?? stateDirectory()
         file = dir.appendingPathComponent("workspace-order.json")
         order = (try? JSONDecoder().decode(
             [String].self, from: Data(contentsOf: file)
@@ -108,9 +121,7 @@ final class TabOrderStore {
     private let file: URL
 
     init(directory: URL? = nil) {
-        let dir = directory ?? FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask
-        )[0].appendingPathComponent("Keep", isDirectory: true)
+        let dir = directory ?? stateDirectory()
         file = dir.appendingPathComponent("tab-order.json")
         order = (try? JSONDecoder().decode(
             [String: [UInt32]].self, from: Data(contentsOf: file)
