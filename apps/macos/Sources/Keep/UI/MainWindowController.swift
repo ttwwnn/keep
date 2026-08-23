@@ -31,9 +31,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// size to put it on.
     private var hasPlacedDivider = false
 
-    init(session: Session) {
+    /// Which window this is, for the model. Everything below the UI knows a
+    /// window only by this — never by an `NSWindow`.
+    let windowID: WindowID
+
+    /// Every intent this window sends carries its own name.
+    private func send(_ intent: Intent) { session.dispatch(intent, from: windowID) }
+
+    init(session: Session, id: WindowID) {
         self.session = session
-        sidebarHost = SidebarHost(dispatch: { [weak session] in session?.dispatch($0) })
+        self.windowID = id
+        sidebarHost = SidebarHost(dispatch: { [weak session] in session?.dispatch($0, from: id) })
 
         // The window's content extends under the titlebar (fullSizeContentView,
         // which the full-height sidebar needs), so the terminal container hangs
@@ -117,11 +125,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
         window.onToggleSidebar = { [weak self] in
             guard let self, let state = self.currentSidebarGeometry() else { return }
-            self.session.dispatch(.setSidebar(
+            self.send(.setSidebar(
                 SidebarState(isCollapsed: !state.isCollapsed, width: state.width)))
         }
         container.onPaneFocus = { [weak self] id, pane in
-            self?.session.dispatch(.focusPane(id, pane))
+            self?.send(.focusPane(id, pane))
         }
         // A pane carried over a tab opens it, after long enough to mean it.
         // The timer runs in the event-tracking mode too: during a drag that
@@ -148,7 +156,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             let timer = Timer(timeInterval: 0.45, repeats: false) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self, let target = self.springTarget else { return }
-                    self.session.dispatch(.activateTab(target))
+                    self.send(.activateTab(target))
                 }
             }
             RunLoop.current.add(timer, forMode: .default)
@@ -162,17 +170,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         container.onPaneDrop = { [weak self] id, pane, target, side in
             guard let self, id.workspace == self.applied?.active?.id.workspace else { return }
             Trace.log("carry", "drop \(pane) onto \(target) \(side)")
-            self.session.dispatch(.movePane(pane, to: target, side: side))
+            self.send(.movePane(pane, to: target, side: side))
         }
         container.onPaneDetach = { [weak self] id, pane in
             guard let self, id.workspace == self.applied?.active?.id.workspace else { return }
             Trace.log("carry", "detach \(pane)")
-            self.session.dispatch(.detachPane(pane))
+            self.send(.detachPane(pane))
         }
-        tabStrip.onSelect = { [weak self] id in self?.session.dispatch(.activateTab(id)) }
-        tabStrip.onClose = { [weak self] id in self?.session.dispatch(.closeTab(id)) }
-        tabStrip.onNewTab = { [weak self] in self?.session.dispatch(.newTab(in: nil)) }
-        tabStrip.onReorder = { [weak self] ids in self?.session.dispatch(.reorderTabs(ids)) }
+        tabStrip.onSelect = { [weak self] id in self?.send(.activateTab(id)) }
+        tabStrip.onClose = { [weak self] id in self?.send(.closeTab(id)) }
+        tabStrip.onNewTab = { [weak self] in self?.send(.newTab(in: nil)) }
+        tabStrip.onReorder = { [weak self] ids in self?.send(.reorderTabs(ids)) }
         // The row's leading edge is the sidebar's trailing edge, and the
         // toggle above the sidebar rides it.
         tabStrip.onLeadingEdgeMoved = { [weak self] edge in
@@ -180,15 +188,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
 
         picker.onHighlight = { [weak self] id in
-            self?.session.dispatch(.previewPickerItem(id))
+            self?.send(.previewPickerItem(id))
         }
-        picker.onChoose = { [weak self] id in self?.session.dispatch(.choosePickerItem(id)) }
+        picker.onChoose = { [weak self] id in self?.send(.choosePickerItem(id)) }
         picker.onDismissItem = { [weak self] id in
-            self?.session.dispatch(.dismissPickerItem(id))
+            self?.send(.dismissPickerItem(id))
         }
-        picker.onCancel = { [weak self] in self?.session.dispatch(.closePicker) }
+        picker.onCancel = { [weak self] in self?.send(.closePicker) }
         picker.onFilter = { [weak self] query in
-            self?.session.dispatch(.setPickerQuery(query))
+            self?.send(.setPickerQuery(query))
         }
 
         // Divider drags become model facts, debounced; model-driven geometry
@@ -408,7 +416,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             guard let state = self.currentSidebarGeometry(),
                   state != self.applied?.sidebar
             else { return }
-            self.session.dispatch(.setSidebar(state))
+            self.send(.setSidebar(state))
         }
     }
 

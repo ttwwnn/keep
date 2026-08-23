@@ -9,6 +9,42 @@ struct TabID: Hashable, Codable, CustomStringConvertible {
     var description: String { "\(workspace)/\(root)" }
 }
 
+/// Which window. A slot rather than a UUID: it is stable across launches, so
+/// a window's furniture comes back to it; it is reused when a window closes,
+/// so the next window inherits that furniture rather than starting bare; and
+/// it is short enough to read in a trace.
+struct WindowID: Hashable, Codable, CustomStringConvertible {
+    let slot: Int
+    var description: String { "w\(slot)" }
+    static let first = WindowID(slot: 0)
+}
+
+/// What one window is pointed at.
+///
+/// Not a second copy of anything below it — these are the facts that are
+/// genuinely different from one window to the next, and `Session` is still
+/// the only code that writes them. The era this replaces had a `Store`, a
+/// `WindowManager` and N sidebars each writing their own idea of the same
+/// fact; what was wrong there was the number of writers, not the number of
+/// values.
+struct WindowView: Equatable {
+    /// The workspaces this window carries, in the order its sidebar shows
+    /// them. A new window has none: every workspace is a ⌘P away, and the
+    /// ones you go to are the ones that stay.
+    var workspaces: [String] = []
+    var workspace: String?
+    var tab: TabID?
+    /// Which pane holds the keyboard, per tab, *in this window*. Two windows
+    /// showing one tab each have their own first responder, and a click in
+    /// one must not move the keyboard in the other.
+    var focusedPane: [TabID: UInt32] = [:]
+    /// An overlay belongs to the window it was opened over.
+    var picker: PickerModel?
+    /// Per window, so one window's keystroke cannot cancel the answer the
+    /// other is still waiting for.
+    var searchGeneration = 0
+}
+
 /// The sidebar's collapsed state and width.
 ///
 /// One value for the whole app, not one per tab: the sidebar is furniture,

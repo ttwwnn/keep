@@ -24,27 +24,80 @@ protocol SessionRendering: AnyObject {
 /// a Store, a WindowManager and N per-window sidebars, and disagreed.
 @MainActor
 final class Session {
-    weak var renderer: SessionRendering?
-
+    /// Every workspace the daemon has. Shared: what exists is one fact.
     private var workspaces: [WorkspaceEntity] = []
-    private var activeWorkspaceName: String?
     private let sidebarStore = SidebarStateStore()
-    private let orderStore = WorkspaceOrderStore()
     private let tabOrderStore = TabOrderStore()
-    private var lastSnapshot: SessionSnapshot?
 
-    // MARK: picker state
-    private var picker: PickerModel?
+    /// What each window is pointed at, and who to hand its snapshot to.
+    ///
+    /// Keyed rather than singular, and still written only here. `windowOrder`
+    /// is creation order, so "the first window" is a real thing — it is where
+    /// something with nowhere else to go lands.
+    private var views: [WindowID: WindowView] = [:]
+    private var renderers: [WindowID: WeakRenderer] = [:]
+    private var lastSnapshots: [WindowID: SessionSnapshot] = [:]
+    private var windowOrder: [WindowID] = []
+
     /// Tabs in the order they were last entered, newest first. The daemon
     /// records no such thing — and it should not, since this is about where
-    /// *you* have been, not about the work.
+    /// *you* have been, not about the work. Shared: where you have been is
+    /// one history, whichever window you were in.
     private var recentTabs: [TabID] = []
     private var destinations: [String] = []
-    /// Bumped per keystroke so a slow answer cannot overwrite a newer one.
-    private var searchGeneration = 0
 
-    private var activeWorkspace: WorkspaceEntity? {
-        workspaces.first { $0.name == activeWorkspaceName }
+    private struct WeakRenderer {
+        weak var value: SessionRendering?
+    }
+
+    // MARK: - the windows
+
+    /// A window is now showing. `carrying` is the list it starts with — empty
+    /// for one somebody just opened, and everything there is for the first,
+    /// which would otherwise come up blank in front of a person whose
+    /// workspaces all still exist.
+    func addWindow(_ id: WindowID, renderer: SessionRendering, carrying: [String]) {
+        renderers[id] = WeakRenderer(value: renderer)
+        if views[id] == nil { views[id] = WindowView(workspaces: carrying) }
+        if !windowOrder.contains(id) { windowOrder.append(id) }
+        publish()
+    }
+
+    func removeWindow(_ id: WindowID) {
+        views[id] = nil
+        renderers[id] = nil
+        lastSnapshots[id] = nil
+        windowOrder.removeAll { $0 == id }
+    }
+
+    private func renderer(_ id: WindowID) -> SessionRendering? { renderers[id]?.value }
+
+    private func workspace(for window: WindowID) -> WorkspaceEntity? {
+        guard let name = views[window]?.workspace else { return nil }
+        return workspaces.first { $0.name == name }
+    }
+
+    /// The tab this window is showing.
+    private func shownTab(in window: WindowID) -> TabEntity? {
+        guard let id = views[window]?.tab else { return nil }
+        return workspaces.first { $0.name == id.workspace }?
+            .tabs.first { $0.id == id }
+    }
+
+    /// Which pane holds the keyboard in this window, falling back to the seed
+    /// the tab carries — so a window showing a tab for the first time lands on
+    /// the pane it was last used in rather than always on the root.
+    private func focusedPane(of tab: TabEntity, in window: WindowID) -> UInt32 {
+        guard let pane = views[window]?.focusedPane[tab.id], tab.owns(pane: pane)
+        else { return tab.focusedPane }
+        return pane
+    }
+
+    /// Put a workspace in this window's list, if it is not there already.
+    private func adopt(_ name: String, into window: WindowID) {
+        guard var view = views[window], !view.workspaces.contains(name) else { return }
+        view.workspaces.append(name)
+        views[window] = view
     }
 
     // MARK: - lifecycle
@@ -55,11 +108,14 @@ final class Session {
         sidebarStore.flush()
     }
 
-    func start() {
+    func start(firstWindow: WindowID, renderer: SessionRendering) {
+        renderers[firstWindow] = WeakRenderer(value: renderer)
+        if !windowOrder.contains(firstWindow) { windowOrder.append(firstWindow) }
+        if views[firstWindow] == nil { views[firstWindow] = WindowView() }
         do {
             try Daemon.ensureRunning()
         } catch {
-            renderer?.present(error: error.localizedDescription)
+            renderer.present(error: error.localizedDescription)
             return
         }
         refreshFromDaemon()
@@ -70,8 +126,12 @@ final class Session {
             _ = try? Daemon.newTab(in: NSUserName())
             refreshFromDaemon()
         }
+        // The first window carries everything there is. A window opened later
+        // starts empty on purpose — this one starting empty would read as the
+        // app having lost the lot.
+        views[firstWindow]?.workspaces = workspaces.map(\.name)
         if let first = workspaces.first(where: { !$0.tabs.isEmpty }) {
-            activate(first.activeTabID ?? first.tabs.first?.id)
+            activate(first.lastTabID ?? first.tabs.first?.id, in: firstWindow)
         }
         publish()
     }
@@ -114,17 +174,36 @@ final class Session {
                 SurfacePool.shared.discard(workspace: daemon.name, tab: tab)
             }
         }
-        // The order somebody arranged by hand, not the alphabet.
-        let arranged = orderStore.arrange(workspaces.map(\.name))
-        workspaces.sort {
-            (arranged.firstIndex(of: $0.name) ?? .max)
-                < (arranged.firstIndex(of: $1.name) ?? .max)
-        }
+        // Nothing sorts `workspaces` any more: the order somebody arranged is
+        // per window now, and it is the window's own list.
+        let alive = Set(workspaces.map(\.name))
+        for id in windowOrder {
+            guard var view = views[id] else { continue }
+            let before = view
 
-        // The active workspace vanished: fall to the first remaining.
-        if activeWorkspaceName != nil, activeWorkspace == nil {
-            activeWorkspaceName = workspaces.first?.name
-            changed = true
+            // A workspace the daemon no longer has leaves every list holding
+            // it, and takes the window pointed at it with it.
+            view.workspaces.removeAll { !alive.contains($0) }
+            if let name = view.workspace, !alive.contains(name) {
+                view.workspace = view.workspaces.first
+                view.tab = nil
+            }
+            if let tab = view.tab,
+               !workspaces.contains(where: { $0.name == tab.workspace
+                   && $0.tabs.contains { $0.id == tab } }) {
+                view.tab = workspaces.first { $0.name == view.workspace }?.tabs.first?.id
+            }
+            // Panes are remembered per tab; without this the map keeps one
+            // entry for every tab the window ever showed, for as long as the
+            // app runs.
+            view.focusedPane = view.focusedPane.filter { entry in
+                workspaces.contains { $0.name == entry.key.workspace
+                    && $0.tabs.contains { $0.id == entry.key } }
+            }
+            if view != before {
+                views[id] = view
+                changed = true
+            }
         }
 
         if changed {
@@ -143,39 +222,45 @@ final class Session {
 
     // MARK: - intents
 
-    func dispatch(_ intent: Intent) {
-        Trace.log("intent", "\(intent)")
+    /// Every mutation enters here, and now says which window asked.
+    ///
+    /// The window rides as an envelope rather than as a case on `Intent`:
+    /// what was asked and who asked it are different questions, and putting
+    /// the second inside the first would have taught every view below the UI
+    /// that windows exist — which is the one thing the layering forbids.
+    func dispatch(_ intent: Intent, from window: WindowID) {
+        Trace.log("intent", "\(window) \(intent)")
         switch intent {
         case .activateWorkspace(let name):
             guard let workspace = workspaces.first(where: { $0.name == name }) else { return }
             if workspace.tabs.isEmpty {
                 // Entering an empty workspace means opening a tab in it.
-                dispatch(.newTab(in: name))
+                dispatch(.newTab(in: name), from: window)
             } else {
-                activate(workspace.activeTabID ?? workspace.tabs.first?.id)
+                activate(workspace.lastTabID ?? workspace.tabs.first?.id, in: window)
                 publish()
-                renderer?.focusActiveTerminal()
+                renderer(window)?.focusActiveTerminal()
             }
 
         case .activateTab(let id):
-            activate(id)
+            activate(id, in: window)
             publish()
-            renderer?.focusActiveTerminal()
+            renderer(window)?.focusActiveTerminal()
 
         case .activateTabIndex(let index):
-            guard let tabs = activeWorkspace?.tabs, !tabs.isEmpty else { return }
+            guard let tabs = workspace(for: window)?.tabs, !tabs.isEmpty else { return }
             let resolved = index == -1 ? tabs.count - 1 : index
             guard tabs.indices.contains(resolved) else { return }
-            activate(tabs[resolved].id)
+            activate(tabs[resolved].id, in: window)
             publish()
 
         case .nextTab, .previousTab:
-            guard let workspace = activeWorkspace, workspace.tabs.count > 1,
-                  let current = workspace.tabs.firstIndex(where: { $0.id == workspace.activeTabID })
+            guard let workspace = workspace(for: window), workspace.tabs.count > 1,
+                  let current = workspace.tabs.firstIndex(where: { $0.id == views[window]?.tab })
             else { return }
             let step = { if case .nextTab = intent { return 1 } else { return -1 } }()
             let next = (current + step + workspace.tabs.count) % workspace.tabs.count
-            activate(workspace.tabs[next].id)
+            activate(workspace.tabs[next].id, in: window)
             publish()
 
         case .nextWorkspace, .previousWorkspace:
@@ -183,32 +268,32 @@ final class Session {
             // arranged rather than the alphabet — stepping through them by
             // keyboard should land where the eye expects.
             guard workspaces.count > 1,
-                  let current = workspaces.firstIndex(where: { $0.name == activeWorkspaceName })
+                  let current = workspaces.firstIndex(where: { $0.name == views[window]?.workspace })
             else { return }
             let step = { if case .nextWorkspace = intent { return 1 } else { return -1 } }()
             let next = (current + step + workspaces.count) % workspaces.count
             // Through the intent rather than around it: entering an empty
             // workspace has to open a tab in it, and that rule lives there.
-            dispatch(.activateWorkspace(workspaces[next].name))
+            dispatch(.activateWorkspace(workspaces[next].name), from: window)
 
         case .newTab(let name):
-            guard let name = name ?? activeWorkspaceName else { return }
+            guard let name = name ?? views[window]?.workspace else { return }
             do {
                 let id = try Daemon.newTab(in: name, cwd: directory(of: name))
                 refreshFromDaemon()
-                activate(TabID(workspace: name, root: id))
+                activate(TabID(workspace: name, root: id), in: window)
                 publish()
             } catch {
-                renderer?.present(error: error.localizedDescription)
+                renderer(window)?.present(error: error.localizedDescription)
             }
 
         case .newWorkspace(let raw):
             let name = raw.trimmingCharacters(in: .whitespaces)
             guard !name.isEmpty else { return }
-            dispatch(.newTab(in: name))
+            dispatch(.newTab(in: name), from: window)
 
         case .closeTab(let id):
-            guard let id = id ?? activeWorkspace?.activeTabID else { return }
+            guard let id = id ?? views[window]?.tab else { return }
             do {
                 // Close the panes first: they are daemon tabs of their own.
                 let panes = workspaces.first { $0.name == id.workspace }?
@@ -224,7 +309,7 @@ final class Session {
                 refreshFromDaemon()
                 publish()
             } catch {
-                renderer?.present(error: error.localizedDescription)
+                renderer(window)?.present(error: error.localizedDescription)
             }
 
         case .closePane(let pane):
@@ -232,7 +317,7 @@ final class Session {
             // the tab itself. A root closed while panes remain is not a hole:
             // the daemon promotes an orphaned pane to stand on its own, so
             // what survives is the rest of the arrangement.
-            guard let workspace = activeWorkspace, let tab = workspace.activeTab else { return }
+            guard let workspace = workspace(for: window), let tab = shownTab(in: window) else { return }
             let requested = pane ?? tab.focusedPane
             let target = tab.owns(pane: requested) ? requested : tab.id.root
             // Closing is idempotent on purpose. Pressing ⌘W faster than the
@@ -243,26 +328,26 @@ final class Session {
             SurfacePool.shared.discard(workspace: workspace.name, tab: target)
             refreshFromDaemon()
             publish()
-            renderer?.focusActiveTerminal()
+            renderer(window)?.focusActiveTerminal()
 
         case .killWorkspace(let name):
             do {
                 try Daemon.kill(name)
             } catch {
-                renderer?.present(error: error.localizedDescription)
+                renderer(window)?.present(error: error.localizedDescription)
             }
             SurfacePool.shared.discardAll(workspace: name)
             refreshFromDaemon()
-            if activeWorkspace == nil || activeWorkspace?.tabs.isEmpty == true {
-                activeWorkspaceName = workspaces.first(where: { !$0.tabs.isEmpty })?.name
-                if let workspace = activeWorkspace {
-                    activate(workspace.activeTabID ?? workspace.tabs.first?.id)
+            if workspace(for: window) == nil || workspace(for: window)?.tabs.isEmpty == true {
+                views[window]?.workspace = workspaces.first(where: { !$0.tabs.isEmpty })?.name
+                if let workspace = workspace(for: window) {
+                    activate(workspace.lastTabID ?? workspace.tabs.first?.id, in: window)
                 }
             }
             publish()
 
         case .split(let direction):
-            guard let workspace = activeWorkspace, let tab = workspace.activeTab else { return }
+            guard let workspace = workspace(for: window), let tab = shownTab(in: window) else { return }
             do {
                 // Split off a pane of THIS tab or off nothing. Focus is
                 // reported by views, and views are moved, rebuilt and handed
@@ -286,10 +371,13 @@ final class Session {
                 // which leaves focus on the root — and then every further
                 // split hangs off the root instead of off the pane you are in.
                 refreshFromDaemon()
-                activeWorkspace?.activeTab?.noteFocus(pane: pane)
+                if let tab = shownTab(in: window) {
+                    tab.noteFocus(pane: pane)
+                    views[window]?.focusedPane[tab.id] = pane
+                }
                 publish()
             } catch {
-                renderer?.present(error: error.localizedDescription)
+                renderer(window)?.present(error: error.localizedDescription)
             }
 
         case .focusPane(let tab, let pane):
@@ -297,55 +385,58 @@ final class Session {
             // taking the responder is AppKit tidying up, not the person
             // moving — and acting on it would aim the next split at a pane in
             // another tab, which is where the new pane would then appear.
-            guard let active = activeWorkspace?.activeTab, active.id == tab else { return }
-            active.noteFocus(pane: pane)
+            guard views[window]?.tab == tab, let entity = shownTab(in: window),
+                  entity.owns(pane: pane)
+            else { return }
+            views[window]?.focusedPane[tab] = pane
+            entity.noteFocus(pane: pane)
             publish()
 
         case .setSidebar(let state):
-            sidebarStore.save(state)
+            sidebarStore.save(state, for: window)
             publish()
 
         case .togglePicker:
-            guard picker?.mode != .goTo else {
-                dispatch(.closePicker)
+            guard views[window]?.picker?.mode != .goTo else {
+                dispatch(.closePicker, from: window)
                 return
             }
-            picker = PickerModel(
+            views[window]?.picker = PickerModel(
                 mode: .goTo, matches: [:], scopeLabel: nil, query: "",
                 items: pickerItems(), previewOf: nil, previewText: "")
             publish()
             // zoxide is a process launch; the list opens on what is already
             // known and grows a moment later rather than waiting for it.
-            loadDestinations()
+            loadDestinations(for: window)
 
         case .toggleSearch(let global):
             let wanted = PickerModel.Mode.search(global: global)
-            guard picker?.mode != wanted else {
-                dispatch(.closePicker)
+            guard views[window]?.picker?.mode != wanted else {
+                dispatch(.closePicker, from: window)
                 return
             }
             let label: String
             if global {
                 label = "everywhere"
-            } else if let tab = activeWorkspace?.activeTab {
+            } else if let tab = shownTab(in: window) {
                 label = "\(tab.id.workspace) › \(tab.title.isEmpty ? "tab \(tab.id.root)" : tab.title)"
             } else {
                 label = "this pane"
             }
-            picker = PickerModel(
+            views[window]?.picker = PickerModel(
                 mode: wanted, matches: [:], scopeLabel: label, query: "",
                 items: [], previewOf: nil, previewText: "")
             publish()
 
         case .setPickerQuery(let query):
-            guard var open = picker else { return }
+            guard var open = views[window]?.picker else { return }
             open.query = query
-            picker = open
+            views[window]?.picker = open
             guard case .search(let global) = open.mode else { return }
-            searchGeneration += 1
-            let generation = searchGeneration
+            views[window]!.searchGeneration += 1
+            let generation = views[window]!.searchGeneration
             guard !query.isEmpty else {
-                picker?.items = []
+                views[window]?.picker?.items = []
                 publish()
                 return
             }
@@ -355,12 +446,12 @@ final class Session {
             // The pane you are in, unless the search is global.
             let scope: (workspace: String, tab: UInt32)? = global
                 ? nil
-                : activeWorkspace?.activeTab.map { ($0.id.workspace, $0.focusedPane) }
+                : shownTab(in: window).map { ($0.id.workspace, focusedPane(of: $0, in: window)) }
             DispatchQueue.global(qos: .userInitiated).async {
                 let hits = (try? Daemon.search(query, scope: scope)) ?? []
                 DispatchQueue.main.async { [weak self] in
-                    guard let self, self.searchGeneration == generation,
-                          case .search = self.picker?.mode
+                    guard let self, self.views[window]?.searchGeneration == generation,
+                          case .search = self.views[window]?.picker?.mode
                     else { return }
                     var items: [PickerModel.Item] = []
                     var matches: [String: PickerModel.Match] = [:]
@@ -387,14 +478,14 @@ final class Session {
                             group: "\(hit.workspace) › tab \(hit.tab)"
                         )
                     }
-                    self.picker?.items = items
-                    self.picker?.matches = matches
+                    self.views[window]?.picker?.items = items
+                    self.views[window]?.picker?.matches = matches
                     self.publish()
                 }
             }
 
         case .movePane(let pane, let target, let side):
-            guard let workspace = activeWorkspace, pane != target,
+            guard let workspace = workspace(for: window), pane != target,
                   let source = workspace.tabs.first(where: { $0.owns(pane: pane) }),
                   let destination = workspace.tabs.first(where: { $0.owns(pane: target) })
             else { return }
@@ -426,86 +517,82 @@ final class Session {
                     Daemon.Move(tab: pane, splitOf: theirs.parent, splitDir: theirs.dir))
                 moves.append(Daemon.Move(tab: target, splitOf: mine.parent, splitDir: mine.dir))
             }
-            rearrange(moves, in: workspace.name, focusing: pane)
+            rearrange(moves, in: workspace.name, focusing: pane, for: window)
 
         case .detachPane(let pane):
-            guard let workspace = activeWorkspace,
+            guard let workspace = workspace(for: window),
                   let source = workspace.tabs.first(where: { $0.owns(pane: pane) }),
                   !source.panes.isEmpty
             else { return }
             var moves = vacating(pane, in: source)
             moves.append(Daemon.Move(tab: pane, splitOf: 0, splitDir: 0))
-            rearrange(moves, in: workspace.name, focusing: pane)
+            rearrange(moves, in: workspace.name, focusing: pane, for: window)
 
         case .reorderTabs(let ids):
-            guard let workspace = activeWorkspace, !ids.isEmpty else { return }
+            guard let workspace = workspace(for: window), !ids.isEmpty else { return }
             tabOrderStore.save(ids, in: workspace.name)
             workspace.reorder(ids)
             publish()
 
         case .reorderWorkspaces(let from, let to):
-            var names = workspaces.map(\.name)
+            // The list this window carries is its order — there is nothing
+            // else to record, and nothing for another window to disagree with.
+            guard var names = views[window]?.workspaces else { return }
             names.move(fromOffsets: from, toOffset: to)
-            // Saved whole: the arrangement is the list, not a diff against
-            // the alphabet, so a workspace that disappears and comes back
-            // lands where it was left.
-            orderStore.save(names)
-            workspaces.sort {
-                (names.firstIndex(of: $0.name) ?? .max) < (names.firstIndex(of: $1.name) ?? .max)
-            }
+            views[window]?.workspaces = names
             publish()
 
         case .closePicker:
-            picker = nil
+            views[window]?.picker = nil
             publish()
-            renderer?.focusActiveTerminal()
+            renderer(window)?.focusActiveTerminal()
 
         case .previewPickerItem(let id):
-            guard var open = picker else { return }
+            guard var open = views[window]?.picker else { return }
             open.previewOf = id
             open.previewText = ""
-            picker = open
+            views[window]?.picker = open
             publish()
             guard let id, let item = open.items.first(where: { $0.id == id }) else { return }
             switch item.kind {
-            case .running(let tab): loadPreview(of: tab, pane: tab.root, for: id)
+            case .running(let tab): loadPreview(of: tab, pane: tab.root, for: id, in: window)
             // The pane that matched, not the tab's root: previewing the root
             // of a split shows something the search never looked at.
-            case .hit(let tab, let pane, _, _): loadPreview(of: tab, pane: pane, for: id)
+            case .hit(let tab, let pane, _, _): loadPreview(of: tab, pane: pane, for: id, in: window)
             case .destination: break
             }
 
         case .choosePickerItem(let id):
-            guard let item = picker?.items.first(where: { $0.id == id }) else { return }
-            picker = nil
+            guard let item = views[window]?.picker?.items.first(where: { $0.id == id }) else { return }
+            views[window]?.picker = nil
             switch item.kind {
             case .running(let tab):
-                dispatch(.activateTab(tab))
+                dispatch(.activateTab(tab), from: window)
             case .destination(let path):
-                openWorkspace(at: path)
+                openWorkspace(at: path, in: window)
             case .hit(let tab, let pane, _, let fromEnd):
                 // Land on the tab, then on the pane inside it, then on the
                 // line. The pane is mounted by the publish above, so the
                 // scroll is asked for after it, not before.
-                activate(tab)
+                activate(tab, in: window)
                 workspaces.first { $0.name == tab.workspace }?
                     .tabs.first { $0.id == tab }?
                     .noteFocus(pane: pane)
                 publish()
-                renderer?.focusActiveTerminal()
+                renderer(window)?.focusActiveTerminal()
                 Trace.log("scroll", "hit \(tab.workspace)/\(pane) back \(fromEnd)")
                 SurfacePool.shared.existing(workspace: tab.workspace, tab: pane)?
                     .scrollBack(lines: Int(fromEnd))
             }
 
         case .dismissPickerItem(let id):
-            guard let item = picker?.items.first(where: { $0.id == id }),
+            guard let item = views[window]?.picker?.items.first(where: { $0.id == id }),
                   case .running(let tab) = item.kind
             else { return }
             try? Daemon.closeTab(tab.root, in: tab.workspace)
             SurfacePool.shared.discard(workspace: tab.workspace, tab: tab.root)
             refreshFromDaemon()
-            picker?.items = pickerItems()
+            views[window]?.picker?.items = pickerItems()
             publish()
         }
     }
@@ -522,7 +609,7 @@ final class Session {
     /// home", which is the right thing to fall back to.
     private func directory(of workspace: String) -> String {
         guard let entity = workspaces.first(where: { $0.name == workspace }),
-              let tab = entity.activeTab
+              let tab = entity.lastTab
         else { return "" }
         let pane = tab.owns(pane: tab.focusedPane) ? tab.focusedPane : tab.id.root
         return SurfacePool.shared
@@ -558,20 +645,23 @@ final class Session {
     /// Ask the daemon to move panes, then believe the daemon rather than
     /// guessing what it did: the arrangement is its fact, and a rejected move
     /// must leave the app showing what is actually there.
-    private func rearrange(_ moves: [Daemon.Move], in workspace: String, focusing pane: UInt32) {
+    private func rearrange(
+        _ moves: [Daemon.Move], in workspace: String, focusing pane: UInt32,
+        for window: WindowID
+    ) {
         do {
             try Daemon.rearrange(moves, in: workspace)
         } catch {
-            renderer?.present(error: error.localizedDescription)
+            renderer(window)?.present(error: error.localizedDescription)
         }
         refreshFromDaemon()
         if let entity = workspaces.first(where: { $0.name == workspace }),
            let holder = entity.tabs.first(where: { $0.owns(pane: pane) }) {
-            activate(holder.id)
+            activate(holder.id, in: window)
             holder.noteFocus(pane: pane)
         }
         publish()
-        renderer?.focusActiveTerminal()
+        renderer(window)?.focusActiveTerminal()
     }
 
     /// The tab a pane belongs to, which is the only thing that can be
@@ -582,11 +672,20 @@ final class Session {
             .id
     }
 
-    private func activate(_ id: TabID?) {
-        guard let id, let workspace = workspaces.first(where: { $0.name == id.workspace })
+    /// THE switch, now with an address.
+    ///
+    /// Workspace and tab are written together, here and nowhere else, so the
+    /// two cannot come to disagree — the same invariant this enforced for the
+    /// app-wide pair it replaces. Entering a workspace also puts it in the
+    /// window's list: the list is the record of where this window has been.
+    private func activate(_ id: TabID?, in window: WindowID) {
+        guard let id, let workspace = workspaces.first(where: { $0.name == id.workspace }),
+              workspace.tabs.contains(where: { $0.id == id }), views[window] != nil
         else { return }
-        activeWorkspaceName = id.workspace
-        workspace.activate(id)
+        adopt(id.workspace, into: window)
+        views[window]?.workspace = id.workspace
+        views[window]?.tab = id
+        workspace.remember(id)
         recentTabs.removeAll { $0 == id }
         recentTabs.insert(id, at: 0)
     }
@@ -636,44 +735,44 @@ final class Session {
         return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
     }
 
-    private func loadDestinations() {
+    private func loadDestinations(for window: WindowID) {
         DispatchQueue.global(qos: .userInitiated).async {
             let paths = Zoxide.directories()
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.picker != nil else { return }
+                guard let self, self.views[window]?.picker != nil else { return }
                 self.destinations = paths
-                self.picker?.items = self.pickerItems()
+                self.views[window]?.picker?.items = self.pickerItems()
                 self.publish()
             }
         }
     }
 
-    private func loadPreview(of tab: TabID, pane: UInt32, for item: String) {
+    private func loadPreview(of tab: TabID, pane: UInt32, for item: String, in window: WindowID) {
         DispatchQueue.global(qos: .userInitiated).async {
             let text = (try? Daemon.preview(workspace: tab.workspace, tab: pane)) ?? ""
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.picker?.previewOf == item else { return }
-                self.picker?.previewText = text
+                guard let self, self.views[window]?.picker?.previewOf == item else { return }
+                self.views[window]?.picker?.previewText = text
                 self.publish()
             }
         }
     }
 
     /// Open a workspace named after a directory, with its first tab there.
-    private func openWorkspace(at path: String) {
+    private func openWorkspace(at path: String, in window: WindowID) {
         let name = (path as NSString).lastPathComponent
         if workspaces.first(where: { $0.name == name })?.tabs.isEmpty == false {
-            dispatch(.activateWorkspace(name))
+            dispatch(.activateWorkspace(name), from: window)
             return
         }
         do {
             let id = try Daemon.newTab(in: name, cwd: path)
             refreshFromDaemon()
-            activate(TabID(workspace: name, root: id))
+            activate(TabID(workspace: name, root: id), in: window)
             publish()
-            renderer?.focusActiveTerminal()
+            renderer(window)?.focusActiveTerminal()
         } catch {
-            renderer?.present(error: error.localizedDescription)
+            renderer(window)?.present(error: error.localizedDescription)
         }
     }
 
@@ -683,45 +782,61 @@ final class Session {
         reconcile(listing)
     }
 
+    /// Every window is offered a snapshot; only the ones whose own has
+    /// changed are handed it.
+    ///
+    /// Rebuilt for all of them on every publish rather than working out which
+    /// windows an intent could have touched — the per-window diff below is
+    /// what keeps "unchanged values are silent" true, and it is exact, where
+    /// that reasoning would only be careful. A selection change in one window
+    /// leaves every other window's snapshot identical, so the others stay
+    /// quiet on their own.
     private func publish() {
-        let snapshot = makeSnapshot()
-        guard snapshot != lastSnapshot else { return }
-        lastSnapshot = snapshot
-        renderer?.render(snapshot)
+        for id in windowOrder {
+            guard let renderer = renderer(id) else { continue }
+            let snapshot = makeSnapshot(for: id)
+            guard snapshot != lastSnapshots[id] else { continue }
+            lastSnapshots[id] = snapshot
+            renderer.render(snapshot)
+        }
     }
 
-    private func makeSnapshot() -> SessionSnapshot {
-        let rows = workspaces.map { workspace in
-            SessionSnapshot.SidebarRow(
+    private func makeSnapshot(for window: WindowID) -> SessionSnapshot {
+        let view = views[window] ?? WindowView()
+        // The workspaces this window carries, in its order — not everything
+        // the daemon has. Anything missing is still a ⌘P away.
+        let rows = view.workspaces.compactMap { name -> SessionSnapshot.SidebarRow? in
+            guard let workspace = workspaces.first(where: { $0.name == name }) else { return nil }
+            return SessionSnapshot.SidebarRow(
                 name: workspace.name,
                 subtitle: workspace.subtitle,
                 tabs: workspace.tabs.count,
                 running: workspace.tabs.flatMap(\.busyTitles),
                 place: workspace.place,
                 dot: workspace.dot,
-                isActive: workspace.name == activeWorkspaceName
+                isActive: workspace.name == view.workspace
             )
         }
-        let strip = (activeWorkspace?.tabs ?? []).map { tab in
+        let strip = (workspace(for: window)?.tabs ?? []).map { tab in
             SessionSnapshot.StripItem(
                 id: tab.id,
                 title: tab.title,
                 busy: tab.busy,
                 hasPanes: !tab.panes.isEmpty,
-                isActive: tab.id == activeWorkspace?.activeTabID
+                isActive: tab.id == view.tab
             )
         }
-        let active = activeWorkspace?.activeTab.map { tab in
+        let active = shownTab(in: window).map { tab in
             SessionSnapshot.ActiveTab(
                 id: tab.id,
                 title: tab.title,
                 panes: tab.panes,
-                focusedPane: tab.focusedPane
+                focusedPane: focusedPane(of: tab, in: window)
             )
         }
         let universe = Set(workspaces.flatMap { $0.tabs.map(\.id) })
         return SessionSnapshot(
-            sidebar: sidebarStore.state, picker: picker, rows: rows, strip: strip,
-            active: active, universe: universe)
+            sidebar: sidebarStore.state(for: window), picker: view.picker,
+            rows: rows, strip: strip, active: active, universe: universe)
     }
 }

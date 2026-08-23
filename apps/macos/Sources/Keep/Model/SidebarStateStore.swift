@@ -17,30 +17,52 @@ func stateDirectory() -> URL {
     )[0].appendingPathComponent("Keep", isDirectory: true)
 }
 
-/// The sidebar's state across app restarts.
+/// Each window's sidebar, across app restarts.
 ///
 /// App-side only — the daemon stores no UI state. One small JSON file:
-/// ~/Library/Application Support/Keep/sidebar-state.json.
+/// sidebar-state.json, keyed by window slot.
+///
+/// One value per window, not one per tab and not one for the app. Per tab was
+/// tried and read as a glitch: you collapse it, move to another tab, and it
+/// is back. But a window is not a tab, and one value for the app reproduces
+/// that same glitch across windows — collapse it in the narrow one and the
+/// wide one you did not touch rearranges itself. The rule is what it always
+/// was, with a word added: furniture stays where you put it, in the room you
+/// put it in.
 ///
 /// Writes are debounced: a divider drag reports continuously and none of it
 /// is worth an fsync per event. `flush` settles the debt at quit.
 @MainActor
 final class SidebarStateStore {
-    private(set) var state: SidebarState
+    private var states: [Int: SidebarState]
     private let file: URL
     private var writeScheduled = false
 
     init(directory: URL? = nil) {
         let dir = directory ?? stateDirectory()
         file = dir.appendingPathComponent("sidebar-state.json")
-        state = (try? JSONDecoder().decode(
-            SidebarState.self, from: Data(contentsOf: file)
-        )) ?? .initial
+        let data = (try? Data(contentsOf: file)) ?? Data()
+        if let keyed = try? JSONDecoder().decode([Int: SidebarState].self, from: data) {
+            states = keyed
+        } else if let bare = try? JSONDecoder().decode(SidebarState.self, from: data) {
+            // What every earlier version wrote. Whoever had one sidebar keeps
+            // it, and it becomes what a second window starts from.
+            states = [WindowID.first.slot: bare]
+        } else {
+            states = [:]
+        }
     }
 
-    func save(_ newState: SidebarState) {
-        guard newState != state else { return }
-        state = newState
+    /// A window nobody has arranged yet inherits the first window's, and the
+    /// factory setting if there is no first window either — so a new window
+    /// opens looking like the one it was opened from.
+    func state(for window: WindowID) -> SidebarState {
+        states[window.slot] ?? states[WindowID.first.slot] ?? .initial
+    }
+
+    func save(_ newState: SidebarState, for window: WindowID) {
+        guard states[window.slot] != newState else { return }
+        states[window.slot] = newState
         scheduleWrite()
     }
 
@@ -53,7 +75,7 @@ final class SidebarStateStore {
     private func write() {
         try? FileManager.default.createDirectory(
             at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? JSONEncoder().encode(state).write(to: file, options: .atomic)
+        try? JSONEncoder().encode(states).write(to: file, options: .atomic)
     }
 
     private func scheduleWrite() {
@@ -71,46 +93,6 @@ final class SidebarStateStore {
 ///
 /// App-side, like the sidebar's own state, because this is a preference about
 /// looking rather than a fact about what is running: the daemon knows which
-/// workspaces exist, and nothing about which one you want at the top.
-///
-/// Names, not indices. A workspace that goes away and comes back keeps its
-/// place, and one that has never been seen is new rather than misplaced.
-@MainActor
-final class WorkspaceOrderStore {
-    private(set) var order: [String]
-    private let file: URL
-
-    init(directory: URL? = nil) {
-        let dir = directory ?? stateDirectory()
-        file = dir.appendingPathComponent("workspace-order.json")
-        order = (try? JSONDecoder().decode(
-            [String].self, from: Data(contentsOf: file)
-        )) ?? []
-    }
-
-    func save(_ names: [String]) {
-        guard names != order else { return }
-        order = names
-        try? FileManager.default.createDirectory(
-            at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? JSONEncoder().encode(order).write(to: file, options: .atomic)
-    }
-
-    /// Sort names into the remembered order, with anything unheard-of at the
-    /// end in alphabetical order — a workspace made a moment ago appears where
-    /// it was made, at the bottom, rather than jumping into the middle of a
-    /// list somebody arranged by hand.
-    func arrange(_ names: [String]) -> [String] {
-        let placed = order.filter(names.contains)
-        let rest = names.filter { !order.contains($0) }.sorted()
-        return placed + rest
-    }
-}
-
-/// The order the tabs of each workspace are listed in.
-///
-/// App-side, like the workspaces' own order: the daemon knows which tabs
-/// exist and nothing about which one you want first. What it does own is the
 /// numbers — so this remembers ids, and ids are only meaningful while the
 /// daemon that issued them is alive. A daemon restarted hands out fresh ones
 /// and the remembered order quietly stops applying, which is the right way

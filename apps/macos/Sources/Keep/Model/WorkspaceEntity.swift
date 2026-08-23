@@ -12,7 +12,12 @@ final class WorkspaceEntity {
     /// How the tabs should be ordered, asked of whoever remembers it. Nil
     /// while nobody does, which is the daemon's order.
     var arrangement: (([UInt32]) -> [UInt32])?
-    private(set) var activeTabID: TabID?
+    /// The tab a window lands on when it enters this workspace.
+    ///
+    /// Not "the tab that is showing" — that is a fact about a window, and
+    /// lives there. This is the workspace's own memory of where you were in
+    /// it, which is what a click on it in any window should resolve to.
+    private(set) var lastTabID: TabID?
 
     /// Where this workspace last was, for the sidebar row.
     ///
@@ -31,8 +36,8 @@ final class WorkspaceEntity {
         self.name = name
     }
 
-    var activeTab: TabEntity? {
-        tabs.first { $0.id == activeTabID }
+    var lastTab: TabEntity? {
+        tabs.first { $0.id == lastTabID }
     }
 
     /// Put the tabs in this order. Ids not named keep their places at the end.
@@ -62,9 +67,9 @@ final class WorkspaceEntity {
         return text
     }
 
-    func activate(_ id: TabID) {
+    func remember(_ id: TabID) {
         guard tabs.contains(where: { $0.id == id }) else { return }
-        activeTabID = id
+        lastTabID = id
     }
 
     /// Merge one daemon listing. Creates entities for new root tabs (not
@@ -108,16 +113,16 @@ final class WorkspaceEntity {
         }
 
         // The active tab died: its index neighbor takes over.
-        if let active = activeTabID, dead.contains(active) {
-            activeTabID = tabs.first?.id
+        if let remembered = lastTabID, dead.contains(remembered) {
+            lastTabID = tabs.first?.id
             changed = true
         }
-        if activeTabID == nil, let first = tabs.first {
-            activeTabID = first.id
+        if lastTabID == nil, let first = tabs.first {
+            lastTabID = first.id
             changed = true
         }
 
-        if let found = Self.place(in: activeTab?.title ?? ""), found != place {
+        if let found = Self.place(in: lastTab?.title ?? ""), found != place {
             place = found
             changed = true
         }

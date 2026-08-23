@@ -8,20 +8,43 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let session = Session()
-    private var windowController: MainWindowController?
+    private var controllers: [MainWindowController] = []
     private var poller: DaemonPoller?
+
+    /// The window a menu item means.
+    ///
+    /// Matched by identity rather than trusting `NSWindow.windowController`,
+    /// and falling back twice: to the main window, and then to the first one
+    /// there is. A modal alert leaves `keyWindow` nil, and a menu item picked
+    /// while one is up still has to mean something.
+    private var focused: MainWindowController? {
+        if let key = NSApp.keyWindow,
+           let match = controllers.first(where: { $0.window === key }) { return match }
+        if let main = NSApp.mainWindow,
+           let match = controllers.first(where: { $0.window === main }) { return match }
+        return controllers.first
+    }
+
+    /// Every menu action is an intent, and every intent now says where it
+    /// came from.
+    private func send(_ intent: Intent) {
+        guard let controller = focused else { return }
+        session.dispatch(intent, from: controller.windowID)
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = GhosttyApp.shared
         buildMenu()
 
-        let controller = MainWindowController(session: session)
-        windowController = controller
-        session.renderer = controller
+        let controller = MainWindowController(session: session, id: .first)
+        controllers.append(controller)
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
 
-        session.start()
+        // The first window carries everything that already exists. A window
+        // opened later starts empty on purpose; this one starting empty would
+        // just look like the app had lost the lot.
+        session.start(firstWindow: controller.windowID, renderer: controller)
         let poller = DaemonPoller(session: session)
         poller.start()
         self.poller = poller
@@ -40,22 +63,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - menu actions (each one is an intent)
 
-    @objc func newTab(_ sender: Any?) { session.dispatch(.newTab(in: nil)) }
-    @objc func goTo(_ sender: Any?) { session.dispatch(.togglePicker) }
-    @objc func find(_ sender: Any?) { session.dispatch(.toggleSearch(global: false)) }
-    @objc func findGlobal(_ sender: Any?) { session.dispatch(.toggleSearch(global: true)) }
-    @objc func closePane(_ sender: Any?) { session.dispatch(.closePane(nil)) }
-    @objc func closeTab(_ sender: Any?) { session.dispatch(.closeTab(nil)) }
-    @objc func splitRight(_ sender: Any?) { session.dispatch(.split(1)) }
-    @objc func splitDown(_ sender: Any?) { session.dispatch(.split(2)) }
-    @objc func nextTab(_ sender: Any?) { session.dispatch(.nextTab) }
-    @objc func previousTab(_ sender: Any?) { session.dispatch(.previousTab) }
-    @objc func nextWorkspace(_ sender: Any?) { session.dispatch(.nextWorkspace) }
-    @objc func previousWorkspace(_ sender: Any?) { session.dispatch(.previousWorkspace) }
+    @objc func newTab(_ sender: Any?) { send(.newTab(in: nil)) }
+    @objc func goTo(_ sender: Any?) { send(.togglePicker) }
+    @objc func find(_ sender: Any?) { send(.toggleSearch(global: false)) }
+    @objc func findGlobal(_ sender: Any?) { send(.toggleSearch(global: true)) }
+    @objc func closePane(_ sender: Any?) { send(.closePane(nil)) }
+    @objc func closeTab(_ sender: Any?) { send(.closeTab(nil)) }
+    @objc func splitRight(_ sender: Any?) { send(.split(1)) }
+    @objc func splitDown(_ sender: Any?) { send(.split(2)) }
+    @objc func nextTab(_ sender: Any?) { send(.nextTab) }
+    @objc func previousTab(_ sender: Any?) { send(.previousTab) }
+    @objc func nextWorkspace(_ sender: Any?) { send(.nextWorkspace) }
+    @objc func previousWorkspace(_ sender: Any?) { send(.previousWorkspace) }
 
     @objc func showTab(_ sender: Any?) {
         guard let tag = (sender as? NSMenuItem)?.tag else { return }
-        session.dispatch(.activateTabIndex(tag == 9 ? -1 : tag - 1))
+        send(.activateTabIndex(tag == 9 ? -1 : tag - 1))
     }
 
     @objc func newWorkspace(_ sender: Any?) {
@@ -69,11 +92,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "Create")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        session.dispatch(.newWorkspace(named: field.stringValue))
+        send(.newWorkspace(named: field.stringValue))
     }
 
     @objc func toggleSidebar(_ sender: Any?) {
-        (windowController?.window as? KeepWindow)?.toggleSidebar(sender)
+        (focused?.window as? KeepWindow)?.toggleSidebar(sender)
     }
 
     private func buildMenu() {
