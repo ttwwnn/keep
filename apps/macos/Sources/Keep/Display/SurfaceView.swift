@@ -1009,8 +1009,19 @@ final class TerminalSurfaceView: NSView {
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Paste")
         alert.addButton(withTitle: "Cancel")
-        let go = alert.runModal() == .alertFirstButtonReturn
-        completeClipboardRequest(go ? text : "", state: state, confirmed: true)
+        // A sheet on this surface's own window: the question is about this
+        // terminal, and the other window has no business being frozen by it.
+        // The answer is allowed to arrive later — this is already a turn of
+        // the run loop after the runtime asked, and the request stays open
+        // until it is completed.
+        guard let window else {
+            let go = alert.runModal() == .alertFirstButtonReturn
+            return completeClipboardRequest(go ? text : "", state: state, confirmed: true)
+        }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            let go = response == .alertFirstButtonReturn
+            self?.completeClipboardRequest(go ? text : "", state: state, confirmed: true)
+        }
     }
 
     /// Scrolling, which is also how the scrollback becomes reachable at all:

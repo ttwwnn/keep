@@ -299,7 +299,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let alert = NSAlert()
         alert.messageText = "Keep"
         alert.informativeText = error
-        alert.runModal()
+        // On this window, and only this one. `runModal` would freeze the
+        // others and hold the run loop, which stops the poller reconciling
+        // and leaves every window's idea of the daemon ageing.
+        guard let window else {
+            alert.runModal()
+            return
+        }
+        alert.beginSheetModal(for: window, completionHandler: nil)
     }
 
     // MARK: - the switch pipeline

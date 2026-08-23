@@ -240,6 +240,12 @@ every query**, and a duplicated `CSI 24;1R` looks like garbage typed at the
 prompt. This is structural — `keep-vt` has no reply channel — and it is
 accepted, not a bug waiting to be found. It is the price of a mirrored tab.
 
+**Known limit.** The background colour a program sets (OSC 11) is still
+app-wide: the runtime reports it against a surface, but the chrome adopts it
+for everybody, so a program in one window retints the other's toolbar. Nothing
+is lost by it and no session is affected — it is on the list, not in the
+design.
+
 **Windows come back the way we left them, not the way AppKit would.**
 `isRestorable` is off. What was open, where, and what each window carried goes
 into `windows.json` when a window closes and when the app is asked to quit —

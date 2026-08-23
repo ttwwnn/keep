@@ -199,8 +199,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.window.initialFirstResponder = field
         alert.addButton(withTitle: "Create")
         alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        send(.newWorkspace(named: field.stringValue))
+        // A sheet on the window that asked, rather than `runModal`. An
+        // app-modal alert stops every window — including the one the person
+        // is watching a build in — and stops the poller with them.
+        guard let window = focused?.window else { return }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.send(.newWorkspace(named: field.stringValue))
+        }
     }
 
     @objc func toggleSidebar(_ sender: Any?) {

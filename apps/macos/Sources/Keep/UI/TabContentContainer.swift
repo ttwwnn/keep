@@ -119,12 +119,26 @@ final class TabContentContainer: NSView {
         let point = convert(windowPoint, from: nil)
         for host in hosts.values { host.hideLanding() }
 
+        // Where the pointer actually is, in screen terms: `point` only says it
+        // is outside this view, which is equally true of the tab strip above
+        // it and of somebody else's screen.
+        let leftTheWindow = window.map { !$0.frame.contains(NSEvent.mouseLocation) } ?? false
+
         guard bounds.contains(point) else {
             // Let go over a tab in the strip: put the pane in that tab, beside
             // what is already there. Anywhere else outside is a tab of its own.
             if let over = tabUnderPointer?(windowPoint), over != source,
                let host = hosts[over], let anchor = host.anchorPane {
                 onPaneDrop?(source, pane, anchor, .right)
+            } else if leftTheWindow {
+                // Dropped on another window. The tracking loop belongs to the
+                // window the press started in, so there is no way from here to
+                // hand the pane to the window under the pointer — and making a
+                // new tab in *this* window instead is the worst answer: the
+                // pane vanishes from where it was dropped and reappears
+                // somewhere nobody was looking. Until a drop can cross, a drag
+                // that leaves is a drag that did not happen.
+                Trace.log("pane", "drag left the window; nothing moved")
             } else {
                 onPaneDetach?(source, pane)
             }
