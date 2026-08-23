@@ -41,11 +41,15 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
     override func becomeKey() {
         super.becomeKey()
         Trace.log("focus", "becomeKey responder=\(Trace.describe(firstResponder))")
+        (firstResponder as? TerminalSurfaceView)?.noteFocus()
     }
 
     override func resignKey() {
         super.resignKey()
         Trace.log("focus", "resignKey")
+        // The responder does not change when a window stops being key, so
+        // nothing else would tell the terminal it no longer has the keyboard.
+        (firstResponder as? TerminalSurfaceView)?.noteFocus()
     }
 
     override func makeFirstResponder(_ responder: NSResponder?) -> Bool {

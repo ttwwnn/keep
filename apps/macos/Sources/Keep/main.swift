@@ -32,11 +32,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         session.dispatch(intent, from: controller.windowID)
     }
 
+    /// The lowest slot nobody is using.
+    ///
+    /// Reused rather than always fresh, so a closed window's furniture — its
+    /// sidebar, and later its frame — is inherited by the next one opened
+    /// instead of accumulating records for windows that are gone.
+    private func freeSlot() -> WindowID {
+        let taken = Set(controllers.map(\.windowID.slot))
+        var slot = 0
+        while taken.contains(slot) { slot += 1 }
+        return WindowID(slot: slot)
+    }
+
+    /// Open one, on purpose. This is the only path that makes a window, and
+    /// it runs when somebody asks for one — never on a switch, a poll or a
+    /// render.
+    @objc func newWindow(_ sender: Any?) {
+        let controller = MainWindowController(session: session, id: freeSlot())
+        controller.onClose = { [weak self] gone in
+            self?.controllers.removeAll { $0 === gone }
+        }
+        controllers.append(controller)
+
+        // The same size as the window it was opened from, stepped down and
+        // across. Matching the size matters beyond looking tidy: two windows
+        // showing one tab have to agree about how big it is, and starting
+        // them the same makes that agreement a no-op on the first frame.
+        if let from = focused?.window ?? NSApp.keyWindow {
+            let frame = from.frame.offsetBy(dx: 24, dy: -24)
+            controller.window?.setFrame(frame, display: false)
+        }
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        // Empty on purpose: a new window carries no workspaces, and every one
+        // there is remains a ⌘P away.
+        session.addWindow(controller.windowID, renderer: controller, carrying: [])
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = GhosttyApp.shared
         buildMenu()
 
         let controller = MainWindowController(session: session, id: .first)
+        controller.onClose = { [weak self] gone in
+            self?.controllers.removeAll { $0 === gone }
+        }
         controllers.append(controller)
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
@@ -113,6 +153,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let fileItem = NSMenuItem()
         let fileMenu = NSMenu(title: "File")
         fileMenu.addItem(withTitle: "New Tab", action: #selector(newTab(_:)), keyEquivalent: "t")
+        // ⌘N stays with New Workspace: a workspace outlives every window that
+        // ever showed it, and the primary key belongs to the thing that lasts.
+        let newWindowItem = NSMenuItem(
+            title: "New Window", action: #selector(newWindow(_:)), keyEquivalent: "n")
+        newWindowItem.keyEquivalentModifierMask = [.command, .shift]
+        newWindowItem.target = self
+        fileMenu.addItem(newWindowItem)
         fileMenu.addItem(
             withTitle: "New Workspace…", action: #selector(newWorkspace(_:)), keyEquivalent: "n")
         fileMenu.addItem(.separator())
@@ -131,6 +178,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             title: "Close Tab", action: #selector(closeTab(_:)), keyEquivalent: "w")
         closeTabItem.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(closeTabItem)
+        // AppKit's own, so the routing to the key window is the system's and
+        // not ours to get wrong.
+        let closeWindowItem = NSMenuItem(
+            title: "Close Window",
+            action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        closeWindowItem.keyEquivalentModifierMask = [.command, .option]
+        fileMenu.addItem(closeWindowItem)
         fileItem.submenu = fileMenu
         main.addItem(fileItem)
 

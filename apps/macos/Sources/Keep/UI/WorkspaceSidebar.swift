@@ -164,6 +164,12 @@ struct WorkspaceSidebar: View {
             Button("Move Down") { move(row, by: 1) }
                 .disabled(index(of: row) == rows.count - 1)
             Divider()
+            // Two names, because the two consequences are nothing alike.
+            // One tidies this window's list and leaves the work running; the
+            // other ends the work, everywhere.
+            Button("Remove from This Window") {
+                dispatch(.removeWorkspace(row.name))
+            }
             Button("Close Workspace", role: .destructive) {
                 dispatch(.killWorkspace(row.name))
             }

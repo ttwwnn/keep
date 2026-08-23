@@ -38,9 +38,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// Every intent this window sends carries its own name.
     private func send(_ intent: Intent) { session.dispatch(intent, from: windowID) }
 
+    /// Told when this window has gone, so the delegate can let the controller
+    /// go with it.
+    var onClose: ((MainWindowController) -> Void)?
+
     init(session: Session, id: WindowID) {
         self.session = session
         self.windowID = id
+        container.windowID = id
         sidebarHost = SidebarHost(dispatch: { [weak session] in session?.dispatch($0, from: id) })
 
         // The window's content extends under the titlebar (fullSizeContentView,
@@ -393,6 +398,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // Nothing is said to the strip about the chrome it has to clear. It
         // can see where it starts, and while the sidebar is animating that is
         // the only account of the matter that is true at every frame.
+    }
+
+    /// Closing a window puts away what that window was showing, and nothing
+    /// else. No path here closes a daemon tab, which is what makes "closing a
+    /// window kills no sessions" true by construction rather than by care:
+    /// the surfaces go, their clients go with them, and the shells carry on
+    /// with one fewer viewer.
+    func windowWillClose(_ notification: Notification) {
+        session.removeWindow(windowID)
+        SurfacePool.shared.discardAll(window: windowID)
+        onClose?(self)
     }
 
     private func cancelSpring() {

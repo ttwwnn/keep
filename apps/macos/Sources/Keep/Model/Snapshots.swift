@@ -152,6 +152,10 @@ enum Intent {
     case newWorkspace(named: String)
     case closeTab(TabID?)             // nil = the active tab, panes and all
     case closePane(UInt32?)           // nil = the focused pane (⌘W)
+    /// Take a workspace out of this window's list. Its sessions carry on and
+    /// every other window keeps it — this is about what is to hand here, not
+    /// about what exists.
+    case removeWorkspace(String)
     case killWorkspace(String)
     case split(UInt8)                 // protocol values: 1 = right, 2 = down
     /// A surface took the keyboard. The tab travels with it: rebuilding an

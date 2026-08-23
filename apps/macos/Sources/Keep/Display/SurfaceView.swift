@@ -612,7 +612,7 @@ final class TerminalSurfaceView: NSView {
     override func becomeFirstResponder() -> Bool {
         let accepted = super.becomeFirstResponder()
         if accepted {
-            if let surface { ghostty_surface_set_focus(surface, true) }
+            noteFocus()
             onFocusGained?()
         }
         return accepted
@@ -622,6 +622,24 @@ final class TerminalSurfaceView: NSView {
         let resigned = super.resignFirstResponder()
         if resigned, let surface { ghostty_surface_set_focus(surface, false) }
         return resigned
+    }
+
+    /// Tell the terminal whether it has the keyboard, meaning the keyboard of
+    /// the machine and not of its own window.
+    ///
+    /// Every window has a first responder, all the time, whether or not that
+    /// window is the one you are typing in. Reporting focus on becoming one
+    /// was right while there was a single window and wrong the moment there
+    /// are two: a tab open in both would have two terminals each believing
+    /// they were focused — two cursors blinking, and two answers to a program
+    /// that asked to be told when focus moves.
+    func noteFocus() {
+        guard let surface else { return }
+        ghostty_surface_set_focus(surface, window?.isKeyWindow == true && isFirstResponderHere)
+    }
+
+    private var isFirstResponderHere: Bool {
+        window?.firstResponder === self
     }
 
     // MARK: - input

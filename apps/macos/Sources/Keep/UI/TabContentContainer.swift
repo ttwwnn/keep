@@ -9,6 +9,10 @@ import AppKit
 /// two `isHidden` flips. Nothing here ever touches a window.
 @MainActor
 final class TabContentContainer: NSView {
+    /// Which window this container is in. Carried so the surfaces it mounts
+    /// are borrowed in this window's name and not another's.
+    var windowID: WindowID = .first
+
     private(set) var hosts: [TabID: TabHostView] = [:]
     private(set) var visibleTab: TabID?
 
@@ -33,7 +37,7 @@ final class TabContentContainer: NSView {
     /// is the switch pipeline's business.
     func host(for tab: SessionSnapshot.ActiveTab) -> TabHostView {
         if let existing = hosts[tab.id] { return existing }
-        let host = TabHostView(id: tab.id)
+        let host = TabHostView(id: tab.id, window: windowID)
         host.onPaneFocus = { [weak self] id, pane in self?.onPaneFocus?(id, pane) }
         host.onPaneCarry = { [weak self] id, pane, event in
             self?.carry(from: id, pane: pane, beginning: event)
@@ -163,6 +167,8 @@ final class TabContentContainer: NSView {
 @MainActor
 final class TabHostView: NSView {
     let id: TabID
+    /// The window this host hangs in, for borrowing surfaces.
+    let windowID: WindowID
     private var tree: PaneTree?
     private var focusedPane: UInt32?
     private var splitViews: [NSSplitView] = []
@@ -272,8 +278,9 @@ final class TabHostView: NSView {
         return best?.pane
     }
 
-    init(id: TabID) {
+    init(id: TabID, window: WindowID) {
         self.id = id
+        self.windowID = window
         super.init(frame: .zero)
     }
 
@@ -322,7 +329,8 @@ final class TabHostView: NSView {
     private func build(_ node: PaneTree) -> NSView {
         switch node {
         case .leaf(let tab):
-            let surface = SurfacePool.shared.surface(workspace: id.workspace, tab: tab)
+            let surface = SurfacePool.shared.surface(
+                window: windowID, workspace: id.workspace, tab: tab)
             surface.onFocusGained = { [weak self] in
                 guard let self else { return }
                 self.onPaneFocus?(self.id, tab)

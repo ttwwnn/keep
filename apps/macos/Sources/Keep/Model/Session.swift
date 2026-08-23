@@ -277,7 +277,13 @@ final class Session {
             dispatch(.activateWorkspace(workspaces[next].name), from: window)
 
         case .newTab(let name):
-            guard let name = name ?? views[window]?.workspace else { return }
+            // A window carrying no workspaces has nowhere to put a tab, and
+            // silently doing nothing makes an empty window a dead end. Ask
+            // where first — the picker is the door every workspace is behind.
+            guard let name = name ?? views[window]?.workspace else {
+                dispatch(.togglePicker, from: window)
+                return
+            }
             do {
                 let id = try Daemon.newTab(in: name, cwd: directory(of: name))
                 refreshFromDaemon()
@@ -330,6 +336,22 @@ final class Session {
             publish()
             renderer(window)?.focusActiveTerminal()
 
+        case .removeWorkspace(let name):
+            guard var view = views[window], view.workspaces.contains(name) else { return }
+            view.workspaces.removeAll { $0 == name }
+            // Standing in the one being put away: step to a neighbour rather
+            // than leaving the window pointed at something it no longer lists.
+            if view.workspace == name {
+                view.workspace = view.workspaces.first
+                view.tab = nil
+            }
+            views[window] = view
+            if let next = views[window]?.workspace,
+               let entity = workspaces.first(where: { $0.name == next }) {
+                activate(entity.lastTabID ?? entity.tabs.first?.id, in: window)
+            }
+            publish()
+
         case .killWorkspace(let name):
             do {
                 try Daemon.kill(name)
@@ -361,7 +383,7 @@ final class Session {
                     // A pane splits off the work in front of you, so it opens
                     // where that work is rather than at home.
                     cwd: SurfacePool.shared
-                        .existing(workspace: workspace.name, tab: target)?
+                        .anyExisting(workspace: workspace.name, tab: target)?
                         .currentDirectory ?? "",
                     splitOf: target,
                     splitDir: direction)
@@ -581,7 +603,7 @@ final class Session {
                 publish()
                 renderer(window)?.focusActiveTerminal()
                 Trace.log("scroll", "hit \(tab.workspace)/\(pane) back \(fromEnd)")
-                SurfacePool.shared.existing(workspace: tab.workspace, tab: pane)?
+                SurfacePool.shared.existing(window: window, workspace: tab.workspace, tab: pane)?
                     .scrollBack(lines: Int(fromEnd))
             }
 
@@ -613,7 +635,7 @@ final class Session {
         else { return "" }
         let pane = tab.owns(pane: tab.focusedPane) ? tab.focusedPane : tab.id.root
         return SurfacePool.shared
-            .existing(workspace: workspace, tab: pane)?
+            .anyExisting(workspace: workspace, tab: pane)?
             .currentDirectory ?? ""
     }
 

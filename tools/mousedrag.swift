@@ -2,6 +2,7 @@
 // window is.
 //
 //   mousedrag frame                                  -> "x y w h" for Keep's window
+//   mousedrag windows                                -> one "id x y w h" per window
 //   mousedrag watch <seconds>                        -> a line per position it takes
 //   mousedrag move <x> <y>                           -> park the pointer, press nothing
 //   mousedrag drag <x1> <y1> <x2> <y2> <steps> <ms>
@@ -61,6 +62,24 @@ case "id":
         exit(0)
     }
     exit(1)
+
+case "windows":
+    // Every window Keep has on screen, so a test can count them and watch
+    // each one separately. The window server's list is the only account that
+    // does not depend on the app agreeing about what it has.
+    guard let list = CGWindowListCopyWindowInfo(
+        [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+    else { exit(1) }
+    for info in list {
+        guard (info[kCGWindowOwnerName as String] as? String) == "Keep",
+              let bounds = info[kCGWindowBounds as String] as? [String: Any],
+              let height = bounds["Height"] as? Double, height > 200,
+              let width = bounds["Width"] as? Double,
+              let x = bounds["X"] as? Double, let y = bounds["Y"] as? Double,
+              let id = info[kCGWindowNumber as String] as? Int
+        else { continue }
+        print("\(id) \(Int(x)) \(Int(y)) \(Int(width)) \(Int(height))")
+    }
 
 case "frame":
     guard let frame = keepFrame() else {
@@ -139,6 +158,7 @@ case "drag":
 default:
     FileHandle.standardError.write(Data("""
         usage: mousedrag id
+               mousedrag windows
                mousedrag frame
                mousedrag watch <seconds>
                mousedrag move <x> <y>
