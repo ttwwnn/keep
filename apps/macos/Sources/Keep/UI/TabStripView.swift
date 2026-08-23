@@ -130,6 +130,12 @@ final class TabStripView: NSView {
     /// holds still and the drag is the tab's; over the bare stretches of the
     /// row it is a titlebar again, which is what those stretches are for.
     private func updateWindowDragging(pointerAt point: NSPoint) {
+        // While a tab is being carried the answer is settled, and asking
+        // again mid-gesture is how the window gets let go halfway through
+        // one: a drag that runs past the last tab leaves the pointer over no
+        // cell at all, which reads as "not on a tab" and hands the window
+        // back to the window server with the button still down.
+        guard carried == nil else { return }
         // A lone tab is not a tab, it is the window's title — drawn without a
         // capsule for exactly that reason — and there is nowhere to reorder it
         // to. Holding the window still under it would take the title bar away
