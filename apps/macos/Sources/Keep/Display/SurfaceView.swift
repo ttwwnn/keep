@@ -721,7 +721,7 @@ final class TerminalSurfaceView: NSView {
         key.action = action
         let mods = Self.mods(from: event.modifierFlags)
         key.mods = mods
-        key.consumed_mods = Self.consumedMods(from: event.modifierFlags)
+        key.consumed_mods = Self.consumedMods(of: event)
         key.keycode = UInt32(event.keyCode)
         // The character this key makes with nothing held down, and only if
         // that is a character at all.
@@ -836,12 +836,35 @@ final class TerminalSurfaceView: NSView {
     /// Declaring it wrongly is how this broke before: the whole modifier set
     /// was handed over, which cancels modifiers that really were held and
     /// left backspace, escape and the arrows arriving as other keys.
-    private static func consumedMods(from flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
-        var translation = flags
+    ///
+    /// And shift is only spent on the keys it actually changes. It makes "?"
+    /// out of "/", so on that key it is spent and must not be reported twice.
+    /// It makes nothing of tab — the key types a tab either way — so on that
+    /// one it was merely held, and reporting it as spent is how shift-tab
+    /// reached a program in kitty mode as a plain tab: whatever cycles
+    /// forwards on tab and backwards on shift-tab simply went forwards, or
+    /// did nothing at all, with no way from inside the program to tell why.
+    private static func consumedMods(of event: NSEvent) -> ghostty_input_mods_e {
+        var translation = event.modifierFlags
         translation.remove(.option)
         translation.remove(.control)
         translation.remove(.command)
+        if translation.contains(.shift), !shiftChangedTheCharacter(event) {
+            translation.remove(.shift)
+        }
         return mods(from: translation)
+    }
+
+    /// Whether holding shift made this key type something else.
+    ///
+    /// Asked of the keyboard layout rather than assumed: on one layout a key
+    /// shifts into another character and on the next it does not, and the
+    /// answer decides whether the program is told shift was held.
+    private static func shiftChangedTheCharacter(_ event: NSEvent) -> Bool {
+        guard let typed = event.characters(byApplyingModifiers: .shift),
+              let plain = event.characters(byApplyingModifiers: [])
+        else { return false }
+        return typed != plain
     }
 
     private static func mods(from flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {

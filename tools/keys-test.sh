@@ -25,16 +25,20 @@
 # window out from under one and refuses it the keyboard. They are the two
 # remaining ways this app and the far end could disagree about a protocol.
 #
-# It stops the running Keep and does not start it again: this is a test, and
-# the app it leaves behind would be pointed at a socket that no longer exists.
+# It drives KeepDev, a build of its own (tools/build-dev.sh), so it can be run
+# while somebody is working in Keep: different name, different bundle id,
+# different state directory, and every kill, focus and window count in here
+# goes by that name. It still takes the mouse over for a couple of minutes.
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
 # shellcheck source=tools/scratch.sh
 . tools/scratch.sh
 
-APP=apps/macos/build/Build/Products/Debug/Keep.app
-BIN=$APP/Contents/MacOS/Keep
+APP=$(dev_app)
+APP_NAME=$(app_name "$APP")
+export KEEP_APP_NAME=$APP_NAME
+BIN=$APP/Contents/MacOS/$APP_NAME
 # Short, because a unix socket path has about a hundred characters and the
 # scratch directories this runs from have more.
 SOCKET=/tmp/keep-keys-$$.sock
@@ -67,7 +71,6 @@ cleanup() {
         rm -rf "$WORK"
     fi
     rm -f "$SOCKET"
-    restore_app "$APP"
 }
 # INT and TERM as well as EXIT: a test that is interrupted has still
 # taken the person's app away, and leaving it taken is how a stopped
@@ -76,11 +79,9 @@ trap cleanup EXIT INT TERM
 
 say() { printf '%s\n' "$*"; }
 
-[ -x "$BIN" ] || { say "no app at $BIN — build it first"; exit 1; }
+say "building $APP_NAME, the client, the daemon and the tools (yours is left alone)"
+./tools/build-dev.sh >/dev/null || { say "could not build $APP_NAME — run tools/build-dev.sh"; exit 1; }
 
-say "building the client and the daemon"
-cargo build --release -p keep -p keepd >/dev/null 2>&1 || { say "cargo build failed"; exit 1; }
-bundle_binaries "$APP" || { say "could not put the fresh binaries in the bundle"; exit 1; }
 swiftc -O tools/sendkey.swift -o "$SENDKEY" 2>/dev/null || { say "could not build sendkey"; exit 1; }
 
 export KEEP_SOCKET=$SOCKET
@@ -101,11 +102,12 @@ sleep 2
 # is using has to step aside for the one under test. It is started again on
 # the way out, pointed back at their own daemon — which itself is never
 # touched: it goes on holding their sessions throughout.
-say "starting the app on its own daemon (yours comes back at the end)"
+say "starting $APP_NAME on its own daemon"
 stop_app
 KEEP_TRACE=1 "$BIN" >"$WORK/app.log" 2>&1 &
 APP_PID=$!
 sleep 11
+place_on_screen
 
 # A fresh probe per case: the screen is cleared, whatever the case needs is
 # asked for, and then the shell stops interpreting and starts printing.
@@ -121,7 +123,7 @@ start_probe() {
     kill_descendants_matching "$DAEMON_PID" "cat"
     sleep 1
     { ( sleep 2
-        printf 'stty sane; clear; %s stty raw -echo; cat -v\n' "$setup"
+        printf 'stty sane; clear; %s stty raw -echo; cat -vt\n' "$setup"
         sleep 45
       ) | script -q /dev/null ./target/release/keep keys --tab 1; } >/dev/null 2>&1 &
     PROBE_PID=$!
@@ -196,6 +198,13 @@ check "left arrow" "$KEYS" '^[[D' '^[OD'
 check "ctrl-c"     "$KEYS" '^C'
 "$SENDKEY" "$APP_PID" key 44 shift; sleep 0.5   # shift-slash, which is "?"
 check "shift-slash is a question mark" "$(screen)" '?'
+# Tab and its shifted twin. Programs that cycle a selection forwards with one
+# and backwards with the other — Claude Code's mode switch among them — go
+# quiet when the shifted one arrives as a plain tab or as nothing at all,
+# and from inside the program the two are the same silence.
+start_probe
+"$SENDKEY" "$APP_PID" key 48 shift; sleep 0.5   # shift-tab
+check "shift-tab is a backtab" "$(screen)" '^[[Z'
 # U+F700..U+F8FF is the block AppKit names function keys with; in UTF-8 every
 # one of them begins EF 9C or EF 9D, which cat -v writes as M-oM-^ or M-oM-^].
 reject "no key sent a glyph of its own" "$KEYS" 'M-o'
@@ -255,6 +264,12 @@ probe_key "plain slash"   44
 check "slash, in kitty mode"          "$LAST" '/'
 probe_key "shift-slash"   44 shift
 check "shift-slash is a question mark, in kitty mode" "$LAST" '?'
+# The one that sent people looking: a program in kitty mode cycling its modes
+# forwards on tab and backwards on shift-tab does nothing at all on the
+# second, because shift arrives spent. Either encoding is fine — the legacy
+# backtab or the protocol's own — as long as the shift is still in it.
+probe_key "shift-tab"     48 shift
+check "shift-tab is still a backtab, in kitty mode" "$LAST" '^[[Z' '^[[9;2u'
 
 # ------------------------------------------------------------ bracketed paste
 

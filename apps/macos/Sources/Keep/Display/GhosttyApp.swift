@@ -464,10 +464,21 @@ final class GhosttyApp {
         // Keep's native toolbar already provides the outer breathing room.
         // Use a tighter terminal-only inset than the user's standalone
         // Ghostty window so the first prompt sits closer to the chrome.
+        //
+        // `shift+tab` is spelled out for the same reason, and measured the
+        // same way: outside the kitty keyboard protocol the encoder sends
+        // `CSI Z`, the backtab every terminal has sent for decades, and with
+        // the protocol in force it sends a plain tab — the shift simply gone.
+        // What that costs is any program that cycles one way on tab and the
+        // other way on shift-tab: it cycles forwards twice, or does nothing,
+        // and from inside there is no way to tell which. `CSI Z` is what the
+        // terminal already sends when nobody has turned the protocol on, so
+        // naming it here only makes the two agree.
         let body = """
             command = \(clientBinary)
             window-padding-y = 0
             keybind = alt+backspace=text:\\x1b\\x7f
+            keybind = shift+tab=text:\\x1b[Z
 
             """
         do {
