@@ -51,7 +51,12 @@ final class PickerView: NSView {
         // A dimmed ground, so the terminal behind reads as "not now".
         layer?.backgroundColor = NSColor.black.withAlphaComponent(0.35).cgColor
 
-        card = Glass.panel(cardContent, cornerRadius: 14)
+        // The window's own corner, measured off a capture of one: on the same
+        // picture the window's rounding runs twice as far as this card's did
+        // at fourteen. An overlay that sits inside a window and is rounded
+        // less than it reads as a rectangle somebody softened, rather than as
+        // a piece of the same thing.
+        card = Glass.panel(cardContent, cornerRadius: 24)
         card.translatesAutoresizingMaskIntoConstraints = false
         // Neither the card nor its insides may shrink to fit what is in them.
         // A container hugs its content at priority 750 by default, which is
