@@ -10,6 +10,7 @@
 		064F6B18D47591C6F8B8D9D0 /* DaemonPoller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C6200092D4D21F2BB040D2A /* DaemonPoller.swift */; };
 		1A4DF695AB0229E7D445A48A /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ADD16A5C6AADA495B3C279A /* main.swift */; };
 		1D448336142D0DABA8D8D0A8 /* SidebarHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21F9A16ACB41B05219BCFCA5 /* SidebarHost.swift */; };
+		1DB5C2ADB8A13CF62A60771D /* TerminalText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B045B3D1F2B2D78B7D298AB /* TerminalText.swift */; };
 		301FC7FCBC5FCEE57D947FFA /* Daemon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B1FC2433A269BA7AA8510FD /* Daemon.swift */; };
 		37E566353DB718B0FE901831 /* WorkspaceSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05581E4C489CBFCB9EE0FC63 /* WorkspaceSidebar.swift */; };
 		38DFD5E48BF89D0DFF2D3606 /* TabContentContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FDC62FD5F9E5BB0275F688A /* TabContentContainer.swift */; };
@@ -34,6 +35,7 @@
 /* Begin PBXFileReference section */
 		02DE3503066299BDBBF6E5E8 /* Zoxide.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Zoxide.swift; sourceTree = "<group>"; };
 		05581E4C489CBFCB9EE0FC63 /* WorkspaceSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSidebar.swift; sourceTree = "<group>"; };
+		0B045B3D1F2B2D78B7D298AB /* TerminalText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalText.swift; sourceTree = "<group>"; };
 		135A8576CC41EE22386C8C4D /* GhosttyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyApp.swift; sourceTree = "<group>"; };
 		1493E76B2245010775C7CC76 /* GhosttyKit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = GhosttyKit.xcframework; path = ../../vendor/GhosttyKit.xcframework; sourceTree = "<group>"; };
 		1FDC62FD5F9E5BB0275F688A /* TabContentContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabContentContainer.swift; sourceTree = "<group>"; };
@@ -87,6 +89,7 @@
 				21F9A16ACB41B05219BCFCA5 /* SidebarHost.swift */,
 				1FDC62FD5F9E5BB0275F688A /* TabContentContainer.swift */,
 				3519A6ACCC0D876A65383EF4 /* TabStripView.swift */,
+				0B045B3D1F2B2D78B7D298AB /* TerminalText.swift */,
 				05581E4C489CBFCB9EE0FC63 /* WorkspaceSidebar.swift */,
 			);
 			path = UI;
@@ -242,6 +245,7 @@
 				38DFD5E48BF89D0DFF2D3606 /* TabContentContainer.swift in Sources */,
 				43B96FF24E38E0F3B1F6D06A /* TabEntity.swift in Sources */,
 				B59464F3438BD1075E780F68 /* TabStripView.swift in Sources */,
+				1DB5C2ADB8A13CF62A60771D /* TerminalText.swift in Sources */,
 				6F431B737F8BD1938D1B0FF2 /* Trace.swift in Sources */,
 				4A2967F994700E628ED8287E /* WorkspaceEntity.swift in Sources */,
 				37E566353DB718B0FE901831 /* WorkspaceSidebar.swift in Sources */,

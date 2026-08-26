@@ -851,7 +851,7 @@ final class Session {
 
     private func loadPreview(of tab: TabID, pane: UInt32, for item: String, in window: WindowID) {
         DispatchQueue.global(qos: .userInitiated).async {
-            let text = (try? Daemon.preview(workspace: tab.workspace, tab: pane)) ?? ""
+            let text = (try? Daemon.colouredPreview(workspace: tab.workspace, tab: pane)) ?? ""
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.views[window]?.picker?.previewOf == item else { return }
                 self.views[window]?.picker?.previewText = text

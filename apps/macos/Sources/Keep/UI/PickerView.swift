@@ -220,6 +220,9 @@ final class PickerView: NSView {
 
     /// The last geometry traced, so a relayout that changes nothing is silent.
     private var lastShape = ""
+    /// What the preview last showed, kept because the drawn text is no longer
+    /// the same string as the one it was made from.
+    private var lastPreview = ""
 
     /// Where the two halves of the card ended up.
     ///
@@ -286,8 +289,19 @@ final class PickerView: NSView {
                 preview.string = context
                 preview.scrollToBeginningOfDocument(nil)
             }
-        } else if preview.string != model.previewText {
-            preview.string = model.previewText
+        } else if lastPreview != model.previewText {
+            lastPreview = model.previewText
+            // Drawn with the colours it had on the screen it came from. The
+            // daemon hands the preview over as the sequences it would repaint
+            // a terminal with, so what the person is looking at is what they
+            // would see if they went there.
+            let terminal = GhosttyApp.shared.terminalPalette()
+            preview.textStorage?.setAttributedString(
+                TerminalText.attributed(
+                    model.previewText,
+                    font: GhosttyApp.shared.terminalFont(size: 10),
+                    palette: terminal.colors,
+                    foreground: terminal.foreground.withAlphaComponent(0.85)))
             preview.scrollToBeginningOfDocument(nil)
         }
         // Next turn: the card is measured after the window has laid it out,

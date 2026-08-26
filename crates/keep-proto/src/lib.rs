@@ -19,6 +19,7 @@ const T_CLOSE_TAB: u8 = 0x07;
 const T_PREVIEW: u8 = 0x08;
 const T_SEARCH: u8 = 0x09;
 const T_REARRANGE: u8 = 0x0a;
+const T_PREVIEW_VT: u8 = 0x0b;
 
 const T_WORKSPACES: u8 = 0x81;
 const T_ERROR: u8 = 0x84;
@@ -73,6 +74,13 @@ pub enum ClientMsg {
     /// without attaching to it — the daemon already holds the grid, so this
     /// costs a snapshot rather than a client.
     Preview { workspace: String, tab: u32 },
+    /// The same screen, as VT sequences rather than as text.
+    ///
+    /// For an embedder that draws the preview itself and wants it to look
+    /// like the terminal it is a picture of. A daemon that predates this
+    /// answers "unknown client tag", which is the caller's cue to ask for
+    /// the plain one instead.
+    PreviewVt { workspace: String, tab: u32 },
     /// Look for `query` in history. The daemon holds the text — including for
     /// tabs no client has ever opened — so it is the only place that can
     /// answer this once rather than once per client.
@@ -335,6 +343,11 @@ impl ClientMsg {
                 b.u32(*tab);
                 T_PREVIEW
             }
+            ClientMsg::PreviewVt { workspace, tab } => {
+                b.str(workspace);
+                b.u32(*tab);
+                T_PREVIEW_VT
+            }
             ClientMsg::Search { query, limit, workspace, tab } => {
                 b.str(query);
                 b.u32(*limit);
@@ -399,6 +412,7 @@ impl ClientMsg {
             }
             T_CLOSE_TAB => ClientMsg::CloseTab { workspace: c.str()?, tab: c.u32()? },
             T_PREVIEW => ClientMsg::Preview { workspace: c.str()?, tab: c.u32()? },
+            T_PREVIEW_VT => ClientMsg::PreviewVt { workspace: c.str()?, tab: c.u32()? },
             T_SEARCH => ClientMsg::Search {
                 query: c.str()?,
                 limit: c.u32()?,
@@ -651,6 +665,7 @@ mod tests {
         });
         roundtrip_client(ClientMsg::CloseTab { workspace: "proj".into(), tab: 7 });
         roundtrip_client(ClientMsg::Preview { workspace: "proj".into(), tab: 2 });
+        roundtrip_client(ClientMsg::PreviewVt { workspace: "proj".into(), tab: 2 });
         roundtrip_client(ClientMsg::Search {
             query: "error".into(), limit: 200, workspace: String::new(), tab: 0,
         });

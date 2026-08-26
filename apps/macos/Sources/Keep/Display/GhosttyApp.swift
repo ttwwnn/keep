@@ -132,6 +132,152 @@ final class GhosttyApp {
         return NSFont(descriptor: descriptor, size: points) ?? base
     }
 
+    /// The sixteen colours the terminal was told to use, and the rest of the
+    /// two hundred and fifty-six worked out from them.
+    ///
+    /// Read the same way the font is: out of the config file the terminal
+    /// reads, because these are not scalars `ghostty_config_get` will answer
+    /// for. A config usually names a theme rather than listing colours, so
+    /// the theme is followed to the file that holds them — the ones shipped
+    /// inside Ghostty, or the person's own under `~/.config`.
+    ///
+    /// Cached per appearance: a preview asks for this on every keystroke, and
+    /// the answer only changes when the system goes from light to dark.
+    func terminalPalette() -> (colors: [NSColor], foreground: NSColor) {
+        let dark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        if let cached = paletteCache[dark] { return cached }
+        let resolved = Self.readPalette(dark: dark)
+        paletteCache[dark] = resolved
+        return resolved
+    }
+
+    private var paletteCache: [Bool: (colors: [NSColor], foreground: NSColor)] {
+        get { _paletteCache }
+        set { _paletteCache = newValue }
+    }
+
+    private static func readPalette(dark: Bool) -> (colors: [NSColor], foreground: NSColor) {
+        var named: [Int: NSColor] = [:]
+        var foreground: NSColor?
+        var theme: String?
+
+        func read(_ path: String) {
+            guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return }
+            for line in text.split(separator: "\n") {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.hasPrefix("#"), let equals = trimmed.firstIndex(of: "=") else {
+                    continue
+                }
+                let key = trimmed[..<equals].trimmingCharacters(in: .whitespaces)
+                let value = trimmed[trimmed.index(after: equals)...]
+                    .trimmingCharacters(in: .whitespaces)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                switch key {
+                case "theme": theme = value
+                case "foreground": foreground = color(from: value)
+                case "palette":
+                    // "palette = 4=#89b4fa": the slot, then the colour.
+                    guard let split = value.firstIndex(of: "="),
+                          let slot = Int(value[..<split].trimmingCharacters(in: .whitespaces)),
+                          (0...255).contains(slot),
+                          let parsed = color(from: String(value[value.index(after: split)...]))
+                    else { break }
+                    named[slot] = parsed
+                default: break
+                }
+            }
+        }
+
+        let home = NSHomeDirectory()
+        for path in [
+            (home as NSString).appendingPathComponent(".config/ghostty/config"),
+            (home as NSString)
+                .appendingPathComponent("Library/Application Support/com.mitchellh.ghostty/config"),
+        ] where FileManager.default.fileExists(atPath: path) {
+            read(path)
+            break
+        }
+
+        // "dark:Catppuccin Mocha,light:Catppuccin Latte" — one name per
+        // appearance, and the one in force is the one to follow.
+        if let theme {
+            let wanted = theme.split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .first { $0.hasPrefix(dark ? "dark:" : "light:") }
+                .map { String($0.dropFirst(dark ? 5 : 6)) }
+                ?? (theme.contains(":") ? nil : theme)
+            if let wanted = wanted?.trimmingCharacters(in: .whitespaces), !wanted.isEmpty {
+                let candidates = [
+                    (home as NSString).appendingPathComponent(".config/ghostty/themes/\(wanted)"),
+                    "/Applications/Ghostty.app/Contents/Resources/ghostty/themes/\(wanted)",
+                ]
+                // The config's own colours win over the theme's, so the theme
+                // is read first and anything named directly is put back after.
+                let direct = named
+                let directForeground = foreground
+                for path in candidates where FileManager.default.fileExists(atPath: path) {
+                    read(path)
+                    break
+                }
+                named.merge(direct) { _, own in own }
+                if let directForeground { foreground = directForeground }
+            }
+        }
+
+        var colors = (0..<256).map { standardColor(at: $0) }
+        for (slot, color) in named { colors[slot] = color }
+        return (colors, foreground ?? colors[7])
+    }
+
+    /// The xterm colours: sixteen named ones, a six-by-six-by-six cube, and a
+    /// ramp of greys. Only the first sixteen are ever overridden in practice.
+    private static func standardColor(at index: Int) -> NSColor {
+        func rgb(_ r: Int, _ g: Int, _ b: Int) -> NSColor {
+            NSColor(
+                srgbRed: CGFloat(r) / 255, green: CGFloat(g) / 255, blue: CGFloat(b) / 255,
+                alpha: 1)
+        }
+        switch index {
+        case 0: return rgb(0, 0, 0)
+        case 1: return rgb(205, 49, 49)
+        case 2: return rgb(13, 188, 121)
+        case 3: return rgb(229, 229, 16)
+        case 4: return rgb(36, 114, 200)
+        case 5: return rgb(188, 63, 188)
+        case 6: return rgb(17, 168, 205)
+        case 7: return rgb(229, 229, 229)
+        case 8: return rgb(102, 102, 102)
+        case 9: return rgb(241, 76, 76)
+        case 10: return rgb(35, 209, 139)
+        case 11: return rgb(245, 245, 67)
+        case 12: return rgb(59, 142, 234)
+        case 13: return rgb(214, 112, 214)
+        case 14: return rgb(41, 184, 219)
+        case 15: return rgb(255, 255, 255)
+        case 16...231:
+            let n = index - 16
+            let steps = [0, 95, 135, 175, 215, 255]
+            return rgb(steps[n / 36], steps[(n / 6) % 6], steps[n % 6])
+        default:
+            let level = 8 + (index - 232) * 10
+            return rgb(level, level, level)
+        }
+    }
+
+    /// `#rrggbb`, or the same without the hash, which both appear in themes.
+    private static func color(from text: String) -> NSColor? {
+        let hex = text.trimmingCharacters(in: CharacterSet(charactersIn: "#")).lowercased()
+        guard hex.count == 6, let value = Int(hex, radix: 16) else { return nil }
+        return NSColor(
+            srgbRed: CGFloat((value >> 16) & 0xff) / 255,
+            green: CGFloat((value >> 8) & 0xff) / 255,
+            blue: CGFloat(value & 0xff) / 255,
+            alpha: 1)
+    }
+
+    /// Any installed Nerd Font, found once.
+    private var _paletteCache: [Bool: (colors: [NSColor], foreground: NSColor)] = [:]
+
     /// Any installed Nerd Font, found once.
     private static let nerdFontFamily: String? = NSFontManager.shared
         .availableFontFamilies

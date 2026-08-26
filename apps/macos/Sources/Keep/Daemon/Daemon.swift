@@ -89,6 +89,7 @@ enum Daemon {
     private static let tagKill: UInt8 = 0x06
     private static let tagCloseTab: UInt8 = 0x07
     private static let tagPreview: UInt8 = 0x08
+    private static let tagPreviewVt: UInt8 = 0x0b
     private static let tagSearch: UInt8 = 0x09
     private static let tagSessions: UInt8 = 0x81
     private static let tagError: UInt8 = 0x84
@@ -241,13 +242,29 @@ enum Daemon {
     /// The daemon holds every tab's grid, so showing what a tab is doing
     /// costs a snapshot rather than a client — including for tabs of a
     /// workspace this app has never opened.
-    static func preview(workspace: String, tab: UInt32) throws -> String {
+    /// The screen a preview shows, with its colours still on it.
+    ///
+    /// Falls back to the plain one, which every daemon has answered since
+    /// before this existed: an older daemon reading a tag it does not know
+    /// closes the connection, and a preview that arrives without colour is
+    /// better than a preview that does not arrive.
+    static func colouredPreview(workspace: String, tab: UInt32) throws -> String {
+        do {
+            return try preview(workspace: workspace, tab: tab, tag: tagPreviewVt)
+        } catch {
+            return try preview(workspace: workspace, tab: tab)
+        }
+    }
+
+    static func preview(
+        workspace: String, tab: UInt32, tag: UInt8 = tagPreview
+    ) throws -> String {
         let sock = try connect()
         defer { close(sock) }
         var w = Writer()
         w.string(workspace)
         w.u32(tab)
-        try send(sock, tag: tagPreview, payload: w.data)
+        try send(sock, tag: tag, payload: w.data)
 
         let (tag, payload) = try recv(sock)
         var r = Reader(payload)

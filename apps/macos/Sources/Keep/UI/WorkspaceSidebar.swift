@@ -213,9 +213,9 @@ struct WorkspaceSidebar: View {
     @ViewBuilder
     private func rowBackground(for row: SessionSnapshot.SidebarRow) -> some View {
         if row.isActive {
-            GlassRow(cornerRadius: 7, tint: Palette.litRow)
+            GlassRow(cornerRadius: 12, tint: Palette.litRow)
         } else if hovered == row.name {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color.white.opacity(0.055))
         }
     }
@@ -245,7 +245,7 @@ struct WorkspaceSidebar: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(fieldFocused ? Color.white.opacity(0.09) : .clear)
         )
         .animation(.easeOut(duration: 0.16), value: fieldFocused)

@@ -118,6 +118,19 @@ fn handle(stream: UnixStream, registry: Arc<Registry>) -> Result<()> {
             msg.write(&mut writer)?;
             Ok(())
         }
+        ClientMsg::PreviewVt { workspace, tab } => {
+            // The same screen the repaint is made of: text with the colours
+            // and styles still on it. Lossy because it goes down a string
+            // field, and a screen holds no invalid UTF-8 anyway — every byte
+            // in it was decoded as a character before it was stored.
+            let vt = registry
+                .get(&workspace)
+                .and_then(|w| w.tab(tab))
+                .and_then(|t| t.repaint().ok())
+                .unwrap_or_default();
+            ServerMsg::PreviewText(String::from_utf8_lossy(&vt).into_owned()).write(&mut writer)?;
+            Ok(())
+        }
         ClientMsg::Preview { workspace, tab } => {
             // A tab that has gone previews as nothing: the picker showing it
             // is a list that can lag behind the daemon by a poll, and an
