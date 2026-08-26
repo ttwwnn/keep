@@ -266,16 +266,6 @@ final class PickerView: NSView {
             field.stringValue = ""
             query = ""
         }
-        // The field follows the model, which opens empty. Left to itself it
-        // kept whatever was last typed into it, so the next ⌘P came up
-        // already filtered by the name of the place you went to last time —
-        // and the row it puts under the cursor, the way back to where you
-        // were, was nowhere on screen.
-        if query != model.query {
-            query = model.query
-            field.stringValue = model.query
-            refilter(preservingSelection: false)
-        }
         matches = model.matches
         if all != model.items {
             all = model.items
@@ -303,6 +293,21 @@ final class PickerView: NSView {
     /// The field owns the keyboard for as long as the picker is up.
     func takeFocus() {
         window?.makeFirstResponder(field)
+    }
+
+    /// Empty the field, for an overlay that is being opened.
+    ///
+    /// Called on the way in rather than on every model, and that distinction
+    /// is the whole of it: typing refilters the list before it tells anyone
+    /// what was typed, so the list's own selection comes back through a
+    /// snapshot that still holds the *previous* query. A field that follows
+    /// every snapshot therefore erases each letter as it is typed, which from
+    /// the keyboard looks exactly like an overlay that will not accept input.
+    func prepareForOpen() {
+        guard !query.isEmpty else { return }
+        query = ""
+        field.stringValue = ""
+        refilter(preservingSelection: false)
     }
 
     var selectedItemID: String? {

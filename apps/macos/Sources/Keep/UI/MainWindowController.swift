@@ -299,6 +299,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             picker.frame = content.bounds
             picker.autoresizingMask = [.width, .height]
             content.addSubview(picker)
+            // Opened, so it opens empty — see `prepareForOpen`.
+            picker.prepareForOpen()
             picker.apply(model)
             picker.takeFocus()
             return
