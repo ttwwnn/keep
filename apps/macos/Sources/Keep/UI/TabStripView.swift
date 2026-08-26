@@ -747,14 +747,9 @@ final class TabCellView: NSView {
         self.alone = alone
 
         var title = item.title.isEmpty ? "untitled" : item.title
-        if item.hasPanes { title += "  ⊞" }
-        // Two panels, one behind the other: this tab is on screen somewhere
-        // else as well. In the row's own idiom — the other two things worth
-        // knowing about a tab are said the same way.
-        if item.isElsewhere { title += "  ⧉" }
         if item.busy { title = "✳ \(title)" }
-        if label.stringValue != title { label.stringValue = title }
-        label.font = .systemFont(ofSize: 12, weight: item.isActive ? .medium : .regular)
+        let font = NSFont.systemFont(ofSize: 12, weight: item.isActive ? .medium : .regular)
+        label.font = font
 
         // The tab you are in already answers, and a lone tab is a window
         // title with nothing to choose between — neither is an offer, so
@@ -782,9 +777,52 @@ final class TabCellView: NSView {
         shortcutLabel.textColor = palette.dimText
         closeButton.contentTintColor = palette.text
 
+        // What a tab is, beside what it is called: split into panes, and open
+        // in another window as well. Drawn as symbols rather than as the box
+        // characters they used to be — a glyph borrowed from a font is at the
+        // mercy of whichever face has it, and `⊞` came out as a chequerboard
+        // rather than as a pane.
+        var marks: [String] = []
+        if item.hasPanes { marks.append("rectangle.split.2x1") }
+        if item.isElsewhere { marks.append("macwindow.on.rectangle") }
+        let colour = label.textColor ?? palette.text
+        if marks.isEmpty {
+            if label.stringValue != title { label.stringValue = title }
+        } else {
+            let line = NSMutableAttributedString(
+                string: title, attributes: [.font: font, .foregroundColor: colour])
+            for mark in marks {
+                line.append(NSAttributedString(string: "  "))
+                line.append(Self.symbol(mark, colour: colour, size: font.pointSize))
+            }
+            label.attributedStringValue = line
+        }
+
         setAccessibilityLabel(title)
         toolTip = item.isElsewhere ? "\(item.title) — open in another window" : item.title
         needsLayout = true
+    }
+
+    /// One SF Symbol, sized and coloured to sit in a line of text.
+    ///
+    /// As an attachment rather than as an image view: it belongs *after* the
+    /// title, however long the title turns out to be, and a field that
+    /// truncates its text must be free to truncate around it.
+    private static func symbol(_ name: String, colour: NSColor, size: CGFloat)
+        -> NSAttributedString
+    {
+        let configuration = NSImage.SymbolConfiguration(pointSize: size, weight: .regular)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [colour]))
+        guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(configuration)
+        else { return NSAttributedString(string: "") }
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        // Dropped onto the text's own baseline; an attachment sits on the
+        // line's bottom otherwise, which puts it a couple of points low.
+        attachment.bounds = NSRect(
+            x: 0, y: -1, width: image.size.width, height: image.size.height)
+        return NSAttributedString(attachment: attachment)
     }
 
     /// Cells are reused and resized as tabs come and go, and a cell that

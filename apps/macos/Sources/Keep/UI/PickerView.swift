@@ -660,15 +660,19 @@ extension PickerView: NSTableViewDataSource, NSTableViewDelegate {
                 systemSymbolName: "text.magnifyingglass", accessibilityDescription: "match")
             badge.contentTintColor = .secondaryLabelColor
         }
-        badge.symbolConfiguration = .init(pointSize: 12, weight: .regular)
+        // Bigger than the text beside it, not smaller: this is the one thing
+        // in the row you read without reading — terminal or folder, decided
+        // before the eye reaches the name — and at twelve points it was
+        // punctuation next to a thirteen-point title.
+        badge.symbolConfiguration = .init(pointSize: 15, weight: .regular)
         badge.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(badge)
 
         NSLayoutConstraint.activate([
             badge.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 18),
             badge.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            badge.widthAnchor.constraint(equalToConstant: 16),
-            title.leadingAnchor.constraint(equalTo: badge.trailingAnchor, constant: 6),
+            badge.widthAnchor.constraint(equalToConstant: 20),
+            title.leadingAnchor.constraint(equalTo: badge.trailingAnchor, constant: 8),
             title.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             title.trailingAnchor.constraint(
                 lessThanOrEqualTo: detail.leadingAnchor, constant: -10),
