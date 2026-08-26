@@ -52,7 +52,12 @@ fn run() -> Result<()> {
             let mut sock = UnixStream::connect(&socket)?;
             ClientMsg::NewTab {
                 workspace: name.clone(),
-                cwd: None,
+                // Where it is run from. `keep <name>` has always opened a
+                // workspace in the directory you were standing in; `keep new`
+                // put its tab in the home directory instead, which is not a
+                // second way of saying the same thing — it is the one thing
+                // nobody wants after typing the command inside a project.
+                cwd: std::env::current_dir().ok().map(|p| p.display().to_string()),
                 cols: 80,
                 rows: 24,
                 split_of: TAB_ANY,
