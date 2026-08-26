@@ -6,9 +6,9 @@ boundaries. Nothing below the UI knows a window exists; nothing above a layer
 mutates the one beneath it directly.
 
 The rule that shapes everything else, as amended: **windows are made and
-closed only when somebody asks for one** — ⌘⇧N, ⌥⌘W, or the restore at
-launch. Nothing else creates, closes, orders, hides or reveals a window: not a
-switch, not a poll, not a render, not a reconcile. Switching workspace and
+closed only when somebody asks for one** — ⌘⇧N, ⌥⌘W, a tab pulled out of the
+row, or the restore at launch. Nothing else creates, closes, orders, hides or
+reveals a window: not a switch, not a poll, not a render, not a reconcile. Switching workspace and
 switching tab are the same operation they always were — flip which mounted
 views are visible, *within a window*. Nothing else moves.
 
@@ -21,6 +21,12 @@ AppKit's window-per-tab. A window you asked for is not that, and everything
 the old rule bought survives the amendment. Two things do not come back: a
 pool of windows that grows and shrinks with the tabs, and N copies of the
 selection state that disagree.
+
+**The tests drive a build of their own**, KeepDev (`tools/build-dev.sh`):
+same source, another name, another bundle id, another state directory. The
+suites stop the app, kill it, drag its windows about and quit it, and the
+window server tells apps apart by name — so without the rename every one of
+those reached whatever Keep somebody happened to be working in.
 
 ## Layers
 
@@ -239,6 +245,27 @@ PTY. With a tab mirrored into two windows, the program gets **two answers to
 every query**, and a duplicated `CSI 24;1R` looks like garbage typed at the
 prompt. This is structural — `keep-vt` has no reply channel — and it is
 accepted, not a bug waiting to be found. It is the price of a mirrored tab.
+
+**A tab pulled out of the row opens in a window of its own.** Drag it clear of
+the row — forty points, about a row and a half, so a wrist that wanders while
+reordering does not make windows by accident — and it lifts out and follows
+the pointer. Let go over another window and that window shows it; let go over
+nothing and a new window appears there, the size of the one it came from.
+
+What moves is the view, and only the view. The shell keeps running, the tab
+stays in its workspace, and it stays in the row it came from — the row lists
+the *workspace's* tabs, not the window's, so it cannot leave without changing
+workspaces, and the daemon has no operation for that. What changes is that the
+window it left moves on to a neighbour, and the row marks the tab `⧉`: on
+screen somewhere else. Without that mark a tab torn into its own window looks
+like a tab that never went anywhere.
+
+The row measures the drag against the pointer (`NSEvent.mouseLocation`) rather
+than against the events. A drag that wanders over another window of the same
+app stops belonging to the window that started it: the events keep coming —
+the press captured the mouse — but their coordinates are measured from
+somewhere else, and read straight, a tab dragged onto the next window reads
+from inside the row as a tab that never left it.
 
 **Known limit.** The background colour a program sets (OSC 11) is still
 app-wide: the runtime reports it against a surface, but the chrome adopts it

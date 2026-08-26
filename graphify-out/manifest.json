@@ -1,0 +1,142 @@
+{
+  "apps/macos/Sources/Keep/Daemon.swift": {
+    "mtime": 1787088458.3145669,
+    "ast_hash": "f7de88e61c717e9214e1c667fd6896f2",
+    "semantic_hash": "f7de88e61c717e9214e1c667fd6896f2"
+  },
+  "apps/macos/Sources/Keep/Ghostty/GhosttyApp.swift": {
+    "mtime": 1787093114.566503,
+    "ast_hash": "d5854270be85c8fb69c49f7b87ef3115",
+    "semantic_hash": "d5854270be85c8fb69c49f7b87ef3115"
+  },
+  "apps/macos/Sources/Keep/Ghostty/SurfaceView.swift": {
+    "mtime": 1787088516.7417285,
+    "ast_hash": "42f93c37e8f19177b354d12425003c08",
+    "semantic_hash": "42f93c37e8f19177b354d12425003c08"
+  },
+  "apps/macos/Sources/Keep/KeepWindow.swift": {
+    "mtime": 1787092686.2268298,
+    "ast_hash": "20b776693c3f248a6c04ff0a03cd82bf",
+    "semantic_hash": "20b776693c3f248a6c04ff0a03cd82bf"
+  },
+  "apps/macos/Sources/Keep/Store.swift": {
+    "mtime": 1787088532.0404148,
+    "ast_hash": "632a295ea05099919488afb054e9f8e8",
+    "semantic_hash": "632a295ea05099919488afb054e9f8e8"
+  },
+  "apps/macos/Sources/Keep/TerminalWindowController.swift": {
+    "mtime": 1787092690.7312806,
+    "ast_hash": "a29feb62f2445491a3db9d745b1234f8",
+    "semantic_hash": "a29feb62f2445491a3db9d745b1234f8"
+  },
+  "apps/macos/Sources/Keep/WindowManager.swift": {
+    "mtime": 1787091954.448098,
+    "ast_hash": "79b4a3ba779ca6d165304dc6cc8e89d2",
+    "semantic_hash": "79b4a3ba779ca6d165304dc6cc8e89d2"
+  },
+  "apps/macos/Sources/Keep/WorkspaceSidebar.swift": {
+    "mtime": 1787093609.038922,
+    "ast_hash": "18b4314f67368d1a5202126f43fa48c5",
+    "semantic_hash": "18b4314f67368d1a5202126f43fa48c5"
+  },
+  "apps/macos/Sources/Keep/main.swift": {
+    "mtime": 1787088832.675385,
+    "ast_hash": "7806bfbd7d16bc216afbcecd8665211c",
+    "semantic_hash": "7806bfbd7d16bc216afbcecd8665211c"
+  },
+  "crates/keep-proto/src/lib.rs": {
+    "mtime": 1787088351.8405674,
+    "ast_hash": "368ee038871e3836368b9938c12adc42",
+    "semantic_hash": "368ee038871e3836368b9938c12adc42"
+  },
+  "crates/keep-vt/build.rs": {
+    "mtime": 1787078228.6805377,
+    "ast_hash": "30ff02c53f09c2d9798079d566bea242",
+    "semantic_hash": "30ff02c53f09c2d9798079d566bea242"
+  },
+  "crates/keep-vt/examples/sizes.rs": {
+    "mtime": 1787078285.6820717,
+    "ast_hash": "9e108f30f14c3a0b064504055033cd7e",
+    "semantic_hash": "9e108f30f14c3a0b064504055033cd7e"
+  },
+  "crates/keep-vt/src/lib.rs": {
+    "mtime": 1787082767.234966,
+    "ast_hash": "441d59c8300f74fb59ed671c90412d94",
+    "semantic_hash": "441d59c8300f74fb59ed671c90412d94"
+  },
+  "crates/keep/src/attach.rs": {
+    "mtime": 1787086806.235417,
+    "ast_hash": "4c6dbfd40c35d8d522b64592a1f98929",
+    "semantic_hash": "4c6dbfd40c35d8d522b64592a1f98929"
+  },
+  "crates/keep/src/main.rs": {
+    "mtime": 1787088394.7916799,
+    "ast_hash": "f1c7973b71421adabf09de2fdfb043a5",
+    "semantic_hash": "f1c7973b71421adabf09de2fdfb043a5"
+  },
+  "crates/keep/src/picker.rs": {
+    "mtime": 1787088412.0406184,
+    "ast_hash": "e0461cc738d96a5ba231f63740869d84",
+    "semantic_hash": "e0461cc738d96a5ba231f63740869d84"
+  },
+  "crates/keepd/src/lib.rs": {
+    "mtime": 1787086727.3104882,
+    "ast_hash": "244efe1e761622f981af0d369bd98bd7",
+    "semantic_hash": "244efe1e761622f981af0d369bd98bd7"
+  },
+  "crates/keepd/src/main.rs": {
+    "mtime": 1787080317.5870533,
+    "ast_hash": "3b55d7d4c148cd567fd569a89f7e104b",
+    "semantic_hash": "3b55d7d4c148cd567fd569a89f7e104b"
+  },
+  "crates/keepd/src/registry.rs": {
+    "mtime": 1787088381.3487842,
+    "ast_hash": "2e2fe0a78cd8d09169bf0567495298b3",
+    "semantic_hash": "2e2fe0a78cd8d09169bf0567495298b3"
+  },
+  "crates/keepd/src/server.rs": {
+    "mtime": 1787088381.3492343,
+    "ast_hash": "f1b65c5e79c39b6e919efd6a2d56f8a8",
+    "semantic_hash": "f1b65c5e79c39b6e919efd6a2d56f8a8"
+  },
+  "crates/keepd/src/tab.rs": {
+    "mtime": 1787084869.7612133,
+    "ast_hash": "bab36421a233e6e51d6862f99c8d8df7",
+    "semantic_hash": "bab36421a233e6e51d6862f99c8d8df7"
+  },
+  "crates/keepd/src/workspace.rs": {
+    "mtime": 1787088381.272988,
+    "ast_hash": "e45b35b0b431de72b804d6e65da2fe89",
+    "semantic_hash": "e45b35b0b431de72b804d6e65da2fe89"
+  },
+  "crates/keepd/tests/daemon.rs": {
+    "mtime": 1787088437.2596884,
+    "ast_hash": "da8f2277ed3e0ca934cc2e65e01a33b4",
+    "semantic_hash": "da8f2277ed3e0ca934cc2e65e01a33b4"
+  },
+  "crates/keepd/tests/pty.rs": {
+    "mtime": 1787086843.0342755,
+    "ast_hash": "0525cc10b0e90d444ad787d873f55748",
+    "semantic_hash": "0525cc10b0e90d444ad787d873f55748"
+  },
+  "vendor/build-ghostty-macos.sh": {
+    "mtime": 1787081729.9342172,
+    "ast_hash": "1bf99b7a80bf639d15502423acb93519",
+    "semantic_hash": "1bf99b7a80bf639d15502423acb93519"
+  },
+  "vendor/fetch.sh": {
+    "mtime": 1787078378.6031063,
+    "ast_hash": "06474309ec79079d636a35ca50d7e2f9",
+    "semantic_hash": "06474309ec79079d636a35ca50d7e2f9"
+  },
+  "README.md": {
+    "mtime": 1787089986.4864414,
+    "ast_hash": "6b001ef66032fcfea2c349398826f924",
+    "semantic_hash": "6b001ef66032fcfea2c349398826f924"
+  },
+  "apps/macos/project.yml": {
+    "mtime": 1787081947.7605631,
+    "ast_hash": "dfb89e90fa6d466e74abeba1af907966",
+    "semantic_hash": "dfb89e90fa6d466e74abeba1af907966"
+  }
+}

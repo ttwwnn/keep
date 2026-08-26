@@ -55,6 +55,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// for one, and the restore at launch — cannot drift apart.
     private func makeController(id: WindowID) -> MainWindowController {
         let controller = MainWindowController(session: session, id: id)
+        controller.onTearOff = { [weak self, weak controller] tab, point, grab in
+            guard let self, let controller else { return }
+            self.tearOff(tab, at: point, heldAt: grab, from: controller)
+        }
         controller.onClose = { [weak self] gone in
             self?.controllers.removeAll { $0 === gone }
             // After the removal: what is written down is what is still open.
@@ -89,6 +93,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Trace.log("window", "remembered \(records.count)")
         windowStore.save(records)
     }
+
+    /// A tab pulled out of a row and let go.
+    ///
+    /// Nothing about the session changes: the tab is running, it stays in its
+    /// workspace, and it stays in the row it came from. What moves is which
+    /// window is looking at it — onto the window it was dropped on, or onto a
+    /// new one if it was dropped on nothing — and the row it came from moves
+    /// on to a neighbour, because a tab torn out and still showing where it
+    /// was is a tab that did not go anywhere.
+    private func tearOff(
+        _ tab: TabID, at point: NSPoint, heldAt grab: CGFloat, from source: MainWindowController
+    ) {
+        let over = controller(under: point)
+        // Where it landed and what was under it. A tear that went somewhere
+        // unexpected has exactly two possible explanations — the drop point
+        // or the lookup — and this line is the only place that tells them
+        // apart.
+        Trace.log(
+            "window",
+            "dropped at \(Int(point.x)),\(Int(point.y)) over \(over?.windowID.description ?? "nothing")")
+        if let target = over, target !== source {
+            // `.activateTab` adopts the workspace into that window on the way
+            // past, so a window that never carried it still lands on the tab.
+            session.dispatch(.activateTab(tab), from: target.windowID)
+            target.window?.makeKeyAndOrderFront(nil)
+            Trace.log("window", "\(tab) handed to \(target.windowID)")
+        } else {
+            let controller = makeController(id: freeSlot())
+            if let frame = source.window?.frame {
+                controller.window?.setFrame(
+                    Self.frame(sized: frame.size, forATabDropped: point, heldAt: grab),
+                    display: false)
+            }
+            controller.showWindow(nil)
+            controller.window?.makeKeyAndOrderFront(nil)
+            session.addWindow(controller.windowID, renderer: controller, carrying: [tab.workspace])
+            session.dispatch(.activateTab(tab), from: controller.windowID)
+            Trace.log("window", "\(tab) torn into \(controller.windowID)")
+        }
+        session.dispatch(.showAnotherTab(than: tab), from: source.windowID)
+        rememberWindows()
+    }
+
+    /// Which of our windows is under a point on screen, if any.
+    ///
+    /// Asked of the window server rather than of our own frames: windows
+    /// overlap, and the one in front is the one somebody aimed at.
+    private func controller(under point: NSPoint) -> MainWindowController? {
+        let number = NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0)
+        return controllers.first { $0.window?.windowNumber == number }
+    }
+
+    /// Where a window torn off at `point` should appear.
+    ///
+    /// The size of the window it came from — two windows on one tab have to
+    /// agree how big it is, and starting them equal makes that agreement a
+    /// no-op on the first frame, the same reason ⌘⇧N copies the frame. The
+    /// origin puts the row roughly where the hand let go, so the tab appears
+    /// under the pointer instead of the window jumping somewhere else.
+    private static func frame(
+        sized size: NSSize, forATabDropped point: NSPoint, heldAt grab: CGFloat
+    ) -> NSRect {
+        NSRect(
+            x: point.x - grab - chromeAllowance,
+            y: point.y - size.height + titlebarAllowance,
+            width: size.width,
+            height: size.height
+        )
+    }
+    /// Traffic lights and the sidebar toggle, which the row begins after.
+    private static let chromeAllowance: CGFloat = 128
+    /// Half a titlebar, so the pointer lands on the row rather than above it.
+    private static let titlebarAllowance: CGFloat = 19
 
     /// Open one, on purpose. Along with the restore at launch this is the
     /// only path that makes a window, and it runs when somebody asks for one

@@ -17,6 +17,10 @@ final class TabStripView: NSView {
     var onNewTab: (() -> Void)?
     /// The row, in the order somebody just put it in.
     var onReorder: (([UInt32]) -> Void)?
+    /// A tab pulled clear of the row and let go: where it landed, in screen
+    /// coordinates, and how far along the cell it was being held. The row
+    /// does not act on it — it does not know what a window is.
+    var onTearOff: ((TabID, NSPoint, CGFloat) -> Void)?
     /// Told when this row's leading edge moves.
     ///
     /// Which is the sidebar's trailing edge, since the row begins where the
@@ -293,6 +297,17 @@ final class TabStripView: NSView {
 
     // MARK: - carrying a tab along the row
 
+    /// How far out of the row the pointer must go before the tab is being
+    /// pulled out of it rather than along it.
+    ///
+    /// Generous on purpose — about one and a half rows. Reordering is done
+    /// with the wrist and a wrist wanders vertically; a threshold tight
+    /// enough to be crossed by accident would turn "put this tab after that
+    /// one" into "make a window", which is not a mistake anybody would forgive
+    /// twice. The tab visibly lifts once it is crossed, so nobody has to guess
+    /// which of the two gestures they are in the middle of.
+    private static let tearThreshold: CGFloat = 40
+
     /// The tab under the pointer, while it is being moved.
     private var carried: TabCellView?
     /// Whether the others should slide to their new places rather than jump.
@@ -326,7 +341,9 @@ final class TabStripView: NSView {
 
         let start = convert(event.locationInWindow, from: nil)
         let originX = cell.frame.minX
+        let originY = cell.frame.minY
         var moved = false
+        var tearing = false
         var sawDrag = 0
         Trace.log("strip", "press on \(item.root) at \(Int(start.x))")
 
@@ -339,12 +356,28 @@ final class TabStripView: NSView {
                 stop.pointee = true
                 return
             }
-            let point = self.convert(event.locationInWindow, from: nil)
+            // Where the pointer is, asked of the pointer.
+            //
+            // Not of the event: `locationInWindow` is relative to whichever
+            // window the event belongs to, and a drag that wanders over
+            // another window of this same app stops belonging to this one.
+            // The events keep arriving — the press captured the mouse — but
+            // their coordinates are then measured from somewhere else, and a
+            // tab dragged onto the next window reads from in here as a tab
+            // that never left the row. It lands back where it started, and
+            // nothing anywhere says why.
+            let onScreen = NSEvent.mouseLocation
+            let point = self.convert(window.convertPoint(fromScreen: onScreen), from: nil)
             switch event.type {
             case .leftMouseDragged:
                 sawDrag += 1
                 if !moved {
-                    guard abs(point.x - start.x) > 4 else { return }
+                    // Distance, not horizontal distance. Measured along one
+                    // axis, a straight pull downwards never became a carry at
+                    // all: it stayed a press and was released as a click,
+                    // which is exactly the motion somebody makes to take a
+                    // tab out of the row.
+                    guard hypot(point.x - start.x, point.y - start.y) > 4 else { return }
                     moved = true
                     Trace.log("strip", "carrying \(item.root)")
                     self.carried = cell
@@ -352,13 +385,41 @@ final class TabStripView: NSView {
                     // through them.
                     self.addSubview(cell, positioned: .above, relativeTo: nil)
                 }
+
+                let tearingNow = self.isOutOfTheRow(point)
+                if tearingNow != tearing {
+                    tearing = tearingNow
+                    Trace.log("strip", tearing ? "tearing \(item.root)" : "back in the row")
+                    // Said again on the way out: a press that arrived without
+                    // a hover leaves the window movable, and a tab pulled
+                    // downwards out of a titlebar is precisely the gesture the
+                    // window server reads as "drag me".
+                    if tearing { self.setWindowDraggable(false) }
+                    cell.animator().alphaValue = tearing ? 0.65 : 1
+                }
+
                 cell.frame.origin.x = originX + (point.x - start.x)
-                self.settle(cell)
+                if tearing {
+                    // Both axes now, so the tab follows the hand out of the
+                    // row instead of sliding along a rail it has left. The
+                    // row closes the gap and stays closed: `settle` would go
+                    // on shuffling places for a tab that is no longer in any
+                    // of them.
+                    cell.frame.origin.y = originY + (point.y - start.y)
+                } else {
+                    cell.frame.origin.y = originY
+                    self.settle(cell)
+                }
 
             case .leftMouseUp:
                 defer { stop.pointee = true }
                 self.carried = nil
-                if moved {
+                cell.alphaValue = 1
+                if tearing {
+                    self.needsLayout = true
+                    Trace.log("strip", "torn off \(item.root)")
+                    self.onTearOff?(item, onScreen, start.x - originX)
+                } else if moved {
                     self.needsLayout = true
                     let order = self.cells.compactMap(\.tabID?.root)
                     Trace.log("strip", "dropped, order now \(order)")
@@ -377,6 +438,16 @@ final class TabStripView: NSView {
         // dropped under the pointer should still be holding the window.
         updateWindowDragging(
             pointerAt: convert(window.mouseLocationOutsideOfEventStream, from: nil))
+    }
+
+    /// Whether the pointer has left the row, far enough to mean it.
+    ///
+    /// Vertical only. Dragging past either end of the row sideways is how a
+    /// tab is put first or last, and always has been; it is leaving the row's
+    /// *band* — up over the top of the window, or down into the terminal —
+    /// that has no meaning inside the row and so is free to mean this.
+    private func isOutOfTheRow(_ point: NSPoint) -> Bool {
+        point.y < -Self.tearThreshold || point.y > bounds.height + Self.tearThreshold
     }
 
     /// Move the carried tab into the place its middle is over, and let the
@@ -677,6 +748,10 @@ final class TabCellView: NSView {
 
         var title = item.title.isEmpty ? "untitled" : item.title
         if item.hasPanes { title += "  ⊞" }
+        // Two panels, one behind the other: this tab is on screen somewhere
+        // else as well. In the row's own idiom — the other two things worth
+        // knowing about a tab are said the same way.
+        if item.isElsewhere { title += "  ⧉" }
         if item.busy { title = "✳ \(title)" }
         if label.stringValue != title { label.stringValue = title }
         label.font = .systemFont(ofSize: 12, weight: item.isActive ? .medium : .regular)
@@ -708,7 +783,7 @@ final class TabCellView: NSView {
         closeButton.contentTintColor = palette.text
 
         setAccessibilityLabel(title)
-        toolTip = item.title
+        toolTip = item.isElsewhere ? "\(item.title) — open in another window" : item.title
         needsLayout = true
     }
 

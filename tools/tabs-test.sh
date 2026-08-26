@@ -22,19 +22,23 @@
 #
 #   tools/tabs-test.sh
 #
-# It takes the mouse over for about a minute. Nothing is mocked: a daemon of
-# its own on a scratch socket, a window, three shells, and real drags.
+# Nothing is mocked: a daemon of its own on a scratch socket, a window, three
+# shells, and real drags.
 #
-# It stops the running Keep and does not start it again: this is a test, and
-# the app it leaves behind would be pointed at a socket that no longer exists.
+# It drives KeepDev, a build of its own (tools/build-dev.sh), so it can be run
+# while somebody is working in Keep: different name, different bundle id,
+# different state directory, and every kill, focus and window count in here
+# goes by that name. It still takes the mouse over for a couple of minutes.
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
 # shellcheck source=tools/scratch.sh
 . tools/scratch.sh
 
-APP=apps/macos/build/Build/Products/Debug/Keep.app
-BIN=$APP/Contents/MacOS/Keep
+APP=$(dev_app)
+APP_NAME=$(app_name "$APP")
+export KEEP_APP_NAME=$APP_NAME
+BIN=$APP/Contents/MacOS/$APP_NAME
 SOCKET=/tmp/keep-tabs-$$.sock
 WORK=$(mktemp -d /tmp/keep-tabs-XXXXXX)
 MOUSE=$WORK/mousedrag
@@ -46,8 +50,10 @@ FAILED=0
 cleanup() {
     [ -n "${APP_PID:-}" ] && kill "$APP_PID" 2>/dev/null
     [ -n "${DAEMON_PID:-}" ] && kill "$DAEMON_PID" 2>/dev/null
-    restore_app "$APP"
-    rm -rf "$WORK" "$SOCKET"
+    # KEEP_WORK=1 leaves the app log and the daemon log behind, which is the
+    # only way to see what a failed run actually saw.
+    [ -n "${KEEP_WORK:-}" ] && say "kept: $WORK" || rm -rf "$WORK"
+    rm -f "$SOCKET"
 }
 # INT and TERM as well as EXIT: a test that is interrupted has still
 # taken the person's app away, and leaving it taken is how a stopped
@@ -56,11 +62,9 @@ trap cleanup EXIT INT TERM
 
 say() { printf '%s\n' "$*"; }
 
-[ -x "$BIN" ] || { say "no app at $BIN — build it first"; exit 1; }
+say "building $APP_NAME, the client, the daemon and the tools (yours is left alone)"
+./tools/build-dev.sh >/dev/null || { say "could not build $APP_NAME — run tools/build-dev.sh"; exit 1; }
 
-say "building the client, the daemon and the mouse"
-cargo build --release -p keep -p keepd >/dev/null 2>&1 || { say "cargo build failed"; exit 1; }
-bundle_binaries "$APP" || { say "could not put the fresh binaries in the bundle"; exit 1; }
 swiftc -O tools/mousedrag.swift -o "$MOUSE" 2>/dev/null || { say "could not build mousedrag"; exit 1; }
 swiftc -O tools/sendkey.swift -o "$SENDKEY" 2>/dev/null || { say "could not build sendkey"; exit 1; }
 
@@ -80,12 +84,13 @@ sleep 2
 
 # Yours steps aside for the one under test and is started again at the end.
 # Your daemon is never touched: it holds your sessions throughout.
-say "starting the app on its own daemon (yours comes back at the end)"
+say "starting $APP_NAME on its own daemon"
 stop_app
 KEEP_TRACE=1 "$BIN" >"$WORK/app.log" 2>&1 &
 APP_PID=$!
 sleep 11
-osascript -e 'tell application "System Events" to set frontmost of process "Keep" to true' >/dev/null 2>&1
+place_on_screen
+osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" >/dev/null 2>&1
 sleep 1
 
 # Three tabs, so that a tab has somewhere to go in both directions.
@@ -101,11 +106,17 @@ shape() { trace | grep "row " | tail -1; }
 # a probe that assumed focus from a `frontmost` issued half a minute and a
 # keystroke ago reports "nothing reached a tab" about an aim that was exact.
 focus_app() {
-    osascript -e 'tell application "System Events" to set frontmost of process "Keep" to true' \
+    osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" \
         >/dev/null 2>&1
     sleep 1
 }
 last_order() { trace | grep "dropped, order now" | tail -1 | sed -E 's/.*now \[(.*)\]/\1/'; }
+window_count() { "$MOUSE" windows | wc -l | tr -d ' '; }
+# Somebody stopped showing that tab. The line names both ends, so this is the
+# window that had it moving on — not the new window arriving at it.
+switched_away_from() {  # switched_away_from <tab>
+    grep -aq "switch    → .* from=$WORKSPACE/$1\b" "$WORK/app.log" && echo yes || echo no
+}
 
 # ------------------------------------------------------- where the tabs are
 #
@@ -262,6 +273,59 @@ reorder 1 0 "and back again" "1, 2, 3"
 
 reorder 0 2 "two places at once" "2, 3, 1"
 
+# ------------------------------------------------ pulling a tab out of the row
+#
+# The gesture the row did not have: drag a tab out of the band it lives in and
+# let go, and it opens in a window of its own. It is a view that moves and
+# nothing else — the shell keeps running, the tab stays in its workspace, and
+# it stays in this row — so what proves it worked is a second window plus the
+# row it came from moving on to a neighbour. A row still showing the tab it
+# just gave away is the failure this check exists for.
+say ""
+say "pulling a tab out of the row"
+TORN=$(last_order | cut -d, -f1 | tr -d ' ')
+WINDOWS_BEFORE=$(window_count)
+FIRST_ID=$("$MOUSE" id)
+focus_app
+"$MOUSE" drag "$(slot 0)" "$ROW_Y" "$(slot 0)" $((ROW_Y + 260)) 30 18
+sleep 4
+check "a tab pulled out of the row makes a window" \
+    $((WINDOWS_BEFORE + 1)) "$(window_count)"
+check "and the row it came from moved on" yes "$(switched_away_from "$TORN")"
+
+# Not checked here: dropping the tab on a window that is already open, which
+# hands it to that window instead of making another. Aiming at it needs a
+# point on screen that belongs to one of the two windows and not the other,
+# and where the two land is the tiling window manager's business — it moves
+# the first window when the second appears, so every number this file
+# measured a moment ago is stale by then. Verified by hand instead.
+
+# Closed again, so the rest of the run has one window to talk about: every
+# probe below asks for "the Keep window" and gets whichever is in front.
+"$SENDKEY" "$APP_PID" key 13 cmd alt; sleep 3     # alt-cmd-w
+check "and closing it leaves the one we started with" \
+    "$WINDOWS_BEFORE" "$(window_count)"
+
+# The guard on the threshold. Reordering is done with the wrist and a wrist
+# wanders; if a few points of vertical drift could tear a tab out, "put this
+# one after that one" would keep making windows.
+#
+# Tried more than once for the reason `reorder` is: the first drag after the
+# app has been activated is regularly spent on the activation, and a drag that
+# works on any attempt is a drag that works.
+WANTED="3, 2, 1"
+for attempt in 1 2 3; do
+    focus_app
+    "$MOUSE" drag "$(slot 0)" "$ROW_Y" "$(slot 1)" $((ROW_Y + 10)) 30 18
+    sleep 2
+    [ "$(last_order)" = "$WANTED" ] && break
+    say "        (attempt $attempt gave [$(last_order)], trying again)"
+    # Back where it started, so the next attempt is the same attempt.
+    [ "$(last_order)" = "$WANTED" ] || true
+done
+check "a wobble is not a tear" "$WINDOWS_BEFORE" "$(window_count)"
+check "it is a reorder" "$WANTED" "$(last_order)"
+
 # ------------------------------------------------- what a titlebar is still for
 
 say ""
@@ -272,8 +336,19 @@ WATCHER=$!
 "$MOUSE" drag $((WX + WW - 4)) "$ROW_Y" $((WX + WW - 164)) $((ROW_Y + 40)) 25 18
 wait "$WATCHER" 2>/dev/null
 sleep 1
-moved_window "the bare end of the row drags the window" \
-    $((WX + WW - 4)) "$ROW_Y" 40
+if window_travelled || ! tiling_manager; then
+    moved_window "the bare end of the row drags the window" \
+        $((WX + WW - 4)) "$ROW_Y" 40
+else
+    # A tiling window manager will not let a window be dragged at all, so
+    # whether it moved says nothing about this app. What the app owns is the
+    # offer: the row hands the window back to the window server everywhere it
+    # is not a tab, and takes it away over one. That is the lever this whole
+    # file exists because of, and the trace is where it is recorded.
+    check "the bare end of the row offers the window to the drag" \
+        "window is draggable" \
+        "$(trace | grep -o "window is draggable\|window is held still" | tail -1)"
+fi
 
 say ""
 say "a window with one tab"

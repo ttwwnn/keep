@@ -142,6 +142,12 @@ enum Intent {
 
     case activateWorkspace(String)
     case activateTab(TabID)
+    /// This window is done showing that tab — another one has taken it over.
+    /// Show a neighbour instead, if this window was on it.
+    ///
+    /// Not a close and not a removal: the tab is running, it is still in the
+    /// workspace, and it is still in this window's row. Only the view moves.
+    case showAnotherTab(than: TabID)
     /// 0-based; -1 means the last tab (⌘9, per macOS convention).
     case activateTabIndex(Int)
     case nextTab
@@ -275,6 +281,11 @@ struct SessionSnapshot: Hashable {
         let busy: Bool                  // strip renders ✳
         let hasPanes: Bool              // strip renders ⊞
         let isActive: Bool
+        /// Some other window is showing this tab. The row still lists it —
+        /// the row is the workspace's tabs, not this window's — so without
+        /// saying so, a tab pulled out into a window of its own looks like a
+        /// tab that never left.
+        let isElsewhere: Bool
     }
 
     struct ActiveTab: Hashable {

@@ -41,6 +41,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// Told when this window has gone, so the delegate can let the controller
     /// go with it.
     var onClose: ((MainWindowController) -> Void)?
+    /// A tab was pulled out of this window's row and let go: the tab, where
+    /// it landed on screen, and how far along the cell it was held.
+    ///
+    /// Answered by the delegate, not here. Making a window is the one thing
+    /// this controller deliberately cannot do — see the rule at the top of
+    /// ARCHITECTURE.md — and a controller that could make its own would be
+    /// the pool that grew and shrank all over again.
+    var onTearOff: ((TabID, NSPoint, CGFloat) -> Void)?
 
     init(session: Session, id: WindowID) {
         self.session = session
@@ -186,6 +194,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         tabStrip.onClose = { [weak self] id in self?.send(.closeTab(id)) }
         tabStrip.onNewTab = { [weak self] in self?.send(.newTab(in: nil)) }
         tabStrip.onReorder = { [weak self] ids in self?.send(.reorderTabs(ids)) }
+        tabStrip.onTearOff = { [weak self] id, point, grab in
+            self?.onTearOff?(id, point, grab)
+        }
         // The row's leading edge is the sidebar's trailing edge, and the
         // toggle above the sidebar rides it.
         tabStrip.onLeadingEdgeMoved = { [weak self] edge in

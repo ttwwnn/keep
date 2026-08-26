@@ -61,8 +61,9 @@ fight with a tiling window manager the app ever had. Switching is now a
 visibility flip between mounted views, and ⌘1–⌘9, drag-to-reorder and the
 close buttons are ours.
 
-**Windows are yours to ask for.** ⌘⇧N opens another, ⌥⌘W closes one, and
-nothing else in the app makes or unmakes a window. Each carries its own list
+**Windows are yours to ask for.** ⌘⇧N opens another, ⌥⌘W closes one, a tab
+dragged clear of the row opens in one of its own, and nothing else in the app
+makes or unmakes a window. Each carries its own list
 of workspaces — a new one starts empty, and ⌘P reaches every workspace there
 is and brings it into that window. Two windows can show the same tab; it is
 the same shell with two viewers, the way two clients attach to one tmux

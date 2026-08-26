@@ -278,6 +278,21 @@ final class Session {
             publish()
             renderer(window)?.focusActiveTerminal()
 
+        case .showAnotherTab(let id):
+            // Only if this window was the one showing it. Every other window
+            // is entitled to go on showing that tab, and a window that was
+            // already somewhere else must not be moved for somebody else's
+            // gesture.
+            guard views[window]?.tab == id, let tabs = workspace(for: window)?.tabs
+            else { return }
+            guard let at = tabs.firstIndex(where: { $0.id == id }) else { return }
+            // The one after, or the one before at the end of the row — the
+            // neighbour, the same one a closed tab would fall back to.
+            let neighbour = at + 1 < tabs.count ? tabs[at + 1] : (at > 0 ? tabs[at - 1] : nil)
+            activate(neighbour?.id, in: window)
+            publish()
+            renderer(window)?.focusActiveTerminal()
+
         case .activateTabIndex(let index):
             guard let tabs = workspace(for: window)?.tabs, !tabs.isEmpty else { return }
             let resolved = index == -1 ? tabs.count - 1 : index
@@ -876,7 +891,8 @@ final class Session {
                 title: tab.title,
                 busy: tab.busy,
                 hasPanes: !tab.panes.isEmpty,
-                isActive: tab.id == view.tab
+                isActive: tab.id == view.tab,
+                isElsewhere: views.contains { $0.key != window && $0.value.tab == tab.id }
             )
         }
         let active = shownTab(in: window).map { tab in
