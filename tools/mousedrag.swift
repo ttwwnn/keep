@@ -22,12 +22,19 @@ import Cocoa
 
 let args = CommandLine.arguments
 
+/// Which app's windows these commands are about.
+///
+/// Not always "Keep": the suites drive a build of their own, named apart, so
+/// that they can be run while somebody is working in the real one. Counting
+/// or dragging the wrong app's window is the failure this exists to stop.
+let appName = ProcessInfo.processInfo.environment["KEEP_APP_NAME"] ?? "Keep"
+
 func keepFrame() -> CGRect? {
     guard let list = CGWindowListCopyWindowInfo(
         [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
     else { return nil }
     for info in list {
-        guard (info[kCGWindowOwnerName as String] as? String) == "Keep",
+        guard (info[kCGWindowOwnerName as String] as? String) == appName,
               let bounds = info[kCGWindowBounds as String] as? [String: Any],
               let height = bounds["Height"] as? Double, height > 200,
               let width = bounds["Width"] as? Double,
@@ -53,7 +60,7 @@ case "id":
         [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
     else { exit(1) }
     for info in list {
-        guard (info[kCGWindowOwnerName as String] as? String) == "Keep",
+        guard (info[kCGWindowOwnerName as String] as? String) == appName,
               let bounds = info[kCGWindowBounds as String] as? [String: Any],
               let height = bounds["Height"] as? Double, height > 200,
               let id = info[kCGWindowNumber as String] as? Int
@@ -71,7 +78,7 @@ case "windows":
         [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
     else { exit(1) }
     for info in list {
-        guard (info[kCGWindowOwnerName as String] as? String) == "Keep",
+        guard (info[kCGWindowOwnerName as String] as? String) == appName,
               let bounds = info[kCGWindowBounds as String] as? [String: Any],
               let height = bounds["Height"] as? Double, height > 200,
               let width = bounds["Width"] as? Double,

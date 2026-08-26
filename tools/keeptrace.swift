@@ -6,7 +6,7 @@ import Cocoa
 // Nunca registra conteúdo de tecla. Este é um terminal: caracteres seriam
 // senhas e comandos. Teclas aparecem como contagem e modificadores, só.
 
-let target = "Keep"
+let target = ProcessInfo.processInfo.environment["KEEP_APP_NAME"] ?? "Keep"
 let out = FileHandle.standardOutput
 let started = Date()
 let fmt: DateFormatter = {

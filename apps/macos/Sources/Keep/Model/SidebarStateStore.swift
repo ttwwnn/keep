@@ -12,9 +12,14 @@ func stateDirectory() -> URL {
        !override.isEmpty {
         return URL(fileURLWithPath: override, isDirectory: true)
     }
+    // Named after this build, not after "Keep". A second build under another
+    // name — the one the tests drive, so that somebody can go on working in
+    // theirs — must not read or rearrange the furniture of the app they are
+    // using.
+    let app = Bundle.main.infoDictionary?["CFBundleName"] as? String ?? "Keep"
     return FileManager.default.urls(
         for: .applicationSupportDirectory, in: .userDomainMask
-    )[0].appendingPathComponent("Keep", isDirectory: true)
+    )[0].appendingPathComponent(app, isDirectory: true)
 }
 
 /// Each window's sidebar, across app restarts.

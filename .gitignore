@@ -3,3 +3,4 @@
 /vendor/libghostty-vt/
 /vendor/GhosttyKit.xcframework/
 apps/macos/build/
+apps/macos/build-dev/

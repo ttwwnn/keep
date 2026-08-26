@@ -20,16 +20,22 @@
 # Nothing is mocked: a daemon of its own on a scratch socket, two windows,
 # real shells, real keystrokes. It takes about two minutes.
 #
-# It stops the running Keep and starts it again at the end, pointed back at
-# the daemon it was using. Your daemon is never touched.
+# It drives KeepDev, a build of its own (tools/build-dev.sh), so it can be run
+# while somebody is working in Keep: different name, different bundle id,
+# different state directory, and every kill, focus and window count in here
+# goes by that name. It still takes the mouse over for a couple of minutes.
+#
+# Your daemon is never touched either.
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
 # shellcheck source=tools/scratch.sh
 . tools/scratch.sh
 
-APP=apps/macos/build/Build/Products/Debug/Keep.app
-BIN=$APP/Contents/MacOS/Keep
+APP=$(dev_app)
+APP_NAME=$(app_name "$APP")
+export KEEP_APP_NAME=$APP_NAME
+BIN=$APP/Contents/MacOS/$APP_NAME
 SOCKET=/tmp/keep-windows-$$.sock
 WORK=$(mktemp -d /tmp/keep-windows-XXXXXX)
 MOUSE=$WORK/mousedrag
@@ -41,7 +47,6 @@ FAILED=0
 cleanup() {
     [ -n "${APP_PID:-}" ] && kill "$APP_PID" 2>/dev/null
     [ -n "${DAEMON_PID:-}" ] && kill "$DAEMON_PID" 2>/dev/null
-    restore_app "$APP"
     [ -n "${KEEP_WORK:-}" ] && say "kept: $WORK" || rm -rf "$WORK"
     rm -f "$SOCKET"
 }
@@ -60,11 +65,9 @@ check() {  # check <what> <wanted> <got>
     fi
 }
 
-[ -x "$BIN" ] || { say "no app at $BIN — build it first"; exit 1; }
+say "building $APP_NAME, the client, the daemon and the tools (yours is left alone)"
+./tools/build-dev.sh >/dev/null || { say "could not build $APP_NAME — run tools/build-dev.sh"; exit 1; }
 
-say "building the client, the daemon and the mouse"
-cargo build --release -p keep -p keepd >/dev/null 2>&1 || { say "cargo build failed"; exit 1; }
-bundle_binaries "$APP" || { say "could not put the fresh binaries in the bundle"; exit 1; }
 swiftc -O tools/mousedrag.swift -o "$MOUSE" 2>/dev/null || { say "could not build mousedrag"; exit 1; }
 swiftc -O tools/sendkey.swift -o "$SENDKEY" 2>/dev/null || { say "could not build sendkey"; exit 1; }
 
@@ -85,16 +88,11 @@ launch_app() {
     focus_app
 }
 focus_app() {
-    osascript -e 'tell application "System Events" to set frontmost of process "Keep" to true' \
+    osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" \
         >/dev/null 2>&1
     sleep 1
 }
 windows() { "$MOUSE" windows | sort -n; }
-# Whether somebody else is deciding where windows go. AeroSpace re-tiles the
-# moment a second window appears, so on a machine running one the geometry is
-# not the app's to be judged on — and a check that fails there is a check that
-# gets ignored everywhere.
-tiling_manager() { pgrep -x AeroSpace >/dev/null 2>&1 || pgrep -x yabai >/dev/null 2>&1; }
 window_count() { windows | wc -l | tr -d ' '; }
 # One window's geometry, by its place in the list rather than its id: a
 # relaunch issues new ids for the same windows.
@@ -124,7 +122,7 @@ viewers_settle() {  # viewers_settle <wanted>
 }
 tab_count() { ./target/release/keep ls | grep -c "^  tab "; }
 
-say "starting the app on its own daemon (yours comes back at the end)"
+say "starting $APP_NAME on its own daemon"
 stop_app
 launch_app
 
