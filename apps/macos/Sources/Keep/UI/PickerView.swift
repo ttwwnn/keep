@@ -93,6 +93,15 @@ final class PickerView: NSView {
         preview.font = GhosttyApp.shared.terminalFont(size: 10)
         preview.textColor = .secondaryLabelColor
         preview.textContainerInset = NSSize(width: 10, height: 8)
+        // Terminal lines are not prose: they are placed, and a line that
+        // wraps is a line that has moved. Given a column of the card rather
+        // than the whole width, wrapping would fold most of them — so the
+        // container is left wide and the long ones simply run past the edge,
+        // the way they do on the screen this is a picture of.
+        preview.textContainer?.widthTracksTextView = false
+        preview.textContainer?.size = NSSize(
+            width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        preview.isHorizontallyResizable = true
         previewScroll.documentView = preview
         previewScroll.drawsBackground = false
         previewScroll.hasVerticalScroller = false
@@ -120,17 +129,24 @@ final class PickerView: NSView {
             divider.leadingAnchor.constraint(equalTo: cardContent.leadingAnchor),
             divider.trailingAnchor.constraint(equalTo: cardContent.trailingAnchor),
 
+            // The list on the left, what it is on the right. Side by side
+            // rather than stacked: the preview is a piece of a terminal, and
+            // a terminal is wide — given the bottom third of the card it had
+            // room for six lines of an eighty-column screen and wrapped every
+            // one of them. Beside the list it gets the full height of the
+            // card, which is the shape the thing being shown actually has.
             scroll.topAnchor.constraint(equalTo: divider.bottomAnchor),
             scroll.leadingAnchor.constraint(equalTo: cardContent.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: cardContent.trailingAnchor),
-            scroll.heightAnchor.constraint(equalTo: cardContent.heightAnchor, multiplier: 0.54),
+            scroll.widthAnchor.constraint(equalTo: cardContent.widthAnchor, multiplier: 0.42),
+            scroll.bottomAnchor.constraint(equalTo: cardContent.bottomAnchor),
 
-            previewDivider.topAnchor.constraint(equalTo: scroll.bottomAnchor),
-            previewDivider.leadingAnchor.constraint(equalTo: cardContent.leadingAnchor),
-            previewDivider.trailingAnchor.constraint(equalTo: cardContent.trailingAnchor),
+            previewDivider.topAnchor.constraint(equalTo: divider.bottomAnchor),
+            previewDivider.leadingAnchor.constraint(equalTo: scroll.trailingAnchor),
+            previewDivider.bottomAnchor.constraint(equalTo: cardContent.bottomAnchor),
+            previewDivider.widthAnchor.constraint(equalToConstant: 1),
 
-            previewScroll.topAnchor.constraint(equalTo: previewDivider.bottomAnchor),
-            previewScroll.leadingAnchor.constraint(equalTo: cardContent.leadingAnchor),
+            previewScroll.topAnchor.constraint(equalTo: divider.bottomAnchor),
+            previewScroll.leadingAnchor.constraint(equalTo: previewDivider.trailingAnchor),
             previewScroll.trailingAnchor.constraint(equalTo: cardContent.trailingAnchor),
             previewScroll.bottomAnchor.constraint(equalTo: cardContent.bottomAnchor),
         ])
@@ -138,6 +154,31 @@ final class PickerView: NSView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not supported") }
+
+    /// The last geometry traced, so a relayout that changes nothing is silent.
+    private var lastShape = ""
+
+    /// Where the two halves of the card ended up.
+    ///
+    /// The one question about this view that a screenshot answers and nothing
+    /// else does — and a screenshot is not available when a tiling window
+    /// manager has parked the window off the edge of the display, which from
+    /// a test's point of view is most of the time. Asked after forcing the
+    /// layout, because the frames are the answer and they are not settled
+    /// until then.
+    private func traceShape() {
+        guard Trace.enabled else { return }
+        layoutSubtreeIfNeeded()
+        let shape = "view \(Int(frame.width))x\(Int(frame.height))"
+            + " card \(Int(card.frame.width))x\(Int(card.frame.height))"
+            + " content \(Int(cardContent.frame.width))x\(Int(cardContent.frame.height))"
+            + " list \(Int(scroll.frame.width))x\(Int(scroll.frame.height))"
+            + " preview \(Int(previewScroll.frame.minX)),\(Int(previewScroll.frame.minY))"
+            + " \(Int(previewScroll.frame.width))x\(Int(previewScroll.frame.height))"
+        guard shape != lastShape else { return }
+        lastShape = shape
+        Trace.log("picker", shape)
+    }
 
     /// Clicking the dimmed ground outside the card dismisses.
     override func mouseDown(with event: NSEvent) {
@@ -167,6 +208,16 @@ final class PickerView: NSView {
             field.stringValue = ""
             query = ""
         }
+        // The field follows the model, which opens empty. Left to itself it
+        // kept whatever was last typed into it, so the next ⌘P came up
+        // already filtered by the name of the place you went to last time —
+        // and the row it puts under the cursor, the way back to where you
+        // were, was nowhere on screen.
+        if query != model.query {
+            query = model.query
+            field.stringValue = model.query
+            refilter(preservingSelection: false)
+        }
         matches = model.matches
         if all != model.items {
             all = model.items
@@ -186,6 +237,9 @@ final class PickerView: NSView {
             preview.string = model.previewText
             preview.scrollToBeginningOfDocument(nil)
         }
+        // Next turn: the card is measured after the window has laid it out,
+        // not while the model is still being applied to it.
+        if Trace.enabled { DispatchQueue.main.async { [weak self] in self?.traceShape() } }
     }
 
     /// The field owns the keyboard for as long as the picker is up.

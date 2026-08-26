@@ -469,9 +469,15 @@ final class Session {
                 dispatch(.closePicker, from: window)
                 return
             }
+            // Built before the assignment, not inside it. `views[window]?...`
+            // begins modifying `views`, and the list now reads `views` to
+            // find out where this window is — two accesses to one property at
+            // once, which Swift stops dead at runtime and says nothing about
+            // at build time.
+            let items = pickerItems(for: window)
             views[window]?.picker = PickerModel(
                 mode: .goTo, matches: [:], scopeLabel: nil, query: "",
-                items: pickerItems(), previewOf: nil, previewText: "")
+                items: items, previewOf: nil, previewText: "")
             publish()
             // zoxide is a process launch; the list opens on what is already
             // known and grows a moment later rather than waiting for it.
@@ -660,7 +666,8 @@ final class Session {
             try? Daemon.closeTab(tab.root, in: tab.workspace)
             SurfacePool.shared.discard(workspace: tab.workspace, tab: tab.root)
             refreshFromDaemon()
-            views[window]?.picker?.items = pickerItems()
+            let items = pickerItems(for: window)
+            views[window]?.picker?.items = items
             publish()
         }
     }
@@ -760,9 +767,22 @@ final class Session {
 
     /// Everything running, most recently visited first, then the places to
     /// start something new.
-    private func pickerItems() -> [PickerModel.Item] {
+    /// Everything running, most recently visited first, then the places to
+    /// start something new — with two things settled for the window that is
+    /// asking.
+    ///
+    /// The tab it is already showing is left out: the list is places to go,
+    /// and the place you are is not one of them. And the first row is the
+    /// last tab you were in **somewhere else**, so that ⌘P and return is the
+    /// way back to whatever you were doing before this — the gesture ⌘-tab
+    /// makes between apps, and the one this list is for. Without it the row
+    /// under the cursor was the next tab of the workspace already in front of
+    /// you, and the most common move of all took aiming.
+    private func pickerItems(for window: WindowID) -> [PickerModel.Item] {
         var running: [PickerModel.Item] = []
         var seen = Set<TabID>()
+        let here = views[window]?.tab
+        if let here { seen.insert(here) }
         func append(_ tab: TabEntity, in workspace: String) {
             guard seen.insert(tab.id).inserted else { return }
             running.append(PickerModel.Item(
@@ -781,6 +801,19 @@ final class Session {
         }
         for workspace in workspaces {
             for tab in workspace.tabs { append(tab, in: workspace.name) }
+        }
+        // The most recent one from another workspace, brought to the front.
+        // Only moved, not filtered: the tabs of the workspace you are in are
+        // still in the list, right behind it.
+        if let elsewhere = running.firstIndex(where: { item in
+            guard case .running(let id) = item.kind else { return false }
+            return id.workspace != here?.workspace
+        }) {
+            // Two statements: `insert(remove(at:))` takes the array twice at
+            // once, which Swift's exclusivity check stops at runtime, and a
+            // build says nothing about it.
+            let first = running.remove(at: elsewhere)
+            running.insert(first, at: 0)
         }
 
         let existing = Set(workspaces.map(\.name))
@@ -809,7 +842,8 @@ final class Session {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.views[window]?.picker != nil else { return }
                 self.destinations = paths
-                self.views[window]?.picker?.items = self.pickerItems()
+                let items = self.pickerItems(for: window)
+                self.views[window]?.picker?.items = items
                 self.publish()
             }
         }
