@@ -26,6 +26,11 @@ final class PickerView: NSView {
     private let previewScroll = NSScrollView()
     /// What the card holds; the card itself is glass around it.
     private let cardContent = NSView()
+    /// Everything above the two halves: the field's row and the line under
+    /// it. Named because the halves are sized as "the card, less this" —
+    /// which is what keeps their height something the card hands down rather
+    /// than something they ask it for.
+    private static let headerHeight: CGFloat = 14 + 20 + 12 + 1
     private var card: NSView!
     /// "3 of 47", the way a browser counts.
     private let counter = NSTextField(labelWithString: "")
@@ -48,10 +53,27 @@ final class PickerView: NSView {
 
         card = Glass.panel(cardContent, cornerRadius: 14)
         card.translatesAutoresizingMaskIntoConstraints = false
+        // Neither the card nor its insides may shrink to fit what is in them.
+        // A container hugs its content at priority 750 by default, which is
+        // above the card's own "be a fraction of the window" — so the card
+        // came out the height of its header, forty-eight points of glass with
+        // a list one point tall inside it.
+        for view in [card!, cardContent] {
+            view.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .vertical)
+            view.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        }
         addSubview(card)
-
-        field.placeholderString = "go to…"
-        field.font = .systemFont(ofSize: 15)
+        // And the insides follow the card, rather than the card following the
+        // insides. Left to the panel they are given whatever size they ask
+        // for — which, with everything in here laid out edge to edge, is the
+        // height of the header and nothing more.
+        cardContent.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            cardContent.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            cardContent.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            cardContent.topAnchor.constraint(equalTo: card.topAnchor),
+            cardContent.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+        ])
         field.isBordered = false
         field.drawsBackground = false
         field.focusRingType = .none
@@ -113,13 +135,34 @@ final class PickerView: NSView {
         previewDivider.translatesAutoresizingMaskIntoConstraints = false
         cardContent.addSubview(previewDivider)
 
-        NSLayoutConstraint.activate([
-            card.centerXAnchor.constraint(equalTo: centerXAnchor),
-            card.topAnchor.constraint(equalTo: topAnchor, constant: 90),
+        // The card is a fraction of the window, and it says so quietly.
+        //
+        // A window whose content is laid out with constraints will resize
+        // itself to satisfy them: its own "stay where you are" is priority
+        // 500, and anything above that wins. An overlay that covers a window
+        // for as long as a keystroke has no business deciding how big that
+        // window is — and when these were required, ⌘P shrank the window to
+        // the height of this card's header and left the terminal a strip two
+        // lines tall.
+        let cardSize = [
             card.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.66),
             card.heightAnchor.constraint(equalTo: heightAnchor, multiplier: 0.62),
+            // Said of the list as well as of the card: the panel is required
+            // to fit what is inside it, so a card told to be 62% of the
+            // window while its insides ask for the height of a header is a
+            // contradiction, and the window is what gives. Asking the list
+            // for the same share, quietly, makes the two agree.
+            scroll.heightAnchor.constraint(
+                equalTo: heightAnchor, multiplier: 0.62, constant: -Self.headerHeight),
+        ]
+        for constraint in cardSize { constraint.priority = NSLayoutConstraint.Priority(499) }
+
+        NSLayoutConstraint.activate(cardSize + [
+            card.centerXAnchor.constraint(equalTo: centerXAnchor),
+            card.topAnchor.constraint(equalTo: topAnchor, constant: 90),
 
             field.topAnchor.constraint(equalTo: cardContent.topAnchor, constant: 14),
+            field.heightAnchor.constraint(equalToConstant: 20),
             field.leadingAnchor.constraint(equalTo: cardContent.leadingAnchor, constant: 16),
             field.trailingAnchor.constraint(equalTo: counter.leadingAnchor, constant: -10),
             counter.centerYAnchor.constraint(equalTo: field.centerYAnchor),
@@ -135,20 +178,35 @@ final class PickerView: NSView {
             // room for six lines of an eighty-column screen and wrapped every
             // one of them. Beside the list it gets the full height of the
             // card, which is the shape the thing being shown actually has.
+            //
+            // Both halves take their height *from* the card rather than
+            // giving the card one. Pinned to its bottom instead, they leave
+            // the card's height to be worked out from what is inside it —
+            // and since the card's own height is a fraction of the window's,
+            // the only way left to satisfy that is to shrink the window. It
+            // does, to the height of this header: press ⌘P and the terminal
+            // becomes a strip two lines tall.
             scroll.topAnchor.constraint(equalTo: divider.bottomAnchor),
             scroll.leadingAnchor.constraint(equalTo: cardContent.leadingAnchor),
             scroll.widthAnchor.constraint(equalTo: cardContent.widthAnchor, multiplier: 0.42),
-            scroll.bottomAnchor.constraint(equalTo: cardContent.bottomAnchor),
+            // Measured against the window, not against the card. Against the
+            // card it is circular — the card is as tall as its insides, and
+            // its insides are as tall as the card — and a circle with a
+            // smallest answer settles on the smallest answer: a card the
+            // height of its own header. Against the window there is nothing
+            // to solve: the window is a size already, and everything here is
+            // a share of it.
+            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 240),
 
             previewDivider.topAnchor.constraint(equalTo: divider.bottomAnchor),
             previewDivider.leadingAnchor.constraint(equalTo: scroll.trailingAnchor),
-            previewDivider.bottomAnchor.constraint(equalTo: cardContent.bottomAnchor),
             previewDivider.widthAnchor.constraint(equalToConstant: 1),
+            previewDivider.heightAnchor.constraint(equalTo: scroll.heightAnchor),
 
             previewScroll.topAnchor.constraint(equalTo: divider.bottomAnchor),
             previewScroll.leadingAnchor.constraint(equalTo: previewDivider.trailingAnchor),
             previewScroll.trailingAnchor.constraint(equalTo: cardContent.trailingAnchor),
-            previewScroll.bottomAnchor.constraint(equalTo: cardContent.bottomAnchor),
+            previewScroll.heightAnchor.constraint(equalTo: scroll.heightAnchor),
         ])
     }
 
