@@ -101,7 +101,11 @@ final class PickerView: NSView {
         table.rowHeight = 34
         table.backgroundColor = .clear
         table.style = .plain
-        table.selectionHighlightStyle = .regular
+        // The row draws its own selection, inset and rounded like the
+        // sidebar's; AppKit's own is a rectangle from edge to edge, which
+        // inside a card with rounded corners reads as a different app's list
+        // pasted into this one.
+        table.selectionHighlightStyle = .none
         table.intercellSpacing = NSSize(width: 0, height: 0)
         table.dataSource = self
         table.delegate = self
@@ -439,18 +443,55 @@ final class PickerView: NSView {
 
     /// Lower is better: the span the match occupies, plus where it starts.
     private static func score(_ haystack: String, _ needle: String) -> Int? {
+        guard let marks = marks(haystack, needle), let first = marks.first, let last = marks.last
+        else { return nil }
+        return (last - first) + first / 2
+    }
+
+    /// Where each letter of the query landed, which is the same walk the score
+    /// is made of — kept rather than counted, so the row can show its work.
+    ///
+    /// A fuzzy list is a claim that these rows match what you typed, and the
+    /// claim is unreadable until the letters it matched on are pointed at:
+    /// three rows deep it stops being obvious why any of them is there, or
+    /// why the one at the top is first.
+    static func marks(_ haystack: String, _ needle: String) -> [Int]? {
         var index = haystack.startIndex
-        var first: Int?
-        var last = 0
-        var position = 0
+        var found: [Int] = []
         for character in needle {
-            guard let found = haystack[index...].firstIndex(of: character) else { return nil }
-            position = haystack.distance(from: haystack.startIndex, to: found)
-            if first == nil { first = position }
-            last = position
-            index = haystack.index(after: found)
+            guard let at = haystack[index...].firstIndex(of: character) else { return nil }
+            found.append(haystack.distance(from: haystack.startIndex, to: at))
+            index = haystack.index(after: at)
         }
-        return (last - (first ?? 0)) + (first ?? 0) / 2
+        return found
+    }
+
+    /// The same text with the matched letters lit.
+    static func lit(
+        _ text: String, marks: [Int], font: NSFont, colour: NSColor
+    ) -> NSAttributedString {
+        let attributed = NSMutableAttributedString(
+            string: text, attributes: [.font: font, .foregroundColor: NSColor.labelColor])
+        let bold = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+        // The marks are counted in characters and the attributes are applied
+        // in UTF-16, which are the same number only until somebody's directory
+        // has an emoji in it.
+        let utf16 = Array(text.utf16)
+        var offsets: [Int] = []
+        var cursor = 0
+        for character in text {
+            offsets.append(cursor)
+            cursor += String(character).utf16.count
+        }
+        for mark in marks where mark < offsets.count {
+            let start = offsets[mark]
+            let length = mark + 1 < offsets.count ? offsets[mark + 1] - start : utf16.count - start
+            guard length > 0 else { continue }
+            attributed.addAttributes(
+                [.foregroundColor: colour, .font: bold],
+                range: NSRange(location: start, length: length))
+        }
+        return attributed
     }
 }
 
@@ -492,8 +533,59 @@ extension PickerView: NSTextFieldDelegate {
 
 // MARK: - rows
 
+/// A row that lights up the way the sidebar's do.
+///
+/// The same shape, the same inset, and the same glass — a list of places to go
+/// inside a window whose other list of places to go looks like this should not
+/// have to be told twice what a chosen row looks like.
+private final class PickerRow: NSTableRowView {
+    private let lozenge = Glass.lozenge(cornerRadius: 12) ?? NSView()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        lozenge.wantsLayer = true
+        lozenge.layer?.cornerCurve = .continuous
+        lozenge.isHidden = true
+        addSubview(lozenge, positioned: .below, relativeTo: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    override func layout() {
+        super.layout()
+        lozenge.frame = bounds.insetBy(dx: 6, dy: 2)
+        Glass.setCornerRadius(lozenge, 12)
+        if !Glass.isAvailable {
+            lozenge.layer?.cornerRadius = 12
+            lozenge.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.10).cgColor
+        }
+    }
+
+    override var isSelected: Bool {
+        didSet {
+            guard isSelected != oldValue else { return }
+            lozenge.isHidden = !isSelected
+            if isSelected, Glass.isAvailable {
+                Glass.tint(lozenge, NSColor.white.withAlphaComponent(0.30))
+            }
+        }
+    }
+
+    // Nothing else may paint over it: `.none` stops the standard highlight,
+    // and these stop the separator and the alternating background that a
+    // table draws underneath rows on its own.
+    override func drawSelection(in dirtyRect: NSRect) {}
+    override func drawSeparator(in dirtyRect: NSRect) {}
+    override func drawBackground(in dirtyRect: NSRect) {}
+}
+
 extension PickerView: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int { shown.count }
+
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        PickerRow()
+    }
 
     func tableView(
         _ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int
@@ -510,17 +602,41 @@ extension PickerView: NSTableViewDataSource, NSTableViewDelegate {
                     item.title, range: match.range, font: font)
             }
         } else {
-            title.font = .systemFont(ofSize: 13)
+            let font = NSFont.systemFont(ofSize: 13)
+            title.font = font
+            // Which letters put this row here. The query is matched against
+            // the title first and the path second — the same order the score
+            // tries them in — so what is lit is what was actually matched on,
+            // not a guess made afterwards.
+            let needle = query.lowercased().filter { !$0.isWhitespace }
+            if !needle.isEmpty, let marks = Self.marks(item.title.lowercased(), needle) {
+                title.attributedStringValue = Self.lit(
+                    item.title, marks: marks, font: font, colour: .controlAccentColor)
+            }
         }
         title.lineBreakMode = .byTruncatingTail
+        title.maximumNumberOfLines = 1
         title.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(title)
 
         let detailText = matches[item.id].map { "\($0.group):\(item.detail)" } ?? item.detail
         let detail = NSTextField(labelWithString: detailText)
-        detail.font = .systemFont(ofSize: 11)
+        let detailFont = NSFont.systemFont(ofSize: 11)
+        detail.font = detailFont
         detail.textColor = .secondaryLabelColor
+        // And in the path, when that is where the match was found — a row
+        // that is here because of its directory says so there.
+        let needle = query.lowercased().filter { !$0.isWhitespace }
+        if !needle.isEmpty, Self.marks(item.title.lowercased(), needle) == nil,
+           let marks = Self.marks(detailText.lowercased(), needle) {
+            detail.attributedStringValue = Self.lit(
+                detailText, marks: marks, font: detailFont, colour: .controlAccentColor)
+        }
         detail.lineBreakMode = .byTruncatingHead
+        // One line, and the head is what gives: a long path is identified by
+        // its end, and a row that wraps is a row that no longer fits between
+        // the two beside it.
+        detail.maximumNumberOfLines = 1
         detail.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(detail)
 
@@ -549,14 +665,14 @@ extension PickerView: NSTableViewDataSource, NSTableViewDelegate {
         cell.addSubview(badge)
 
         NSLayoutConstraint.activate([
-            badge.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 14),
+            badge.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 18),
             badge.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             badge.widthAnchor.constraint(equalToConstant: 16),
             title.leadingAnchor.constraint(equalTo: badge.trailingAnchor, constant: 6),
             title.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             title.trailingAnchor.constraint(
                 lessThanOrEqualTo: detail.leadingAnchor, constant: -10),
-            detail.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -14),
+            detail.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -18),
             detail.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
         return cell
