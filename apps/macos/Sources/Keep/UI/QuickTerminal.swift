@@ -7,6 +7,21 @@ import Carbon.HIToolbox
 /// app behind, which reads as a terminal you cannot type into.
 private final class QuickPanel: NSPanel {
     override var canBecomeKey: Bool { true }
+
+    /// The same hooks KeepWindow has, for the same reason: the surface tells
+    /// libghostty it is focused only when asked, and becoming key is the
+    /// moment to ask. Without these the cursor stayed a hollow outline — the
+    /// terminal's own way of saying "not focused" — while the keys already
+    /// worked, which reads as a panel that cannot be interacted with.
+    override func becomeKey() {
+        super.becomeKey()
+        (firstResponder as? TerminalSurfaceView)?.noteFocus()
+    }
+
+    override func resignKey() {
+        super.resignKey()
+        (firstResponder as? TerminalSurfaceView)?.noteFocus()
+    }
 }
 
 /// The drop-down terminal: ⌃` from anywhere, and a terminal slides in over
