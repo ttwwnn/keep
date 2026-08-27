@@ -67,8 +67,8 @@ final class PickerView: NSView {
             // into a dark one.
             NSColor(name: nil) { appearance in
                 appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                    ? NSColor(white: 0.10, alpha: 0.55)
-                    : NSColor(white: 0.94, alpha: 0.55)
+                    ? NSColor(white: 0.07, alpha: 0.78)
+                    : NSColor(white: 0.97, alpha: 0.78)
             })
         card.translatesAutoresizingMaskIntoConstraints = false
         // Neither the card nor its insides may shrink to fit what is in them.
@@ -566,7 +566,10 @@ private final class PickerRow: NSTableRowView {
             guard isSelected != oldValue else { return }
             lozenge.isHidden = !isSelected
             if isSelected, Glass.isAvailable {
-                Glass.tint(lozenge, NSColor.white.withAlphaComponent(0.30))
+                // Quieter than the sidebar's, which is one row among five;
+                // this is one row among forty, and a bright fill scanning
+                // down a long list is a light being flashed at you.
+                Glass.tint(lozenge, NSColor.white.withAlphaComponent(0.20))
             }
         }
     }
