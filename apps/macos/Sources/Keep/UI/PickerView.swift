@@ -20,7 +20,10 @@ final class PickerView: NSView {
     var onCancel: (() -> Void)?
 
     private let field = NSTextField()
-    private let scroll = FadingScrollView()
+    private let scroll = NSScrollView()
+    /// The list's frame, which is what fades. A scroll view manages its own
+    /// layer and quietly loses a mask put on it.
+    private let listBox = FadingBox()
     private let table = NSTableView()
     private let preview = NSTextView()
     private let previewScroll = NSScrollView()
@@ -31,6 +34,10 @@ final class PickerView: NSView {
     /// which is what keeps their height something the card hands down rather
     /// than something they ask it for.
     private static let headerHeight: CGFloat = 20 + 24 + 18
+    /// Where the list's first row sits when nothing is scrolled: below the
+    /// fade, not inside it, or the row you are looking at starts out half
+    /// gone. The fade reaches full strength at exactly this line.
+    private static let listTopInset: CGFloat = headerHeight + 24
     private var card: NSView!
     /// "3 of 47", the way a browser counts.
     private let counter = NSTextField(labelWithString: "")
@@ -122,12 +129,11 @@ final class PickerView: NSView {
         table.doubleAction = #selector(chooseSelected)
         table.addTableColumn(NSTableColumn(identifier: .init("row")))
         scroll.documentView = table
-        // The fade belongs to the frame, not to what is inside it: on the clip
-        // view it travelled with the scroll and ended up pinned to the last
-        // row. Here it stays over the top and bottom edges of the list, and
-        // the rows pass through it.
-        scroll.fadeTop = Self.headerHeight
-        scroll.fadeBottom = 28
+        // Gone by the field's own line and fully back by the time the list
+        // proper begins: the clear end of the gradient sits at a little over
+        // half of this, which is just below where the field's text sits.
+        listBox.fadeTop = Self.listTopInset
+        listBox.fadeBottom = 28
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         // The list occupies the whole card and is held clear of the header by
@@ -136,11 +142,13 @@ final class PickerView: NSView {
         // over it then blurs it, which is the whole effect.
         scroll.automaticallyAdjustsContentInsets = false
         scroll.contentInsets = NSEdgeInsets(
-            top: Self.headerHeight, left: 0, bottom: 0, right: 0)
+            top: Self.listTopInset, left: 0, bottom: 0, right: 0)
         scroll.scrollerInsets = NSEdgeInsets(
-            top: Self.headerHeight, left: 0, bottom: 0, right: 0)
+            top: Self.listTopInset, left: 0, bottom: 0, right: 0)
         scroll.translatesAutoresizingMaskIntoConstraints = false
-        cardContent.addSubview(scroll)
+        listBox.translatesAutoresizingMaskIntoConstraints = false
+        listBox.addSubview(scroll)
+        cardContent.addSubview(listBox)
 
         preview.isEditable = false
         preview.isSelectable = false
@@ -218,9 +226,14 @@ final class PickerView: NSView {
             // the only way left to satisfy that is to shrink the window. It
             // does, to the height of this header: press ⌘P and the terminal
             // becomes a strip two lines tall.
-            scroll.topAnchor.constraint(equalTo: cardContent.topAnchor),
-            scroll.leadingAnchor.constraint(equalTo: cardContent.leadingAnchor),
-            scroll.widthAnchor.constraint(equalTo: cardContent.widthAnchor, multiplier: 0.42),
+            listBox.topAnchor.constraint(equalTo: cardContent.topAnchor),
+            listBox.leadingAnchor.constraint(equalTo: cardContent.leadingAnchor),
+            listBox.widthAnchor.constraint(equalTo: cardContent.widthAnchor, multiplier: 0.42),
+            listBox.heightAnchor.constraint(equalTo: scroll.heightAnchor),
+
+            scroll.topAnchor.constraint(equalTo: listBox.topAnchor),
+            scroll.leadingAnchor.constraint(equalTo: listBox.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: listBox.trailingAnchor),
             // Measured against the window, not against the card. Against the
             // card it is circular — the card is as tall as its insides, and
             // its insides are as tall as the card — and a circle with a
@@ -231,7 +244,7 @@ final class PickerView: NSView {
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 240),
 
             previewScroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 18),
-            previewScroll.leadingAnchor.constraint(equalTo: scroll.trailingAnchor, constant: 8),
+            previewScroll.leadingAnchor.constraint(equalTo: listBox.trailingAnchor, constant: 8),
             previewScroll.trailingAnchor.constraint(equalTo: cardContent.trailingAnchor),
             previewScroll.bottomAnchor.constraint(equalTo: scroll.bottomAnchor),
         ])
@@ -562,20 +575,23 @@ extension PickerView: NSTextFieldDelegate {
 
 // MARK: - rows
 
-/// A list whose top and bottom edges fade out.
+/// A box whose top and bottom edges fade out.
 ///
 /// A row travelling up under the field thins out and is gone before it
 /// reaches it, rather than sliding behind a lid; the same at the bottom, so
 /// the list ends by running out rather than by being cut.
 ///
-/// A material laid over the top was the first try — a material blurs what is
-/// behind it inside the window, which is the native way to do this — but a
-/// material also paints: with nothing scrolled up there it is a band across
-/// the card, and what it does to the row underneath is hide it rather than
-/// soften it. And the mask belongs here rather than on the clip view, whose
-/// bounds travel with the scroll: laid there, the fade rode along with the
-/// content and came to rest against the last row.
-private final class FadingScrollView: NSScrollView {
+/// Around the scroll view rather than on it: a scroll view manages its own
+/// layer and a mask put there is quietly lost. And not on the clip view
+/// either, whose bounds travel with the scroll — laid there, the fade rode
+/// along with the content and came to rest against the last row.
+///
+/// A material laid over the top was the first try, since a material blurs
+/// what is behind it inside the window and that is the native way to get
+/// this. But a material also paints: with nothing scrolled up there it is a
+/// band across the card, and what it does to the row underneath is hide it
+/// rather than soften it.
+private final class FadingBox: NSView {
     var fadeTop: CGFloat = 0 { didSet { needsLayout = true } }
     var fadeBottom: CGFloat = 0 { didSet { needsLayout = true } }
     private let fade = CAGradientLayer()
@@ -599,7 +615,7 @@ private final class FadingScrollView: NSScrollView {
     override func layout() {
         super.layout()
         guard bounds.height > 0 else { return }
-        let top = min(0.5, fadeTop / bounds.height)
+        let top = min(0.6, fadeTop / bounds.height)
         let bottom = min(0.5, fadeBottom / bounds.height)
         // No implicit animation: this runs on every resize, and a
         // quarter-second cross-fade of a mask is a shimmer.
@@ -607,7 +623,7 @@ private final class FadingScrollView: NSScrollView {
         CATransaction.setDisableActions(true)
         fade.frame = bounds
         fade.locations = [
-            NSNumber(value: top * 0.35), NSNumber(value: top),
+            NSNumber(value: top * 0.55), NSNumber(value: top),
             NSNumber(value: 1 - bottom), NSNumber(value: 1.0),
         ]
         CATransaction.commit()
