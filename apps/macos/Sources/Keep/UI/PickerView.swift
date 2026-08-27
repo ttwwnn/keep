@@ -579,6 +579,15 @@ extension PickerView: NSTextFieldDelegate {
 
 /// A box whose top and bottom edges fade out.
 ///
+/// A fade rather than a blur, and not for want of trying. Blurring what is
+/// behind something, inside a window, has two native forms and this card can
+/// afford neither: `NSVisualEffectView` is the window server's own blur and
+/// costs nothing to scroll, but a material paints as well as blurs, and over
+/// glass its edge is a band across the card whatever material is chosen. A
+/// `CIGaussianBlur` in `backgroundFilters` paints nothing and is redrawn on
+/// every frame the list moves, which is a blur you can count. What is left is
+/// this, and it costs neither.
+///
 /// A row travelling up under the field thins out and is gone before it
 /// reaches it, rather than sliding behind a lid; the same at the bottom, so
 /// the list ends by running out rather than by being cut.
