@@ -61,12 +61,16 @@ final class PickerView: NSView {
         // A dimmed ground, so the terminal behind reads as "not now".
         layer?.backgroundColor = NSColor.black.withAlphaComponent(0.35).cgColor
 
+        // The window's own corner, measured off a capture of one: on the same
+        // picture the window's rounding runs twice as far as this card's did
+        // at fourteen. An overlay that sits inside a window and is rounded
+        // less than it reads as a rectangle somebody softened, rather than as
+        // a piece of the same thing.
         // The card is a material, not glass — and the difference is what the
         // blur at its top edge depends on. A material laid over glass paints
         // in a different key and its edge is a band; laid over the *same*
         // material it adds blur and nothing else, which is how a header comes
-        // to blur the rows going under it. Rounded at 24, the window's own
-        // corner, measured off a capture of one.
+        // to blur the rows going under it.
         //
         // `.withinWindow` and not `.behindWindow`: what is worth blurring here
         // is the terminal this card is drawn over, and the terminal is inside
@@ -131,11 +135,10 @@ final class PickerView: NSView {
         table.doubleAction = #selector(chooseSelected)
         table.addTableColumn(NSTableColumn(identifier: .init("row")))
         scroll.documentView = table
-        // Only the bottom fades: at the bottom the list should run out
-        // rather than be cut. At the top the strip does the work — a row
-        // going under the field is meant to stay visible and go out of
-        // focus, the way the reference does it, and an alpha fade there
-        // erased the row before the blur had anything to blur.
+        // Gone by the field's own line and fully back by the time the list
+        // proper begins: the clear end of the gradient sits at a little over
+        // half of this, which is just below where the field's text sits.
+        listBox.fadeTop = Self.listTopInset
         listBox.fadeBottom = 28
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
@@ -152,12 +155,9 @@ final class PickerView: NSView {
         scroll.translatesAutoresizingMaskIntoConstraints = false
         listBox.translatesAutoresizingMaskIntoConstraints = false
         listBox.addSubview(scroll)
-        cardContent.addSubview(listBox)
-        // Above the list and below the field, and a sibling of the faded box
-        // rather than a child: inside it, the box's own alpha mask erased the
-        // strip along with the rows it was there to blur.
         blurStrip.translatesAutoresizingMaskIntoConstraints = false
-        cardContent.addSubview(blurStrip)
+        listBox.addSubview(blurStrip)
+        cardContent.addSubview(listBox)
 
         preview.isEditable = false
         preview.isSelectable = false
@@ -240,7 +240,7 @@ final class PickerView: NSView {
             listBox.widthAnchor.constraint(equalTo: cardContent.widthAnchor, multiplier: 0.42),
             listBox.heightAnchor.constraint(equalTo: scroll.heightAnchor),
 
-            blurStrip.topAnchor.constraint(equalTo: cardContent.topAnchor),
+            blurStrip.topAnchor.constraint(equalTo: listBox.topAnchor),
             blurStrip.leadingAnchor.constraint(equalTo: listBox.leadingAnchor),
             blurStrip.trailingAnchor.constraint(equalTo: listBox.trailingAnchor),
             blurStrip.heightAnchor.constraint(equalToConstant: Self.listTopInset),
@@ -621,12 +621,8 @@ private final class BlurStrip: NSVisualEffectView {
     }
 
     /// Solid at the top, gone at the bottom, stretchable sideways.
-    ///
-    /// Solid for the field's own band, then a long ramp: the row under the
-    /// field is fully out of focus, the next one half, and a row is sharp by
-    /// the time it stands clear — focus arriving gradually, not at an edge.
     private static func fading(height: CGFloat) -> NSImage {
-        let solid = (height * 0.62).rounded()
+        let solid = (height * 0.3).rounded()
         let image = NSImage(size: NSSize(width: 8, height: height), flipped: false) { rect in
             NSColor.black.setFill()
             NSRect(x: 0, y: rect.height - solid, width: rect.width, height: solid).fill()
