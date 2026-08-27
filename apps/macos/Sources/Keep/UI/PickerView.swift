@@ -57,6 +57,19 @@ final class PickerView: NSView {
         // less than it reads as a rectangle somebody softened, rather than as
         // a piece of the same thing.
         card = Glass.panel(cardContent, cornerRadius: 24)
+        // Grey, over whatever is behind it. Glass refracts what it is over,
+        // and what this is over is a terminal — so in a theme with a blue-dark
+        // background the card came out blue, which is not a colour anything in
+        // here chose.
+        Glass.tint(
+            card,
+            // Dynamic, so the same grey does not turn a light theme's card
+            // into a dark one.
+            NSColor(name: nil) { appearance in
+                appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                    ? NSColor(white: 0.10, alpha: 0.55)
+                    : NSColor(white: 0.94, alpha: 0.55)
+            })
         card.translatesAutoresizingMaskIntoConstraints = false
         // Neither the card nor its insides may shrink to fit what is in them.
         // A container hugs its content at priority 750 by default, which is
@@ -139,11 +152,6 @@ final class PickerView: NSView {
         previewScroll.translatesAutoresizingMaskIntoConstraints = false
         cardContent.addSubview(previewScroll)
 
-        let previewDivider = NSBox()
-        previewDivider.boxType = .separator
-        previewDivider.translatesAutoresizingMaskIntoConstraints = false
-        cardContent.addSubview(previewDivider)
-
         // The card is a fraction of the window, and it says so quietly.
         //
         // A window whose content is laid out with constraints will resize
@@ -207,13 +215,8 @@ final class PickerView: NSView {
             // a share of it.
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 240),
 
-            previewDivider.topAnchor.constraint(equalTo: divider.bottomAnchor),
-            previewDivider.leadingAnchor.constraint(equalTo: scroll.trailingAnchor),
-            previewDivider.widthAnchor.constraint(equalToConstant: 1),
-            previewDivider.heightAnchor.constraint(equalTo: scroll.heightAnchor),
-
             previewScroll.topAnchor.constraint(equalTo: divider.bottomAnchor),
-            previewScroll.leadingAnchor.constraint(equalTo: previewDivider.trailingAnchor),
+            previewScroll.leadingAnchor.constraint(equalTo: scroll.trailingAnchor, constant: 8),
             previewScroll.trailingAnchor.constraint(equalTo: cardContent.trailingAnchor),
             previewScroll.heightAnchor.constraint(equalTo: scroll.heightAnchor),
         ])
@@ -647,10 +650,14 @@ extension PickerView: NSTableViewDataSource, NSTableViewDelegate {
         let badge = NSImageView()
         switch item.kind {
         case .running:
+            // Filled means busy, and that is all it means. Painted with the
+            // accent colour it was a blue square at this size — read as a
+            // swatch, or as something bleeding through from behind, rather
+            // than as "there is a program running in here".
             badge.image = NSImage(
                 systemSymbolName: item.busy ? "terminal.fill" : "terminal",
                 accessibilityDescription: item.busy ? "running" : "terminal")
-            badge.contentTintColor = item.busy ? .controlAccentColor : .secondaryLabelColor
+            badge.contentTintColor = item.busy ? .labelColor : .secondaryLabelColor
         case .destination:
             badge.image = NSImage(
                 systemSymbolName: "folder", accessibilityDescription: "folder")
