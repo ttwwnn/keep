@@ -20,7 +20,7 @@ final class PickerView: NSView {
     var onCancel: (() -> Void)?
 
     private let field = NSTextField()
-    private let scroll = NSScrollView()
+    private let scroll = FadingScrollView()
     private let table = NSTableView()
     private let preview = NSTextView()
     private let previewScroll = NSScrollView()
@@ -121,15 +121,13 @@ final class PickerView: NSView {
         table.target = self
         table.doubleAction = #selector(chooseSelected)
         table.addTableColumn(NSTableColumn(identifier: .init("row")))
-        // The clip view carries the mask, so it fades what is scrolled rather
-        // than the frame it is scrolled in — and maintains it itself, since it
-        // is the only thing here that is told when its own size changes. Put
-        // in before the document, or the document stays with the clip view it
-        // replaces and the list is simply not there.
-        let clip = FadingClipView()
-        clip.fadeHeight = Self.headerHeight
-        scroll.contentView = clip
         scroll.documentView = table
+        // The fade belongs to the frame, not to what is inside it: on the clip
+        // view it travelled with the scroll and ended up pinned to the last
+        // row. Here it stays over the top and bottom edges of the list, and
+        // the rows pass through it.
+        scroll.fadeTop = Self.headerHeight
+        scroll.fadeBottom = 28
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         // The list occupies the whole card and is held clear of the header by
@@ -564,23 +562,32 @@ extension PickerView: NSTextFieldDelegate {
 
 // MARK: - rows
 
-/// A clip view whose top edge fades out.
+/// A list whose top and bottom edges fade out.
 ///
 /// A row travelling up under the field thins out and is gone before it
-/// reaches it, rather than sliding behind a lid. A material laid over the top
-/// would blur it, but a material also paints: with nothing scrolled up there
-/// it is a band across the card, which is not what was wanted.
-private final class FadingClipView: NSClipView {
-    /// How far down the fade reaches — the height of the header it runs under.
-    var fadeHeight: CGFloat = 0 { didSet { needsLayout = true } }
+/// reaches it, rather than sliding behind a lid; the same at the bottom, so
+/// the list ends by running out rather than by being cut.
+///
+/// A material laid over the top was the first try — a material blurs what is
+/// behind it inside the window, which is the native way to do this — but a
+/// material also paints: with nothing scrolled up there it is a band across
+/// the card, and what it does to the row underneath is hide it rather than
+/// soften it. And the mask belongs here rather than on the clip view, whose
+/// bounds travel with the scroll: laid there, the fade rode along with the
+/// content and came to rest against the last row.
+private final class FadingScrollView: NSScrollView {
+    var fadeTop: CGFloat = 0 { didSet { needsLayout = true } }
+    var fadeBottom: CGFloat = 0 { didSet { needsLayout = true } }
     private let fade = CAGradientLayer()
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        fade.colors = [NSColor.clear.cgColor, NSColor.black.cgColor]
-        // The layer's own axis, which grows upwards whatever the view does:
-        // the gradient starts at the top, where the rows go to disappear.
+        fade.colors = [
+            NSColor.clear.cgColor, NSColor.black.cgColor,
+            NSColor.black.cgColor, NSColor.clear.cgColor,
+        ]
+        // Top to bottom along the layer's own axis, which grows upwards.
         fade.startPoint = CGPoint(x: 0.5, y: 1)
         fade.endPoint = CGPoint(x: 0.5, y: 0)
         layer?.mask = fade
@@ -592,13 +599,17 @@ private final class FadingClipView: NSClipView {
     override func layout() {
         super.layout()
         guard bounds.height > 0 else { return }
-        let stop = min(1, fadeHeight / bounds.height)
-        // No implicit animation: this runs on every scroll and every resize,
-        // and a quarter-second cross-fade of a mask is a shimmer.
+        let top = min(0.5, fadeTop / bounds.height)
+        let bottom = min(0.5, fadeBottom / bounds.height)
+        // No implicit animation: this runs on every resize, and a
+        // quarter-second cross-fade of a mask is a shimmer.
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         fade.frame = bounds
-        fade.locations = [NSNumber(value: stop * 0.4), NSNumber(value: stop)]
+        fade.locations = [
+            NSNumber(value: top * 0.35), NSNumber(value: top),
+            NSNumber(value: 1 - bottom), NSNumber(value: 1.0),
+        ]
         CATransaction.commit()
     }
 }
