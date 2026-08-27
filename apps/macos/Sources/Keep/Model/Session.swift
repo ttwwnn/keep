@@ -464,6 +464,18 @@ final class Session {
             sidebarStore.save(state, for: window)
             publish()
 
+        case .toggleDisclosure(let name):
+            var state = sidebarStore.state(for: window)
+            if state.folded.remove(name) == nil { state.folded.insert(name) }
+            sidebarStore.save(state, for: window)
+            publish()
+
+        case .toggleVerticalTabs:
+            var state = sidebarStore.state(for: window)
+            state.verticalTabs.toggle()
+            sidebarStore.save(state, for: window)
+            publish()
+
         case .togglePicker:
             guard views[window]?.picker?.mode != .goTo else {
                 dispatch(.closePicker, from: window)
@@ -905,6 +917,7 @@ final class Session {
 
     private func makeSnapshot(for window: WindowID) -> SessionSnapshot {
         let view = views[window] ?? WindowView()
+        let sidebar = sidebarStore.state(for: window)
         // The workspaces this window carries, in its order — not everything
         // the daemon has. Anything missing is still a ⌘P away.
         let rows = view.workspaces.compactMap { name -> SessionSnapshot.SidebarRow? in
@@ -916,7 +929,19 @@ final class Session {
                 running: workspace.tabs.flatMap(\.busyTitles),
                 place: workspace.place,
                 dot: workspace.dot,
-                isActive: workspace.name == view.workspace
+                isActive: workspace.name == view.workspace,
+                tabRows: workspace.tabs.map { tab in
+                    SessionSnapshot.SidebarTab(
+                        id: tab.id,
+                        title: tab.title.isEmpty ? "tab \(tab.id.root)" : tab.title,
+                        busy: tab.busy,
+                        isActive: tab.id == view.tab,
+                        isElsewhere: views.contains {
+                            $0.key != window && $0.value.tab == tab.id
+                        }
+                    )
+                },
+                expanded: !sidebar.folded.contains(workspace.name)
             )
         }
         let strip = (workspace(for: window)?.tabs ?? []).map { tab in
@@ -939,7 +964,7 @@ final class Session {
         }
         let universe = Set(workspaces.flatMap { $0.tabs.map(\.id) })
         return SessionSnapshot(
-            sidebar: sidebarStore.state(for: window), picker: view.picker,
+            sidebar: sidebar, picker: view.picker,
             rows: rows, strip: strip, active: active, universe: universe)
     }
 }

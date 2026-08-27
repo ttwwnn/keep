@@ -53,7 +53,31 @@ struct WindowView: Equatable {
 struct SidebarState: Hashable, Codable {
     var isCollapsed: Bool
     var width: CGFloat
+    /// Workspaces whose tab list is folded shut. The set holds the closed
+    /// ones rather than the open ones so that the default — an empty set —
+    /// shows everything, and the feature is visible before anyone has
+    /// touched a chevron.
+    var folded: Set<String> = []
+    /// Tabs live in the sidebar, nested under their workspaces, and the
+    /// titlebar row steps aside.
+    var verticalTabs: Bool = false
     static let initial = SidebarState(isCollapsed: false, width: 250)
+
+    /// By hand, so a state file written before these fields existed still
+    /// decodes: synthesized Codable treats a missing key as an error, and an
+    /// error here silently resets the sidebar to factory settings.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        isCollapsed = try c.decode(Bool.self, forKey: .isCollapsed)
+        width = try c.decode(CGFloat.self, forKey: .width)
+        folded = try c.decodeIfPresent(Set<String>.self, forKey: .folded) ?? []
+        verticalTabs = try c.decodeIfPresent(Bool.self, forKey: .verticalTabs) ?? false
+    }
+
+    init(isCollapsed: Bool, width: CGFloat) {
+        self.isCollapsed = isCollapsed
+        self.width = width
+    }
 }
 
 /// One pane beyond a tab's root, in daemon (creation) order.
@@ -170,6 +194,10 @@ enum Intent {
     /// would be written to whichever tab happened to be active.
     case focusPane(TabID, UInt32)
     case setSidebar(SidebarState)     // from the toggle or a divider drag
+    /// Fold or unfold one workspace's tab list in this window's sidebar.
+    case toggleDisclosure(String)
+    /// Tabs move into the sidebar and the titlebar row steps aside — or back.
+    case toggleVerticalTabs
     /// Open the picker, or put it away if it is already up: the key that
     /// summons it is the key that dismisses it.
     case togglePicker
@@ -271,8 +299,22 @@ struct SessionSnapshot: Hashable {
         let place: String
         let dot: Dot
         let isActive: Bool
+        /// The tabs themselves, for the sidebar that nests them under the
+        /// workspace. Always carried — a handful of small values — and the
+        /// `expanded` flag says whether the sidebar shows them.
+        let tabRows: [SidebarTab]
+        let expanded: Bool
         var id: String { name }
         enum Dot: Hashable { case empty, busy, attached, idle }
+    }
+
+    struct SidebarTab: Hashable, Identifiable {
+        let id: TabID
+        let title: String
+        let busy: Bool
+        let isActive: Bool
+        /// Another window is showing it — the strip's ⧉, said vertically.
+        let isElsewhere: Bool
     }
 
     struct StripItem: Hashable, Identifiable {

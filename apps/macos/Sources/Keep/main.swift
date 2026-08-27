@@ -290,6 +290,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         (focused?.window as? KeepWindow)?.toggleSidebar(sender)
     }
 
+    /// Tabs move into the sidebar, nested under their workspaces, and the
+    /// titlebar row steps aside. Per window, like the rest of the furniture.
+    @objc func toggleVerticalTabs(_ sender: Any?) { send(.toggleVerticalTabs) }
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(toggleVerticalTabs(_:)) {
+            item.state = focused?.isVerticalTabs == true ? .on : .off
+        }
+        return true
+    }
+
     private func buildMenu() {
         let main = NSMenu()
 
@@ -372,6 +383,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             withTitle: "Toggle Sidebar",
             action: #selector(toggleSidebar(_:)), keyEquivalent: "b")
         toggleSidebarItem.target = self
+        let verticalTabsItem = viewMenu.addItem(
+            withTitle: "Vertical Tabs",
+            action: #selector(toggleVerticalTabs(_:)), keyEquivalent: "")
+        verticalTabsItem.target = self
         viewItem.submenu = viewMenu
         main.addItem(viewItem)
 

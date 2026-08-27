@@ -50,6 +50,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// the pool that grew and shrank all over again.
     var onTearOff: ((TabID, NSPoint, CGFloat) -> Void)?
 
+    /// For the menu's checkmark: whether this window keeps its tabs in the
+    /// sidebar. Read from the applied snapshot — the one account that is
+    /// already true on screen.
+    var isVerticalTabs: Bool { applied?.sidebar.verticalTabs ?? false }
+
     init(session: Session, id: WindowID) {
         self.session = session
         self.windowID = id
@@ -244,6 +249,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // rather than restored per tab. The user's own toggle animates.
         if applied?.sidebar != snapshot.sidebar {
             applySidebar(snapshot.sidebar, animated: applied != nil)
+        }
+        // Vertical tabs: the titlebar row steps aside. The strip keeps the
+        // window still while the pointer is over a tab, so leaving with it
+        // hidden would leave the window immovable — hand the window back.
+        if tabStrip.isHidden != snapshot.sidebar.verticalTabs {
+            tabStrip.isHidden = snapshot.sidebar.verticalTabs
+            if snapshot.sidebar.verticalTabs { window?.isMovable = true }
         }
 
         guard let active = snapshot.active else {

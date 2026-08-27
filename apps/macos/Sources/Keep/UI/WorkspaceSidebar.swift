@@ -65,12 +65,34 @@ struct WorkspaceSidebar: View {
         .scrollContentBackground(.hidden)
     }
 
+    /// One list row per workspace: the workspace button, and under it the
+    /// tabs it holds. One row and not several, because `.onMove` counts list
+    /// rows and the reorder must keep counting workspaces.
     private func rowButton(_ row: SessionSnapshot.SidebarRow) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            workspaceButton(row)
+            if row.expanded {
+                ForEach(row.tabRows) { tab in tabButton(tab, in: row) }
+            }
+        }
+        .padding(.horizontal, 5)
+        // Zero, and the gutter above instead: the plain list keeps insets of
+        // its own that a row cannot see, and a block that stops short of both
+        // edges by an amount nobody chose looks like a mistake rather than a
+        // margin. On the outer stack, not the button — a list-row trait set
+        // on a nested child never reaches the list.
+        .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 0))
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+    }
+
+    private func workspaceButton(_ row: SessionSnapshot.SidebarRow) -> some View {
         Button {
             dispatch(.activateWorkspace(row.name))
         } label: {
             VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 8) {
+                disclosure(row)
                 StateDot(state: row.dot)
                 Text(row.name)
                     .font(identifier)
@@ -142,14 +164,6 @@ struct WorkspaceSidebar: View {
         .background(rowBackground(for: row))
         .animation(.easeOut(duration: 0.16), value: row.isActive)
         .help(tooltip(for: row))
-        .padding(.horizontal, 5)
-        // Zero, and the gutter above instead: the plain list keeps insets of
-        // its own that a row cannot see, and a block that stops short of both
-        // edges by an amount nobody chose looks like a mistake rather than a
-        // margin.
-        .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 0))
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
         .onHover { inside in
             hovered = inside ? row.name : (hovered == row.name ? nil : hovered)
         }
@@ -174,6 +188,88 @@ struct WorkspaceSidebar: View {
                 dispatch(.killWorkspace(row.name))
             }
         }
+    }
+
+    /// The fold. Its own button, not part of the workspace's: a chevron that
+    /// also entered the workspace would make looking cost a switch.
+    ///
+    /// Shown only when there is something to fold — and replaced by a spacer
+    /// otherwise, so every name in the column starts at the same x.
+    @ViewBuilder
+    private func disclosure(_ row: SessionSnapshot.SidebarRow) -> some View {
+        if row.tabRows.count > 0 {
+            Button {
+                dispatch(.toggleDisclosure(row.name))
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(Palette.inkFaint)
+                    .rotationEffect(.degrees(row.expanded ? 90 : 0))
+                    .frame(width: 10)
+                    .contentShape(Rectangle().inset(by: -6))
+            }
+            .buttonStyle(.plain)
+            .animation(.easeOut(duration: 0.14), value: row.expanded)
+        } else {
+            Spacer().frame(width: 10)
+        }
+    }
+
+    /// One tab, under its workspace. What the strip says horizontally, said
+    /// vertically: title, ✳ while busy, ⧉ when another window is showing it,
+    /// and the one being shown marked by ink and a quiet fill.
+    private func tabButton(_ tab: SessionSnapshot.SidebarTab, in row: SessionSnapshot.SidebarRow)
+        -> some View
+    {
+        Button {
+            dispatch(.activateTab(tab.id))
+        } label: {
+            HStack(spacing: 6) {
+                if tab.busy {
+                    Text("✳")
+                        .font(counter)
+                        .foregroundStyle(Palette.busy)
+                }
+                Text(tab.title)
+                    .font(Font(GhosttyApp.shared.terminalFont(size: 11.5)))
+                    .foregroundStyle(
+                        tab.isActive && row.isActive ? Palette.ink : Palette.inkResting)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if tab.isElsewhere {
+                    Image(systemName: "macwindow.on.rectangle")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Palette.inkFaint)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.leading, 34)
+            .padding(.trailing, 10)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(
+                        tab.isActive && row.isActive
+                            ? Color.white.opacity(0.09)
+                            : hovered == tabHoverKey(tab) ? Color.white.opacity(0.05) : .clear)
+                    .padding(.leading, 26)
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { inside in
+            let key = tabHoverKey(tab)
+            hovered = inside ? key : (hovered == key ? nil : hovered)
+        }
+        .contextMenu {
+            Button("Close Tab", role: .destructive) { dispatch(.closeTab(tab.id)) }
+        }
+    }
+
+    /// Hover state shares one string field with the workspace rows; a tab's
+    /// key must not collide with a workspace named like it.
+    private func tabHoverKey(_ tab: SessionSnapshot.SidebarTab) -> String {
+        "tab:\(tab.id.workspace)/\(tab.id.root)"
     }
 
     /// Everything running here, one per line, or what the workspace is
