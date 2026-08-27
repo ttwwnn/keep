@@ -25,6 +25,7 @@
 		84C8CA80F395C374233C7CA3 /* KeepWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26C7493E188242FF1E50B5D4 /* KeepWindow.swift */; };
 		B04424C572755CE4309A1FE1 /* SurfacePool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90248BC4509FC2E08EB2D118 /* SurfacePool.swift */; };
 		B59464F3438BD1075E780F68 /* TabStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3519A6ACCC0D876A65383EF4 /* TabStripView.swift */; };
+		BBDAF22F8DA5789B5C594CA3 /* QuickTerminal.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6571C8EA2DC4DE2201268BA /* QuickTerminal.swift */; };
 		C14A34D9BAC90E62DE4B0FBD /* SurfaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C981DAB120BC0DE6416E716 /* SurfaceView.swift */; };
 		D10C70635824F4B9A739338F /* SidebarStateStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B52FB855ABF4E5D3B625D009 /* SidebarStateStore.swift */; };
 		E356BA1857859AE5D2018AFA /* Glass.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ADE1AE5D8DAF64D7C40B063 /* Glass.swift */; };
@@ -55,6 +56,7 @@
 		9C981DAB120BC0DE6416E716 /* SurfaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurfaceView.swift; sourceTree = "<group>"; };
 		A62F12BE65464B5D829B95B5 /* Session.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Session.swift; sourceTree = "<group>"; };
 		B52FB855ABF4E5D3B625D009 /* SidebarStateStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarStateStore.swift; sourceTree = "<group>"; };
+		B6571C8EA2DC4DE2201268BA /* QuickTerminal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickTerminal.swift; sourceTree = "<group>"; };
 		D4662B67EB8646DBFEB7245F /* Trace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Trace.swift; sourceTree = "<group>"; };
 		FEB4BBC629ECFAF569DEF4E7 /* Keep.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Keep.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -86,6 +88,7 @@
 				26C7493E188242FF1E50B5D4 /* KeepWindow.swift */,
 				39D911C7DB5BAD50525CD8D4 /* MainWindowController.swift */,
 				84B8EF3EABE63EB3AD2EC738 /* PickerView.swift */,
+				B6571C8EA2DC4DE2201268BA /* QuickTerminal.swift */,
 				21F9A16ACB41B05219BCFCA5 /* SidebarHost.swift */,
 				1FDC62FD5F9E5BB0275F688A /* TabContentContainer.swift */,
 				3519A6ACCC0D876A65383EF4 /* TabStripView.swift */,
@@ -236,6 +239,7 @@
 				84C8CA80F395C374233C7CA3 /* KeepWindow.swift in Sources */,
 				42C317891120DD2DE4CC07E0 /* MainWindowController.swift in Sources */,
 				6F5D18F3C86797CC64FB6C14 /* PickerView.swift in Sources */,
+				BBDAF22F8DA5789B5C594CA3 /* QuickTerminal.swift in Sources */,
 				455019EEBA12AFF62782ABC6 /* Session.swift in Sources */,
 				1D448336142D0DABA8D8D0A8 /* SidebarHost.swift in Sources */,
 				D10C70635824F4B9A739338F /* SidebarStateStore.swift in Sources */,

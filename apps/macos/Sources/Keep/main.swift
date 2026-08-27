@@ -225,6 +225,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let poller = DaemonPoller(session: session)
         poller.start()
         self.poller = poller
+
+        // ⌃` from anywhere: the drop-down terminal. Registered after launch,
+        // once — a Carbon hotkey outlives whoever registered it, and two
+        // registrations would mean two toggles per press.
+        QuickTerminal.shared.registerHotkey()
     }
 
     /// The app is a viewer; the daemon keeps the work. Closing the window is
@@ -293,6 +298,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Tabs move into the sidebar, nested under their workspaces, and the
     /// titlebar row steps aside. Per window, like the rest of the furniture.
     @objc func toggleVerticalTabs(_ sender: Any?) { send(.toggleVerticalTabs) }
+
+    @objc func toggleQuickTerminal(_ sender: Any?) { QuickTerminal.shared.toggle() }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if item.action == #selector(toggleVerticalTabs(_:)) {
@@ -387,6 +394,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             withTitle: "Vertical Tabs",
             action: #selector(toggleVerticalTabs(_:)), keyEquivalent: "")
         verticalTabsItem.target = self
+        // In the menu for discoverability; the hotkey itself is global and
+        // works with the app in the background, which a key equivalent
+        // cannot.
+        let quickItem = viewMenu.addItem(
+            withTitle: "Quick Terminal",
+            action: #selector(toggleQuickTerminal(_:)), keyEquivalent: "`")
+        quickItem.keyEquivalentModifierMask = [.control]
+        quickItem.target = self
         viewItem.submenu = viewMenu
         main.addItem(viewItem)
 
