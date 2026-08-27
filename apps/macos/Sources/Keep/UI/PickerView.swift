@@ -30,7 +30,7 @@ final class PickerView: NSView {
     /// it. Named because the halves are sized as "the card, less this" —
     /// which is what keeps their height something the card hands down rather
     /// than something they ask it for.
-    private static let headerHeight: CGFloat = 14 + 20 + 12 + 1
+    private static let headerHeight: CGFloat = 14 + 20 + 12
     private var card: NSView!
     /// "3 of 47", the way a browser counts.
     private let counter = NSTextField(labelWithString: "")
@@ -105,11 +105,6 @@ final class PickerView: NSView {
         counter.translatesAutoresizingMaskIntoConstraints = false
         cardContent.addSubview(counter)
 
-        let divider = NSBox()
-        divider.boxType = .separator
-        divider.translatesAutoresizingMaskIntoConstraints = false
-        cardContent.addSubview(divider)
-
         table.headerView = nil
         table.rowHeight = 34
         table.backgroundColor = .clear
@@ -174,6 +169,11 @@ final class PickerView: NSView {
         ]
         for constraint in cardSize { constraint.priority = NSLayoutConstraint.Priority(499) }
 
+        // The field's row is what the two halves start under; there is no
+        // line between them any more, and a rule drawn edge to edge inside a
+        // card is a seam in something that is meant to read as one surface.
+        let header = field
+
         NSLayoutConstraint.activate(cardSize + [
             card.centerXAnchor.constraint(equalTo: centerXAnchor),
             card.topAnchor.constraint(equalTo: topAnchor, constant: 90),
@@ -184,10 +184,6 @@ final class PickerView: NSView {
             field.trailingAnchor.constraint(equalTo: counter.leadingAnchor, constant: -10),
             counter.centerYAnchor.constraint(equalTo: field.centerYAnchor),
             counter.trailingAnchor.constraint(equalTo: cardContent.trailingAnchor, constant: -16),
-
-            divider.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 12),
-            divider.leadingAnchor.constraint(equalTo: cardContent.leadingAnchor),
-            divider.trailingAnchor.constraint(equalTo: cardContent.trailingAnchor),
 
             // The list on the left, what it is on the right. Side by side
             // rather than stacked: the preview is a piece of a terminal, and
@@ -203,7 +199,7 @@ final class PickerView: NSView {
             // the only way left to satisfy that is to shrink the window. It
             // does, to the height of this header: press ⌘P and the terminal
             // becomes a strip two lines tall.
-            scroll.topAnchor.constraint(equalTo: divider.bottomAnchor),
+            scroll.topAnchor.constraint(equalTo: header.bottomAnchor),
             scroll.leadingAnchor.constraint(equalTo: cardContent.leadingAnchor),
             scroll.widthAnchor.constraint(equalTo: cardContent.widthAnchor, multiplier: 0.42),
             // Measured against the window, not against the card. Against the
@@ -215,7 +211,7 @@ final class PickerView: NSView {
             // a share of it.
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 240),
 
-            previewScroll.topAnchor.constraint(equalTo: divider.bottomAnchor),
+            previewScroll.topAnchor.constraint(equalTo: header.bottomAnchor),
             previewScroll.leadingAnchor.constraint(equalTo: scroll.trailingAnchor, constant: 8),
             previewScroll.trailingAnchor.constraint(equalTo: cardContent.trailingAnchor),
             previewScroll.heightAnchor.constraint(equalTo: scroll.heightAnchor),
