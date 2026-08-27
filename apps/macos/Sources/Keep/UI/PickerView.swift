@@ -121,9 +121,26 @@ final class PickerView: NSView {
         table.target = self
         table.doubleAction = #selector(chooseSelected)
         table.addTableColumn(NSTableColumn(identifier: .init("row")))
+        // The clip view carries the mask, so it fades what is scrolled rather
+        // than the frame it is scrolled in — and maintains it itself, since it
+        // is the only thing here that is told when its own size changes. Put
+        // in before the document, or the document stays with the clip view it
+        // replaces and the list is simply not there.
+        let clip = FadingClipView()
+        clip.fadeHeight = Self.headerHeight
+        scroll.contentView = clip
         scroll.documentView = table
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
+        // The list occupies the whole card and is held clear of the header by
+        // an inset, rather than starting below it. That is what lets a row
+        // scroll *under* the field instead of stopping at it — and what is
+        // over it then blurs it, which is the whole effect.
+        scroll.automaticallyAdjustsContentInsets = false
+        scroll.contentInsets = NSEdgeInsets(
+            top: Self.headerHeight, left: 0, bottom: 0, right: 0)
+        scroll.scrollerInsets = NSEdgeInsets(
+            top: Self.headerHeight, left: 0, bottom: 0, right: 0)
         scroll.translatesAutoresizingMaskIntoConstraints = false
         cardContent.addSubview(scroll)
 
@@ -148,6 +165,10 @@ final class PickerView: NSView {
         previewScroll.translatesAutoresizingMaskIntoConstraints = false
         cardContent.addSubview(previewScroll)
 
+        // Above the list, which fades out beneath them.
+        cardContent.addSubview(field)
+        cardContent.addSubview(counter)
+
         // The card is a fraction of the window, and it says so quietly.
         //
         // A window whose content is laid out with constraints will resize
@@ -165,8 +186,7 @@ final class PickerView: NSView {
             // window while its insides ask for the height of a header is a
             // contradiction, and the window is what gives. Asking the list
             // for the same share, quietly, makes the two agree.
-            scroll.heightAnchor.constraint(
-                equalTo: heightAnchor, multiplier: 0.62, constant: -Self.headerHeight),
+            scroll.heightAnchor.constraint(equalTo: heightAnchor, multiplier: 0.62),
         ]
         for constraint in cardSize { constraint.priority = NSLayoutConstraint.Priority(499) }
 
@@ -200,7 +220,7 @@ final class PickerView: NSView {
             // the only way left to satisfy that is to shrink the window. It
             // does, to the height of this header: press ⌘P and the terminal
             // becomes a strip two lines tall.
-            scroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 18),
+            scroll.topAnchor.constraint(equalTo: cardContent.topAnchor),
             scroll.leadingAnchor.constraint(equalTo: cardContent.leadingAnchor),
             scroll.widthAnchor.constraint(equalTo: cardContent.widthAnchor, multiplier: 0.42),
             // Measured against the window, not against the card. Against the
@@ -215,7 +235,7 @@ final class PickerView: NSView {
             previewScroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 18),
             previewScroll.leadingAnchor.constraint(equalTo: scroll.trailingAnchor, constant: 8),
             previewScroll.trailingAnchor.constraint(equalTo: cardContent.trailingAnchor),
-            previewScroll.heightAnchor.constraint(equalTo: scroll.heightAnchor),
+            previewScroll.bottomAnchor.constraint(equalTo: scroll.bottomAnchor),
         ])
     }
 
@@ -543,6 +563,45 @@ extension PickerView: NSTextFieldDelegate {
 }
 
 // MARK: - rows
+
+/// A clip view whose top edge fades out.
+///
+/// A row travelling up under the field thins out and is gone before it
+/// reaches it, rather than sliding behind a lid. A material laid over the top
+/// would blur it, but a material also paints: with nothing scrolled up there
+/// it is a band across the card, which is not what was wanted.
+private final class FadingClipView: NSClipView {
+    /// How far down the fade reaches — the height of the header it runs under.
+    var fadeHeight: CGFloat = 0 { didSet { needsLayout = true } }
+    private let fade = CAGradientLayer()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        fade.colors = [NSColor.clear.cgColor, NSColor.black.cgColor]
+        // The layer's own axis, which grows upwards whatever the view does:
+        // the gradient starts at the top, where the rows go to disappear.
+        fade.startPoint = CGPoint(x: 0.5, y: 1)
+        fade.endPoint = CGPoint(x: 0.5, y: 0)
+        layer?.mask = fade
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    override func layout() {
+        super.layout()
+        guard bounds.height > 0 else { return }
+        let stop = min(1, fadeHeight / bounds.height)
+        // No implicit animation: this runs on every scroll and every resize,
+        // and a quarter-second cross-fade of a mask is a shimmer.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fade.frame = bounds
+        fade.locations = [NSNumber(value: stop * 0.4), NSNumber(value: stop)]
+        CATransaction.commit()
+    }
+}
 
 /// A row that lights up the way the sidebar's do.
 ///
