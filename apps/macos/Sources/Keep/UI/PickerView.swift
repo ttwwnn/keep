@@ -24,6 +24,8 @@ final class PickerView: NSView {
     /// The list's frame, which is what fades. A scroll view manages its own
     /// layer and quietly loses a mask put on it.
     private let listBox = FadingBox()
+    /// The strip the rows go out of focus in, on their way under the field.
+    private let blurStrip = BlurStrip()
     private let table = NSTableView()
     private let preview = NSTextView()
     private let previewScroll = NSScrollView()
@@ -64,42 +66,45 @@ final class PickerView: NSView {
         // at fourteen. An overlay that sits inside a window and is rounded
         // less than it reads as a rectangle somebody softened, rather than as
         // a piece of the same thing.
-        card = Glass.panel(cardContent, cornerRadius: 24)
-        // Grey, over whatever is behind it. Glass refracts what it is over,
-        // and what this is over is a terminal — so in a theme with a blue-dark
-        // background the card came out blue, which is not a colour anything in
-        // here chose.
-        Glass.tint(
-            card,
-            // Dynamic, so the same grey does not turn a light theme's card
-            // into a dark one.
-            NSColor(name: nil) { appearance in
-                appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                    ? NSColor(white: 0.07, alpha: 0.78)
-                    : NSColor(white: 0.97, alpha: 0.78)
-            })
+        // The card is a material, not glass — and the difference is what the
+        // blur at its top edge depends on. A material laid over glass paints
+        // in a different key and its edge is a band; laid over the *same*
+        // material it adds blur and nothing else, which is how a header comes
+        // to blur the rows going under it.
+        //
+        // `.withinWindow` and not `.behindWindow`: what is worth blurring here
+        // is the terminal this card is drawn over, and the terminal is inside
+        // this window. Behind it is the desktop, which nobody is looking at.
+        let panel = NSVisualEffectView()
+        panel.material = .hudWindow
+        panel.blendingMode = .withinWindow
+        panel.state = .active
+        panel.isEmphasized = true
+        panel.wantsLayer = true
+        panel.layer?.cornerRadius = 24
+        panel.layer?.cornerCurve = .continuous
+        panel.layer?.masksToBounds = true
+        cardContent.translatesAutoresizingMaskIntoConstraints = false
+        panel.addSubview(cardContent)
+        NSLayoutConstraint.activate([
+            cardContent.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
+            cardContent.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
+            cardContent.topAnchor.constraint(equalTo: panel.topAnchor),
+            cardContent.bottomAnchor.constraint(equalTo: panel.bottomAnchor),
+        ])
+        card = panel
         card.translatesAutoresizingMaskIntoConstraints = false
         // Neither the card nor its insides may shrink to fit what is in them.
         // A container hugs its content at priority 750 by default, which is
         // above the card's own "be a fraction of the window" — so the card
-        // came out the height of its header, forty-eight points of glass with
-        // a list one point tall inside it.
+        // came out the height of its header, forty-eight points of material
+        // with a list one point tall inside it.
         for view in [card!, cardContent] {
             view.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .vertical)
             view.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
         }
         addSubview(card)
-        // And the insides follow the card, rather than the card following the
-        // insides. Left to the panel they are given whatever size they ask
-        // for — which, with everything in here laid out edge to edge, is the
-        // height of the header and nothing more.
-        cardContent.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            cardContent.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-            cardContent.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            cardContent.topAnchor.constraint(equalTo: card.topAnchor),
-            cardContent.bottomAnchor.constraint(equalTo: card.bottomAnchor),
-        ])
+
         field.font = .systemFont(ofSize: 16)
         field.isBordered = false
         field.drawsBackground = false
@@ -150,6 +155,8 @@ final class PickerView: NSView {
         scroll.translatesAutoresizingMaskIntoConstraints = false
         listBox.translatesAutoresizingMaskIntoConstraints = false
         listBox.addSubview(scroll)
+        blurStrip.translatesAutoresizingMaskIntoConstraints = false
+        listBox.addSubview(blurStrip)
         cardContent.addSubview(listBox)
 
         preview.isEditable = false
@@ -232,6 +239,11 @@ final class PickerView: NSView {
             listBox.leadingAnchor.constraint(equalTo: cardContent.leadingAnchor),
             listBox.widthAnchor.constraint(equalTo: cardContent.widthAnchor, multiplier: 0.42),
             listBox.heightAnchor.constraint(equalTo: scroll.heightAnchor),
+
+            blurStrip.topAnchor.constraint(equalTo: listBox.topAnchor),
+            blurStrip.leadingAnchor.constraint(equalTo: listBox.leadingAnchor),
+            blurStrip.trailingAnchor.constraint(equalTo: listBox.trailingAnchor),
+            blurStrip.heightAnchor.constraint(equalToConstant: Self.listTopInset),
 
             scroll.topAnchor.constraint(equalTo: listBox.topAnchor),
             scroll.leadingAnchor.constraint(equalTo: listBox.leadingAnchor),
@@ -576,6 +588,58 @@ extension PickerView: NSTextFieldDelegate {
 }
 
 // MARK: - rows
+
+/// A strip that blurs whatever passes behind it.
+///
+/// The window server's own blur, which costs nothing to scroll — a
+/// `CIGaussianBlur` in `backgroundFilters` is the same idea redrawn on every
+/// frame the list moves, and the frame rate says so.
+///
+/// It works here because the card underneath is the same material: a material
+/// paints as well as blurs, and over anything else its edge is a band. Over
+/// its own kind it adds blur and nothing else.
+///
+/// Masked so the blur has a strength — full at the top, gone by the bottom
+/// edge, so a row does not snap back into focus as it leaves.
+private final class BlurStrip: NSVisualEffectView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        material = .hudWindow
+        blendingMode = .withinWindow
+        state = .active
+        maskImage = Self.fading(height: max(frame.height, 1))
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    override func layout() {
+        super.layout()
+        if maskImage?.size.height != bounds.height, bounds.height > 0 {
+            maskImage = Self.fading(height: bounds.height)
+        }
+    }
+
+    /// Solid at the top, gone at the bottom, stretchable sideways.
+    private static func fading(height: CGFloat) -> NSImage {
+        let solid = (height * 0.3).rounded()
+        let image = NSImage(size: NSSize(width: 8, height: height), flipped: false) { rect in
+            NSColor.black.setFill()
+            NSRect(x: 0, y: rect.height - solid, width: rect.width, height: solid).fill()
+            NSGradient(starting: .black, ending: NSColor.black.withAlphaComponent(0))?
+                .draw(
+                    in: NSRect(x: 0, y: 0, width: rect.width, height: rect.height - solid),
+                    angle: 90)
+            return true
+        }
+        image.capInsets = NSEdgeInsets(top: solid, left: 2, bottom: 0, right: 2)
+        image.resizingMode = .stretch
+        return image
+    }
+
+    /// Nothing here is clickable; the list underneath is.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
 
 /// A box whose top and bottom edges fade out.
 ///
