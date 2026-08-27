@@ -34,10 +34,11 @@ final class PickerView: NSView {
     /// which is what keeps their height something the card hands down rather
     /// than something they ask it for.
     private static let headerHeight: CGFloat = 20 + 24 + 18
-    /// Where the list's first row sits when nothing is scrolled: below the
-    /// fade, not inside it, or the row you are looking at starts out half
-    /// gone. The fade reaches full strength at exactly this line.
-    private static let listTopInset: CGFloat = headerHeight + 24
+    /// Where the list's first row sits when nothing is scrolled — just under
+    /// the field, not a header's height below it. The fade reaches full
+    /// strength at exactly this line, so the first row is whole and the one
+    /// behind the field is not.
+    private static let listTopInset: CGFloat = 20 + 24 + 8
     private var card: NSView!
     /// "3 of 47", the way a browser counts.
     private let counter = NSTextField(labelWithString: "")
@@ -143,8 +144,9 @@ final class PickerView: NSView {
         scroll.automaticallyAdjustsContentInsets = false
         scroll.contentInsets = NSEdgeInsets(
             top: Self.listTopInset, left: 0, bottom: 0, right: 0)
-        scroll.scrollerInsets = NSEdgeInsets(
-            top: Self.listTopInset, left: 0, bottom: 0, right: 0)
+        // The scroller is not inset with it: given the same top, its track
+        // starts a third of the way down the card and the knob is a stub.
+        scroll.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         scroll.translatesAutoresizingMaskIntoConstraints = false
         listBox.translatesAutoresizingMaskIntoConstraints = false
         listBox.addSubview(scroll)
