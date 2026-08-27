@@ -154,7 +154,11 @@ enum Intent {
     }
 
     /// Put the tabs of the active workspace in this order, by hand.
-    case reorderTabs([UInt32])
+    /// The row, in the order somebody just put it in. `in` names the
+    /// workspace when the drag happened in the sidebar, where any group can
+    /// be rearranged; nil means the window's active one, which is the only
+    /// one the titlebar strip can see.
+    case reorderTabs([UInt32], in: String?)
 
     /// Put the workspaces in a different order, by hand.
     case reorderWorkspaces(from: IndexSet, to: Int)

@@ -614,8 +614,10 @@ final class Session {
             moves.append(Daemon.Move(tab: pane, splitOf: 0, splitDir: 0))
             rearrange(moves, in: workspace.name, focusing: pane, for: window)
 
-        case .reorderTabs(let ids):
-            guard let workspace = workspace(for: window), !ids.isEmpty else { return }
+        case .reorderTabs(let ids, let name):
+            let target = name.flatMap { n in workspaces.first { $0.name == n } }
+                ?? workspace(for: window)
+            guard let workspace = target, !ids.isEmpty else { return }
             tabOrderStore.save(ids, in: workspace.name)
             workspace.reorder(ids)
             publish()

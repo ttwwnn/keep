@@ -26,6 +26,8 @@ struct WorkspaceSidebar: View {
     let dispatch: (Intent) -> Void
     @State private var newName = ""
     @State private var hovered: String?
+    /// The tab a drag is currently held over, keyed like `hovered`.
+    @State private var dropTarget: String?
     @FocusState private var fieldFocused: Bool
 
     private var rows: [SessionSnapshot.SidebarRow] { model.rows }
@@ -40,29 +42,26 @@ struct WorkspaceSidebar: View {
     }
 
     var body: some View {
-        List {
-            ForEach(rows) { row in
-                rowButton(row)
-            }
-            // Dragging a row rearranges the list. The order is a preference
-            // about looking, so it is the app that keeps it; the daemon knows
-            // which workspaces exist and nothing about which one you want at
-            // the top.
-            .onMove { from, to in
-                dispatch(.reorderWorkspaces(from: from, to: to))
-            }
+        // A scroll view over a plain stack, not a List. A List on macOS is an
+        // NSTableView underneath, and inside its rows `.draggable` and
+        // `.dropDestination` never fire — a tab could be pressed and pulled
+        // and nothing anywhere would hear about it. The List earned its keep
+        // while `.onMove` did the reordering; every drag is explicit now, and
+        // the stack also retires the listRow* incantations the List needed.
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 2) {
+                ForEach(rows) { row in
+                    rowButton(row)
+                }
 
-            // Under the last workspace, not pinned to the floor. Starting one
-            // is the next thing after the ones you have, and a row at the
-            // bottom of a tall empty column reads as a different control than
-            // the list it belongs to.
-            newRow
+                // Under the last workspace, not pinned to the floor. Starting
+                // one is the next thing after the ones you have, and a row at
+                // the bottom of a tall empty column reads as a different
+                // control than the list it belongs to.
+                newRow
+            }
+            .padding(.vertical, 6)
         }
-        // The AppKit host owns one flat, full-height surface; the plain style
-        // avoids a second rounded panel below the titlebar, and the hidden
-        // scroll background lets the terminal tint show through.
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
     }
 
     /// One list row per workspace: the workspace button, and under it the
@@ -76,14 +75,6 @@ struct WorkspaceSidebar: View {
             }
         }
         .padding(.horizontal, 5)
-        // Zero, and the gutter above instead: the plain list keeps insets of
-        // its own that a row cannot see, and a block that stops short of both
-        // edges by an amount nobody chose looks like a mistake rather than a
-        // margin. On the outer stack, not the button — a list-row trait set
-        // on a nested child never reaches the list.
-        .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 0))
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
     }
 
     /// The workspace, as a plain header: the name, and the fold at the far
@@ -121,6 +112,18 @@ struct WorkspaceSidebar: View {
         }
         .buttonStyle(.plain)
         .help(tooltip(for: row))
+        // Dragging a header rearranges the workspaces. This replaces the
+        // List's own `.onMove`, which claimed every drag that started
+        // anywhere in the row — the nested tabs included, which is how tab
+        // drags did nothing at all. One mechanism for both kinds of row,
+        // told apart by the payload.
+        .draggable("ws\u{1F}\(row.name)")
+        .dropDestination(for: String.self) { items, _ in
+            guard let payload = items.first else { return false }
+            return dropWorkspace(payload, onto: row)
+        } isTargeted: { over in
+            hovered = over ? row.name : (hovered == row.name ? nil : hovered)
+        }
         .onHover { inside in
             hovered = inside ? row.name : (hovered == row.name ? nil : hovered)
         }
@@ -180,7 +183,7 @@ struct WorkspaceSidebar: View {
         -> some View
     {
         let chosen = tab.isActive && row.isActive
-        let hoveredHere = hovered == tabHoverKey(tab)
+        let hoveredHere = hovered == tabHoverKey(tab) || dropTarget == tabHoverKey(tab)
         return Button {
             dispatch(.activateTab(tab.id))
         } label: {
@@ -211,6 +214,20 @@ struct WorkspaceSidebar: View {
         .buttonStyle(.plain)
         .padding(.leading, 12)
         .padding(.trailing, 8)
+        // The same drag the strip has, vertically. The payload names the
+        // workspace as well as the tab, because the drop must refuse a tab
+        // from another group: the daemon has no operation that moves a tab
+        // between workspaces, and a drop that silently did something else
+        // instead would be worse than one that does nothing.
+        .draggable("tab\u{1F}\(row.name)\u{1F}\(tab.id.root)")
+        .dropDestination(for: String.self) { items, _ in
+            guard let payload = items.first else { return false }
+            Trace.log("sidebar", "dropped \(payload) on \(tabHoverKey(tab))")
+            return drop(payload, onto: tab, in: row)
+        } isTargeted: { over in
+            let key = tabHoverKey(tab)
+            dropTarget = over ? key : (dropTarget == key ? nil : dropTarget)
+        }
         .onHover { inside in
             let key = tabHoverKey(tab)
             hovered = inside ? key : (hovered == key ? nil : hovered)
@@ -218,6 +235,26 @@ struct WorkspaceSidebar: View {
         .contextMenu {
             Button("Close Tab", role: .destructive) { dispatch(.closeTab(tab.id)) }
         }
+    }
+
+    /// A tab let go over another: it takes that tab's place, shifting the
+    /// rest along — the same landing the strip gives a carried tab.
+    private func drop(
+        _ payload: String, onto target: SessionSnapshot.SidebarTab,
+        in row: SessionSnapshot.SidebarRow
+    ) -> Bool {
+        let parts = payload.split(separator: "\u{1F}")
+        guard parts.count == 3, parts[0] == "tab", parts[1] == row.name,
+              let root = UInt32(parts[2]), root != target.id.root
+        else { return false }
+        var order = row.tabRows.map(\.id.root)
+        guard let from = order.firstIndex(of: root),
+              let to = order.firstIndex(of: target.id.root)
+        else { return false }
+        order.remove(at: from)
+        order.insert(root, at: to)
+        dispatch(.reorderTabs(order, in: row.name))
+        return true
     }
 
     /// The strip's capsule, vertically: glass for the tab being shown, a
@@ -229,6 +266,20 @@ struct WorkspaceSidebar: View {
         } else if hovered {
             Capsule(style: .continuous).fill(Color.white.opacity(0.055))
         }
+    }
+
+    /// A workspace header let go over another: it takes that header's place.
+    private func dropWorkspace(_ payload: String, onto target: SessionSnapshot.SidebarRow) -> Bool {
+        let parts = payload.split(separator: "\u{1F}")
+        guard parts.count == 2, parts[0] == "ws", parts[1] != target.name,
+              let from = rows.firstIndex(where: { $0.name == parts[1] }),
+              let to = rows.firstIndex(where: { $0.name == target.name })
+        else { return false }
+        // `move(fromOffsets:toOffset:)` counts the destination in the list as
+        // it was before the row left it: going down, the slot after the
+        // target is the target's place.
+        dispatch(.reorderWorkspaces(from: [from], to: from < to ? to + 1 : to))
+        return true
     }
 
     /// Hover state shares one string field with the workspace rows; a tab's
@@ -311,9 +362,6 @@ struct WorkspaceSidebar: View {
         )
         .animation(.easeOut(duration: 0.16), value: fieldFocused)
         .padding(.horizontal, 5)
-        .listRowInsets(EdgeInsets(top: 3, leading: 0, bottom: 1, trailing: 0))
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
         .contentShape(Rectangle())
         .onTapGesture { fieldFocused = true }
     }
