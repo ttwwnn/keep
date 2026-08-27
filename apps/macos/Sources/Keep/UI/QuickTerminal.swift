@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import GhosttyKit
 
 /// A borderless window cannot become key — AppKit's default answer, and for
 /// a panel whose whole job is taking keystrokes, the wrong one. Without this
@@ -47,6 +48,7 @@ final class QuickTerminal: NSObject, NSWindowDelegate {
     private var surface: TerminalSurfaceView?
     private var visible = false
     private var hotKeyRef: EventHotKeyRef?
+    private var themeObserver: NSObjectProtocol?
 
     /// The workspace the panel shows. Its own, so its size vote and its tab
     /// never tangle with anything a window is showing — and still a real
@@ -162,15 +164,6 @@ final class QuickTerminal: NSObject, NSWindowDelegate {
         content.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         content.layer?.masksToBounds = true
 
-        // The same ground the app's windows have: the window server's blur
-        // with the terminal's own background over it.
-        let backdrop = NSVisualEffectView()
-        backdrop.material = .hudWindow
-        backdrop.blendingMode = .behindWindow
-        backdrop.state = .active
-        backdrop.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(backdrop)
-
         // Tab 0 is TAB_ANY: the first live tab of the workspace, created if
         // it has none. The panel never needs to ask the daemon what exists.
         let surface = TerminalSurfaceView(workspace: Self.workspace, tab: 0)
@@ -178,10 +171,6 @@ final class QuickTerminal: NSObject, NSWindowDelegate {
         content.addSubview(surface)
 
         NSLayoutConstraint.activate([
-            backdrop.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            backdrop.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            backdrop.topAnchor.constraint(equalTo: content.topAnchor),
-            backdrop.bottomAnchor.constraint(equalTo: content.bottomAnchor),
             surface.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 8),
             surface.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -8),
             surface.topAnchor.constraint(equalTo: content.topAnchor, constant: 6),
@@ -191,7 +180,38 @@ final class QuickTerminal: NSObject, NSWindowDelegate {
         panel.contentView = content
         self.panel = panel
         self.surface = surface
+        applyTheme()
+        // The theme moves — a config reload, light to dark — and the panel
+        // moves with it, the way the app's own windows do.
+        themeObserver = NotificationCenter.default.addObserver(
+            forName: GhosttyApp.backgroundDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applyTheme() }
+        }
         return panel
+    }
+
+    /// The app's own dress, not a stock material: the panel goes clear, the
+    /// surface draws the configured background at its configured opacity, the
+    /// margin around it continues the same tint, and the WindowServer blur
+    /// comes through the same libghostty hook the app's windows use.
+    private func applyTheme() {
+        guard let panel, let content = panel.contentView else { return }
+        let ghostty = GhosttyApp.shared
+        let opacity = ghostty.terminalBackgroundOpacity
+        panel.isOpaque = false
+        // Not fully clear: a window whose alpha is exactly zero stops
+        // getting a shadow, and the shadow is the panel's edge.
+        panel.backgroundColor = NSColor.white.withAlphaComponent(0.001)
+        if let color = ghostty.terminalBackground {
+            content.layer?.backgroundColor =
+                color.withAlphaComponent(CGFloat(opacity)).cgColor
+        }
+        if opacity < 1, let app = ghostty.app {
+            ghostty_set_window_background_blur(
+                app, Unmanaged.passUnretained(panel).toOpaque())
+        }
+        panel.invalidateShadow()
     }
 
     /// The screen the pointer is on: the panel is summoned by a keystroke,
