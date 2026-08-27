@@ -38,7 +38,7 @@ final class PickerView: NSView {
     /// the field, not a header's height below it. The fade reaches full
     /// strength at exactly this line, so the first row is whole and the one
     /// behind the field is not.
-    private static let listTopInset: CGFloat = 20 + 24 + 8
+    private static let listTopInset: CGFloat = 20 + 24 + 24
     private var card: NSView!
     /// "3 of 47", the way a browser counts.
     private let counter = NSTextField(labelWithString: "")
@@ -634,7 +634,10 @@ private final class FadingBox: NSView {
         CATransaction.setDisableActions(true)
         fade.frame = bounds
         fade.locations = [
-            NSNumber(value: top * 0.55), NSNumber(value: top),
+            // A long ramp: a short one lets a row's own edge — the top of a
+            // selected lozenge especially — cross it in a few points and read
+            // as a line drawn across the card.
+            NSNumber(value: top * 0.28), NSNumber(value: top),
             NSNumber(value: 1 - bottom), NSNumber(value: 1.0),
         ]
         CATransaction.commit()
