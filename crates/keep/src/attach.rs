@@ -119,29 +119,27 @@ pub fn attach(
         .name("keep-resize".into())
         .spawn(move || {
             let mut sent = (cols, rows);
-            let mut seen = (cols, rows);
             while !resize_flag.load(Ordering::Acquire) {
-                std::thread::sleep(Duration::from_millis(200));
+                // Ten commits a second, live. A settle-then-commit variant was
+                // tried — one clean redraw when the hand stops — and it was
+                // calmer but wrong: what is wanted is the terminal *tracking*
+                // the gesture, the way it does when it owns its own PTY. At
+                // 5Hz the program's redraws arrived as hiccups; at 10Hz, with
+                // half the latency to the first one, they read as motion. The
+                // per-tick cost while nothing changes is one syscall.
+                std::thread::sleep(Duration::from_millis(100));
                 // Zero means "not looking", which the daemon leaves out of
                 // the minimum. Read in the same tick as the size, since the
                 // two answer one question: how big is this viewer, if at all.
                 let showing = watching.as_ref().map(|p| is_showing(p)).unwrap_or(true);
-                let now = if showing { terminal::size().unwrap_or(seen) } else { (0, 0) };
-                // Committed only once it has settled: the same value on two
-                // consecutive ticks. A resize in progress changes every tick,
-                // and every commit mid-gesture is a PTY resize, a SIGWINCH,
-                // and a program redrawing its whole screen — five times per
-                // drag, which is the stutter people feel. The view tracks the
-                // hand smoothly on its own (that reflow is local); the shell
-                // hears about it once, when the hand stops.
-                if now != sent && now == seen {
+                let now = if showing { terminal::size().unwrap_or(sent) } else { (0, 0) };
+                if now != sent {
                     sent = now;
                     let msg = ClientMsg::Resize { cols: now.0, rows: now.1 };
                     if msg.write(&mut resize_sock).is_err() {
                         break;
                     }
                 }
-                seen = now;
             }
         })
         .context("spawn resize thread")?;
