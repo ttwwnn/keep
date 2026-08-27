@@ -86,83 +86,40 @@ struct WorkspaceSidebar: View {
         .listRowBackground(Color.clear)
     }
 
+    /// The workspace, as a plain header: the name, and the fold at the far
+    /// end. Everything the old card said — the dot, what is running, the
+    /// count, the path — now belongs to the rows beneath it or to the
+    /// tooltip; a header that repeats its children is twice the reading for
+    /// the same news.
     private func workspaceButton(_ row: SessionSnapshot.SidebarRow) -> some View {
         Button {
             dispatch(.activateWorkspace(row.name))
         } label: {
-            VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 8) {
-                disclosure(row)
-                StateDot(state: row.dot)
                 Text(row.name)
                     .font(identifier)
-                    .foregroundStyle(row.isActive ? Palette.ink : Palette.inkResting)
+                    .foregroundStyle(
+                        row.isActive
+                            ? Palette.ink
+                            : hovered == row.name ? Palette.inkResting : Palette.inkFaint)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Spacer(minLength: 8)
-                // News if there is news, inventory otherwise. A workspace
-                // running something is the only thing in this list that
-                // changes while you are not looking at it, so that is what
-                // the end of the row is for; when nothing is running it goes
-                // back to saying how many tabs are waiting.
-                HStack(spacing: 6) {
-                    if let first = row.running.first {
-                        Text(first)
-                            .foregroundStyle(Palette.busy)
-                            .lineLimit(1)
-                            // From the front. Only a tab that is actually
-                            // running something reaches this line — a shell
-                            // sitting at a prompt never does — so what is
-                            // here is the name of a piece of work, and a name
-                            // is read from its beginning. Cutting the head
-                            // off is what you do to a path, where the end is
-                            // the part that identifies it, and there are no
-                            // paths in this field.
-                            .truncationMode(.tail)
-                            .layoutPriority(-1)
-                        // One name and a count, not a list: a row this wide
-                        // can carry a name, and three names truncated to five
-                        // characters each carry nothing. The rest are in the
-                        // tooltip, which is where a list belongs.
-                        if row.running.count > 1 {
-                            Text("+\(row.running.count - 1)")
-                                .foregroundStyle(Palette.busy.opacity(0.7))
-                        }
-                    }
-                    // Kept whether or not something is running. How many tabs
-                    // are waiting is the one fact about a workspace that is
-                    // always true, and it used to be the thing that stepped
-                    // aside the moment there was news — so the row said least
-                    // about a workspace exactly when there was most to say.
-                    // It sits last, so the number stays where the eye left
-                    // it while the name beside it comes and goes.
-                    if row.tabs > 0 {
-                        Text("\(row.tabs)")
-                            .foregroundStyle(row.isActive ? Palette.inkResting : Palette.inkFaint)
-                    }
+                if row.dot == .busy {
+                    // The one fact worth carrying up from the tabs: something
+                    // is running in here, visible with the group folded shut.
+                    Text("✳")
+                        .font(counter)
+                        .foregroundStyle(Palette.busy)
                 }
-                .font(counter)
+                Spacer(minLength: 8)
+                disclosure(row)
             }
-            // Where the workspace is. The name above is what somebody called
-            // it and this is what it turned out to be, which for a row that
-            // has not been opened in a while is the more useful of the two.
-            // Cut from the front, because a path is identified by its end.
-            if !row.place.isEmpty {
-                Text(row.place)
-                    .font(counter)
-                    .foregroundStyle(row.isActive ? Palette.inkFaint : Palette.inkFaint.opacity(0.75))
-                    .lineLimit(1)
-                    .truncationMode(.head)
-                    .padding(.leading, 16)
-            }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 4)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(rowBackground(for: row))
-        .animation(.easeOut(duration: 0.16), value: row.isActive)
         .help(tooltip(for: row))
         .onHover { inside in
             hovered = inside ? row.name : (hovered == row.name ? nil : hovered)
@@ -215,25 +172,28 @@ struct WorkspaceSidebar: View {
         }
     }
 
-    /// One tab, under its workspace. What the strip says horizontally, said
-    /// vertically: title, ✳ while busy, ⧉ when another window is showing it,
-    /// and the one being shown marked by ink and a quiet fill.
+    /// One tab, under its workspace, wearing the strip's own clothes: the
+    /// chosen one is a glass capsule, the others are bare text that brightens
+    /// under the pointer, ✳ while busy, ⧉ when another window is showing it.
+    /// The same tab in two places should look like the same tab.
     private func tabButton(_ tab: SessionSnapshot.SidebarTab, in row: SessionSnapshot.SidebarRow)
         -> some View
     {
-        Button {
+        let chosen = tab.isActive && row.isActive
+        let hoveredHere = hovered == tabHoverKey(tab)
+        return Button {
             dispatch(.activateTab(tab.id))
         } label: {
             HStack(spacing: 6) {
                 if tab.busy {
                     Text("✳")
-                        .font(counter)
+                        .font(.system(size: 10))
                         .foregroundStyle(Palette.busy)
                 }
                 Text(tab.title)
-                    .font(Font(GhosttyApp.shared.terminalFont(size: 11.5)))
+                    .font(.system(size: 12, weight: chosen ? .medium : .regular))
                     .foregroundStyle(
-                        tab.isActive && row.isActive ? Palette.ink : Palette.inkResting)
+                        chosen ? Palette.ink : hoveredHere ? Palette.inkResting : Palette.inkFaint)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 if tab.isElsewhere {
@@ -243,26 +203,31 @@ struct WorkspaceSidebar: View {
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.leading, 34)
-            .padding(.trailing, 10)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
             .contentShape(Rectangle())
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(
-                        tab.isActive && row.isActive
-                            ? Color.white.opacity(0.09)
-                            : hovered == tabHoverKey(tab) ? Color.white.opacity(0.05) : .clear)
-                    .padding(.leading, 26)
-            )
+            .background(capsule(chosen: chosen, hovered: hoveredHere))
         }
         .buttonStyle(.plain)
+        .padding(.leading, 12)
+        .padding(.trailing, 8)
         .onHover { inside in
             let key = tabHoverKey(tab)
             hovered = inside ? key : (hovered == key ? nil : hovered)
         }
         .contextMenu {
             Button("Close Tab", role: .destructive) { dispatch(.closeTab(tab.id)) }
+        }
+    }
+
+    /// The strip's capsule, vertically: glass for the tab being shown, a
+    /// breath of white under the pointer, nothing otherwise.
+    @ViewBuilder
+    private func capsule(chosen: Bool, hovered: Bool) -> some View {
+        if chosen {
+            GlassRow(cornerRadius: 13, tint: Palette.litRow)
+        } else if hovered {
+            Capsule(style: .continuous).fill(Color.white.opacity(0.055))
         }
     }
 
