@@ -1,6 +1,14 @@
 import AppKit
 import Carbon.HIToolbox
 
+/// A borderless window cannot become key — AppKit's default answer, and for
+/// a panel whose whole job is taking keystrokes, the wrong one. Without this
+/// override `makeKey()` fails silently and every key goes on landing in the
+/// app behind, which reads as a terminal you cannot type into.
+private final class QuickPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+}
+
 /// The drop-down terminal: ⌃` from anywhere, and a terminal slides in over
 /// whatever you were doing; ⌃` again — or clicking away — and it leaves.
 ///
@@ -75,6 +83,7 @@ final class QuickTerminal: NSObject, NSWindowDelegate {
         panel.alphaValue = 1
         panel.orderFrontRegardless()
         panel.makeKey()
+        if let surface { panel.makeFirstResponder(surface) }
         visible = true
 
         NSAnimationContext.runAnimationGroup { context in
@@ -111,7 +120,7 @@ final class QuickTerminal: NSObject, NSWindowDelegate {
     private func ensurePanel() -> NSPanel {
         if let panel { return panel }
 
-        let panel = NSPanel(
+        let panel = QuickPanel(
             contentRect: .zero,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
