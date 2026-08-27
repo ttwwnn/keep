@@ -265,16 +265,20 @@ final class PickerView: NSView {
 
     func apply(_ model: PickerModel) {
         adoptTerminalFont()
+        // Said every time, not only when the mode changes. The view starts
+        // out believing it is in `.goTo`, which is the mode the first ⌘P
+        // arrives in — so the one that mattered most was the one nobody ever
+        // set, and the field opened blank.
+        switch model.mode {
+        case .goTo:
+            field.placeholderString = "go to a terminal, or a folder to start one in…"
+        case .search(let global):
+            field.placeholderString = global
+                ? "find everywhere…"
+                : "find in \(model.scopeLabel ?? "this pane")…"
+        }
         if mode != model.mode {
             mode = model.mode
-            switch mode {
-            case .goTo:
-                field.placeholderString = "go to…"
-            case .search(let global):
-                field.placeholderString = global
-                    ? "find everywhere…"
-                    : "find in \(model.scopeLabel ?? "this pane")…"
-            }
             field.stringValue = ""
             query = ""
         }
@@ -316,6 +320,13 @@ final class PickerView: NSView {
     /// The field owns the keyboard for as long as the picker is up.
     func takeFocus() {
         window?.makeFirstResponder(field)
+        // The caret is the accent colour by default, which in a card that has
+        // just had every other blue taken out of it is the only blue left.
+        // The field editor is shared and handed round, so it is set here,
+        // each time this field takes it.
+        if let editor = window?.fieldEditor(true, for: field) as? NSTextView {
+            editor.insertionPointColor = .white
+        }
     }
 
     /// Empty the field, for an overlay that is being opened.
@@ -540,14 +551,44 @@ extension PickerView: NSTextFieldDelegate {
 /// have to be told twice what a chosen row looks like.
 private final class PickerRow: NSTableRowView {
     private let lozenge = Glass.lozenge(cornerRadius: 12) ?? NSView()
+    /// A breath of white under the pointer, the same one the sidebar uses.
+    /// Flat rather than glass: it appears and disappears as the pointer
+    /// travels, and a pane of glass per row for that is a lot of glass.
+    private let hover = NSView()
+    private var hovered = false { didSet { showHover() } }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         lozenge.wantsLayer = true
         lozenge.layer?.cornerCurve = .continuous
         lozenge.isHidden = true
+        hover.wantsLayer = true
+        hover.layer?.cornerCurve = .continuous
+        hover.layer?.cornerRadius = 12
+        hover.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.06).cgColor
+        hover.isHidden = true
+        addSubview(hover, positioned: .below, relativeTo: nil)
         addSubview(lozenge, positioned: .below, relativeTo: nil)
     }
+
+    /// The chosen row already says so; two marks on one row says nothing.
+    private func showHover() { hover.isHidden = !hovered || isSelected }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self))
+        // A row that is scrolled out from under the pointer is never sent
+        // `mouseExited`; asking where the pointer actually is settles it.
+        hovered = window.map { bounds.contains(convert($0.mouseLocationOutsideOfEventStream, from: nil)) }
+            ?? false
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovered = true }
+    override func mouseExited(with event: NSEvent) { hovered = false }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not supported") }
@@ -555,6 +596,7 @@ private final class PickerRow: NSTableRowView {
     override func layout() {
         super.layout()
         lozenge.frame = bounds.insetBy(dx: 6, dy: 2)
+        hover.frame = lozenge.frame
         Glass.setCornerRadius(lozenge, 12)
         if !Glass.isAvailable {
             lozenge.layer?.cornerRadius = 12
@@ -566,6 +608,7 @@ private final class PickerRow: NSTableRowView {
         didSet {
             guard isSelected != oldValue else { return }
             lozenge.isHidden = !isSelected
+            showHover()
             if isSelected, Glass.isAvailable {
                 // Quieter than the sidebar's, which is one row among five;
                 // this is one row among forty, and a bright fill scanning
