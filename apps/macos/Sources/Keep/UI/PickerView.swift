@@ -30,7 +30,7 @@ final class PickerView: NSView {
     /// it. Named because the halves are sized as "the card, less this" —
     /// which is what keeps their height something the card hands down rather
     /// than something they ask it for.
-    private static let headerHeight: CGFloat = 14 + 20 + 12
+    private static let headerHeight: CGFloat = 20 + 24 + 18
     private var card: NSView!
     /// "3 of 47", the way a browser counts.
     private let counter = NSTextField(labelWithString: "")
@@ -92,6 +92,7 @@ final class PickerView: NSView {
             cardContent.topAnchor.constraint(equalTo: card.topAnchor),
             cardContent.bottomAnchor.constraint(equalTo: card.bottomAnchor),
         ])
+        field.font = .systemFont(ofSize: 16)
         field.isBordered = false
         field.drawsBackground = false
         field.focusRingType = .none
@@ -99,14 +100,14 @@ final class PickerView: NSView {
         field.translatesAutoresizingMaskIntoConstraints = false
         cardContent.addSubview(field)
 
-        counter.font = .systemFont(ofSize: 11)
+        counter.font = .systemFont(ofSize: 12)
         counter.textColor = .tertiaryLabelColor
         counter.alignment = .right
         counter.translatesAutoresizingMaskIntoConstraints = false
         cardContent.addSubview(counter)
 
         table.headerView = nil
-        table.rowHeight = 34
+        table.rowHeight = 38
         table.backgroundColor = .clear
         table.style = .plain
         // The row draws its own selection, inset and rounded like the
@@ -178,12 +179,12 @@ final class PickerView: NSView {
             card.centerXAnchor.constraint(equalTo: centerXAnchor),
             card.topAnchor.constraint(equalTo: topAnchor, constant: 90),
 
-            field.topAnchor.constraint(equalTo: cardContent.topAnchor, constant: 14),
-            field.heightAnchor.constraint(equalToConstant: 20),
-            field.leadingAnchor.constraint(equalTo: cardContent.leadingAnchor, constant: 16),
+            field.topAnchor.constraint(equalTo: cardContent.topAnchor, constant: 20),
+            field.heightAnchor.constraint(equalToConstant: 24),
+            field.leadingAnchor.constraint(equalTo: cardContent.leadingAnchor, constant: 20),
             field.trailingAnchor.constraint(equalTo: counter.leadingAnchor, constant: -10),
             counter.centerYAnchor.constraint(equalTo: field.centerYAnchor),
-            counter.trailingAnchor.constraint(equalTo: cardContent.trailingAnchor, constant: -16),
+            counter.trailingAnchor.constraint(equalTo: cardContent.trailingAnchor, constant: -20),
 
             // The list on the left, what it is on the right. Side by side
             // rather than stacked: the preview is a piece of a terminal, and
@@ -199,7 +200,7 @@ final class PickerView: NSView {
             // the only way left to satisfy that is to shrink the window. It
             // does, to the height of this header: press ⌘P and the terminal
             // becomes a strip two lines tall.
-            scroll.topAnchor.constraint(equalTo: header.bottomAnchor),
+            scroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 18),
             scroll.leadingAnchor.constraint(equalTo: cardContent.leadingAnchor),
             scroll.widthAnchor.constraint(equalTo: cardContent.widthAnchor, multiplier: 0.42),
             // Measured against the window, not against the card. Against the
@@ -211,7 +212,7 @@ final class PickerView: NSView {
             // a share of it.
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 240),
 
-            previewScroll.topAnchor.constraint(equalTo: header.bottomAnchor),
+            previewScroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 18),
             previewScroll.leadingAnchor.constraint(equalTo: scroll.trailingAnchor, constant: 8),
             previewScroll.trailingAnchor.constraint(equalTo: cardContent.trailingAnchor),
             previewScroll.heightAnchor.constraint(equalTo: scroll.heightAnchor),
@@ -302,7 +303,7 @@ final class PickerView: NSView {
             preview.textStorage?.setAttributedString(
                 TerminalText.attributed(
                     model.previewText,
-                    font: GhosttyApp.shared.terminalFont(size: 10),
+                    font: GhosttyApp.shared.terminalFont(size: 11),
                     palette: terminal.colors,
                     foreground: terminal.foreground.withAlphaComponent(0.85)))
             preview.scrollToBeginningOfDocument(nil)
@@ -597,14 +598,14 @@ extension PickerView: NSTableViewDataSource, NSTableViewDelegate {
 
         let title = NSTextField(labelWithString: item.title)
         if case .hit = item.kind {
-            let font = GhosttyApp.shared.terminalFont(size: 11)
+            let font = GhosttyApp.shared.terminalFont(size: 12)
             title.font = font
             if let match = matches[item.id] {
                 title.attributedStringValue = Self.marked(
                     item.title, range: match.range, font: font)
             }
         } else {
-            let font = NSFont.systemFont(ofSize: 13)
+            let font = NSFont.systemFont(ofSize: 14)
             title.font = font
             // Which letters put this row here. The query is matched against
             // the title first and the path second — the same order the score
@@ -623,9 +624,11 @@ extension PickerView: NSTableViewDataSource, NSTableViewDelegate {
 
         let detailText = matches[item.id].map { "\($0.group):\(item.detail)" } ?? item.detail
         let detail = NSTextField(labelWithString: detailText)
-        let detailFont = NSFont.systemFont(ofSize: 11)
+        let detailFont = NSFont.systemFont(ofSize: 12)
         detail.font = detailFont
-        detail.textColor = .secondaryLabelColor
+        // Dimmer than secondary: the path is there to tell two rows with the
+        // same name apart, not to be read alongside the name.
+        detail.textColor = .tertiaryLabelColor
         // And in the path, when that is where the match was found — a row
         // that is here because of its directory says so there.
         let needle = query.lowercased().filter { !$0.isWhitespace }
@@ -670,14 +673,14 @@ extension PickerView: NSTableViewDataSource, NSTableViewDelegate {
         // in the row you read without reading — terminal or folder, decided
         // before the eye reaches the name — and at twelve points it was
         // punctuation next to a thirteen-point title.
-        badge.symbolConfiguration = .init(pointSize: 15, weight: .regular)
+        badge.symbolConfiguration = .init(pointSize: 17, weight: .regular)
         badge.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(badge)
 
         NSLayoutConstraint.activate([
             badge.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 18),
             badge.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            badge.widthAnchor.constraint(equalToConstant: 20),
+            badge.widthAnchor.constraint(equalToConstant: 22),
             title.leadingAnchor.constraint(equalTo: badge.trailingAnchor, constant: 8),
             title.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             title.trailingAnchor.constraint(
