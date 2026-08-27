@@ -28,9 +28,53 @@ struct WorkspaceSidebar: View {
     @State private var hovered: String?
     /// The tab a drag is currently held over, keyed like `hovered`.
     @State private var dropTarget: String?
+    /// The payload in flight. Set in `onDrag` and read from here everywhere:
+    /// on macOS the item provider's contents cannot be read during the drag
+    /// (loads are deferred until it ends), so the state IS the payload.
+    @State private var dragged: String?
+    /// The order in flight while a drag is over its own group. The snapshot
+    /// is not touched until the drop commits; these are what the rows render
+    /// from in the meantime, which is what lets the gap travel.
+    @State private var liveTabOrder: LiveTabOrder?
+    @State private var liveWorkspaceOrder: [String]?
     @FocusState private var fieldFocused: Bool
 
+    struct LiveTabOrder: Equatable {
+        var workspace: String
+        var roots: [UInt32]
+    }
+
     private var rows: [SessionSnapshot.SidebarRow] { model.rows }
+
+    /// The rows in the order being shown: the live one mid-drag, the
+    /// snapshot's otherwise.
+    private var shownRows: [SessionSnapshot.SidebarRow] {
+        guard let order = liveWorkspaceOrder else { return rows }
+        return order.compactMap { name in rows.first { $0.name == name } }
+    }
+
+    private func shownTabs(of row: SessionSnapshot.SidebarRow)
+        -> [SessionSnapshot.SidebarTab]
+    {
+        guard let live = liveTabOrder, live.workspace == row.name else { return row.tabRows }
+        return live.roots.compactMap { root in row.tabRows.first { $0.id.root == root } }
+    }
+
+    /// What the fold animation is keyed on: only the facts that change the
+    /// list's geometry. Keyed on the whole snapshot, every title the poller
+    /// touches would animate layout for no reason.
+    private var shape: [String] {
+        rows.map { row in
+            "\(row.name)|\(row.expanded)|\(row.tabRows.map { String($0.id.root) }.joined(separator: ","))"
+        }
+    }
+
+    private func cancelDrag() {
+        dragged = nil
+        liveTabOrder = nil
+        liveWorkspaceOrder = nil
+        dropTarget = nil
+    }
 
     /// The terminal's own face, for the strings the terminal would also print.
     private var identifier: Font {
@@ -49,8 +93,12 @@ struct WorkspaceSidebar: View {
         // while `.onMove` did the reordering; every drag is explicit now, and
         // the stack also retires the listRow* incantations the List needed.
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 2) {
-                ForEach(rows) { row in
+            // An eager VStack, deliberately. The lazy one has a filed radar
+            // for exactly this shape of update — a published array replaced
+            // wholesale — and exit transitions cannot run on rows that were
+            // never realised; at a sidebar's row count, eager is free.
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(shownRows) { row in
                     rowButton(row)
                 }
 
@@ -61,6 +109,29 @@ struct WorkspaceSidebar: View {
                 newRow
             }
             .padding(.vertical, 6)
+            // The fold's engine. An animation keyed on a value covers changes
+            // that arrive from outside the view — the snapshot is replaced by
+            // `render`, not mutated here — and keying it on the geometry
+            // alone keeps the poller's title churn from animating layout.
+            .animation(.easeOut(duration: 0.18), value: shape)
+        }
+        // A drop that ends on the sidebar's bare ground still ends: without
+        // this, a tab dropped an inch below its group kept its ghost dimmed
+        // and its mirror alive. (A drag cancelled with Esc has no signal at
+        // all on macOS; the next drag's onDrag clears what it left.)
+        .onDrop(of: [.plainText], delegate: CleanupDropDelegate(clear: cancelDrag))
+        .onChange(of: model.rows) { _, new in
+            // Mid-drag, the poller may replace the snapshot underneath the
+            // mirror. The mirror survives — it is the truth of the gesture —
+            // unless its group is gone, and then so is the gesture.
+            guard dragged != nil else {
+                liveTabOrder = nil
+                liveWorkspaceOrder = nil
+                return
+            }
+            if let live = liveTabOrder, !new.contains(where: { $0.name == live.workspace }) {
+                cancelDrag()
+            }
         }
     }
 
@@ -71,9 +142,17 @@ struct WorkspaceSidebar: View {
         VStack(alignment: .leading, spacing: 0) {
             workspaceButton(row)
             if row.expanded {
-                ForEach(row.tabRows) { tab in tabButton(tab, in: row) }
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(shownTabs(of: row)) { tab in tabButton(tab, in: row) }
+                }
+                // Under the header, on their way in and out — which with the
+                // clip below reads as sliding from beneath it rather than
+                // materialising over the neighbours.
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .zIndex(-1)
             }
         }
+        .clipped()
         .padding(.horizontal, 5)
     }
 
@@ -117,13 +196,24 @@ struct WorkspaceSidebar: View {
         // anywhere in the row — the nested tabs included, which is how tab
         // drags did nothing at all. One mechanism for both kinds of row,
         // told apart by the payload.
-        .draggable("ws\u{1F}\(row.name)")
-        .dropDestination(for: String.self) { items, _ in
-            guard let payload = items.first else { return false }
-            return dropWorkspace(payload, onto: row)
-        } isTargeted: { over in
-            hovered = over ? row.name : (hovered == row.name ? nil : hovered)
+        .onDrag {
+            // A new drag first clears whatever a cancelled one left behind.
+            cancelDrag()
+            let payload = "ws\u{1F}\(row.name)"
+            dragged = payload
+            liveWorkspaceOrder = rows.map(\.name)
+            // A real type, not an empty provider: on macOS an empty one
+            // never engages a drop at all.
+            return NSItemProvider(object: payload as NSString)
         }
+        .onDrop(of: [.plainText], delegate: HeaderDropDelegate(
+            target: row.name,
+            dragged: $dragged,
+            liveOrder: $liveWorkspaceOrder,
+            commitOrder: { order in commitWorkspaceOrder(order) },
+            moveTabHere: { id in dispatch(.moveTab(id, to: row.name, before: nil)) },
+            clear: cancelDrag))
+        .opacity(dragged == "ws\u{1F}\(row.name)" ? 0.4 : 1)
         .onHover { inside in
             hovered = inside ? row.name : (hovered == row.name ? nil : hovered)
         }
@@ -214,19 +304,36 @@ struct WorkspaceSidebar: View {
         .buttonStyle(.plain)
         .padding(.leading, 12)
         .padding(.trailing, 8)
-        // The same drag the strip has, vertically — and further: dropped in
-        // another group, the tab moves there, shells and panes intact. The
-        // payload names the workspace as well as the tab so the drop knows
-        // which of the two it is doing.
-        .draggable("tab\u{1F}\(row.name)\u{1F}\(tab.id.root)")
-        .dropDestination(for: String.self) { items, _ in
-            guard let payload = items.first else { return false }
-            Trace.log("sidebar", "dropped \(payload) on \(tabHoverKey(tab))")
-            return drop(payload, onto: tab, in: row)
-        } isTargeted: { over in
-            let key = tabHoverKey(tab)
-            dropTarget = over ? key : (dropTarget == key ? nil : dropTarget)
+        // The same drag the strip has, vertically — and live: while the drag
+        // is over its own group the other rows open a path in real time, the
+        // dragged one travelling as a dimmed ghost, and the drop commits the
+        // order the gap already shows. Dropped in another group, the tab
+        // moves there, shells and panes intact.
+        .onDrag {
+            cancelDrag()
+            let payload = "tab\u{1F}\(row.name)\u{1F}\(tab.id.root)"
+            dragged = payload
+            liveTabOrder = LiveTabOrder(
+                workspace: row.name, roots: row.tabRows.map(\.id.root))
+            return NSItemProvider(object: payload as NSString)
         }
+        .onDrop(of: [.plainText], delegate: TabDropDelegate(
+            workspace: row.name,
+            targetRoot: tab.id.root,
+            targetKey: tabHoverKey(tab),
+            dragged: $dragged,
+            liveOrder: $liveTabOrder,
+            dropTarget: $dropTarget,
+            commitOrder: { roots in
+                Trace.log("sidebar", "reorder committed in \(row.name): \(roots)")
+                dispatch(.reorderTabs(roots, in: row.name))
+            },
+            moveTabHere: { id in
+                Trace.log("sidebar", "moved \(id) into \(row.name)")
+                dispatch(.moveTab(id, to: row.name, before: tab.id.root))
+            },
+            clear: cancelDrag))
+        .opacity(dragged == "tab\u{1F}\(row.name)\u{1F}\(tab.id.root)" ? 0.4 : 1)
         .onHover { inside in
             let key = tabHoverKey(tab)
             hovered = inside ? key : (hovered == key ? nil : hovered)
@@ -236,32 +343,21 @@ struct WorkspaceSidebar: View {
         }
     }
 
-    /// A tab let go over another: it takes that tab's place, shifting the
-    /// rest along — the same landing the strip gives a carried tab.
-    private func drop(
-        _ payload: String, onto target: SessionSnapshot.SidebarTab,
-        in row: SessionSnapshot.SidebarRow
-    ) -> Bool {
-        let parts = payload.split(separator: "\u{1F}")
-        guard parts.count == 3, parts[0] == "tab", let root = UInt32(parts[2])
-        else { return false }
-        // From another group: the tab changes workspaces and lands where it
-        // was dropped. Same group: the reorder the strip has always had.
-        guard parts[1] == row.name else {
-            dispatch(.moveTab(
-                TabID(workspace: String(parts[1]), root: root),
-                to: row.name, before: target.id.root))
-            return true
-        }
-        guard root != target.id.root else { return false }
-        var order = row.tabRows.map(\.id.root)
-        guard let from = order.firstIndex(of: root),
-              let to = order.firstIndex(of: target.id.root)
-        else { return false }
-        order.remove(at: from)
-        order.insert(root, at: to)
-        dispatch(.reorderTabs(order, in: row.name))
-        return true
+    /// Commit a header drag: the mirror is the final order, and the intent
+    /// speaks in offsets, so the one moved name is translated into the move
+    /// that produces that order.
+    private func commitWorkspaceOrder(_ order: [String]) {
+        guard order != rows.map(\.name),
+              let payload = dragged,
+              let part = payload.split(separator: "\u{1F}").last
+        else { return }
+        let name = String(part)
+        guard let from = rows.firstIndex(where: { $0.name == name }),
+              let to = order.firstIndex(of: name)
+        else { return }
+        // `move(fromOffsets:toOffset:)` counts the destination in the list
+        // as it was before the row left it: going down, one past the slot.
+        dispatch(.reorderWorkspaces(from: [from], to: from < to ? to + 1 : to))
     }
 
     /// The strip's capsule, vertically: glass for the tab being shown, a
@@ -273,29 +369,6 @@ struct WorkspaceSidebar: View {
         } else if hovered {
             Capsule(style: .continuous).fill(Color.white.opacity(0.055))
         }
-    }
-
-    /// A workspace header let go over another: it takes that header's place.
-    /// A tab let go on a header joins that group, at the end.
-    private func dropWorkspace(_ payload: String, onto target: SessionSnapshot.SidebarRow) -> Bool {
-        let parts = payload.split(separator: "\u{1F}")
-        if parts.count == 3, parts[0] == "tab", let root = UInt32(parts[2]),
-           parts[1] != target.name
-        {
-            dispatch(.moveTab(
-                TabID(workspace: String(parts[1]), root: root),
-                to: target.name, before: nil))
-            return true
-        }
-        guard parts.count == 2, parts[0] == "ws", parts[1] != target.name,
-              let from = rows.firstIndex(where: { $0.name == parts[1] }),
-              let to = rows.firstIndex(where: { $0.name == target.name })
-        else { return false }
-        // `move(fromOffsets:toOffset:)` counts the destination in the list as
-        // it was before the row left it: going down, the slot after the
-        // target is the target's place.
-        dispatch(.reorderWorkspaces(from: [from], to: from < to ? to + 1 : to))
-        return true
     }
 
     /// Hover state shares one string field with the workspace rows; a tab's
@@ -393,6 +466,127 @@ struct WorkspaceSidebar: View {
 /// Both, deliberately: hue alone is a thing not everyone can read, so a filled
 /// dot means something is watching this workspace and a hollow one means
 /// nothing is.
+/// The live half of a tab drag.
+///
+/// `dropEntered` fires as the drag crosses each row, and that is where the
+/// path opens: the mirror order moves inside an animation, the rows render
+/// from the mirror, and the gap travels with the pointer — the strip's
+/// `settle()`, said in SwiftUI. The drop then commits an order the eye has
+/// already seen.
+///
+/// Everything reads the dragged payload from bound state, never from the
+/// item provider: macOS defers provider loads until the drag is over, so
+/// mid-drag the provider is a promise and the state is the fact.
+private struct TabDropDelegate: DropDelegate {
+    let workspace: String
+    let targetRoot: UInt32
+    let targetKey: String
+    @Binding var dragged: String?
+    @Binding var liveOrder: WorkspaceSidebar.LiveTabOrder?
+    @Binding var dropTarget: String?
+    let commitOrder: ([UInt32]) -> Void
+    let moveTabHere: (TabID) -> Void
+    let clear: () -> Void
+
+    private func draggedTab() -> (workspace: String, root: UInt32)? {
+        guard let payload = dragged else { return nil }
+        let parts = payload.split(separator: "\u{1F}")
+        guard parts.count == 3, parts[0] == "tab", let root = UInt32(parts[2])
+        else { return nil }
+        return (String(parts[1]), root)
+    }
+
+    func dropEntered(info: DropInfo) {
+        guard let tab = draggedTab() else { return }
+        if tab.workspace == workspace, var live = liveOrder, live.workspace == workspace {
+            guard let from = live.roots.firstIndex(of: tab.root),
+                  let to = live.roots.firstIndex(of: targetRoot), from != to
+            else { return }
+            live.roots.move(
+                fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to)
+            withAnimation(.easeOut(duration: 0.14)) { liveOrder = live }
+        } else if tab.workspace != workspace {
+            // Another group's tab: no shared order to open, so the target
+            // lights instead — the same highlight the pointer earns.
+            dropTarget = targetKey
+        }
+    }
+
+    func dropExited(info: DropInfo) {
+        if dropTarget == targetKey { dropTarget = nil }
+    }
+
+    /// `.move`, or macOS shows a copy cursor for the whole gesture.
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        defer { clear() }
+        guard let tab = draggedTab() else { return false }
+        if tab.workspace == workspace {
+            if let live = liveOrder, live.workspace == workspace {
+                commitOrder(live.roots)
+            }
+        } else {
+            moveTabHere(TabID(workspace: tab.workspace, root: tab.root))
+        }
+        return true
+    }
+}
+
+/// The same, for the headers: a header drag slides the other groups aside as
+/// it passes, and a tab from another group dropped on a header joins it.
+private struct HeaderDropDelegate: DropDelegate {
+    let target: String
+    @Binding var dragged: String?
+    @Binding var liveOrder: [String]?
+    let commitOrder: ([String]) -> Void
+    let moveTabHere: (TabID) -> Void
+    let clear: () -> Void
+
+    func dropEntered(info: DropInfo) {
+        guard let payload = dragged else { return }
+        let parts = payload.split(separator: "\u{1F}")
+        guard parts.count == 2, parts[0] == "ws", parts[1] != target,
+              var order = liveOrder,
+              let from = order.firstIndex(of: String(parts[1])),
+              let to = order.firstIndex(of: target), from != to
+        else { return }
+        order.move(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to)
+        withAnimation(.easeOut(duration: 0.14)) { liveOrder = order }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        defer { clear() }
+        guard let payload = dragged else { return false }
+        let parts = payload.split(separator: "\u{1F}")
+        if parts.count == 2, parts[0] == "ws" {
+            if let order = liveOrder { commitOrder(order) }
+            return true
+        }
+        if parts.count == 3, parts[0] == "tab", let root = UInt32(parts[2]),
+           parts[1] != target
+        {
+            moveTabHere(TabID(workspace: String(parts[1]), root: root))
+            return true
+        }
+        return false
+    }
+}
+
+/// The net under everything: a drop that ends on the sidebar's bare ground —
+/// or a gesture macOS never reports the end of — must not leave a dimmed
+/// ghost and a live mirror behind.
+private struct CleanupDropDelegate: DropDelegate {
+    let clear: () -> Void
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+    func performDrop(info: DropInfo) -> Bool {
+        clear()
+        return true
+    }
+}
+
 private struct StateDot: View {
     let state: SessionSnapshot.SidebarRow.Dot
 
