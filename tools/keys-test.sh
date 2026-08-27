@@ -198,6 +198,9 @@ check "left arrow" "$KEYS" '^[[D' '^[OD'
 check "ctrl-c"     "$KEYS" '^C'
 "$SENDKEY" "$APP_PID" key 44 shift; sleep 0.5   # shift-slash, which is "?"
 check "shift-slash is a question mark" "$(screen)" '?'
+start_probe
+"$SENDKEY" "$APP_PID" key 40 cmd; sleep 0.5     # cmd-k
+check "cmd-k asks the program to clear" "$(screen)" '^L'
 # Tab and its shifted twin. Programs that cycle a selection forwards with one
 # and backwards with the other — Claude Code's mode switch among them — go
 # quiet when the shifted one arrives as a plain tab or as nothing at all,
@@ -270,6 +273,12 @@ check "shift-slash is a question mark, in kitty mode" "$LAST" '?'
 # backtab or the protocol's own — as long as the shift is still in it.
 probe_key "shift-tab"     48 shift
 check "shift-tab is still a backtab, in kitty mode" "$LAST" '^[[Z' '^[[9;2u'
+# The terminal must not clear its own screen. The screen belongs to the
+# daemon, and a program drawing one of its own keeps its own account of what
+# is on it — wiped underneath, that account is wrong and the program looks
+# broken. The chord is a keystroke, and whoever is drawing decides.
+probe_key "cmd-k"         40 cmd
+check "cmd-k asks the program to clear, in kitty mode" "$LAST" '^L'
 
 # ------------------------------------------------------------ bracketed paste
 

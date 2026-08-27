@@ -611,6 +611,20 @@ final class GhosttyApp {
         // Use a tighter terminal-only inset than the user's standalone
         // Ghostty window so the first prompt sits closer to the chrome.
         //
+        // `super+k` is spelled out for a different reason: the terminal binds
+        // it to clearing the screen, and clearing the screen is the one thing
+        // this terminal must not do on its own. The screen lives in the
+        // daemon — a local wipe is undone by the next repaint — and a program
+        // drawing a full screen of its own, an editor or Claude Code, keeps
+        // its own account of what is on it. Wiped underneath, that account is
+        // wrong until something forces a redraw, which reads as the program
+        // having broken.
+        //
+        // So the chord is a keystroke instead: form feed, which is what
+        // ctrl-l has always been. A shell clears its screen with it, and a
+        // full-screen program redraws — the same gesture, asked of whoever is
+        // actually drawing.
+        //
         // `shift+tab` is spelled out for the same reason, and measured the
         // same way: outside the kitty keyboard protocol the encoder sends
         // `CSI Z`, the backtab every terminal has sent for decades, and with
@@ -625,6 +639,7 @@ final class GhosttyApp {
             window-padding-y = 0
             keybind = alt+backspace=text:\\x1b\\x7f
             keybind = shift+tab=text:\\x1b[Z
+            keybind = super+k=text:\\x0c
 
             """
         do {
