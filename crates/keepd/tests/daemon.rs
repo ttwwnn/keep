@@ -576,3 +576,42 @@ fn nobody_looking_leaves_the_size_alone() {
     std::thread::sleep(Duration::from_millis(300));
     assert_eq!(size_of(&path, "nobody"), (120, 40), "an unwatched tab reflowed itself");
 }
+
+/// A tab moves to another workspace with its shell still running.
+///
+/// Nothing restarts: the same PTY is simply filed under the other name with
+/// an id of that workspace's own, which is what makes this safe to do to a
+/// tab with hours of work in it.
+#[test]
+fn a_tab_moves_between_workspaces_with_its_shell() {
+    let path = start_daemon("move");
+    let mut sock = attach(&path, "origin", 100, 30);
+    ClientMsg::Input(b"echo carried$((10+7))\n".to_vec()).write(&mut sock).unwrap();
+    assert!(read_until(&mut sock, "carried17", Duration::from_secs(10)).contains("carried17"));
+
+    let mut mover = UnixStream::connect(&path).unwrap();
+    ClientMsg::MoveTab { workspace: "origin".into(), tab: 1, to: "target".into() }
+        .write(&mut mover)
+        .unwrap();
+    mover.set_read_timeout(Some(Duration::from_secs(5))).ok();
+    let moved = match ServerMsg::read(&mut mover) {
+        Ok(Some(ServerMsg::TabCreated { tab })) => tab,
+        other => panic!("expected the new id, got {other:?}"),
+    };
+
+    // Gone from where it was, present where it went.
+    assert!(tabs_of(&path, "origin").is_empty(), "still filed under its old name");
+    let target = tabs_of(&path, "target");
+    assert_eq!(target.len(), 1);
+    assert_eq!(target[0].id, moved);
+
+    // And it is the same shell: attaching repaints the history it made
+    // before the move.
+    let mut back = UnixStream::connect(&path).unwrap();
+    ClientMsg::Attach { workspace: "target".into(), tab: moved, cols: 100, rows: 30 }
+        .write(&mut back)
+        .unwrap();
+    back.set_read_timeout(Some(Duration::from_secs(5))).ok();
+    let seen = read_until(&mut back, "carried17", Duration::from_secs(10));
+    assert!(seen.contains("carried17"), "the shell did not survive the move: {seen:?}");
+}

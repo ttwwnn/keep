@@ -218,6 +218,67 @@ impl Workspace {
         Ok((id, tab))
     }
 
+    /// Take a tab and its whole pane tree out of this workspace.
+    ///
+    /// The entries leave exactly as they were — ids, layout, the running
+    /// shells behind them — and it is the receiving workspace that renames
+    /// them, because ids are per-workspace counters and only the receiver
+    /// knows which numbers it has not used.
+    pub fn take_tree(&self, root: u32) -> Result<Vec<(u32, Arc<Tab>, u32, u8)>> {
+        let mut guard = self.tabs.lock().map_err(|_| anyhow!("workspace poisoned"))?;
+        if !guard.iter().any(|e| e.id == root) {
+            return Err(anyhow!("no tab {root}"));
+        }
+        // The subtree: the root, its panes, their panes. Ids are members once
+        // found, so a chain of splits follows its parents out.
+        let mut member = vec![root];
+        loop {
+            let more: Vec<u32> = guard
+                .iter()
+                .filter(|e| member.contains(&e.split_of) && !member.contains(&e.id))
+                .map(|e| e.id)
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            member.extend(more);
+        }
+        let mut taken = Vec::new();
+        guard.retain_mut(|e| {
+            if member.contains(&e.id) {
+                taken.push((e.id, Arc::clone(&e.tab), e.split_of, e.split_dir));
+                false
+            } else {
+                true
+            }
+        });
+        Ok(taken)
+    }
+
+    /// Adopt a tree taken from another workspace. Every tab gets an id of this
+    /// workspace's own, the pane links are rewritten to match, and the new
+    /// root id comes back so the caller can say where the tab went.
+    pub fn adopt_tree(&self, tree: Vec<(u32, Arc<Tab>, u32, u8)>) -> Result<u32> {
+        let mut renamed: Vec<(u32, u32)> = Vec::new();
+        for (old, _, _, _) in &tree {
+            renamed.push((*old, self.next_id.fetch_add(1, Ordering::Relaxed)));
+        }
+        let rename = |old: u32| renamed.iter().find(|(o, _)| *o == old).map(|(_, n)| *n);
+        let root = renamed.first().map(|(_, n)| *n).ok_or_else(|| anyhow!("empty tree"))?;
+        let mut guard = self.tabs.lock().map_err(|_| anyhow!("workspace poisoned"))?;
+        for (old, tab, split_of, split_dir) in tree {
+            guard.push(Entry {
+                id: rename(old).unwrap_or(root),
+                tab,
+                // The root's parent is outside the tree — it has none — and
+                // stays 0. A pane's parent came along, renamed.
+                split_of: rename(split_of).unwrap_or(0),
+                split_dir,
+            });
+        }
+        Ok(root)
+    }
+
     pub fn tab(&self, id: u32) -> Option<Arc<Tab>> {
         let guard = self.tabs.lock().ok()?;
         guard.iter().find(|e| e.id == id).map(|e| Arc::clone(&e.tab))

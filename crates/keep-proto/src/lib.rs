@@ -20,6 +20,7 @@ const T_PREVIEW: u8 = 0x08;
 const T_SEARCH: u8 = 0x09;
 const T_REARRANGE: u8 = 0x0a;
 const T_PREVIEW_VT: u8 = 0x0b;
+const T_MOVE_TAB: u8 = 0x0c;
 
 const T_WORKSPACES: u8 = 0x81;
 const T_ERROR: u8 = 0x84;
@@ -98,6 +99,10 @@ pub enum ClientMsg {
     Resize { cols: u16, rows: u16 },
     /// End a whole workspace, tabs and all.
     Kill { workspace: String },
+    /// Move a tab — panes and all — to another workspace. The shells behind
+    /// it carry on untouched; only the filing changes. Answered with
+    /// [`ServerMsg::TabCreated`] carrying the tab's id in its new home.
+    MoveTab { workspace: String, tab: u32, to: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -378,6 +383,12 @@ impl ClientMsg {
                 b.str(workspace);
                 T_KILL
             }
+            ClientMsg::MoveTab { workspace, tab, to } => {
+                b.str(workspace);
+                b.u32(*tab);
+                b.str(to);
+                T_MOVE_TAB
+            }
         };
         write_frame(w, tag, &b.0)
     }
@@ -413,6 +424,9 @@ impl ClientMsg {
             T_CLOSE_TAB => ClientMsg::CloseTab { workspace: c.str()?, tab: c.u32()? },
             T_PREVIEW => ClientMsg::Preview { workspace: c.str()?, tab: c.u32()? },
             T_PREVIEW_VT => ClientMsg::PreviewVt { workspace: c.str()?, tab: c.u32()? },
+            T_MOVE_TAB => {
+                ClientMsg::MoveTab { workspace: c.str()?, tab: c.u32()?, to: c.str()? }
+            }
             T_SEARCH => ClientMsg::Search {
                 query: c.str()?,
                 limit: c.u32()?,
@@ -666,6 +680,11 @@ mod tests {
         roundtrip_client(ClientMsg::CloseTab { workspace: "proj".into(), tab: 7 });
         roundtrip_client(ClientMsg::Preview { workspace: "proj".into(), tab: 2 });
         roundtrip_client(ClientMsg::PreviewVt { workspace: "proj".into(), tab: 2 });
+        roundtrip_client(ClientMsg::MoveTab {
+            workspace: "proj".into(),
+            tab: 2,
+            to: "other".into(),
+        });
         roundtrip_client(ClientMsg::Search {
             query: "error".into(), limit: 200, workspace: String::new(), tab: 0,
         });

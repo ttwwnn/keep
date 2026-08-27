@@ -200,6 +200,9 @@ enum Intent {
     case setSidebar(SidebarState)     // from the toggle or a divider drag
     /// Fold or unfold one workspace's tab list in this window's sidebar.
     case toggleDisclosure(String)
+    /// Move a tab — panes and all — into another workspace, landing before
+    /// the named tab there, or at the end when dropped on the group itself.
+    case moveTab(TabID, to: String, before: UInt32?)
     /// Tabs move into the sidebar and the titlebar row steps aside — or back.
     case toggleVerticalTabs
     /// Open the picker, or put it away if it is already up: the key that

@@ -153,6 +153,28 @@ impl Registry {
         Ok(workspace)
     }
 
+    /// Move a tab — panes and all — from one workspace to another.
+    ///
+    /// Nothing about the shells changes: the same `Tab`s, the same PTYs, the
+    /// same subscribers, filed under a different name with fresh ids. Ids are
+    /// per-workspace counters, so the receiver assigns its own; the new root
+    /// id comes back for whoever wants to follow the tab there.
+    ///
+    /// The two workspace locks are taken one at a time — take, then adopt —
+    /// so this cannot deadlock against anything, and the worst a crash
+    /// between the two could leave is a tab in transit, in a process that
+    /// just crashed anyway.
+    pub fn move_tab(&self, from: &str, tab: u32, to: &str) -> Result<u32> {
+        if from == to {
+            return Err(anyhow!("a tab cannot move to where it is"));
+        }
+        let source =
+            self.get(from).ok_or_else(|| anyhow!("no such workspace: {from}"))?;
+        let target = self.get_or_create(to)?;
+        let tree = source.take_tree(tab)?;
+        target.adopt_tree(tree)
+    }
+
     pub fn kill(&self, name: &str) -> Result<()> {
         let workspace = {
             let mut guard = self.workspaces.lock().map_err(|_| anyhow!("registry poisoned"))?;

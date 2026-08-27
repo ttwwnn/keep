@@ -90,6 +90,7 @@ enum Daemon {
     private static let tagCloseTab: UInt8 = 0x07
     private static let tagPreview: UInt8 = 0x08
     private static let tagPreviewVt: UInt8 = 0x0b
+    private static let tagMoveTab: UInt8 = 0x0c
     private static let tagSearch: UInt8 = 0x09
     private static let tagSessions: UInt8 = 0x81
     private static let tagError: UInt8 = 0x84
@@ -270,6 +271,26 @@ enum Daemon {
         var r = Reader(payload)
         switch tag {
         case tagPreviewText: return try r.string()
+        case tagError: throw Failure.protocolError(try r.string())
+        default: throw Failure.protocolError("unexpected reply tag \(tag)")
+        }
+    }
+
+    /// Move a tab — panes and all — to another workspace. The shells carry
+    /// on untouched; the reply is the tab's id in its new home.
+    static func moveTab(_ tab: UInt32, from workspace: String, to: String) throws -> UInt32 {
+        let sock = try connect()
+        defer { close(sock) }
+        var w = Writer()
+        w.string(workspace)
+        w.u32(tab)
+        w.string(to)
+        try send(sock, tag: tagMoveTab, payload: w.data)
+
+        let (tag, payload) = try recv(sock)
+        var r = Reader(payload)
+        switch tag {
+        case tagTabCreated: return try r.u32()
         case tagError: throw Failure.protocolError(try r.string())
         default: throw Failure.protocolError("unexpected reply tag \(tag)")
         }

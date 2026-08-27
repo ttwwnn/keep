@@ -118,6 +118,13 @@ fn handle(stream: UnixStream, registry: Arc<Registry>) -> Result<()> {
             msg.write(&mut writer)?;
             Ok(())
         }
+        ClientMsg::MoveTab { workspace, tab, to } => {
+            match registry.move_tab(&workspace, tab, &to) {
+                Ok(root) => ServerMsg::TabCreated { tab: root }.write(&mut writer)?,
+                Err(e) => ServerMsg::Error(e.to_string()).write(&mut writer)?,
+            }
+            Ok(())
+        }
         ClientMsg::PreviewVt { workspace, tab } => {
             // The same screen the repaint is made of: text with the colours
             // and styles still on it. Lossy because it goes down a string

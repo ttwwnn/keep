@@ -464,6 +464,34 @@ final class Session {
             sidebarStore.save(state, for: window)
             publish()
 
+        case .moveTab(let id, let to, let before):
+            let newRoot: UInt32
+            do {
+                newRoot = try Daemon.moveTab(id.root, from: id.workspace, to: to)
+            } catch {
+                renderer(window)?.present(error: error.localizedDescription)
+                return
+            }
+            // The old filing goes with the tab: surfaces keyed by the old
+            // name would otherwise hold clients on ids the daemon reissued.
+            SurfacePool.shared.discard(workspace: id.workspace, tab: id.root)
+            refreshFromDaemon()
+            // Land where it was dropped, not where the daemon appended it.
+            if let target = workspaces.first(where: { $0.name == to }) {
+                var order = target.tabs.map(\.id.root).filter { $0 != newRoot }
+                let at = before.flatMap { order.firstIndex(of: $0) } ?? order.count
+                order.insert(newRoot, at: at)
+                tabOrderStore.save(order, in: to)
+                target.reorder(order)
+            }
+            // The window that carried it follows it; a window that was merely
+            // showing it has lost it, and reconcile will hand that window a
+            // neighbour the way it does when a tab dies.
+            if views[window]?.tab == id {
+                activate(TabID(workspace: to, root: newRoot), in: window)
+            }
+            publish()
+
         case .toggleDisclosure(let name):
             var state = sidebarStore.state(for: window)
             if state.folded.remove(name) == nil { state.folded.insert(name) }

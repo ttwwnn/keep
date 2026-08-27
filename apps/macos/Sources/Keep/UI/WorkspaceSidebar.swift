@@ -214,11 +214,10 @@ struct WorkspaceSidebar: View {
         .buttonStyle(.plain)
         .padding(.leading, 12)
         .padding(.trailing, 8)
-        // The same drag the strip has, vertically. The payload names the
-        // workspace as well as the tab, because the drop must refuse a tab
-        // from another group: the daemon has no operation that moves a tab
-        // between workspaces, and a drop that silently did something else
-        // instead would be worse than one that does nothing.
+        // The same drag the strip has, vertically — and further: dropped in
+        // another group, the tab moves there, shells and panes intact. The
+        // payload names the workspace as well as the tab so the drop knows
+        // which of the two it is doing.
         .draggable("tab\u{1F}\(row.name)\u{1F}\(tab.id.root)")
         .dropDestination(for: String.self) { items, _ in
             guard let payload = items.first else { return false }
@@ -244,9 +243,17 @@ struct WorkspaceSidebar: View {
         in row: SessionSnapshot.SidebarRow
     ) -> Bool {
         let parts = payload.split(separator: "\u{1F}")
-        guard parts.count == 3, parts[0] == "tab", parts[1] == row.name,
-              let root = UInt32(parts[2]), root != target.id.root
+        guard parts.count == 3, parts[0] == "tab", let root = UInt32(parts[2])
         else { return false }
+        // From another group: the tab changes workspaces and lands where it
+        // was dropped. Same group: the reorder the strip has always had.
+        guard parts[1] == row.name else {
+            dispatch(.moveTab(
+                TabID(workspace: String(parts[1]), root: root),
+                to: row.name, before: target.id.root))
+            return true
+        }
+        guard root != target.id.root else { return false }
         var order = row.tabRows.map(\.id.root)
         guard let from = order.firstIndex(of: root),
               let to = order.firstIndex(of: target.id.root)
@@ -269,8 +276,17 @@ struct WorkspaceSidebar: View {
     }
 
     /// A workspace header let go over another: it takes that header's place.
+    /// A tab let go on a header joins that group, at the end.
     private func dropWorkspace(_ payload: String, onto target: SessionSnapshot.SidebarRow) -> Bool {
         let parts = payload.split(separator: "\u{1F}")
+        if parts.count == 3, parts[0] == "tab", let root = UInt32(parts[2]),
+           parts[1] != target.name
+        {
+            dispatch(.moveTab(
+                TabID(workspace: String(parts[1]), root: root),
+                to: target.name, before: nil))
+            return true
+        }
         guard parts.count == 2, parts[0] == "ws", parts[1] != target.name,
               let from = rows.firstIndex(where: { $0.name == parts[1] }),
               let to = rows.firstIndex(where: { $0.name == target.name })
