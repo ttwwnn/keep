@@ -619,17 +619,22 @@ private struct StateDot: View {
 private enum Palette {
     /// White in the dark appearance, near-black in the light one — resolved
     /// when drawn, so a theme flip repaints without anyone being told.
-    private static func ink(_ alpha: CGFloat) -> Color {
+    ///
+    /// Two alphas, not one: black on a pale ground loses contrast faster
+    /// than white on a dark one, so the same transparency that reads as
+    /// "resting" in the dark reads as "disabled" in the light. The light
+    /// side runs a step more opaque across the board.
+    private static func ink(dark: CGFloat, light: CGFloat) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
             appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor.white.withAlphaComponent(alpha)
-                : NSColor.black.withAlphaComponent(alpha)
+                ? NSColor.white.withAlphaComponent(dark)
+                : NSColor.black.withAlphaComponent(light)
         })
     }
 
-    static let ink = ink(0.96)
-    static let inkResting = ink(0.60)
-    static let inkFaint = ink(0.38)
+    static let ink = ink(dark: 0.96, light: 0.92)
+    static let inkResting = ink(dark: 0.60, light: 0.75)
+    static let inkFaint = ink(dark: 0.38, light: 0.55)
 
     /// The hover and focus washes: light lifts a dark ground, shade settles
     /// on a light one.

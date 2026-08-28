@@ -222,7 +222,13 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
         let accessory = NSTitlebarAccessoryViewController()
         accessory.identifier = Self.toggleSidebarAccessoryIdentifier
         accessory.layoutAttribute = .left
-        if let glass = Glass.lozenge(cornerRadius: side / 2) {
+        if Glass.isAvailable {
+            // Adaptive, not bare glass: Tahoe glass draws its own depth, and
+            // over a light titlebar that depth is a coin with a drop shadow.
+            // Dark keeps the glass; light gets a flat circle.
+            let glass = AdaptiveLozengeView(
+                cornerRadius: side / 2,
+                lightFill: NSColor.black.withAlphaComponent(0.06))
             // The titlebar stretches an accessory view to its full height,
             // which a bezelled button tolerated and a glass capsule does not:
             // it became a tall rounded slab. So the accessory is a host that
@@ -370,7 +376,14 @@ private final class CenteringHost: NSView {
     /// two states, from the same palette, as the new-tab button.
     func retint() {
         let palette = TabStripView.Palette.current
-        Glass.tint(child, hovered ? palette.glassTint : nil)
+        if let adaptive = child as? AdaptiveLozengeView {
+            adaptive.set(
+                cornerRadius: side / 2,
+                tint: hovered ? palette.glassTint : nil,
+                lightFill: NSColor.black.withAlphaComponent(hovered ? 0.12 : 0.06))
+        } else {
+            Glass.tint(child, hovered ? palette.glassTint : nil)
+        }
         control?.contentTintColor = hovered ? palette.text : palette.dimText
     }
 
