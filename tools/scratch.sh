@@ -74,6 +74,13 @@ bundle_binaries() {
     # the one people have been using only because somebody made it by hand.
     mkdir -p "$bundle/Contents/Resources" || return 1
     cp target/release/keep target/release/keepd "$bundle/Contents/Resources/" || return 1
+    # The binaries first, then the bundle. Signing only the bundle leaves the
+    # nested executables carrying whatever signature they were built with,
+    # and macOS answers a mismatch with SIGKILL on exec — which surfaces as
+    # "Ghostty failed to launch the requested command" the first time a new
+    # tab spawns a client from the freshly copied file.
+    codesign --force --sign - "$bundle/Contents/Resources/keep" >/dev/null 2>&1
+    codesign --force --sign - "$bundle/Contents/Resources/keepd" >/dev/null 2>&1
     codesign --force --deep --sign - "$bundle" >/dev/null 2>&1
 }
 
