@@ -367,7 +367,7 @@ struct WorkspaceSidebar: View {
         if chosen {
             GlassRow(cornerRadius: 13, tint: Palette.litRow)
         } else if hovered {
-            Capsule(style: .continuous).fill(Color.white.opacity(0.055))
+            Capsule(style: .continuous).fill(Palette.wash(0.055))
         }
     }
 
@@ -417,7 +417,7 @@ struct WorkspaceSidebar: View {
             GlassRow(cornerRadius: 12, tint: Palette.litRow)
         } else if hovered == row.name {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.white.opacity(0.055))
+                .fill(Palette.wash(0.055))
         }
     }
 
@@ -447,7 +447,7 @@ struct WorkspaceSidebar: View {
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(fieldFocused ? Color.white.opacity(0.09) : .clear)
+                .fill(fieldFocused ? Palette.wash(0.09) : .clear)
         )
         .animation(.easeOut(duration: 0.16), value: fieldFocused)
         .padding(.horizontal, 5)
@@ -608,14 +608,50 @@ private struct StateDot: View {
 }
 
 /// The colours this sidebar is allowed to use, and where they come from.
+///
+/// Ink and washes are dynamic: they were white-on-dark constants, and in the
+/// light theme white ink on a light sidebar is a list you cannot read. The
+/// primary colour resolves per appearance; the washes flip with it, since a
+/// breath of white means nothing on white.
 private enum Palette {
-    static let ink = Color.white.opacity(0.96)
-    static let inkResting = Color.white.opacity(0.55)
-    static let inkFaint = Color.white.opacity(0.32)
+    /// White in the dark appearance, near-black in the light one — resolved
+    /// when drawn, so a theme flip repaints without anyone being told.
+    private static func ink(_ alpha: CGFloat) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                ? NSColor.white.withAlphaComponent(alpha)
+                : NSColor.black.withAlphaComponent(alpha)
+        })
+    }
 
-    static let attached = OKLCH.color(0.76, 0.14, 150)
-    static let busy = OKLCH.color(0.82, 0.15, 85)
-    static let idle = OKLCH.color(0.70, 0.05, 250)
+    static let ink = ink(0.96)
+    static let inkResting = ink(0.60)
+    static let inkFaint = ink(0.38)
+
+    /// The hover and focus washes: light lifts a dark ground, shade settles
+    /// on a light one.
+    static func wash(_ alpha: CGFloat) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                ? NSColor.white.withAlphaComponent(alpha)
+                : NSColor.black.withAlphaComponent(alpha)
+        })
+    }
+
+    /// The state hues keep their hue and trade lightness with the ground:
+    /// bright pigments read on a dark sidebar and wash out on a light one, so
+    /// the light appearance gets the same colours a step darker.
+    private static func state(_ lightness: Double, _ chroma: Double, _ hue: Double) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                ? OKLCH.appKitColor(lightness, chroma, hue)
+                : OKLCH.appKitColor(lightness - 0.22, chroma, hue)
+        })
+    }
+
+    static let attached = state(0.76, 0.14, 150)
+    static let busy = state(0.82, 0.15, 85)
+    static let idle = state(0.70, 0.05, 250)
 
     /// The wash behind the current workspace, in a hue that is that
     /// workspace's own.
@@ -632,8 +668,11 @@ private enum Palette {
     /// same colour, which is honest. Sharing is common with few workspaces and
     /// costs nothing: only the current row is washed, so two washes are never
     /// on screen together to be compared.
-    static let litRow = NSColor.white.withAlphaComponent(0.30)
-
+    static let litRow = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor.white.withAlphaComponent(0.30)
+            : NSColor.black.withAlphaComponent(0.14)
+    }
 }
 
 /// A pane of the window's own glass, behind a SwiftUI row.
