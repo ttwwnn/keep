@@ -135,6 +135,16 @@ final class AdaptiveLozengeView: NSView {
         apply()
     }
 
+    /// Again on arrival: `init` runs before the view knows its window, and
+    /// `effectiveAppearance` answers for the system then, not for the window
+    /// this will live in. Decided too early, the first paint wore the wrong
+    /// appearance until something — a manual theme flip, say — forced every
+    /// view to re-decide.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        apply()
+    }
+
     private func apply() {
         let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         layer?.cornerRadius = radius
