@@ -98,13 +98,29 @@ workspaces do not survive a reboot.
 
 ## Building
 
-Requires a Rust toolchain. **Zig is not needed** — upstream ships a prebuilt
-universal xcframework:
+Requires a Rust toolchain. On macOS, **Zig is not needed** — upstream ships a
+prebuilt universal xcframework:
 
 ```sh
-./vendor/fetch.sh   # downloads libghostty-vt
+./vendor/fetch.sh   # downloads libghostty-vt (and builds the Linux slices if zig is present)
 cargo build --release
 ```
+
+### Linux
+
+The daemon and the client run on Linux — that half of Keep is the product
+there, the way tmux is. Upstream ships no prebuilt Linux library, so the
+build needs Zig (which also serves as the cross-linker, meaning the whole
+thing builds *from a Mac* with no container):
+
+```sh
+brew install zig cargo-zigbuild   # or your distro's zig ≥ 0.16
+tools/build-linux.sh              # → dist/linux-{x86_64,aarch64}/keep, keepd
+```
+
+On a Linux machine, `./vendor/fetch.sh && cargo build --release` does the
+same natively. The macOS app does not port; on Linux you attach from any
+terminal, which is what the client is for.
 
 Then put `target/release/keep` and `target/release/keepd` on your `PATH`.
 The client starts the daemon on demand; you never run `keepd` yourself.

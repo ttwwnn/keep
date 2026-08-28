@@ -1,6 +1,8 @@
 /target
 # Vendored upstream binary — fetch with vendor/fetch.sh, don't commit 8MB.
 /vendor/libghostty-vt/
+/vendor/libghostty-vt-linux-*/
+/dist/
 /vendor/GhosttyKit.xcframework/
 apps/macos/build/
 apps/macos/build-dev/

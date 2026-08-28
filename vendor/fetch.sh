@@ -32,3 +32,34 @@ cp -R "$src/Headers/." "$DEST/include/"
 
 echo "==> ok: $DEST"
 lipo -info "$DEST/libghostty-vt.a" 2>/dev/null || true
+
+# ------------------------------------------------------------------- linux
+# Upstream ships no prebuilt Linux artifact — only the source tarball — so
+# the Linux slices are built here, with Zig, which cross-compiles from
+# macOS without a container. `-Demit-lib-vt` keeps it to the library;
+# `-Di18n=false` keeps gettext out of a build that only wants the .a.
+if [ "${KEEP_LINUX:-1}" = "1" ]; then
+    command -v zig >/dev/null 2>&1 || {
+        echo "==> zig not found; skipping the Linux slices" >&2
+        exit 0
+    }
+    SRC_URL="https://github.com/ghostty-org/ghostty/releases/download/${TAG}/libghostty-vt-source.tar.gz"
+    echo "==> downloading $SRC_URL"
+    curl -fsSL "$SRC_URL" -o "$work/vt-src.tar.gz"
+    mkdir -p "$work/src"
+    tar -xzf "$work/vt-src.tar.gz" -C "$work/src"
+    SRC_DIR=$(find "$work/src" -maxdepth 1 -mindepth 1 -type d | head -1)
+
+    for ARCH in x86_64 aarch64; do
+        echo "==> building linux-$ARCH"
+        (cd "$SRC_DIR" && rm -rf zig-out && zig build \
+            -Demit-lib-vt=true -Di18n=false \
+            -Dtarget="$ARCH-linux-gnu" -Doptimize=ReleaseFast)
+        LDEST="$(dirname "$DEST")/libghostty-vt-linux-$ARCH"
+        rm -rf "$LDEST"
+        mkdir -p "$LDEST/include"
+        cp "$SRC_DIR/zig-out/lib/libghostty-vt.a" "$LDEST/"
+        cp -R "$SRC_DIR/zig-out/include/." "$LDEST/include/"
+        echo "==> ok: $LDEST"
+    done
+fi
