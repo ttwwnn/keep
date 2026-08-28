@@ -84,3 +84,66 @@ enum Glass {
         glass.tintColor = color
     }
 }
+
+/// A selection lozenge that is glass on a dark ground and a flat wash on a
+/// light one.
+///
+/// Tahoe's glass draws its own depth — an edge and a shadow — and over a
+/// pale surface that depth reads as a pill floating off the list with a drop
+/// shadow under it. The dark appearance keeps the glass; the light one gets
+/// a plain rounded fill, which is what selection looks like everywhere else
+/// on a light macOS.
+final class AdaptiveLozengeView: NSView {
+    private let glass: NSView?
+    private var radius: CGFloat
+    private var lightFill: NSColor
+
+    init(cornerRadius: CGFloat, lightFill: NSColor) {
+        self.radius = cornerRadius
+        self.lightFill = lightFill
+        self.glass = Glass.lozenge(cornerRadius: cornerRadius)
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerCurve = .continuous
+        if let glass {
+            glass.autoresizingMask = [.width, .height]
+            addSubview(glass)
+        }
+        apply()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    func set(cornerRadius: CGFloat, tint: NSColor?, lightFill: NSColor) {
+        radius = cornerRadius
+        self.lightFill = lightFill
+        if let glass {
+            Glass.setCornerRadius(glass, cornerRadius)
+            Glass.tint(glass, tint)
+        }
+        apply()
+    }
+
+    override func layout() {
+        super.layout()
+        glass?.frame = bounds
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        apply()
+    }
+
+    private func apply() {
+        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        layer?.cornerRadius = radius
+        if dark && glass != nil {
+            glass?.isHidden = false
+            layer?.backgroundColor = nil
+        } else {
+            glass?.isHidden = true
+            layer?.backgroundColor = lightFill.cgColor
+        }
+    }
+}

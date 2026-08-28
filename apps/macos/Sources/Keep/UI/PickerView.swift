@@ -650,7 +650,10 @@ private final class FadingBox: NSView {
 /// inside a window whose other list of places to go looks like this should not
 /// have to be told twice what a chosen row looks like.
 private final class PickerRow: NSTableRowView {
-    private let lozenge = Glass.lozenge(cornerRadius: 12) ?? NSView()
+    // Adaptive: Tahoe glass draws its own depth, and on a light ground that
+    // depth is a pill floating off the list with a shadow under it.
+    private let lozenge = AdaptiveLozengeView(
+        cornerRadius: 12, lightFill: NSColor.black.withAlphaComponent(0.10))
     /// A breath of white under the pointer, the same one the sidebar uses.
     /// Flat rather than glass: it appears and disappears as the pointer
     /// travels, and a pane of glass per row for that is a lot of glass.
@@ -659,13 +662,15 @@ private final class PickerRow: NSTableRowView {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        lozenge.wantsLayer = true
-        lozenge.layer?.cornerCurve = .continuous
         lozenge.isHidden = true
         hover.wantsLayer = true
         hover.layer?.cornerCurve = .continuous
         hover.layer?.cornerRadius = 12
-        hover.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.06).cgColor
+        hover.layer?.backgroundColor = NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                ? NSColor.white.withAlphaComponent(0.06)
+                : NSColor.black.withAlphaComponent(0.05)
+        }.cgColor
         hover.isHidden = true
         addSubview(hover, positioned: .below, relativeTo: nil)
         addSubview(lozenge, positioned: .below, relativeTo: nil)
@@ -697,11 +702,6 @@ private final class PickerRow: NSTableRowView {
         super.layout()
         lozenge.frame = bounds.insetBy(dx: 6, dy: 2)
         hover.frame = lozenge.frame
-        Glass.setCornerRadius(lozenge, 12)
-        if !Glass.isAvailable {
-            lozenge.layer?.cornerRadius = 12
-            lozenge.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.10).cgColor
-        }
     }
 
     override var isSelected: Bool {
@@ -709,11 +709,14 @@ private final class PickerRow: NSTableRowView {
             guard isSelected != oldValue else { return }
             lozenge.isHidden = !isSelected
             showHover()
-            if isSelected, Glass.isAvailable {
+            if isSelected {
                 // Quieter than the sidebar's, which is one row among five;
                 // this is one row among forty, and a bright fill scanning
                 // down a long list is a light being flashed at you.
-                Glass.tint(lozenge, NSColor.white.withAlphaComponent(0.20))
+                lozenge.set(
+                    cornerRadius: 12,
+                    tint: NSColor.white.withAlphaComponent(0.20),
+                    lightFill: NSColor.black.withAlphaComponent(0.10))
             }
         }
     }

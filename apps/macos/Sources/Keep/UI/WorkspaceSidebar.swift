@@ -278,7 +278,10 @@ struct WorkspaceSidebar: View {
             dispatch(.activateTab(tab.id))
         } label: {
             HStack(spacing: 6) {
-                if tab.busy {
+                // Only when the title does not already say so: programs that
+                // title themselves with the same mark — Claude Code does —
+                // were showing it twice.
+                if tab.busy && !tab.title.hasPrefix("✳") {
                     Text("✳")
                         .font(.system(size: 10))
                         .foregroundStyle(Palette.busy)
@@ -687,22 +690,16 @@ private struct GlassRow: NSViewRepresentable {
     let tint: NSColor
 
     func makeNSView(context: Context) -> NSView {
-        let view = Glass.lozenge(cornerRadius: cornerRadius) ?? NSView()
-        view.wantsLayer = true
-        view.layer?.cornerCurve = .continuous
-        return view
+        AdaptiveLozengeView(
+            cornerRadius: cornerRadius,
+            lightFill: NSColor.black.withAlphaComponent(0.12))
     }
 
     func updateNSView(_ view: NSView, context: Context) {
-        if Glass.isAvailable {
-            Glass.setCornerRadius(view, cornerRadius)
-            Glass.tint(view, tint)
-        } else {
-            // Before glass: the flat fill this used to be, in the same colour
-            // glass would have been aimed at.
-            view.layer?.cornerRadius = cornerRadius
-            view.layer?.backgroundColor = tint.withAlphaComponent(0.34).cgColor
-        }
+        (view as? AdaptiveLozengeView)?.set(
+            cornerRadius: cornerRadius,
+            tint: tint,
+            lightFill: NSColor.black.withAlphaComponent(0.12))
     }
 }
 

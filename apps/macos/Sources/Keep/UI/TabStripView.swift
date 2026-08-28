@@ -747,7 +747,9 @@ final class TabCellView: NSView {
         self.alone = alone
 
         var title = item.title.isEmpty ? "untitled" : item.title
-        if item.busy { title = "✳ \(title)" }
+        // Unless the title already says so — programs that title themselves
+        // with the same mark were showing it twice.
+        if item.busy && !title.hasPrefix("✳") { title = "✳ \(title)" }
         let font = NSFont.systemFont(ofSize: 12, weight: item.isActive ? .medium : .regular)
         label.font = font
 
