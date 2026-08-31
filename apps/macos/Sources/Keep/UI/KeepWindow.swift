@@ -31,6 +31,35 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
     // notifications reapply nothing. Reapplying invalidates the shadow and
     // pokes the WindowServer — visible against a transparent, blurred window.
     private var appliedAppearance: (color: NSColor?, opacity: Double, blur: Int16)?
+    /// How many overlays are asking the window to stop being see-through.
+    ///
+    /// Counted rather than flagged: two of them could be up at once, and the
+    /// first one to close must not hand the transparency back while the
+    /// second is still relying on it.
+    private var opaqueHolds = 0
+
+    /// Stop being see-through while something floats over the window.
+    ///
+    /// A material blurs what is behind it *within* the window, and where the
+    /// window is see-through what is behind it is the desktop — which is how
+    /// the picker's card came to be wearing a wallpaper. For as long as the
+    /// overlay is up the window is opaque, so the blur has nothing in it but
+    /// terminal. The cost is the five per cent of desktop the terminal shows
+    /// through itself, gone for the length of a keystroke.
+    ///
+    /// It does not help Liquid Glass, which was the reason this was written:
+    /// `NSGlassEffectView` samples what the window server has *behind* the
+    /// window, and an opaque window does not change what is behind it.
+    func holdOpaque(_ hold: Bool) {
+        let before = opaqueHolds
+        opaqueHolds = max(0, opaqueHolds + (hold ? 1 : -1))
+        guard (before == 0) != (opaqueHolds == 0) else { return }
+        // The appearance is applied only when it changes, and from its own
+        // point of view nothing has: the change is in what we are allowed to
+        // do with it.
+        appliedAppearance = nil
+        applyTerminalAppearance()
+    }
 
     deinit {
         if let terminalBackgroundObserver {
@@ -113,7 +142,7 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
         appliedAppearance = next
         sidebarToggleHost?.retint()
 
-        let isTransparent = next.opacity < 1
+        let isTransparent = next.opacity < 1 && opaqueHolds == 0
         if isTransparent {
             // The renderer already draws the configured background colour at
             // `background-opacity`. Keep the host window effectively clear so

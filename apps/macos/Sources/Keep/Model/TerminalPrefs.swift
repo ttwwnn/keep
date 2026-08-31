@@ -45,6 +45,12 @@ struct TerminalPrefs: Codable, Equatable {
         var lines: [String] = []
         if let theme, !theme.isEmpty { lines.append("theme = \(theme)") }
         if let fontFamily, !fontFamily.isEmpty {
+            // `font-family` is a *list*, not a scalar: naming one appends a
+            // fallback rather than replacing the primary, so ours landed
+            // behind theirs and the terminal went on using their face. An
+            // empty value resets the list, which is the documented way to
+            // replace instead of add.
+            lines.append("font-family = ")
             lines.append("font-family = \(fontFamily)")
         }
         if let fontSize, fontSize > 0 {

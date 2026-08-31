@@ -33,6 +33,15 @@ final class PickerView: NSView {
     private let previewScroll = NSScrollView()
     /// What the card holds; the card itself is glass around it.
     private let cardContent = NSView()
+    /// The lit rim around the card.
+    ///
+    /// The material path draws a flat hairline — the same white at every
+    /// point of the rounding — which is a rectangle somebody outlined, not a
+    /// piece of glass. Glass has a light coming from somewhere: the top edge
+    /// catches it, the sides fall away, and the bottom picks up a little back
+    /// off whatever is under it. Since the card cannot be real glass here
+    /// (that is what fetched the wallpaper), the rim is drawn.
+    private let edge = EdgeView(cornerRadius: 24)
     /// The card's own ground, in the terminal's colour.
     ///
     /// Glass refracts whatever the window server has under it, and under a
@@ -150,19 +159,32 @@ final class PickerView: NSView {
         // at fourteen. An overlay that sits inside a window and is rounded
         // less than it reads as a rectangle somebody softened, rather than as
         // a piece of the same thing.
-        // Sampling this window rather than the screen, which is the whole
-        // difference between a card floating on a terminal and one wearing
-        // somebody's wallpaper. Liquid Glass refracts what the window server
-        // has under it, and under a window whose `background-opacity` is less
-        // than one that is the desktop — no plate painted inside the window
-        // can change what it finds, because it never looks in here. The
-        // material that can be told where to look is the older one.
+        // Built in layers rather than handed to Liquid Glass, which was
+        // tried and settles the question: `NSGlassEffectView` samples what
+        // the window server has *behind the window*, not what this app has
+        // put inside it. Holding the window opaque does not change that —
+        // what is behind the window is the desktop either way, and the card
+        // came back wearing it. So the stack is ours, bottom to top: a plate
+        // that holds the colour and casts the shadow, a material that blurs
+        // the terminal, a tint that says which colour the blur is under, and
+        // a rim.
+        //
+        // The blur is the window server's rather than a `CIGaussianBlur` in
+        // `backgroundFilters`. Same picture, and the filter is redrawn every
+        // frame the terminal paints — which for a terminal is most of them.
         card = Glass.panel(cardContent, cornerRadius: 24, sampling: .window)
         card.translatesAutoresizingMaskIntoConstraints = false
         backdrop.wantsLayer = true
         backdrop.layer?.cornerCurve = .continuous
         backdrop.layer?.cornerRadius = 24
         backdrop.translatesAutoresizingMaskIntoConstraints = false
+        // The card lifts off the terminal rather than lying on it. Cast from
+        // the plate, which is the one view in the stack whose frame is the
+        // card's and whose layer nothing else is masking.
+        backdrop.layer?.shadowColor = NSColor.black.cgColor
+        backdrop.layer?.shadowOpacity = 0.5
+        backdrop.layer?.shadowRadius = 36
+        backdrop.layer?.shadowOffset = CGSize(width: 0, height: -14)
         addSubview(backdrop)
         adoptTerminalBackground()
         // A theme change repaints this the way it repaints the chrome.
@@ -181,6 +203,8 @@ final class PickerView: NSView {
             view.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
         }
         addSubview(card)
+        edge.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(edge)
         // And the insides follow the card, rather than the card following the
         // insides. Left to the panel they are given whatever size they ask
         // for — which, with everything in here laid out edge to edge, is the
@@ -336,6 +360,10 @@ final class PickerView: NSView {
             backdrop.trailingAnchor.constraint(equalTo: card.trailingAnchor),
             backdrop.topAnchor.constraint(equalTo: card.topAnchor),
             backdrop.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            edge.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            edge.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            edge.topAnchor.constraint(equalTo: card.topAnchor),
+            edge.bottomAnchor.constraint(equalTo: card.bottomAnchor),
 
             field.topAnchor.constraint(equalTo: cardContent.topAnchor, constant: 20),
             field.heightAnchor.constraint(equalToConstant: 24),
@@ -423,6 +451,16 @@ final class PickerView: NSView {
         Trace.log("picker", shape)
     }
 
+    override func layout() {
+        super.layout()
+        // Given explicitly, so the shadow is cast by the card's shape rather
+        // than worked out from the plate's contents — which are half
+        // transparent, and would cast half a shadow.
+        backdrop.layer?.shadowPath = CGPath(
+            roundedRect: backdrop.bounds, cornerWidth: 24, cornerHeight: 24,
+            transform: nil)
+    }
+
     /// Clicking the dimmed ground outside the card dismisses.
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
@@ -459,10 +497,14 @@ final class PickerView: NSView {
         // theme this is a card of.
         let light = (ground.usingColorSpace(.sRGB)?.brightnessComponent ?? 0) >= 0.5
         let colour = Self.deepened(ground)
-        // Thin. The plate is here to stop the desktop, not to be seen: every
-        // point of it is a point of blur that does not reach the eye.
+        // Barely there. The plate used to be the only thing standing between
+        // the card and the desktop, and had to be thick enough to hide it;
+        // now the window itself is opaque for as long as the overlay is up,
+        // so the plate is only a bed for the colour and a shape for the
+        // shadow — and every point of it is a point of blurred terminal that
+        // does not reach the eye.
         backdrop.layer?.backgroundColor = colour
-            .withAlphaComponent(light ? 0.70 : 0.45).cgColor
+            .withAlphaComponent(light ? 0.45 : 0.22).cgColor
         // And the same colour again inside the card, over the material's
         // blur. The material paints a light grey of its own on top of
         // whatever it blurred, which is what made the card read as a pale
@@ -1168,6 +1210,67 @@ private final class FadingBox: NSView {
         ]
         CATransaction.commit()
     }
+}
+
+/// A hairline whose brightness travels around the shape.
+///
+/// The border is drawn at full strength and then *masked* by a gradient of
+/// alphas, rather than being drawn in a gradient of colours. That is what
+/// keeps the corner: a stroked path has to say which curve it is stroking,
+/// and the continuous corner AppKit rounds these views with is not a curve
+/// it will hand out. A layer with `cornerCurve = .continuous` draws its own
+/// border on the right shape, and a mask over it decides how much of that
+/// border reaches the eye at each point.
+private final class EdgeView: NSView {
+    private let rim = CALayer()
+    private let fall = CAGradientLayer()
+
+    init(cornerRadius: CGFloat) {
+        super.init(frame: .zero)
+        wantsLayer = true
+        rim.cornerRadius = cornerRadius
+        rim.cornerCurve = .continuous
+        rim.borderWidth = 1
+        rim.borderColor = NSColor.white.cgColor
+        // Light from above. The top edge catches most of it, the sides fall
+        // away to almost nothing, and the bottom takes a little back off
+        // whatever the card is lying on — which is the reading that makes an
+        // edge look like a thickness rather than a line.
+        //
+        // Quietly. A rim that swings from a third of white to almost nothing
+        // reads as a border with a bright part, which is a different thing
+        // from an edge catching light — the swing has to be small enough
+        // that you notice the shape, not the gradient.
+        fall.colors = [
+            NSColor.white.withAlphaComponent(0.22).cgColor,
+            NSColor.white.withAlphaComponent(0.12).cgColor,
+            NSColor.white.withAlphaComponent(0.17).cgColor,
+        ]
+        fall.locations = [0, 0.45, 1]
+        // Along the layer's own axis, which grows upwards.
+        fall.startPoint = CGPoint(x: 0.5, y: 1)
+        fall.endPoint = CGPoint(x: 0.5, y: 0)
+        rim.mask = fall
+        layer?.addSublayer(rim)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    override func layout() {
+        super.layout()
+        // No implicit animation: this runs on every window resize, and a
+        // quarter-second cross-fade of a rim is a shimmer around the card.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        rim.frame = bounds
+        fall.frame = bounds
+        CATransaction.commit()
+    }
+
+    /// It is a decoration lying over the whole card. Every click through it
+    /// belongs to whatever is underneath.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 /// A scrap of a terminal in a theme's own colours.

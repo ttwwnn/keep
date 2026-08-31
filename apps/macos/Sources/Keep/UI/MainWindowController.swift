@@ -307,9 +307,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         guard let model else {
             guard picker.superview != nil else { return }
             picker.removeFromSuperview()
+            (window as? KeepWindow)?.holdOpaque(false)
             return
         }
         if picker.superview == nil, let content = window?.contentView {
+            // The card's blur samples this window, and where this window is
+            // see-through what it samples is the desktop. Opaque for as long
+            // as the overlay is up, so the blur has nothing but terminal in
+            // it — which is what lets the card be as thin as it is.
+            (window as? KeepWindow)?.holdOpaque(true)
             picker.frame = content.bounds
             picker.autoresizingMask = [.width, .height]
             content.addSubview(picker)

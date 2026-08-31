@@ -51,7 +51,12 @@ enum Glass {
         effect.wantsLayer = true
         effect.layer?.cornerRadius = cornerRadius
         effect.layer?.cornerCurve = .continuous
-        effect.layer?.borderWidth = 1
+        // A flat hairline, for a caller that has not drawn its own. One that
+        // samples this window has: the material's edge is the same white at
+        // every point of the rounding, which reads as a rectangle somebody
+        // outlined rather than as a thickness of glass, and the view that
+        // wants that fixed is the one that asked to sample the window.
+        effect.layer?.borderWidth = sampling == .window ? 0 : 1
         effect.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
 
         // A material paints as well as blurs, and what it paints is not a
