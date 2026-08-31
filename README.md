@@ -110,6 +110,14 @@ ignores them. Only `working_directory` survives, so the app fixes the client
 app-wide and hands each surface its target through a file in a private
 working directory, which the client reads and deletes.
 
+A second, about the platform rather than about libghostty: Liquid Glass
+refracts what the window server has behind the *window*. A terminal that asks
+for `background-opacity` less than one makes the window see-through, and glass
+laid over it comes back with the desktop in it — wallpaper and all — whatever
+the app paints inside the window, and whether or not the window is held opaque.
+So the overlays that float over the terminal are built out of a material, a
+tint and a drawn rim instead of being handed to the system.
+
 Another, this one by design: a tab shown in two windows answers a program's
 questions twice. When something asks the terminal where the cursor is or what
 it is, the daemon passes the question to every client and each replies on the

@@ -84,10 +84,39 @@ Glass belongs on things that float over content. It does not go on the sidebar
 or the strip, which are tinted with the terminal's own colour so that chrome and
 content read as one surface.
 
+It also has a limit, and the picker's card is on the wrong side of it.
+`NSGlassEffectView` refracts what the **window server** has under the window,
+not what the app has put inside it — and a terminal asking for
+`background-opacity` less than one makes the window see-through, so the card
+came out wearing the desktop. Holding the window opaque does not help: what is
+behind a window is the same either way, only whether you can see it changes.
+
+So an overlay that floats over the terminal is built in layers instead — a
+plate for the colour and the shadow, a material for the blur, a tint over the
+blur, a rim on top. The blur is the window server's rather than a
+`CIGaussianBlur` in `backgroundFilters`: same picture, and the filter is
+redrawn every frame the thing behind it paints, which for a terminal is most
+of them. The small things that float *inside* such a card keep the real glass,
+because their backdrop is the card.
+
+A rim drawn by hand is white at full strength **masked** by a gradient of
+alphas, never painted in a gradient of colours — a stroked path has to name
+the curve it strokes, and the continuous corner these views are rounded with
+is not one AppKit hands out. The swing across it is small: a border running
+from a third of white down to nothing reads as a border with a bright part,
+which is a different thing from an edge catching light.
+
 ## Motion
 
 150 to 200 ms, ease out. Motion reports a state change and nothing else: a row
 becoming current, a pane going to rest, a size chip arriving and leaving.
+
+**And nothing else means nothing else.** Every layer property animates over a
+quarter of a second on its own unless it is told not to, which is how an
+overlay costing four milliseconds to build came to take a quarter of a second
+to appear. Anything that should simply *be* there — an overlay revealing, a
+plate taking a theme's colour, a mask laid out on resize — runs inside a
+transaction with actions disabled. Motion here is chosen, never inherited.
 
 ## Layout
 
@@ -100,6 +129,13 @@ around it, so it reads as the start of something.
 The picker's rows are 30 rather than 24. They float over content instead of
 being furniture, each carries a selection lozenge inset by two, and they are
 aimed at with a pointer as often as with the arrows.
+
+Nothing is painted over the terminal while the picker is up. Darkening a whole
+window so that one card can be read asks every pixel on the display to change;
+the shadow under the card says the same thing about depth, and says it where
+the card is. The card is a share of the window up to a point — two thirds of an
+ultra-wide display is thirteen hundred points of card holding a list of
+forty-character rows, which is a wall with a list painted on one end.
 
 What the overlay can do is said in the corner rather than along the bottom: a
 chip of glass carrying *Open ↩* and *Actions ⌘K*, and the panel that ⌘K opens
