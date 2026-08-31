@@ -23,22 +23,23 @@ blazing and blue sinking, which is what an HSL wheel would give.
 | Ink | white 0.96 | active row, selected tab |
 | Ink, resting | white 0.55 | inactive rows |
 | Ink, faint | white 0.35 | counts, placeholders |
-| Selection | OKLCH(0.72, 0.13, hue-of-name) at 0.16 | the active workspace row |
+| Selection | glass in the dark, a wash in the light | the active workspace row |
 | Attached | OKLCH(0.76, 0.14, 150) | filled dot |
 | Busy | OKLCH(0.82, 0.15, 85) | filled dot |
 | Idle | OKLCH(0.70, 0.05, 250) | hollow dot |
 | Empty | white 0.30 | hollow dot |
 
-**Selection is hued per workspace.** The hue is derived from the name by a
-stable hash, so a workspace keeps its colour across sessions. It appears only
-on the row that is current, which is the one place the product register lets an
-accent go; inactive rows carry no colour but their state dot.
+**Selection carries no hue.** It was once a colour per workspace, derived from
+the name by a stable hash so that a workspace kept it across sessions. That is
+gone: the current row is a pane of the window's own glass in the dark and a
+wash in the light, and the hue it used to wear said nothing the name beside it
+was not already saying. Colour is left to state alone — the dots — which is
+the only thing in the chrome that cannot be read as text.
 
-Twelve anchors, thirty degrees apart, not a free hue. Near-misses are the ugly
-case: two names eleven degrees apart read as one colour mixed badly, while two
-names on the same anchor read as the same colour, which is honest. Sharing is
-common with few workspaces and costs nothing, because only the current row is
-washed and two washes are never on screen together.
+Where a list has to group rows of one workspace, it groups them by aligning
+their names into a column rather than by tinting them. Same information,
+and it survives being read by someone who cannot tell the twelve anchors
+apart.
 
 ## Typography
 
@@ -76,4 +77,9 @@ becoming current, a pane going to rest, a size chip arriving and leaving.
 Dense. Rows are 24 points, gutters are 6, and the list runs to the window's
 edges rather than sitting inside a panel. Spacing varies between groups rather
 than being uniform: the list breathes at its top, the footer is set apart by a
-rule.
+rule, and a heading in a list carries its gap above the word rather than
+around it, so it reads as the start of something.
+
+The picker's rows are 30 rather than 24. They float over content instead of
+being furniture, each carries a selection lozenge inset by two, and they are
+aimed at with a pointer as often as with the arrows.

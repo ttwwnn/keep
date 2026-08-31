@@ -278,10 +278,11 @@ struct WorkspaceSidebar: View {
             dispatch(.activateTab(tab.id))
         } label: {
             HStack(spacing: 6) {
-                // Only when the title does not already say so: programs that
-                // title themselves with the same mark — Claude Code does —
-                // were showing it twice.
-                if tab.busy && !tab.title.hasPrefix("✳") {
+                // The title arrives with the marks its program wrote already
+                // stripped — programs that title themselves with this same ✳,
+                // as Claude Code does, were showing it twice — so the row
+                // draws the one mark, and it is this one.
+                if tab.busy {
                     Text("✳")
                         .font(.system(size: 10))
                         .foregroundStyle(Palette.busy)
@@ -292,6 +293,18 @@ struct WorkspaceSidebar: View {
                         chosen ? Palette.ink : hoveredHere ? Palette.inkResting : Palette.inkFaint)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    // The title gives before the program's name does: a title
+                    // is what something calls itself and may be a sentence,
+                    // or may be six tabs saying the same sentence, while the
+                    // name is the word that tells you what the tab is.
+                    .layoutPriority(-1)
+                if !tab.command.isEmpty {
+                    Text("— \(tab.command)")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Palette.inkFaint)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
                 if tab.isElsewhere {
                     Image(systemName: "macwindow.on.rectangle")
                         .font(.system(size: 9))

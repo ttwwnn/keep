@@ -215,6 +215,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         picker.onDismissItem = { [weak self] id in
             self?.send(.dismissPickerItem(id))
         }
+        picker.onAction = { [weak self] id, action in self?.run(action, on: id) }
         picker.onCancel = { [weak self] in self?.send(.closePicker) }
         picker.onFilter = { [weak self] query in
             self?.send(.setPickerQuery(query))
@@ -318,6 +319,45 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             return
         }
         picker.apply(model)
+    }
+
+    /// What the picker's actions panel asked for, on the row it was over.
+    ///
+    /// Two kinds of thing, kept apart on purpose. Going somewhere and closing
+    /// something are facts about the session, so they go down the one channel
+    /// as intents. Revealing a folder and copying a path change nothing here
+    /// — they hand a string to another program — so they are done on the spot
+    /// rather than travelling through the model to come back out unchanged.
+    private func run(_ action: PickerAction, on id: String) {
+        guard let item = applied?.picker?.items.first(where: { $0.id == id }) else { return }
+        switch action {
+        case .open:
+            send(.choosePickerItem(id))
+        case .close:
+            send(.dismissPickerItem(id))
+        case .newTab:
+            send(.closePicker)
+            send(.newTab(in: item.workspace.isEmpty ? nil : item.workspace))
+        case .reveal:
+            guard !item.path.isEmpty else { return }
+            send(.closePicker)
+            NSWorkspace.shared.activateFileViewerSelecting(
+                [URL(fileURLWithPath: item.path)])
+        case .copyPath:
+            put(item.path, onTheBoard: "path")
+            send(.closePicker)
+        case .copyText:
+            put(item.title, onTheBoard: "line")
+            send(.closePicker)
+        }
+    }
+
+    private func put(_ text: String, onTheBoard what: String) {
+        guard !text.isEmpty else { return }
+        let board = NSPasteboard.general
+        board.clearContents()
+        board.setString(text, forType: .string)
+        Trace.log("picker", "copied \(what)")
     }
 
     func present(error: String) {

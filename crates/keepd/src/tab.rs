@@ -7,7 +7,7 @@
 //! Tabs are grouped into sessions; see `session.rs`.
 
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
 
@@ -63,6 +63,95 @@ pub struct Tab {
     /// The shell's own pid, kept to tell "sitting at a prompt" apart from
     /// "running something".
     shell_pid: Option<u32>,
+    /// When a byte last went either way, in unix milliseconds.
+    ///
+    /// Both directions, because either one alone lies about a different tab:
+    /// counting only input calls a finished build stale the moment you stop
+    /// typing, and counting only output calls a REPL you are typing into
+    /// stale while it waits for you.
+    last_active: Arc<AtomicU64>,
+}
+
+fn now_ms() -> u64 {
+    // SystemTime rather than Instant: Instant on macOS is CLOCK_UPTIME_RAW,
+    // which stops while the machine sleeps. A laptop shut overnight would
+    // wake claiming every tab had been active minutes ago.
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Where a process is working, asked of the kernel.
+///
+/// The same authority `is_busy` trusts, and for the same reason: it needs no
+/// cooperation from the user's setup, where OSC 7 needs a shell that emits it.
+#[cfg(target_os = "macos")]
+fn process_cwd(pid: i32) -> Option<String> {
+    let mut info: libc::proc_vnodepathinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_vnodepathinfo>() as libc::c_int;
+    let read = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDVNODEPATHINFO,
+            0,
+            &mut info as *mut _ as *mut libc::c_void,
+            size,
+        )
+    };
+    // A short reply is a failed one: the pid is gone, or belongs to another
+    // user and this process may not ask about it.
+    if read < size {
+        return None;
+    }
+    // libc types the path as a 32×32 array rather than as [c_char; 1024];
+    // it is one buffer either way, so read it as one.
+    let path = unsafe {
+        std::slice::from_raw_parts(
+            info.pvi_cdir.vip_path.as_ptr() as *const u8,
+            std::mem::size_of_val(&info.pvi_cdir.vip_path),
+        )
+    };
+    let end = path.iter().position(|&b| b == 0).unwrap_or(path.len());
+    String::from_utf8(path[..end].to_vec()).ok().filter(|p| !p.is_empty())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn process_cwd(pid: i32) -> Option<String> {
+    std::fs::read_link(format!("/proc/{pid}/cwd"))
+        .ok()
+        .and_then(|p| p.into_os_string().into_string().ok())
+        .filter(|p| !p.is_empty())
+}
+
+/// What a process is called: the last component of its executable's path.
+///
+/// The name and not the path, because this is read in a list beside a title
+/// and `claude` is the whole of what the reader wants from
+/// `/opt/homebrew/bin/claude`.
+#[cfg(target_os = "macos")]
+fn process_name(pid: i32) -> Option<String> {
+    // PROC_PIDPATHINFO_MAXSIZE. Written out rather than named because libc
+    // exports the struct but not this constant.
+    const MAX_PATH: usize = 4 * 1024;
+    let mut buf = vec![0u8; MAX_PATH];
+    let written = unsafe {
+        libc::proc_pidpath(pid, buf.as_mut_ptr() as *mut libc::c_void, MAX_PATH as u32)
+    };
+    if written <= 0 {
+        return None;
+    }
+    buf.truncate(written as usize);
+    let path = String::from_utf8(buf).ok()?;
+    let name = path.rsplit('/').next()?.to_owned();
+    (!name.is_empty()).then_some(name)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn process_name(pid: i32) -> Option<String> {
+    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+    let name = comm.trim().to_owned();
+    (!name.is_empty()).then_some(name)
 }
 
 /// A live feed of everything the tab writes from the moment of attach.
@@ -141,8 +230,11 @@ impl Tab {
         // Reader thread. The lock is held only for the parse and fan-out, never
         // across the read syscall, so a chatty tab cannot stall readers of
         // the screen.
+        let last_active = Arc::new(AtomicU64::new(now_ms()));
+
         let sink = Arc::clone(&inner);
         let done = Arc::clone(&finished);
+        let touched = Arc::clone(&last_active);
         std::thread::Builder::new()
             .name("keepd-pty-reader".into())
             .spawn(move || {
@@ -152,6 +244,9 @@ impl Tab {
                         Ok(0) | Err(_) => break,
                         Ok(n) => n,
                     };
+                    // Before the lock: this is the tab saying something, and
+                    // it is true whether or not the parse gets its turn.
+                    touched.store(now_ms(), Ordering::Relaxed);
                     let Ok(mut guard) = sink.lock() else { break };
                     guard.terminal.write(&buf[..n]);
                     // One allocation for the whole fan-out: every client gets a
@@ -187,6 +282,7 @@ impl Tab {
             finished,
             size: Mutex::new((cols, rows)),
             shell_pid,
+            last_active,
         })
     }
 
@@ -287,6 +383,7 @@ impl Tab {
         let mut w = self.writer.lock().map_err(|_| anyhow::anyhow!("writer poisoned"))?;
         w.write_all(bytes)?;
         w.flush()?;
+        self.last_active.store(now_ms(), Ordering::Relaxed);
         Ok(())
     }
 
@@ -357,12 +454,64 @@ impl Tab {
             return false;
         }
         let Some(shell) = self.shell_pid else { return false };
-        let Ok(master) = self.master.lock() else { return false };
-        match master.process_group_leader() {
+        match self.foreground_pid() {
             Some(fg) => fg as u32 != shell,
             // No foreground group means nothing is claiming the terminal.
             None => false,
         }
+    }
+
+    /// Whoever holds the terminal: the running command, or the shell waiting.
+    fn foreground_pid(&self) -> Option<i32> {
+        let master = self.master.lock().ok()?;
+        master.process_group_leader()
+    }
+
+    /// Where the tab is working right now.
+    ///
+    /// The foreground process's directory, which is the command's while one
+    /// runs and the shell's at a prompt — so a tab that has `cd`'d somewhere
+    /// says so without waiting for the next prompt.
+    ///
+    /// Asked each time rather than cached: a cache would have to be
+    /// invalidated on every `cd`, which is the very thing being asked about.
+    /// The call costs microseconds and the list is polled every two seconds.
+    pub fn cwd(&self) -> String {
+        self.foreground_pid()
+            .and_then(process_cwd)
+            // Asking the shell is a second attempt and not merely a stand-in
+            // for a missing pid: a group leader that exited while its
+            // siblings live, and a command running as another user, both
+            // still name a pid — one the kernel then refuses to answer for.
+            // Those are the cases this exists for, so the fallback has to
+            // hang off the failed answer rather than off the missing question.
+            .or_else(|| self.shell_pid.and_then(|p| process_cwd(p as i32)))
+            // And failing that, whatever the shell reported for itself: OSC 7
+            // needs a shell configured to send it, so it is the last resort
+            // rather than the source.
+            .or_else(|| {
+                let pwd = self.inner.lock().ok().map(|g| g.terminal.pwd())?;
+                (!pwd.is_empty()).then_some(pwd)
+            })
+            .unwrap_or_default()
+    }
+
+    /// When a byte last went either way, in unix milliseconds.
+    pub fn last_active(&self) -> u64 {
+        self.last_active.load(Ordering::Relaxed)
+    }
+
+    /// What is holding the terminal: the running command, or the shell.
+    ///
+    /// The same pid `cwd` and `is_busy` ask about, asked a third question. A
+    /// tab whose program titles itself something the reader cannot place —
+    /// or titles itself the same thing in six tabs at once — still knows how
+    /// to say what it is.
+    pub fn command(&self) -> String {
+        self.foreground_pid()
+            .and_then(process_name)
+            .or_else(|| self.shell_pid.and_then(|p| process_name(p as i32)))
+            .unwrap_or_default()
     }
 
     /// True once the child is gone and the PTY hit EOF.

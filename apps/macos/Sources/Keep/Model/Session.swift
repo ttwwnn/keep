@@ -579,9 +579,14 @@ final class Session {
                             ?? TabID(workspace: hit.workspace, root: hit.tab)
                         let item = PickerModel.Item(
                             kind: .hit(tab, pane: hit.tab, line: hit.line, fromEnd: hit.fromEnd),
+                            workspace: hit.workspace,
+                            context: "",
                             title: hit.text.isEmpty ? " " : hit.text,
                             detail: "\(hit.line + 1)",
-                            busy: false
+                            command: "",
+                            path: "",
+                            busy: false,
+                            lastActive: nil
                         )
                         items.append(item)
                         let start = Int(hit.matchStart)
@@ -821,28 +826,84 @@ final class Session {
     /// under the cursor was the next tab of the workspace already in front of
     /// you, and the most common move of all took aiming.
     private func pickerItems(for window: WindowID) -> [PickerModel.Item] {
-        var running: [PickerModel.Item] = []
+        var picked: [(tab: TabEntity, workspace: WorkspaceEntity)] = []
         var seen = Set<TabID>()
         let here = views[window]?.tab
         if let here { seen.insert(here) }
-        func append(_ tab: TabEntity, in workspace: String) {
+        func append(_ tab: TabEntity, in workspace: WorkspaceEntity) {
             guard seen.insert(tab.id).inserted else { return }
-            running.append(PickerModel.Item(
-                kind: .running(tab.id),
-                title: "\(workspace) › \(tab.title.isEmpty ? "tab \(tab.id.root)" : tab.title)",
-                detail: tab.panes.isEmpty ? "" : "\(tab.panes.count + 1) panes",
-                busy: tab.busy
-            ))
+            picked.append((tab, workspace))
         }
         // Where you have been, then whatever you have not visited yet.
         for id in recentTabs {
             if let workspace = workspaces.first(where: { $0.name == id.workspace }),
                let tab = workspace.tabs.first(where: { $0.id == id }) {
-                append(tab, in: workspace.name)
+                append(tab, in: workspace)
             }
         }
-        for workspace in workspaces {
-            for tab in workspace.tabs { append(tab, in: workspace.name) }
+        // The tail, most recently active first. `recentTabs` only knows the
+        // tabs this window has visited, so without this the rest arrive in
+        // the order the daemon happens to list them — which at a cold launch,
+        // when `recentTabs` is empty, is the whole list.
+        let unvisited = workspaces
+            .flatMap { workspace in workspace.tabs.map { (tab: $0, workspace: workspace) } }
+            .filter { !seen.contains($0.tab.id) }
+            .sorted { ($0.tab.lastActive ?? .distantPast) > ($1.tab.lastActive ?? .distantPast) }
+        for entry in unvisited { append(entry.tab, in: entry.workspace) }
+
+        // What tells one row from another, decided across the whole list
+        // rather than per row: a position is only worth showing when there is
+        // a sibling to be told apart from.
+        var rowsPerWorkspace: [String: Int] = [:]
+        for entry in picked { rowsPerWorkspace[entry.workspace.name, default: 0] += 1 }
+
+        var running = picked.map { entry -> PickerModel.Item in
+            let name = entry.workspace.name
+            let alone = rowsPerWorkspace[name] == 1
+            return PickerModel.Item(
+                kind: .running(entry.tab.id),
+                workspace: name,
+                context: context(for: entry.tab, in: entry.workspace, alone: alone),
+                title: Self.plainTitle(entry.tab.title, fallback: "tab \(entry.tab.id.root)"),
+                detail: entry.tab.panes.isEmpty ? "" : "\(entry.tab.panes.count + 1) panes",
+                command: Self.program(of: entry.tab),
+                path: entry.tab.cwd,
+                busy: entry.tab.busy,
+                lastActive: entry.tab.lastActive
+            )
+        }
+        // Two tabs of one workspace in the same directory come out with the
+        // same context, which is a column that has stopped doing its job.
+        // Number those, and only those.
+        //
+        // Counted per workspace, not across the list: two workspaces are
+        // already told apart by the name the context starts with, and a
+        // shared key would have a workspace literally called `proj 2`
+        // colliding with the second tab of `proj` and both coming out
+        // numbered again.
+        func key(_ item: PickerModel.Item) -> String { "\(item.workspace)\u{0}\(item.context)" }
+        var contexts: [String: Int] = [:]
+        for item in running { contexts[key(item), default: 0] += 1 }
+        running = running.map { item in
+            guard (contexts[key(item)] ?? 0) > 1,
+                  case .running(let id) = item.kind,
+                  let workspace = workspaces.first(where: { $0.name == item.workspace }),
+                  let position = workspace.tabs.firstIndex(where: { $0.id == id })
+            else { return item }
+            // The tab's own position rather than a running count, so the
+            // number means the same thing it means everywhere else — ⌘1 to
+            // ⌘9 — and does not change when the list is reordered under it.
+            return PickerModel.Item(
+                kind: item.kind,
+                workspace: item.workspace,
+                context: "\(item.context) \(position + 1)",
+                title: item.title,
+                detail: item.detail,
+                command: item.command,
+                path: item.path,
+                busy: item.busy,
+                lastActive: item.lastActive
+            )
         }
         // The most recent one from another workspace, brought to the front.
         // Only moved, not filtered: the tabs of the workspace you are in are
@@ -860,17 +921,114 @@ final class Session {
 
         let existing = Set(workspaces.map(\.name))
         let new = destinations.compactMap { path -> PickerModel.Item? in
-            let name = (path as NSString).lastPathComponent
+            let short = abbreviate(path)
+            let name = (short as NSString).lastPathComponent
             // A directory whose workspace already exists is reachable above.
             guard !existing.contains(name) else { return nil }
             return PickerModel.Item(
                 kind: .destination(path: path),
+                workspace: "",
+                context: "",
                 title: name,
-                detail: abbreviate(path),
-                busy: false
+                // The whole path, still, even though the row now draws it as
+                // one line: this is also what the query is matched against,
+                // and a folder findable by `www/acaua` yesterday should not
+                // have become findable only by `acaua`.
+                detail: short,
+                command: "",
+                path: path,
+                busy: false,
+                lastActive: nil
             )
         }
         return running + new
+    }
+
+    /// A tab's title with the busy marks its program put there taken off.
+    ///
+    /// Programs that title themselves also spin: Claude Code writes `✳` and
+    /// a rotating `◐◑◒◓` at the head of every title it sets. The row already
+    /// says whether the tab is busy, with a mark of its own that means the
+    /// same thing — so leaving these in prints it twice and puts punctuation
+    /// where the eye is looking for a word. The sidebar drops the same `✳`
+    /// for the same reason.
+    static func plainTitle(_ title: String, fallback: String) -> String {
+        let trimmed = title
+            .drop { Self.spinnerMarks.contains($0) || $0.isWhitespace }
+            .trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? fallback : trimmed
+    }
+
+    /// The marks Claude Code writes at the head of every title it sets: its
+    /// own `✳`, and the frames of its spinner.
+    private static let spinnerMarks: Set<Character> = ["✳", "◐", "◑", "◒", "◓", "✻", "✽"]
+
+    /// What is running in the tab, with a guess for when the daemon cannot say.
+    ///
+    /// The daemon reads the name from the foreground process, which is the
+    /// true answer — but it only reaches a client whose daemon is new enough
+    /// to send it, and the daemon outlives the app by design. Until one is
+    /// restarted the field is empty, and the row would go back to saying
+    /// nothing about what it is.
+    ///
+    /// So: the marks above are Claude Code's signature — the sidebar already
+    /// singles out `✳` as its doing — and a title wearing one is worth
+    /// naming. A guess, and only ever used in place of silence: the moment
+    /// the daemon answers, its answer wins.
+    private static func program(of tab: TabEntity) -> String {
+        if !tab.command.isEmpty { return tab.command }
+        return tab.title.first.map(spinnerMarks.contains) == true ? "claude" : ""
+    }
+
+    /// The left column of a terminal row: which workspace, and where in it.
+    ///
+    /// The tab's directory relative to the workspace's own is the shortest
+    /// true thing that separates siblings — `777leads/api` rather than
+    /// `~/www/777leads/api`, and short enough to sit in a column. When the
+    /// tab is at the workspace's root, or the daemon could not say where it
+    /// is, the position stands in instead, but only where there is a sibling
+    /// to be told apart from.
+    private func context(
+        for tab: TabEntity, in workspace: WorkspaceEntity, alone: Bool
+    ) -> String {
+        let name = workspace.name
+        if let tail = relativePlace(of: tab.cwd, in: workspace) { return "\(name)/\(tail)" }
+        guard !alone, let position = workspace.tabs.firstIndex(where: { $0.id == tab.id })
+        else { return name }
+        return "\(name) \(position + 1)"
+    }
+
+    /// The part of `cwd` below the workspace's own directory, or nil when it
+    /// is not below it, is the directory itself, or is unknown.
+    ///
+    /// A tab that wandered outside its workspace keeps its last component
+    /// rather than a path nobody can read in a column: `777leads` with a tab
+    /// in `~/other/thing` reads `777leads/thing`, which is at least where it
+    /// is, and the preview says the rest.
+    private func relativePlace(of cwd: String, in workspace: WorkspaceEntity) -> String? {
+        guard !cwd.isEmpty else { return nil }
+        let path = (cwd as NSString).standardizingPath
+        let root = (workspace.place as NSString).standardizingPath
+        // A tail is only worth showing if it is a name. At the filesystem
+        // root `lastPathComponent` is "/", which would read as a column with
+        // a stray slash in it and say nothing about which tab this is.
+        func named(_ tail: String) -> String? {
+            tail.isEmpty || tail == "/" ? nil : tail
+        }
+        guard !workspace.place.isEmpty else {
+            // No remembered directory to measure against: the tab's own last
+            // component is the only thing on offer, and it says nothing when
+            // it merely repeats the workspace's name.
+            let tail = (path as NSString).lastPathComponent
+            return tail == workspace.name ? nil : named(tail)
+        }
+        guard path != root else { return nil }
+        // The slash matters: without it a root of `~/www/proj` would claim
+        // `~/www/project-two` as one of its own.
+        guard path.hasPrefix(root + "/") else {
+            return named((path as NSString).lastPathComponent)
+        }
+        return named(String(path.dropFirst(root.count + 1)))
     }
 
     private func abbreviate(_ path: String) -> String {
@@ -963,7 +1121,8 @@ final class Session {
                 tabRows: workspace.tabs.map { tab in
                     SessionSnapshot.SidebarTab(
                         id: tab.id,
-                        title: tab.title.isEmpty ? "tab \(tab.id.root)" : tab.title,
+                        title: Self.plainTitle(tab.title, fallback: "tab \(tab.id.root)"),
+                        command: Self.program(of: tab),
                         busy: tab.busy,
                         isActive: tab.id == view.tab,
                         isElsewhere: views.contains {

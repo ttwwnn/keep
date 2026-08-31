@@ -150,6 +150,7 @@ dependencies = [
  "anyhow",
  "keep-proto",
  "keep-vt",
+ "libc",
  "portable-pty",
 ]
 

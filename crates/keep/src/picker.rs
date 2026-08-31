@@ -164,6 +164,9 @@ mod tests {
                 busy: false,
                 split_of: 0,
                 split_dir: 0,
+                cwd: String::new(),
+                last_active: 0,
+                command: String::new(),
             }],
         }
     }

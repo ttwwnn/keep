@@ -229,6 +229,12 @@ enum Intent {
 /// thing and land on it. So there is no hierarchy here. Everything running
 /// is one row, most recently visited first, and below it the places to start
 /// something new.
+///
+/// The view draws the two groups under headings, which is not a hierarchy
+/// coming back: nothing is chosen twice and no row is behind another. It is
+/// a heading over a run of rows, because a terminal you are returning to and
+/// a folder you would start one in are different answers to the question and
+/// were wearing the same row.
 struct PickerModel: Hashable {
     /// Which question the overlay is asking. It is one overlay because it is
     /// one gesture — type, move, choose — and splitting it in two would mean
@@ -255,17 +261,49 @@ struct PickerModel: Hashable {
 
         }
         let kind: Kind
-        /// "workspace › title", or the directory's name.
+        /// Whose row this is. Empty for a folder, which belongs to nobody yet.
+        let workspace: String
+        /// The left column, and the whole of the disambiguation: the
+        /// workspace's name alone, `name/tail` when the tab sits somewhere
+        /// inside it, or `name 2` when position is the only thing telling
+        /// siblings apart. Empty for folders and search hits.
+        ///
+        /// One string rather than three fields because the row draws it as
+        /// one column, and deciding what it says is the list's business, not
+        /// the cell's.
+        let context: String
+        /// The row's own text: the tab's title, a folder's name, a matched
+        /// line of history.
         let title: String
-        /// The path, or what the tab is doing.
+        /// A folder's parent path, or what the tab is doing.
         let detail: String
+        /// What is holding the terminal — `claude`, `nvim`, `zsh`. Said out
+        /// loud because a title is what a program decided to call itself,
+        /// which may be nothing, and may be the same sentence in six tabs.
+        let command: String
+        /// Where the row is, on disk: a tab's working directory, or the
+        /// folder a destination would open in. Empty for a line of history,
+        /// and for a shell that has not reached a prompt to say.
+        ///
+        /// Carried rather than dug back out of `kind`, because a running
+        /// tab's directory is a fact about the tab and the kind only names
+        /// the tab.
+        let path: String
         let busy: Bool
+        /// When the tab last did anything. Nil for folders, for hits, and for
+        /// a daemon too old to say.
+        let lastActive: Date?
         var id: String {
             switch kind {
             case .running(let tab): return "run:\(tab)"
             case .destination(let path): return "dir:\(path)"
             case .hit(let tab, let pane, let line, _): return "hit:\(tab):\(pane):\(line)"
             }
+        }
+        /// A place to start something, rather than something already running.
+        var isFolder: Bool {
+            if case .destination = kind { return true }
+            return false
         }
     }
 
@@ -317,7 +355,11 @@ struct SessionSnapshot: Hashable {
 
     struct SidebarTab: Hashable, Identifiable {
         let id: TabID
+        /// The tab's own title, with the busy marks its program wrote taken
+        /// off — the row draws its own, and twice is once too many.
         let title: String
+        /// What is running in there. Empty when nothing can say.
+        let command: String
         let busy: Bool
         let isActive: Bool
         /// Another window is showing it — the strip's ⧉, said vertically.

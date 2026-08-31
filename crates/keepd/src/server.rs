@@ -82,9 +82,18 @@ fn handle(stream: UnixStream, registry: Arc<Registry>) -> Result<()> {
     let Some(first) = ClientMsg::read(&mut reader)? else { return Ok(()) };
 
     match first {
+        // Both questions are still answered. A client built before `cwd` and
+        // `last_active` existed keeps asking the old one, and it keeps
+        // working — the daemon outlives every client, so the two are never
+        // upgraded together.
         ClientMsg::List => {
             registry.reap();
             ServerMsg::Workspaces(registry.list()).write(&mut writer)?;
+            Ok(())
+        }
+        ClientMsg::List2 => {
+            registry.reap();
+            ServerMsg::Workspaces2(registry.list()).write(&mut writer)?;
             Ok(())
         }
         ClientMsg::Kill { workspace } => {

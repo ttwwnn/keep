@@ -19,6 +19,17 @@ final class TabEntity {
     private(set) var busyTitles: [String] = []
     private(set) var panes: [PaneState] = []
     private(set) var focusedPane: UInt32
+    /// Where the tab is working, from the daemon. The root's, not a pane's:
+    /// a tab is one place in the picker, and the root is the one that opened
+    /// it. Empty when the daemon does not know or is too old to say.
+    private(set) var cwd: String = ""
+    /// When anything last happened here, across the whole tab. The newest of
+    /// root and panes: a build finishing in the pane beside the one you typed
+    /// in is still this tab having been active.
+    private(set) var lastActive: Date?
+    /// What is holding the terminal. The root's, like `cwd` — a tab is one
+    /// row in the picker, and the root is the pane it opened as.
+    private(set) var command: String = ""
 
     init(id: TabID) {
         self.id = id
@@ -39,12 +50,23 @@ final class TabEntity {
         let newPanes = daemonPanes.map {
             PaneState(tab: $0.id, splitOf: $0.splitOf, splitDir: $0.splitDir)
         }
+        let newCwd = root.cwd
+        let newLastActive = ([root] + daemonPanes).compactMap(\.lastActive).max()
+        // `lastActive` is deliberately not in `changed`: a tab producing
+        // output moves it on every poll, and republishing the whole tab twice
+        // a second for a clock nothing is drawing is a lot of nothing. The
+        // picker reads it when it builds its list, which is the only place it
+        // is shown.
+        let newCommand = root.command
         let changed = newTitle != title || newBusy != busy || newPanes != panes
-            || newBusyTitles != busyTitles
+            || newBusyTitles != busyTitles || newCwd != cwd || newCommand != command
         title = newTitle
         busy = newBusy
         busyTitles = newBusyTitles
         panes = newPanes
+        cwd = newCwd
+        lastActive = newLastActive
+        command = newCommand
         // A focused pane that died falls back to the root.
         if focusedPane != id.root && !newPanes.contains(where: { $0.tab == focusedPane }) {
             focusedPane = id.root

@@ -17,6 +17,8 @@ final class PickerView: NSView {
     var onHighlight: ((String?) -> Void)?
     var onChoose: ((String) -> Void)?
     var onDismissItem: ((String) -> Void)?
+    /// Anything the actions panel offers, on the row it was opened over.
+    var onAction: ((String, PickerAction) -> Void)?
     var onCancel: (() -> Void)?
 
     private let field = NSTextField()
@@ -24,7 +26,7 @@ final class PickerView: NSView {
     /// The list's frame, which is what fades. A scroll view manages its own
     /// layer and quietly loses a mask put on it.
     private let listBox = FadingBox()
-    private let table = NSTableView()
+    private let table = PickerTable()
     private let preview = NSTextView()
     private let previewScroll = NSScrollView()
     /// What the card holds; the card itself is glass around it.
@@ -42,15 +44,75 @@ final class PickerView: NSView {
     private var card: NSView!
     /// "3 of 47", the way a browser counts.
     private let counter = NSTextField(labelWithString: "")
+    /// What Return does, and where the rest of it is.
+    private let footer = PickerFooter()
+    /// Up only while it is open: it takes the keyboard for as long as it
+    /// exists, and a hidden view that has taken the keyboard is a picker that
+    /// will not accept typing.
+    private var actions: PickerActionsPanel?
 
     private var all: [PickerModel.Item] = []
-    private var shown: [PickerModel.Item] = []
+    /// What the table draws, headings included.
+    ///
+    /// Headings live here rather than in the model because they are a fact
+    /// about this drawing of the list and not about the list: search mode has
+    /// none, and one whose whole section has been filtered away must go with
+    /// it. Both fall out of rebuilding them after every filter.
+    private var shown: [Row] = []
     private var query = ""
     private var mode: PickerModel.Mode = .goTo
     private var matches: [String: PickerModel.Match] = [:]
+    /// Which column each row was matched on, decided while filtering.
+    ///
+    /// Kept rather than worked out again in the cell: with three columns to
+    /// try, a cell that re-runs the walk can light a column the score never
+    /// looked at, and claim the row is here for a reason it is not.
+    private var litColumns: [String: Lit] = [:]
     private var isSearching: Bool {
         if case .search = mode { return true }
         return false
+    }
+
+    enum Row: Equatable {
+        case heading(String)
+        case item(PickerModel.Item)
+
+        var item: PickerModel.Item? {
+            if case .item(let item) = self { return item }
+            return nil
+        }
+    }
+
+    struct Lit: Equatable {
+        enum Column { case context, title, detail }
+        let column: Column
+        let marks: [Int]
+    }
+
+    /// Dense, per the house ladder, and one line of text per row. Not the
+    /// sidebar's 24: these rows carry a selection lozenge inset by two and
+    /// are aimed at with a pointer as often as with the arrows.
+    static let rowHeight: CGFloat = 30
+    /// The extra four points are the gap above the word, not around it.
+    static let headingHeight: CGFloat = 34
+    /// Wide enough for `777leads/api` in the terminal face, narrow enough to
+    /// leave a title room. What overflows truncates rather than pushing the
+    /// column along and taking every row's alignment with it.
+    static let contextWidth: CGFloat = 132
+
+    /// How long ago, in as few characters as will carry it.
+    ///
+    /// No words and no formatter: this is a column that has to align, and it
+    /// sits beside identifiers rather than inside a sentence.
+    static func recency(_ date: Date?, now: Date = Date()) -> String {
+        guard let date else { return "" }
+        let seconds = now.timeIntervalSince(date)
+        guard seconds >= 0 else { return "now" }
+        if seconds < 60 { return "now" }
+        if seconds < 3600 { return "\(Int(seconds / 60))m" }
+        if seconds < 86_400 { return "\(Int(seconds / 3600))h" }
+        if seconds < 604_800 { return "\(Int(seconds / 86_400))d" }
+        return "\(Int(seconds / 604_800))w"
     }
 
     override init(frame: NSRect) {
@@ -129,6 +191,17 @@ final class PickerView: NSView {
         table.target = self
         table.doubleAction = #selector(chooseSelected)
         table.addTableColumn(NSTableColumn(identifier: .init("row")))
+        // The right button selects what it is over and then asks the same
+        // question ⌘K asks. Selecting first is the whole of it: a menu that
+        // acts on a row other than the one under the pointer is a menu that
+        // does something else than it was asked to.
+        table.onRightClick = { [weak self] row in
+            guard let self else { return }
+            if row >= 0, row < self.shown.count, self.shown[row].item != nil {
+                self.select(row: row)
+            }
+            self.openActions()
+        }
         scroll.documentView = table
         // Gone by the field's own line and fully back by the time the list
         // proper begins: the clear end of the gradient sits at a little over
@@ -172,6 +245,19 @@ final class PickerView: NSView {
         previewScroll.hasVerticalScroller = false
         previewScroll.translatesAutoresizingMaskIntoConstraints = false
         cardContent.addSubview(previewScroll)
+
+        footer.translatesAutoresizingMaskIntoConstraints = false
+        footer.onOpen = { [weak self] in
+            guard let id = self?.selectedItemID else { return }
+            self?.onChoose?(id)
+        }
+        footer.onActions = { [weak self] in self?.toggleActions() }
+        // On the card, not in it. Glass refracts what is *behind* it, and
+        // inside the card's own glass there is nothing behind it but the
+        // card's content view — so a pane laid there came out flat, a grey
+        // rectangle with a corner radius. Out here its backdrop is the card
+        // itself, which is what the reference has beneath its chip.
+        addSubview(footer)
 
         // Above the list, which fades out beneath them.
         cardContent.addSubview(field)
@@ -248,7 +334,17 @@ final class PickerView: NSView {
             previewScroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 18),
             previewScroll.leadingAnchor.constraint(equalTo: listBox.trailingAnchor, constant: 8),
             previewScroll.trailingAnchor.constraint(equalTo: cardContent.trailingAnchor),
-            previewScroll.bottomAnchor.constraint(equalTo: scroll.bottomAnchor),
+            previewScroll.bottomAnchor.constraint(
+                equalTo: footer.topAnchor, constant: -6),
+
+            // In the corner, floating, sized by what is in it. Pinned to two
+            // edges and nothing else: the card's height is a share of the
+            // window's, and a footer that also pushed on the card would be
+            // the one thing in here deciding how tall it is.
+            footer.trailingAnchor.constraint(
+                equalTo: card.trailingAnchor, constant: -PickerFooter.margin),
+            footer.bottomAnchor.constraint(
+                equalTo: card.bottomAnchor, constant: -PickerFooter.margin),
         ])
     }
 
@@ -286,6 +382,14 @@ final class PickerView: NSView {
     /// Clicking the dimmed ground outside the card dismisses.
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        // The panel is dismissed by the click that lands outside it, and that
+        // click does nothing else: a stray tap should not also close the
+        // picker underneath.
+        if let panel = actions {
+            let inPanel = panel.convert(event.locationInWindow, from: nil)
+            if !panel.bounds.contains(inPanel) { closeActions() }
+            return
+        }
         if !card.frame.contains(point) { onCancel?() }
     }
 
@@ -371,15 +475,66 @@ final class PickerView: NSView {
     /// every snapshot therefore erases each letter as it is typed, which from
     /// the keyboard looks exactly like an overlay that will not accept input.
     func prepareForOpen() {
+        closeActions()
         guard !query.isEmpty else { return }
         query = ""
         field.stringValue = ""
         refilter(preservingSelection: false)
     }
 
-    var selectedItemID: String? {
-        table.selectedRow >= 0 && table.selectedRow < shown.count
-            ? shown[table.selectedRow].id : nil
+    var selectedItemID: String? { selectedItem?.id }
+
+    private var selectedItem: PickerModel.Item? {
+        guard table.selectedRow >= 0, table.selectedRow < shown.count else { return nil }
+        return shown[table.selectedRow].item
+    }
+
+    // MARK: - actions
+
+    /// ⌘K, the footer's chip and the right button all arrive here.
+    private func toggleActions() {
+        if actions == nil { openActions() } else { closeActions() }
+    }
+
+    private func openActions() {
+        guard let item = selectedItem else { return }
+        if actions != nil { closeActions() }
+        let panel = PickerActionsPanel()
+        panel.translatesAutoresizingMaskIntoConstraints = false
+        panel.onRun = { [weak self] action in
+            guard let self else { return }
+            // Closed before the action runs: several of these take the app
+            // somewhere else, and a panel still up when Finder comes forward
+            // is a panel that comes back with it.
+            let id = item.id
+            self.closeActions()
+            self.onAction?(id, action)
+        }
+        panel.onClose = { [weak self] in self?.closeActions() }
+        // Over the card rather than inside it, for the reason the chip is —
+        // and it must be the panel's own glass that the chip's edge meets.
+        addSubview(panel)
+        NSLayoutConstraint.activate([
+            // Out of the corner it was named in — the footer's chip is
+            // directly beneath it, which is what makes the panel read as that
+            // chip opening rather than as something arriving from elsewhere.
+            panel.trailingAnchor.constraint(
+                equalTo: card.trailingAnchor, constant: -PickerFooter.margin),
+            panel.bottomAnchor.constraint(
+                equalTo: card.bottomAnchor, constant: -PickerFooter.margin),
+        ])
+        panel.present(item)
+        actions = panel
+        panel.takeFocus()
+    }
+
+    private func closeActions() {
+        guard let panel = actions else { return }
+        actions = nil
+        panel.removeFromSuperview()
+        // The field gets the keyboard back, or the picker is up with nothing
+        // listening to it.
+        takeFocus()
     }
 
     // MARK: - filtering
@@ -388,10 +543,72 @@ final class PickerView: NSView {
         let previous = preservingSelection ? selectedItemID : nil
         // In search the daemon has already decided what matches; filtering
         // its answer again with a different rule would hide real hits.
-        shown = isSearching ? all : Self.matches(all, query: query)
+        if isSearching {
+            litColumns = [:]
+            shown = all.map(Row.item)
+        } else {
+            let (kept, marks) = Self.matches(all, query: query)
+            litColumns = marks
+            shown = Self.sectioned(kept)
+        }
         table.reloadData()
-        let index = previous.flatMap { id in shown.firstIndex { $0.id == id } } ?? 0
-        select(row: shown.isEmpty ? -1 : index)
+        let index = previous.flatMap { id in
+            shown.firstIndex { $0.item?.id == id }
+        } ?? firstSelectableRow()
+        select(row: index)
+    }
+
+    /// The two headings, around the two groups, and neither when its group is
+    /// empty — which is what makes a heading disappear as its section is
+    /// typed away rather than stand over nothing.
+    ///
+    /// The kinds are gathered rather than assumed to arrive together. Unfiltered
+    /// they do, because the list is built as `running + new`; but the score
+    /// sorts the whole list at once, so one letter typed can put a folder
+    /// between two terminals — and a heading standing over rows of the other
+    /// kind is worse than no heading at all. Order within each group is left
+    /// exactly as the score left it.
+    private static func sectioned(_ items: [PickerModel.Item]) -> [Row] {
+        var terminals: [PickerModel.Item] = []
+        var folders: [PickerModel.Item] = []
+        var loose: [PickerModel.Item] = []
+        for item in items {
+            switch item.kind {
+            case .running: terminals.append(item)
+            case .destination: folders.append(item)
+            case .hit: loose.append(item)
+            }
+        }
+        var rows: [Row] = loose.map(Row.item)
+        if !terminals.isEmpty {
+            rows.append(.heading("terminals"))
+            rows += terminals.map(Row.item)
+        }
+        if !folders.isEmpty {
+            rows.append(.heading("open in"))
+            rows += folders.map(Row.item)
+        }
+        return rows
+    }
+
+    /// The first row that can hold the selection, or -1 in an empty list.
+    private func firstSelectableRow() -> Int {
+        shown.firstIndex { $0.item != nil } ?? -1
+    }
+
+    /// The next row the selection may rest on, stepping over headings.
+    ///
+    /// Clamps rather than wraps, and returns where it started when there is
+    /// nowhere to go, so holding ↓ at the bottom of the list does nothing
+    /// instead of jumping back to the top.
+    private func nextSelectable(from row: Int, step: Int) -> Int {
+        var next = row + step
+        while next >= 0 && next < shown.count {
+            if shown[next].item != nil { return next }
+            next += step
+        }
+        return row >= 0 && row < shown.count && shown[row].item != nil
+            ? row : firstSelectableRow()
     }
 
     private func updateCounter() {
@@ -419,13 +636,40 @@ final class PickerView: NSView {
     /// two selectors the arrows arrive as.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let held = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard held == .control else { return super.performKeyEquivalent(with: event) }
+        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        // Both halves of the toggle, and the panel's escape hatch, in one
+        // place: the panel is a subview of this one, so a ⌘K it answered
+        // itself would only ever be the closing half.
+        if held == .command, key == "k" {
+            toggleActions()
+            return true
+        }
+        // The two the panel advertises, so that what it says about them is
+        // true without opening it. ⇧⌘F is not among them: it is Find
+        // Everywhere, and the picker is the last thing that should take it.
+        if held == [.command, .shift], key == "r" || key == "c" {
+            guard let item = selectedItem else { return true }
+            // The panel, if it is up, has just been answered without it.
+            closeActions()
+            switch (key, item.kind) {
+            case ("r", _) where !item.path.isEmpty: onAction?(item.id, .reveal)
+            case ("c", .hit): onAction?(item.id, .copyText)
+            case ("c", _) where !item.path.isEmpty: onAction?(item.id, .copyPath)
+            default: break
+            }
+            return true
+        }
+        // While the panel is up it owns the arrows; moving the list behind it
+        // would change what the actions are about, under the panel naming it.
+        guard held == .control, actions == nil else {
+            return super.performKeyEquivalent(with: event)
+        }
         switch event.charactersIgnoringModifiers {
         case "j":
-            select(row: min(table.selectedRow + 1, shown.count - 1))
+            select(row: nextSelectable(from: table.selectedRow, step: 1))
             return true
         case "k":
-            select(row: max(table.selectedRow - 1, 0))
+            select(row: nextSelectable(from: table.selectedRow, step: -1))
             return true
         default:
             return super.performKeyEquivalent(with: event)
@@ -434,8 +678,9 @@ final class PickerView: NSView {
 
     private func select(row: Int) {
         defer { updateCounter() }
-        guard row >= 0, row < shown.count else {
+        guard row >= 0, row < shown.count, shown[row].item != nil else {
             table.deselectAll(nil)
+            footer.show(nil)
             onHighlight?(nil)
             return
         }
@@ -443,6 +688,10 @@ final class PickerView: NSView {
         // well asked the daemon for the same preview twice.
         table.selectRowIndexes([row], byExtendingSelection: false)
         table.scrollRowToVisible(row)
+        // Said here as well as from the delegate: a refilter that lands on the
+        // same row number holding a different item changes the selection
+        // without changing the selected row, and the table reports nothing.
+        footer.show(selectedItem)
     }
 
     /// The matched text, marked the way a browser marks it: a tinted run
@@ -472,17 +721,45 @@ final class PickerView: NSView {
     /// Subsequence matching, the way every fuzzy finder behaves: the letters
     /// you type must appear in order, and rows where they appear closer
     /// together rank higher.
-    static func matches(_ items: [PickerModel.Item], query: String) -> [PickerModel.Item] {
+    /// The rows that match, best first, and which column put each one there.
+    ///
+    /// Three columns are tried in reading order, and the one that answers is
+    /// remembered. The context column goes first on purpose: it is where a
+    /// workspace's name lives, so typing one gathers that project rather than
+    /// scattering its tabs behind whichever titles happened to score better.
+    static func matches(
+        _ items: [PickerModel.Item], query: String
+    ) -> ([PickerModel.Item], [String: Lit]) {
         let needle = query.lowercased().filter { !$0.isWhitespace }
-        guard !needle.isEmpty else { return items }
-        return items.compactMap { item -> (PickerModel.Item, Int)? in
-            guard let score = score(item.title.lowercased(), needle)
-                ?? score(item.detail.lowercased(), needle)
-            else { return nil }
-            return (item, score)
+        guard !needle.isEmpty else { return (items, [:]) }
+        let scored = items.enumerated().compactMap {
+            (position, item) -> (PickerModel.Item, Int, Int, Lit)? in
+            let columns: [(Lit.Column, String)] = [
+                (.context, item.context), (.title, item.title), (.detail, item.detail),
+            ]
+            for (column, text) in columns {
+                guard let landed = Self.marks(text.lowercased(), needle),
+                      let first = landed.first, let last = landed.last
+                else { continue }
+                return (
+                    item, (last - first) + first / 2, position,
+                    Lit(column: column, marks: landed)
+                )
+            }
+            return nil
         }
-        .sorted { $0.1 < $1.1 }
-        .map(\.0)
+        // Position is the tiebreak, and it has to be written down: Swift's
+        // sort is not documented stable, so rows of equal score kept the
+        // list's own order — where you have been, most recent first — only by
+        // luck, and lost it the moment the sort changed its mind.
+        .sorted { ($0.1, $0.2) < ($1.1, $1.2) }
+        var kept: [PickerModel.Item] = []
+        var columns: [String: Lit] = [:]
+        for (item, _, _, hit) in scored {
+            kept.append(item)
+            columns[item.id] = hit
+        }
+        return (kept, columns)
     }
 
     /// Lower is better: the span the match occupies, plus where it starts.
@@ -511,11 +788,20 @@ final class PickerView: NSView {
     }
 
     /// The same text with the matched letters lit.
+    ///
+    /// Lit by weight and brightness rather than by a colour. The accent this
+    /// used was the system's fixed blue — the one thing in the card that had
+    /// not chosen its own colour, in an app whose rule is that colour carries
+    /// information or does not appear. What is left says the same thing with
+    /// the ladder the rest of the chrome is built on: the letters that
+    /// matched come forward, the ones around them step back.
     static func lit(
-        _ text: String, marks: [Int], font: NSFont, colour: NSColor
+        _ text: String, marks: [Int], font: NSFont,
+        base: NSColor = .secondaryLabelColor, hit: NSColor = .labelColor
     ) -> NSAttributedString {
         let attributed = NSMutableAttributedString(
-            string: text, attributes: [.font: font, .foregroundColor: NSColor.labelColor])
+            string: text, attributes: [.font: font, .foregroundColor: base])
+        let colour = hit
         let bold = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
         // The marks are counted in characters and the attributes are applied
         // in UTF-16, which are the same number only until somebody's directory
@@ -553,10 +839,10 @@ extension PickerView: NSTextFieldDelegate {
     ) -> Bool {
         switch selector {
         case #selector(NSResponder.moveDown(_:)):
-            select(row: min(table.selectedRow + 1, shown.count - 1))
+            select(row: nextSelectable(from: table.selectedRow, step: 1))
             return true
         case #selector(NSResponder.moveUp(_:)):
-            select(row: max(table.selectedRow - 1, 0))
+            select(row: nextSelectable(from: table.selectedRow, step: -1))
             return true
         case #selector(NSResponder.insertNewline(_:)):
             if let id = selectedItemID { onChoose?(id) }
@@ -733,101 +1019,266 @@ extension PickerView: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int { shown.count }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-        PickerRow()
+        // A heading takes the plain row: `PickerRow` washes under the pointer,
+        // and a wash on something that cannot be chosen is an invitation the
+        // list will not honour.
+        shown[row].item == nil ? NSTableRowView() : PickerRow()
+    }
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        // The list breathes between its groups rather than everywhere: a
+        // heading is taller than a row because the gap is above it, which is
+        // what makes it read as the start of something instead of as a row
+        // that lost its text.
+        shown[row].item == nil ? Self.headingHeight : Self.rowHeight
+    }
+
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        shown[row].item != nil
     }
 
     func tableView(
         _ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int
     ) -> NSView? {
-        let item = shown[row]
+        switch shown[row] {
+        case .heading(let text): return headingCell(text)
+        case .item(let item): return itemCell(item)
+        }
+    }
+
+    /// A heading: the app's own voice, so the system face, and quiet enough
+    /// that the eye takes it as a label on the way past rather than as a row.
+    private func headingCell(_ text: String) -> NSView {
         let cell = NSView()
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 11, weight: .medium)
+        label.textColor = .tertiaryLabelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 18),
+            // Pinned low, so the extra height falls above it as a gap between
+            // the sections rather than around the word.
+            label.bottomAnchor.constraint(equalTo: cell.bottomAnchor, constant: -4),
+        ])
+        return cell
+    }
+
+    private func itemCell(_ item: PickerModel.Item) -> NSView {
+        let cell = NSView()
+        if case .hit = item.kind { return hitCell(item, in: cell) }
+        // A workspace name and the directory under it are things the terminal
+        // would also print, so they are set in the terminal's own face — and
+        // in a column, which is the whole repair: three tabs of one project
+        // read as three of one project before a word of them is read.
+        let identifierFont = GhosttyApp.shared.terminalFont(size: 12.5)
+        if item.isFolder { return folderCell(item, font: identifierFont, in: cell) }
+
+        let context = NSTextField(labelWithString: item.context)
+        context.font = identifierFont
+        context.textColor = .secondaryLabelColor
+        context.lineBreakMode = .byTruncatingTail
+        context.maximumNumberOfLines = 1
+        context.translatesAutoresizingMaskIntoConstraints = false
+        // The column holds its width against a long name rather than pushing
+        // the title along and taking the alignment with it.
+        context.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        cell.addSubview(context)
 
         let title = NSTextField(labelWithString: item.title)
-        if case .hit = item.kind {
-            let font = GhosttyApp.shared.terminalFont(size: 12)
-            title.font = font
-            if let match = matches[item.id] {
-                title.attributedStringValue = Self.marked(
-                    item.title, range: match.range, font: font)
+        title.font = identifierFont
+        title.textColor = .labelColor
+        title.lineBreakMode = .byTruncatingTail
+        title.maximumNumberOfLines = 1
+        title.translatesAutoresizingMaskIntoConstraints = false
+        title.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
+        cell.addSubview(title)
+
+        // What the row is here for, when the query is what put it here.
+        if let hit = litColumns[item.id] {
+            let target = hit.column == .context ? context : title
+            let text = hit.column == .context ? item.context : item.title
+            if hit.column == .context || hit.column == .title {
+                target.attributedStringValue = Self.lit(
+                    text, marks: hit.marks, font: identifierFont)
             }
-        } else {
-            let font = NSFont.systemFont(ofSize: 14)
-            title.font = font
-            // Which letters put this row here. The query is matched against
-            // the title first and the path second — the same order the score
-            // tries them in — so what is lit is what was actually matched on,
-            // not a guess made afterwards.
-            let needle = query.lowercased().filter { !$0.isWhitespace }
-            if !needle.isEmpty, let marks = Self.marks(item.title.lowercased(), needle) {
-                title.attributedStringValue = Self.lit(
-                    item.title, marks: marks, font: font, colour: .controlAccentColor)
+        }
+
+        // The terminal glyph, back where it was. The section heading says
+        // terminal-or-folder too, but a heading is read once at the top of a
+        // group and a row is read on its own — and filled-versus-hollow is
+        // still the one thing here you take in without reading.
+        let badge = NSImageView()
+        badge.image = NSImage(
+            systemSymbolName: item.busy ? "terminal.fill" : "terminal",
+            accessibilityDescription: item.busy ? "running" : "terminal")
+        badge.contentTintColor = item.busy ? .labelColor : .tertiaryLabelColor
+        badge.symbolConfiguration = .init(pointSize: 13, weight: .regular)
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(badge)
+
+        // What the tab is, and how long ago it was anything. The pane count
+        // keeps its place ahead of the time so the times still form a column.
+        let trailingText = [item.detail, Self.recency(item.lastActive)]
+            .filter { !$0.isEmpty }
+            .joined(separator: "  ")
+        let trailing = NSTextField(labelWithString: trailingText)
+        trailing.font = GhosttyApp.shared.terminalFont(size: 11)
+        trailing.textColor = .tertiaryLabelColor
+        trailing.alignment = .right
+        trailing.maximumNumberOfLines = 1
+        trailing.translatesAutoresizingMaskIntoConstraints = false
+        trailing.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // A row here because of its pane count should say so, or it is a row
+        // with no visible reason for being in the list. The detail leads the
+        // joined string, so its marks land without shifting.
+        if let hit = litColumns[item.id], hit.column == .detail {
+            trailing.attributedStringValue = Self.lit(
+                trailingText, marks: hit.marks, font: trailing.font ?? identifierFont,
+                base: .tertiaryLabelColor)
+        }
+        cell.addSubview(trailing)
+
+        // What the tab actually is. A title is what a program decided to call
+        // itself — it may say nothing, and six tabs running one tool say the
+        // same sentence — so the name of the program goes beside it. Set
+        // harder against compression than the title: when the row runs out of
+        // room the sentence is what should give, not the word that identifies
+        // it.
+        let command = NSTextField(labelWithString: item.command.isEmpty ? "" : "— \(item.command)")
+        command.font = identifierFont
+        command.textColor = .tertiaryLabelColor
+        command.lineBreakMode = .byTruncatingTail
+        command.maximumNumberOfLines = 1
+        command.translatesAutoresizingMaskIntoConstraints = false
+        command.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        command.setContentHuggingPriority(.required, for: .horizontal)
+        cell.addSubview(command)
+
+        NSLayoutConstraint.activate([
+            context.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 18),
+            context.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            context.widthAnchor.constraint(lessThanOrEqualToConstant: Self.contextWidth),
+            badge.leadingAnchor.constraint(
+                equalTo: cell.leadingAnchor, constant: Self.contextWidth + 26),
+            badge.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            badge.widthAnchor.constraint(equalToConstant: 16),
+            title.leadingAnchor.constraint(equalTo: badge.trailingAnchor, constant: 8),
+            title.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            command.leadingAnchor.constraint(equalTo: title.trailingAnchor, constant: 6),
+            command.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            command.trailingAnchor.constraint(
+                lessThanOrEqualTo: trailing.leadingAnchor, constant: -10),
+            trailing.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -18),
+            trailing.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        ])
+        return cell
+    }
+
+    /// A place to start something: one path, one line.
+    ///
+    /// The road faint and the name it would take in ink, so the eye lands on
+    /// the word that becomes the workspace. One string rather than two labels
+    /// because it is one path — and under a heading that already says these
+    /// are folders, printing the name again on the right was the same word
+    /// twice, which is what this replaces.
+    private func folderCell(
+        _ item: PickerModel.Item, font: NSFont, in cell: NSView
+    ) -> NSView {
+        // `detail` is the whole path and `title` its last component, so the
+        // road to the folder is what is left when the name is taken off the
+        // end — no rejoining, and no chance of the two disagreeing.
+        let badge = NSImageView()
+        badge.image = NSImage(systemSymbolName: "folder", accessibilityDescription: "folder")
+        badge.contentTintColor = .tertiaryLabelColor
+        badge.symbolConfiguration = .init(pointSize: 13, weight: .regular)
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(badge)
+
+        let path = item.detail.isEmpty ? item.title : item.detail
+        let parentLength = max(path.count - item.title.count, 0)
+        let label = NSTextField(labelWithString: path)
+        label.font = font
+        let text = NSMutableAttributedString(
+            string: path,
+            attributes: [.font: font, .foregroundColor: NSColor.labelColor])
+        if parentLength > 0 {
+            let head = String(path.prefix(parentLength))
+            text.addAttribute(
+                .foregroundColor, value: NSColor.tertiaryLabelColor,
+                range: NSRange(location: 0, length: (head as NSString).length))
+        }
+        // A row that matched on its path says where, on the letters that did.
+        if let hit = litColumns[item.id] {
+            // A match on the path counts from the path's start and needs no
+            // shifting; one on the name counts from where the name begins.
+            let shift = hit.column == .title ? parentLength : 0
+            let bold = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+            let scalars = Array(path)
+            var offsets: [Int] = []
+            var cursor = 0
+            for character in scalars {
+                offsets.append(cursor)
+                cursor += String(character).utf16.count
             }
+            for mark in hit.marks {
+                let index = mark + shift
+                guard index < offsets.count else { continue }
+                let start = offsets[index]
+                let length = index + 1 < offsets.count
+                    ? offsets[index + 1] - start
+                    : (path as NSString).length - start
+                guard length > 0, start + length <= (path as NSString).length else { continue }
+                text.addAttributes(
+                    [.foregroundColor: NSColor.labelColor, .font: bold],
+                    range: NSRange(location: start, length: length))
+            }
+        }
+        label.attributedStringValue = text
+        // The head is what gives on a path: a long one is known by its end.
+        label.lineBreakMode = .byTruncatingHead
+        label.maximumNumberOfLines = 1
+        label.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(label)
+        NSLayoutConstraint.activate([
+            badge.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 18),
+            badge.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            badge.widthAnchor.constraint(equalToConstant: 16),
+            label.leadingAnchor.constraint(equalTo: badge.trailingAnchor, constant: 8),
+            label.trailingAnchor.constraint(
+                lessThanOrEqualTo: cell.trailingAnchor, constant: -18),
+            label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        ])
+        return cell
+    }
+
+    /// A line of history, drawn as the terminal drew it — no columns, because
+    /// a hit is one string and splitting it would be inventing structure that
+    /// the text does not have.
+    private func hitCell(_ item: PickerModel.Item, in cell: NSView) -> NSView {
+        let font = GhosttyApp.shared.terminalFont(size: 12)
+        let title = NSTextField(labelWithString: item.title)
+        title.font = font
+        if let match = matches[item.id] {
+            title.attributedStringValue = Self.marked(
+                item.title, range: match.range, font: font)
         }
         title.lineBreakMode = .byTruncatingTail
         title.maximumNumberOfLines = 1
         title.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(title)
 
-        let detailText = matches[item.id].map { "\($0.group):\(item.detail)" } ?? item.detail
-        let detail = NSTextField(labelWithString: detailText)
-        let detailFont = NSFont.systemFont(ofSize: 12)
-        detail.font = detailFont
-        // Dimmer than secondary: the path is there to tell two rows with the
-        // same name apart, not to be read alongside the name.
+        let where_ = matches[item.id].map { "\($0.group):\(item.detail)" } ?? item.detail
+        let detail = NSTextField(labelWithString: where_)
+        detail.font = .systemFont(ofSize: 12)
         detail.textColor = .tertiaryLabelColor
-        // And in the path, when that is where the match was found — a row
-        // that is here because of its directory says so there.
-        let needle = query.lowercased().filter { !$0.isWhitespace }
-        if !needle.isEmpty, Self.marks(item.title.lowercased(), needle) == nil,
-           let marks = Self.marks(detailText.lowercased(), needle) {
-            detail.attributedStringValue = Self.lit(
-                detailText, marks: marks, font: detailFont, colour: .controlAccentColor)
-        }
         detail.lineBreakMode = .byTruncatingHead
-        // One line, and the head is what gives: a long path is identified by
-        // its end, and a row that wraps is a row that no longer fits between
-        // the two beside it.
         detail.maximumNumberOfLines = 1
         detail.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(detail)
 
-        // Two kinds of row, and you should not have to read the text to tell
-        // them apart: a terminal you are going back to, or a folder you are
-        // starting something in. Busy terminals wear the accent colour, which
-        // is the same thing the sidebar dot says.
-        let badge = NSImageView()
-        switch item.kind {
-        case .running:
-            // Filled means busy, and that is all it means. Painted with the
-            // accent colour it was a blue square at this size — read as a
-            // swatch, or as something bleeding through from behind, rather
-            // than as "there is a program running in here".
-            badge.image = NSImage(
-                systemSymbolName: item.busy ? "terminal.fill" : "terminal",
-                accessibilityDescription: item.busy ? "running" : "terminal")
-            badge.contentTintColor = item.busy ? .labelColor : .secondaryLabelColor
-        case .destination:
-            badge.image = NSImage(
-                systemSymbolName: "folder", accessibilityDescription: "folder")
-            badge.contentTintColor = .tertiaryLabelColor
-        case .hit:
-            badge.image = NSImage(
-                systemSymbolName: "text.magnifyingglass", accessibilityDescription: "match")
-            badge.contentTintColor = .secondaryLabelColor
-        }
-        // Bigger than the text beside it, not smaller: this is the one thing
-        // in the row you read without reading — terminal or folder, decided
-        // before the eye reaches the name — and at twelve points it was
-        // punctuation next to a thirteen-point title.
-        badge.symbolConfiguration = .init(pointSize: 17, weight: .regular)
-        badge.translatesAutoresizingMaskIntoConstraints = false
-        cell.addSubview(badge)
-
         NSLayoutConstraint.activate([
-            badge.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 18),
-            badge.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            badge.widthAnchor.constraint(equalToConstant: 22),
-            title.leadingAnchor.constraint(equalTo: badge.trailingAnchor, constant: 8),
+            title.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 18),
             title.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             title.trailingAnchor.constraint(
                 lessThanOrEqualTo: detail.leadingAnchor, constant: -10),
@@ -839,10 +1290,35 @@ extension PickerView: NSTableViewDataSource, NSTableViewDelegate {
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         updateCounter()
+        footer.show(selectedItem)
         onHighlight?(selectedItemID)
     }
 
     @objc private func chooseSelected() {
-        if let id = selectedItemID { onChoose?(id) }
+        // What was clicked, not what was selected. A heading refuses the
+        // selection, so a double-click on one leaves the previous row
+        // selected and would otherwise open it — sending you somewhere you
+        // did not click.
+        let clicked = table.clickedRow
+        guard clicked >= 0, clicked < shown.count, let item = shown[clicked].item
+        else { return }
+        onChoose?(item.id)
     }
+}
+
+
+/// The picker's list, which answers the right button.
+///
+/// A table would otherwise put up the standard contextual menu — or, having
+/// none, nothing at all. This one reports the row that was clicked and lets
+/// the picker decide, because what can be done to a row is the picker's
+/// question and it already has a panel that answers it.
+final class PickerTable: NSTableView {
+    var onRightClick: ((Int) -> Void)?
+
+    override func rightMouseDown(with event: NSEvent) {
+        onRightClick?(row(at: convert(event.locationInWindow, from: nil)))
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? { nil }
 }

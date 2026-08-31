@@ -21,6 +21,12 @@ const T_SEARCH: u8 = 0x09;
 const T_REARRANGE: u8 = 0x0a;
 const T_PREVIEW_VT: u8 = 0x0b;
 const T_MOVE_TAB: u8 = 0x0c;
+// The same question as `T_LIST`, asked by a client that can read the two
+// fields `TabInfo` grew. Renumbered rather than extended for the reason the
+// blob tags below were: tab records sit back to back inside one payload with
+// no length of their own, so a decoder that stops short of the new fields
+// reads the next tab's id out of the middle of this one.
+const T_LIST2: u8 = 0x0d;
 
 const T_WORKSPACES: u8 = 0x81;
 const T_ERROR: u8 = 0x84;
@@ -32,6 +38,8 @@ const T_PREVIEW_TEXT: u8 = 0x89;
 // Renumbered when hits gained their history's length: a client that
 // expects the field must not read a hit that predates it.
 const T_SEARCH_HITS: u8 = 0x9a;
+/// The answer to [`T_LIST2`], with `cwd` and `last_active` on every tab.
+const T_WORKSPACES2: u8 = 0x9b;
 
 // Blob frames carry their payload raw, with no length inside it — the frame
 // header already has one. They were renumbered when that redundant length was
@@ -55,6 +63,10 @@ pub const SPLIT_DOWN: u8 = 2;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientMsg {
     List,
+    /// [`ClientMsg::List`] from a client that wants `cwd` and `last_active`
+    /// too. A daemon that predates them answers "unknown client tag" and
+    /// closes, which is the caller's cue to ask the old question instead.
+    List2,
     /// Attach to a tab. `tab` may be [`TAB_ANY`], meaning "the first live tab,
     /// creating one if the workspace has none". The workspace itself is
     /// created on demand.
@@ -120,6 +132,21 @@ pub struct TabInfo {
     /// The tab this one is a pane of, or [`TAB_ANY`] for a standalone tab.
     pub split_of: u32,
     pub split_dir: u8,
+    /// Where the tab's foreground process is working: the command's directory
+    /// while one runs, the shell's at a prompt. Empty when it could not be
+    /// read — a process that exited between the two calls, or one owned by
+    /// another user. Only travels on [`T_WORKSPACES2`].
+    pub cwd: String,
+    /// When a byte last went either way through the tab, in unix
+    /// milliseconds. Zero means unknown, which is what a client reading a
+    /// [`T_WORKSPACES`] frame gets.
+    pub last_active: u64,
+    /// What is holding the terminal: the running command's name, or the
+    /// shell's at a prompt. Empty when it could not be read.
+    ///
+    /// A title says what a program calls itself, which it may not do, and
+    /// which several tabs may say identically. This says what it *is*.
+    pub command: String,
 }
 
 /// One line of history that matched, where it lives, and enough around it to
@@ -177,6 +204,10 @@ impl WorkspaceInfo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerMsg {
     Workspaces(Vec<WorkspaceInfo>),
+    /// The same list with each tab's `cwd` and `last_active` included. Sent
+    /// only in answer to [`ClientMsg::List2`], so a client that cannot read
+    /// them never meets one.
+    Workspaces2(Vec<WorkspaceInfo>),
     /// Which tab the attach landed on. Sent before the repaint, because a
     /// client that asked for [`TAB_ANY`] does not know yet.
     Attached { tab: u32 },
@@ -211,6 +242,9 @@ impl Buf {
     fn u32(&mut self, v: u32) {
         self.0.extend_from_slice(&v.to_be_bytes());
     }
+    fn u64(&mut self, v: u64) {
+        self.0.extend_from_slice(&v.to_be_bytes());
+    }
     fn bytes(&mut self, v: &[u8]) {
         self.u32(v.len() as u32);
         self.0.extend_from_slice(v);
@@ -243,6 +277,9 @@ impl<'a> Cursor<'a> {
     fn u32(&mut self) -> io::Result<u32> {
         Ok(u32::from_be_bytes(self.take(4)?.try_into().unwrap()))
     }
+    fn u64(&mut self) -> io::Result<u64> {
+        Ok(u64::from_be_bytes(self.take(8)?.try_into().unwrap()))
+    }
     fn bytes(&mut self) -> io::Result<Vec<u8>> {
         let n = self.u32()? as usize;
         Ok(self.take(n)?.to_vec())
@@ -257,6 +294,69 @@ impl<'a> Cursor<'a> {
 
 fn bad(msg: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, msg)
+}
+
+/// The workspace list, in one of its two layouts.
+///
+/// Written once rather than twice: the layouts differ by two fields at the
+/// tail of each tab record, and two copies of this loop would be two places
+/// for the next field to be added to only one of.
+fn write_workspaces(b: &mut Buf, list: &[WorkspaceInfo], with_cwd: bool) {
+    b.u32(list.len() as u32);
+    for s in list {
+        b.str(&s.name);
+        b.u32(s.tabs.len() as u32);
+        for t in &s.tabs {
+            b.u32(t.id);
+            b.u16(t.cols);
+            b.u16(t.rows);
+            b.u32(t.clients);
+            b.bool(t.finished);
+            b.str(&t.title);
+            b.bool(t.busy);
+            b.u32(t.split_of);
+            b.u8(t.split_dir);
+            if with_cwd {
+                b.str(&t.cwd);
+                b.u64(t.last_active);
+                b.str(&t.command);
+            }
+        }
+    }
+}
+
+fn read_workspaces(c: &mut Cursor, with_cwd: bool) -> io::Result<Vec<WorkspaceInfo>> {
+    let n = c.u32()? as usize;
+    let mut list = Vec::with_capacity(n.min(1024));
+    for _ in 0..n {
+        let name = c.str()?;
+        let tab_count = c.u32()? as usize;
+        let mut tabs = Vec::with_capacity(tab_count.min(1024));
+        for _ in 0..tab_count {
+            let mut tab = TabInfo {
+                id: c.u32()?,
+                cols: c.u16()?,
+                rows: c.u16()?,
+                clients: c.u32()?,
+                finished: c.bool()?,
+                title: c.str()?,
+                busy: c.bool()?,
+                split_of: c.u32()?,
+                split_dir: c.u8()?,
+                cwd: String::new(),
+                last_active: 0,
+                command: String::new(),
+            };
+            if with_cwd {
+                tab.cwd = c.str()?;
+                tab.last_active = c.u64()?;
+                tab.command = c.str()?;
+            }
+            tabs.push(tab);
+        }
+        list.push(WorkspaceInfo { name, tabs });
+    }
+    Ok(list)
 }
 
 fn write_frame(w: &mut impl Write, tag: u8, payload: &[u8]) -> io::Result<()> {
@@ -322,6 +422,7 @@ impl ClientMsg {
         let mut b = Buf::new();
         let tag = match self {
             ClientMsg::List => T_LIST,
+            ClientMsg::List2 => T_LIST2,
             ClientMsg::Attach { workspace, tab, cols, rows } => {
                 b.str(workspace);
                 b.u32(*tab);
@@ -403,6 +504,7 @@ impl ClientMsg {
         let mut c = Cursor(&payload);
         let msg = match tag {
             T_LIST => ClientMsg::List,
+            T_LIST2 => ClientMsg::List2,
             T_ATTACH => ClientMsg::Attach {
                 workspace: c.str()?,
                 tab: c.u32()?,
@@ -469,23 +571,12 @@ impl ServerMsg {
         let mut b = Buf::new();
         let tag = match self {
             ServerMsg::Workspaces(list) => {
-                b.u32(list.len() as u32);
-                for s in list {
-                    b.str(&s.name);
-                    b.u32(s.tabs.len() as u32);
-                    for t in &s.tabs {
-                        b.u32(t.id);
-                        b.u16(t.cols);
-                        b.u16(t.rows);
-                        b.u32(t.clients);
-                        b.bool(t.finished);
-                        b.str(&t.title);
-                        b.bool(t.busy);
-                        b.u32(t.split_of);
-                        b.0.push(t.split_dir);
-                    }
-                }
+                write_workspaces(&mut b, list, false);
                 T_WORKSPACES
+            }
+            ServerMsg::Workspaces2(list) => {
+                write_workspaces(&mut b, list, true);
+                T_WORKSPACES2
             }
             ServerMsg::Attached { tab } => {
                 b.u32(*tab);
@@ -544,30 +635,8 @@ impl ServerMsg {
         }
         let mut c = Cursor(&payload);
         let msg = match tag {
-            T_WORKSPACES => {
-                let n = c.u32()? as usize;
-                let mut list = Vec::with_capacity(n.min(1024));
-                for _ in 0..n {
-                    let name = c.str()?;
-                    let tab_count = c.u32()? as usize;
-                    let mut tabs = Vec::with_capacity(tab_count.min(1024));
-                    for _ in 0..tab_count {
-                        tabs.push(TabInfo {
-                            id: c.u32()?,
-                            cols: c.u16()?,
-                            rows: c.u16()?,
-                            clients: c.u32()?,
-                            finished: c.bool()?,
-                            title: c.str()?,
-                            busy: c.bool()?,
-                            split_of: c.u32()?,
-                            split_dir: c.u8()?,
-                        });
-                    }
-                    list.push(WorkspaceInfo { name, tabs });
-                }
-                ServerMsg::Workspaces(list)
-            }
+            T_WORKSPACES => ServerMsg::Workspaces(read_workspaces(&mut c, false)?),
+            T_WORKSPACES2 => ServerMsg::Workspaces2(read_workspaces(&mut c, true)?),
             T_ATTACHED => ServerMsg::Attached { tab: c.u32()? },
             T_TAB_CREATED => ServerMsg::TabCreated { tab: c.u32()? },
             T_ERROR => ServerMsg::Error(c.str()?),
@@ -735,6 +804,9 @@ mod tests {
                         busy: false,
                         split_of: TAB_ANY,
                         split_dir: SPLIT_NONE,
+                        cwd: String::new(),
+                        last_active: 0,
+                        command: String::new(),
                     },
                     TabInfo {
                         id: 2,
@@ -746,10 +818,71 @@ mod tests {
                         busy: true,
                         split_of: 1,
                         split_dir: SPLIT_RIGHT,
+                        cwd: String::new(),
+                        last_active: 0,
+                        command: String::new(),
                     },
                 ],
             },
         ]));
+    }
+
+    /// The v2 list carries the three fields the v1 one drops.
+    ///
+    /// Both directions matter and neither is the other's mirror: a v2 frame
+    /// must bring `cwd`, `last_active` and `command` home intact, and a v1
+    /// frame must arrive with them emptied rather than read short.
+    #[test]
+    fn workspaces2_carries_cwd_and_last_active() {
+        let tabs = vec![
+            TabInfo {
+                id: 1,
+                cols: 80,
+                rows: 24,
+                clients: 1,
+                finished: false,
+                title: "✳ building".into(),
+                busy: true,
+                split_of: TAB_ANY,
+                split_dir: SPLIT_NONE,
+                cwd: "/Users/someone/www/projeto/api".into(),
+                last_active: 1_756_600_000_123,
+                command: "claude".into(),
+            },
+            TabInfo {
+                id: 2,
+                cols: 80,
+                rows: 24,
+                clients: 0,
+                finished: false,
+                title: String::new(),
+                busy: false,
+                split_of: 1,
+                split_dir: SPLIT_DOWN,
+                cwd: String::new(),
+                last_active: u64::MAX,
+                command: String::new(),
+            },
+        ];
+        let list = vec![WorkspaceInfo { name: "projeto".into(), tabs: tabs.clone() }];
+        roundtrip_server(ServerMsg::Workspaces2(list.clone()));
+
+        // Down the old tag, the same tabs come back stripped of both.
+        let mut buf = Vec::new();
+        ServerMsg::Workspaces(list).write(&mut buf).unwrap();
+        let mut r = &buf[..];
+        let Some(ServerMsg::Workspaces(back)) = ServerMsg::read(&mut r).unwrap() else {
+            panic!("expected a v1 workspace list")
+        };
+        assert_eq!(back[0].tabs.len(), 2);
+        assert_eq!(back[0].tabs[0].title, "✳ building");
+        assert_eq!(back[0].tabs[0].split_dir, SPLIT_NONE);
+        assert_eq!(back[0].tabs[1].id, 2, "a short read would find this in the wrong place");
+        for tab in &back[0].tabs {
+            assert_eq!(tab.command, "");
+            assert_eq!(tab.cwd, "");
+            assert_eq!(tab.last_active, 0);
+        }
     }
 
     #[test]
@@ -767,6 +900,9 @@ mod tests {
                     busy: false,
                     split_of: TAB_ANY,
                     split_dir: SPLIT_NONE,
+                    cwd: String::new(),
+                    last_active: 0,
+                    command: String::new(),
                 },
                 TabInfo {
                     id: 2,
@@ -778,6 +914,9 @@ mod tests {
                     busy: false,
                     split_of: TAB_ANY,
                     split_dir: SPLIT_NONE,
+                    cwd: String::new(),
+                    last_active: 0,
+                    command: String::new(),
                 },
             ],
         };

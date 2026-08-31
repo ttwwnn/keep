@@ -20,6 +20,16 @@ enum Daemon {
         /// The tab this one is a pane of (0 = standalone), and where it sits.
         var splitOf: UInt32
         var splitDir: UInt8
+        /// Where the tab's foreground process is working. Empty when the
+        /// daemon could not read it, and always empty from a daemon that
+        /// predates the field.
+        var cwd: String = ""
+        /// When a byte last went either way. Nil from a daemon too old to
+        /// say, which the picker shows as no time at all rather than as now.
+        var lastActive: Date?
+        /// What is holding the terminal — `claude`, `nvim`, `zsh`. Empty from
+        /// a daemon too old to say.
+        var command: String = ""
 
         /// Shells retitle constantly and usually with the host and path,
         /// which says nothing useful in a list of tabs from one machine.
@@ -85,6 +95,7 @@ enum Daemon {
     }
 
     private static let tagList: UInt8 = 0x01
+    private static let tagList2: UInt8 = 0x0d
     private static let tagNewTab: UInt8 = 0x03
     private static let tagKill: UInt8 = 0x06
     private static let tagCloseTab: UInt8 = 0x07
@@ -93,6 +104,7 @@ enum Daemon {
     private static let tagMoveTab: UInt8 = 0x0c
     private static let tagSearch: UInt8 = 0x09
     private static let tagSessions: UInt8 = 0x81
+    private static let tagSessions2: UInt8 = 0x9b
     private static let tagError: UInt8 = 0x84
     private static let tagOk: UInt8 = 0x85
     private static let tagTabCreated: UInt8 = 0x88
@@ -146,15 +158,34 @@ enum Daemon {
         throw Failure.cannotConnect(socketPath)
     }
 
+    /// Every workspace and its tabs.
+    ///
+    /// Asked twice over, the fuller question first, the same way
+    /// `colouredPreview` asks for a preview: a daemon that predates `cwd` and
+    /// `lastActive` closes on the tag it does not know, and a list without
+    /// them is better than no list. The daemon outlives every client, so the
+    /// app will meet one older than itself whenever it is rebuilt — and that
+    /// is exactly when nobody wants to be told to restart it and lose their
+    /// sessions.
     static func list() throws -> [Workspace] {
+        do {
+            return try askForList(tag: tagList2)
+        } catch {
+            return try askForList(tag: tagList)
+        }
+    }
+
+    private static func askForList(tag question: UInt8) throws -> [Workspace] {
         let sock = try connect()
         defer { close(sock) }
-        try send(sock, tag: tagList, payload: Data())
+        try send(sock, tag: question, payload: Data())
 
         let (tag, payload) = try recv(sock)
         switch tag {
         case tagSessions:
-            return try decodeWorkspaces(payload)
+            return try decodeWorkspaces(payload, withCwd: false)
+        case tagSessions2:
+            return try decodeWorkspaces(payload, withCwd: true)
         case tagError:
             var r = Reader(payload)
             throw Failure.protocolError(try r.string())
@@ -447,7 +478,13 @@ enum Daemon {
         return out
     }
 
-    private static func decodeWorkspaces(_ payload: Data) throws -> [Workspace] {
+    /// The two layouts differ only by two fields at the tail of each tab, so
+    /// they are read by one function: tab records sit back to back with no
+    /// length of their own, and a decoder that reads the wrong number of them
+    /// finds the next tab's id inside the middle of this one.
+    private static func decodeWorkspaces(
+        _ payload: Data, withCwd: Bool
+    ) throws -> [Workspace] {
         var r = Reader(payload)
         let count = try r.u32()
         var out: [Workspace] = []
@@ -458,7 +495,7 @@ enum Daemon {
             var tabs: [Tab] = []
             tabs.reserveCapacity(Int(min(tabCount, 4096)))
             for _ in 0..<tabCount {
-                tabs.append(Tab(
+                var tab = Tab(
                     id: try r.u32(),
                     cols: try r.u16(),
                     rows: try r.u16(),
@@ -468,7 +505,17 @@ enum Daemon {
                     busy: try r.u8() != 0,
                     splitOf: try r.u32(),
                     splitDir: try r.u8()
-                ))
+                )
+                if withCwd {
+                    tab.cwd = try r.string()
+                    let stamp = try r.u64()
+                    // Zero is the daemon saying it does not know, which is not
+                    // the same as 1970.
+                    tab.lastActive = stamp == 0
+                        ? nil : Date(timeIntervalSince1970: Double(stamp) / 1000)
+                    tab.command = try r.string()
+                }
+                tabs.append(tab)
             }
             out.append(Workspace(name: name, tabs: tabs))
         }
@@ -514,6 +561,9 @@ private struct Reader {
     }
     mutating func u32() throws -> UInt32 {
         try take(4).withUnsafeBytes { UInt32(bigEndian: $0.loadUnaligned(as: UInt32.self)) }
+    }
+    mutating func u64() throws -> UInt64 {
+        try take(8).withUnsafeBytes { UInt64(bigEndian: $0.loadUnaligned(as: UInt64.self)) }
     }
     mutating func string() throws -> String {
         let n = Int(try u32())

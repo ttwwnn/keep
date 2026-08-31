@@ -125,11 +125,23 @@ fn enter(
     Ok(())
 }
 
+/// The workspace list, asking for the fuller answer first.
+///
+/// A daemon that predates `cwd` and `last_active` refuses the tag and closes,
+/// which arrives here as a read error rather than as a reply — so the retry
+/// needs a fresh connection, not another write on this one.
 fn list(socket: &Path) -> Result<Vec<WorkspaceInfo>> {
+    if let Ok(list) = ask(socket, ClientMsg::List2) {
+        return Ok(list);
+    }
+    ask(socket, ClientMsg::List)
+}
+
+fn ask(socket: &Path, question: ClientMsg) -> Result<Vec<WorkspaceInfo>> {
     let mut sock = UnixStream::connect(socket).context("connect to daemon")?;
-    ClientMsg::List.write(&mut sock)?;
+    question.write(&mut sock)?;
     match ServerMsg::read(&mut sock)? {
-        Some(ServerMsg::Workspaces(list)) => Ok(list),
+        Some(ServerMsg::Workspaces(list) | ServerMsg::Workspaces2(list)) => Ok(list),
         Some(ServerMsg::Error(e)) => anyhow::bail!(e),
         _ => anyhow::bail!("unexpected reply from daemon"),
     }

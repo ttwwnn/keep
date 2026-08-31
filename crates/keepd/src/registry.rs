@@ -42,6 +42,9 @@ impl Registry {
                             busy: t.tab.is_busy(),
                             split_of: t.split_of,
                             split_dir: t.split_dir,
+                            cwd: t.tab.cwd(),
+                            last_active: t.tab.last_active(),
+                            command: t.tab.command(),
                         }
                     })
                     .collect(),

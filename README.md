@@ -82,6 +82,14 @@ naming it. A workspace also reports whether it is *running* something, taken
 from the terminal's foreground process group rather than from shell
 integration, so a build in a workspace nobody is watching still says so.
 
+The same process group answers two more questions the picker needs, because a
+title is not always a name: run the same tool in six tabs and six rows say the
+same sentence. So the daemon also reports each tab's working directory — asked
+of the kernel, so it needs no shell setup and follows a `cd` rather than
+waiting for the next prompt — and when a byte last went either way through it.
+The picker shows the directory relative to the workspace's own, which is short
+enough to sit in a column: `777leads/api` rather than `~/www/777leads/api`.
+
 One wrinkle worth knowing about: the libghostty build we link against accepts
 the per-surface `command`, `env_vars` and `initial_input` fields and then
 ignores them. Only `working_directory` survives, so the app fixes the client

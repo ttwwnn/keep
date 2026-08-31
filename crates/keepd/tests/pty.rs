@@ -523,3 +523,90 @@ fn moving_a_pane_can_leave_its_own_panes_behind() {
     let moved = tabs.iter().find(|t| t.id == middle).expect("the mover survived");
     assert_eq!(moved.split_of, elsewhere, "the pane did not arrive");
 }
+
+/// The tab reports where it is working, and follows a `cd`.
+///
+/// The shell inside is never asked: this comes from the kernel, so it holds
+/// for a setup that emits no OSC 7 — which is most of them.
+#[test]
+fn cwd_follows_the_shell() {
+    let session = Tab::spawn(shell(), 60, 10).expect("spawn");
+
+    // `/tmp` is a symlink to `/private/tmp` on macOS, and what comes back is
+    // the resolved path either way — so compare against the resolved one.
+    let target = std::fs::canonicalize("/tmp").expect("resolve /tmp");
+    let target = target.to_str().expect("utf-8 path").to_owned();
+
+    assert!(
+        wait_for(Duration::from_secs(5), || !session.cwd().is_empty()),
+        "the tab never reported a directory"
+    );
+    assert_ne!(session.cwd(), target, "the test would prove nothing from /tmp");
+
+    session.send(b"cd /tmp\n").expect("send");
+    assert!(
+        wait_for(Duration::from_secs(5), || session.cwd() == target),
+        "cwd did not follow the shell: {:?}",
+        session.cwd()
+    );
+    session.kill().ok();
+}
+
+/// The tab says what is holding it: the shell at a prompt, the command while
+/// one runs.
+///
+/// This is the answer for a tab whose title says nothing useful — or says the
+/// same thing as five others, which is what a tool that titles every session
+/// after itself produces.
+#[test]
+fn command_names_what_is_running() {
+    let session = Tab::spawn(shell(), 60, 10).expect("spawn");
+    // The executable's own name, not the path it was spawned by: on macOS
+    // `/bin/sh` is bash wearing another name, and this reports what is
+    // actually running rather than what was asked for.
+    assert!(
+        wait_for(Duration::from_secs(5), || {
+            matches!(session.command().as_str(), "sh" | "bash")
+        }),
+        "a tab at a prompt did not name its shell: {:?}",
+        session.command()
+    );
+
+    session.send(b"exec cat\n").expect("send");
+    assert!(
+        wait_for(Duration::from_secs(5), || session.command() == "cat"),
+        "the running command was not named: {:?}",
+        session.command()
+    );
+    session.kill().ok();
+}
+
+/// Activity is stamped by output as well as by input.
+///
+/// A command that finishes while nobody types is the case this exists for:
+/// counting keystrokes alone would call such a tab stale.
+#[test]
+fn output_alone_counts_as_activity() {
+    let session = Tab::spawn(shell(), 60, 10).expect("spawn");
+    assert!(
+        wait_for(Duration::from_secs(5), || session.last_active() > 0),
+        "a fresh tab reported no activity at all"
+    );
+
+    session.send(b"sleep 1; echo awake\n").expect("send");
+    assert!(
+        wait_for(Duration::from_secs(5), || screen_contains(&session, "awake")),
+        "the shell never ran the command"
+    );
+    let after_typing = session.last_active();
+
+    // Nothing is sent from here on; only the shell's own output can move it.
+    session.send(b"(sleep 1; echo later) &\n").expect("send");
+    let sent_at = session.last_active();
+    assert!(
+        wait_for(Duration::from_secs(8), || session.last_active() > sent_at),
+        "output did not count as activity"
+    );
+    assert!(after_typing > 0);
+    session.kill().ok();
+}
