@@ -151,8 +151,12 @@ final class PickerView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        // A dimmed ground, so the terminal behind reads as "not now".
-        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.35).cgColor
+        // Nothing painted over the terminal. Dimming the whole window to
+        // make one card stand out is asking every pixel on the display to
+        // change so that a fraction of them can be read — the shadow under
+        // the card says the same thing about depth, and says it locally.
+        // The view stays here, clear, because the click outside the card is
+        // still its to catch.
 
         // The window's own corner, measured off a capture of one: on the same
         // picture the window's rounding runs twice as far as this card's did
@@ -182,9 +186,11 @@ final class PickerView: NSView {
         // the plate, which is the one view in the stack whose frame is the
         // card's and whose layer nothing else is masking.
         backdrop.layer?.shadowColor = NSColor.black.cgColor
-        backdrop.layer?.shadowOpacity = 0.5
-        backdrop.layer?.shadowRadius = 36
-        backdrop.layer?.shadowOffset = CGSize(width: 0, height: -14)
+        // Deeper than it would need to be over a dimmed ground: this is now
+        // the only thing holding the card off the terminal.
+        backdrop.layer?.shadowOpacity = 0.62
+        backdrop.layer?.shadowRadius = 48
+        backdrop.layer?.shadowOffset = CGSize(width: 0, height: -18)
         addSubview(backdrop)
         adoptTerminalBackground()
         // A theme change repaints this the way it repaints the chrome.
@@ -281,6 +287,10 @@ final class PickerView: NSView {
 
         preview.isEditable = false
         preview.isSelectable = false
+        // Lay out what is visible rather than the whole thing. This is a
+        // screen's worth of coloured runs arriving on every arrow key, and
+        // contiguous layout does all of it before the first line is drawn.
+        preview.layoutManager?.allowsNonContiguousLayout = true
         preview.drawsBackground = false
         preview.font = GhosttyApp.shared.terminalFont(size: 10)
         preview.textColor = .secondaryLabelColor
@@ -503,14 +513,20 @@ final class PickerView: NSView {
         // so the plate is only a bed for the colour and a shape for the
         // shadow — and every point of it is a point of blurred terminal that
         // does not reach the eye.
+        // Without actions disabled these two cross-fade over a quarter of a
+        // second, which on the way in is a card that arrives late and on a
+        // theme change is a smear.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         backdrop.layer?.backgroundColor = colour
-            .withAlphaComponent(light ? 0.45 : 0.22).cgColor
+            .withAlphaComponent(light ? 0.52 : 0.32).cgColor
         // And the same colour again inside the card, over the material's
         // blur. The material paints a light grey of its own on top of
         // whatever it blurred, which is what made the card read as a pale
         // panel on a black terminal — this is the colour the card is
         // supposed to be, laid over that.
         Glass.tint(card, colour.withAlphaComponent(light ? 0.72 : 0.55))
+        CATransaction.commit()
     }
 
     /// The terminal's own colour, a step deeper than it.
@@ -804,7 +820,7 @@ final class PickerView: NSView {
             litColumns = marks
             shown = Self.sectioned(kept)
         }
-        table.reloadData()
+        Trace.time("picker", "reload \(shown.count) rows") { table.reloadData() }
         let index = previous.flatMap { id in
             shown.firstIndex { $0.item?.id == id }
         } ?? firstSelectableRow()

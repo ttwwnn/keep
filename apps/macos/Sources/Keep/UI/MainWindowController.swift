@@ -305,24 +305,74 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// keyboard for exactly that long.
     private func renderPicker(_ model: PickerModel?) {
         guard let model else {
-            guard picker.superview != nil else { return }
-            picker.removeFromSuperview()
+            guard picker.superview != nil, !picker.isHidden else { return }
+            // Hidden, not removed. Taking a view out of a window frees every
+            // layer under it and re-adding it builds them again — a card, a
+            // material, a table of rows and whatever glass they carry — for
+            // an overlay whose whole life is a keystroke long. Hidden it
+            // takes no events and draws nothing, and the second ⌘P is free.
+            picker.isHidden = true
             (window as? KeepWindow)?.holdOpaque(false)
+            // Removing a view takes the keyboard off whatever inside it was
+            // holding it; hiding one does not. Hand it back deliberately, or
+            // the overlay is gone and every keystroke still goes to its
+            // field editor.
+            if let holder = window?.firstResponder as? NSView,
+               holder.isDescendant(of: picker) {
+                focusActiveTerminal()
+            }
             return
         }
         if picker.superview == nil, let content = window?.contentView {
+            picker.frame = content.bounds
+            picker.autoresizingMask = [.width, .height]
+            picker.isHidden = true
+            content.addSubview(picker)
+        }
+        if picker.isHidden {
+            Trace.log("picker", "opening")
+            // Where our own clock stops being the answer. Everything below
+            // is a few milliseconds of main thread; what is left is the
+            // window server building the layers and painting them, and the
+            // only way to see that from in here is to ask when the
+            // transaction carrying it actually commits.
+            CATransaction.begin()
+            // Nothing here is a state change worth watching happen. Every
+            // layer property touched on the way in — a view unhiding, a
+            // plate taking the theme's colour, a rim laying itself out —
+            // animates implicitly over a quarter of a second unless it is
+            // told not to, and a quarter of a second is exactly what "not
+            // instant" feels like. The overlay is meant to be *there*.
+            CATransaction.setDisableActions(true)
+            // The one number that mattered, and the one our own clock could
+            // not give: everything above is a few milliseconds of main
+            // thread, and what was left was a quarter of a second of implicit
+            // animation. Kept, because the next thing to slow this down will
+            // not be visible any other way either.
+            if Trace.enabled {
+                let asked = DispatchTime.now().uptimeNanoseconds
+                CATransaction.setCompletionBlock {
+                    let spent = Double(
+                        DispatchTime.now().uptimeNanoseconds - asked) / 1_000_000
+                    Trace.log("picker", "on screen \(String(format: "%.1f", spent))ms")
+                }
+            }
+            defer {
+                Trace.log("picker", "open")
+                CATransaction.commit()
+            }
             // The card's blur samples this window, and where this window is
             // see-through what it samples is the desktop. Opaque for as long
             // as the overlay is up, so the blur has nothing but terminal in
             // it — which is what lets the card be as thin as it is.
-            (window as? KeepWindow)?.holdOpaque(true)
-            picker.frame = content.bounds
-            picker.autoresizingMask = [.width, .height]
-            content.addSubview(picker)
+            Trace.time("picker", "holdOpaque") {
+                (window as? KeepWindow)?.holdOpaque(true)
+            }
+            Trace.time("picker", "show") { picker.isHidden = false }
             // Opened, so it opens empty — see `prepareForOpen`.
-            picker.prepareForOpen()
-            picker.apply(model)
-            picker.takeFocus()
+            Trace.time("picker", "prepare") { picker.prepareForOpen() }
+            Trace.time("picker", "apply") { picker.apply(model) }
+            Trace.time("picker", "focus") { picker.takeFocus() }
             return
         }
         picker.apply(model)

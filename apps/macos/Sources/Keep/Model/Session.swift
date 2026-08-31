@@ -514,11 +514,11 @@ final class Session {
             // find out where this window is — two accesses to one property at
             // once, which Swift stops dead at runtime and says nothing about
             // at build time.
-            let items = pickerItems(for: window)
+            let items = Trace.time("picker", "items") { pickerItems(for: window) }
             views[window]?.picker = PickerModel(
                 mode: .goTo, matches: [:], scopeLabel: nil, query: "",
                 items: items, previewOf: nil, previewText: "")
-            publish()
+            Trace.time("picker", "publish") { publish() }
             // zoxide is a process launch; the list opens on what is already
             // known and grows a moment later rather than waiting for it.
             loadDestinations(for: window)
@@ -528,11 +528,13 @@ final class Session {
                 dispatch(.closePicker, from: window)
                 return
             }
-            let commands = Self.paletteItems(catalog)
+            let commands = Trace.time("palette", "items \(catalog)") {
+                Self.paletteItems(catalog)
+            }
             views[window]?.picker = PickerModel(
                 mode: .palette(catalog), matches: [:], scopeLabel: nil, query: "",
                 items: commands, previewOf: nil, previewText: "")
-            publish()
+            Trace.time("palette", "publish") { publish() }
 
         case .toggleSearch(let global):
             let wanted = PickerModel.Mode.search(global: global)
@@ -686,12 +688,25 @@ final class Session {
             views[window]?.picker = open
             publish()
             guard let id, let item = open.items.first(where: { $0.id == id }) else { return }
-            switch item.kind {
-            case .running(let tab): loadPreview(of: tab, pane: tab.root, for: id, in: window)
-            // The pane that matched, not the tab's root: previewing the root
-            // of a split shows something the search never looked at.
-            case .hit(let tab, let pane, _, _): loadPreview(of: tab, pane: pane, for: id, in: window)
-            case .destination, .command, .theme, .fontFamily: break
+            // Not on this keystroke. Holding ↓ through a list walks a row per
+            // frame, and each row asked the daemon for a screen and then laid
+            // one out — work for a row nobody stopped on. A short wait spends
+            // it only on the row that was actually arrived at.
+            previewGeneration += 1
+            let generation = previewGeneration
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in
+                guard let self, self.previewGeneration == generation,
+                      self.views[window]?.picker?.previewOf == id
+                else { return }
+                switch item.kind {
+                case .running(let tab):
+                    self.loadPreview(of: tab, pane: tab.root, for: id, in: window)
+                // The pane that matched, not the tab's root: previewing the
+                // root of a split shows something the search never looked at.
+                case .hit(let tab, let pane, _, _):
+                    self.loadPreview(of: tab, pane: pane, for: id, in: window)
+                case .destination, .command, .theme, .fontFamily: break
+                }
             }
 
         case .choosePickerItem(let id):
@@ -1101,6 +1116,10 @@ final class Session {
             }
         }
     }
+
+    /// Which preview request is the current one, so the ones the arrow keys
+    /// left behind can be dropped rather than answered.
+    private var previewGeneration = 0
 
     private func loadPreview(of tab: TabID, pane: UInt32, for item: String, in window: WindowID) {
         DispatchQueue.global(qos: .userInitiated).async {

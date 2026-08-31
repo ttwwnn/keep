@@ -35,6 +35,22 @@ enum Trace {
         )
     }
 
+    /// Time a step and log what it cost, in milliseconds.
+    ///
+    /// Written because "it feels slow" is not a measurement and the parts
+    /// that could be to blame — a table rebuilding its rows, a window
+    /// changing whether it is opaque, a config being reloaded — are all one
+    /// synchronous call from each other on the main thread.
+    @discardableResult
+    static func time<T>(_ kind: String, _ what: String, _ body: () -> T) -> T {
+        guard enabled else { return body() }
+        let started = DispatchTime.now().uptimeNanoseconds
+        let result = body()
+        let spent = Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000
+        log(kind, "\(what) \(String(format: "%.1f", spent))ms")
+        return result
+    }
+
     /// The dynamic class of a responder. `type(of:)` on the optional itself
     /// only ever reports `NSResponder`, which says nothing.
     static func describe(_ responder: NSResponder?) -> String {

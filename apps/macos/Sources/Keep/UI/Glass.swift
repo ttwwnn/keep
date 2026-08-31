@@ -141,30 +141,53 @@ enum Glass {
 /// a plain rounded fill, which is what selection looks like everywhere else
 /// on a light macOS.
 final class AdaptiveLozengeView: NSView {
-    private let glass: NSView?
+    /// Made when the lozenge is first shown, not when it is first built.
+    ///
+    /// A pane of glass is a window-server resource, and a list makes one of
+    /// these per row while showing one at a time: forty rows of a picker,
+    /// scrolled, are forty panes of glass created so that the selected row
+    /// can wear one. Every list that uses this hides it until the row is
+    /// chosen, so being shown is exactly the moment the glass is wanted.
+    private var glass: NSView?
     private var radius: CGFloat
     private var lightFill: NSColor
+    /// What the tint should be when the glass does arrive, since it can be
+    /// set before there is anything to set it on.
+    private var tint: NSColor?
 
     init(cornerRadius: CGFloat, lightFill: NSColor) {
         self.radius = cornerRadius
         self.lightFill = lightFill
-        self.glass = Glass.lozenge(cornerRadius: cornerRadius)
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerCurve = .continuous
-        if let glass {
-            glass.autoresizingMask = [.width, .height]
-            addSubview(glass)
-        }
         apply()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not supported") }
 
+    override var isHidden: Bool {
+        didSet {
+            guard !isHidden else { return }
+            makeGlass()
+        }
+    }
+
+    private func makeGlass() {
+        guard glass == nil, let made = Glass.lozenge(cornerRadius: radius) else { return }
+        made.frame = bounds
+        made.autoresizingMask = [.width, .height]
+        Glass.tint(made, tint)
+        addSubview(made)
+        glass = made
+        apply()
+    }
+
     func set(cornerRadius: CGFloat, tint: NSColor?, lightFill: NSColor) {
         radius = cornerRadius
         self.lightFill = lightFill
+        self.tint = tint
         if let glass {
             Glass.setCornerRadius(glass, cornerRadius)
             Glass.tint(glass, tint)
