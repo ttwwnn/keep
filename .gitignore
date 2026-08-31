@@ -6,3 +6,4 @@
 /vendor/GhosttyKit.xcframework/
 apps/macos/build/
 apps/macos/build-dev/
+*.swp
