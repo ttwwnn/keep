@@ -33,6 +33,19 @@ final class PickerView: NSView {
     private let previewScroll = NSScrollView()
     /// What the card holds; the card itself is glass around it.
     private let cardContent = NSView()
+    /// The card's own ground, in the terminal's colour.
+    ///
+    /// Glass refracts whatever the window server has under it, and under a
+    /// window whose `background-opacity` is less than one that is the
+    /// desktop: the card came out wearing the wallpaper. `KeepWindow` already
+    /// meets this in the titlebar strip, where the Metal surface has not
+    /// started yet and the clear window shows through — and answers it the
+    /// same way, by painting the colour the terminal would have painted.
+    ///
+    /// Opaque, unlike that strip. The strip is meant to read as continuous
+    /// with a terminal that is itself see-through; this is the floor of an
+    /// overlay, and a floor you can see the desktop through is not one.
+    private let backdrop = NSView()
     /// Everything above the two halves: the field's row and the line under
     /// it. Named because the halves are sized as "the card, less this" —
     /// which is what keeps their height something the card hands down rather
@@ -91,6 +104,15 @@ final class PickerView: NSView {
         let marks: [Int]
     }
 
+    /// How far the card may grow before it stops being a panel.
+    ///
+    /// Wide enough for the two halves — a list of paths on the left and a
+    /// screen's worth of terminal on the right — and no wider. Two thirds of
+    /// an ultra-wide display is thirteen hundred points of card holding a
+    /// list of forty-character rows: a wall with a list painted on one end.
+    static let widest: CGFloat = 860
+    static let tallest: CGFloat = 560
+
     /// Dense, per the house ladder, and one line of text per row. Not the
     /// sidebar's 24: these rows carry a selection lozenge inset by two and
     /// are aimed at with a pointer as often as with the arrows.
@@ -128,21 +150,27 @@ final class PickerView: NSView {
         // at fourteen. An overlay that sits inside a window and is rounded
         // less than it reads as a rectangle somebody softened, rather than as
         // a piece of the same thing.
-        card = Glass.panel(cardContent, cornerRadius: 24)
-        // Grey, over whatever is behind it. Glass refracts what it is over,
-        // and what this is over is a terminal — so in a theme with a blue-dark
-        // background the card came out blue, which is not a colour anything in
-        // here chose.
-        Glass.tint(
-            card,
-            // Dynamic, so the same grey does not turn a light theme's card
-            // into a dark one.
-            NSColor(name: nil) { appearance in
-                appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                    ? NSColor(white: 0.07, alpha: 0.78)
-                    : NSColor(white: 0.97, alpha: 0.78)
-            })
+        // Sampling this window rather than the screen, which is the whole
+        // difference between a card floating on a terminal and one wearing
+        // somebody's wallpaper. Liquid Glass refracts what the window server
+        // has under it, and under a window whose `background-opacity` is less
+        // than one that is the desktop — no plate painted inside the window
+        // can change what it finds, because it never looks in here. The
+        // material that can be told where to look is the older one.
+        card = Glass.panel(cardContent, cornerRadius: 24, sampling: .window)
         card.translatesAutoresizingMaskIntoConstraints = false
+        backdrop.wantsLayer = true
+        backdrop.layer?.cornerCurve = .continuous
+        backdrop.layer?.cornerRadius = 24
+        backdrop.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(backdrop)
+        adoptTerminalBackground()
+        // A theme change repaints this the way it repaints the chrome.
+        NotificationCenter.default.addObserver(
+            forName: GhosttyApp.backgroundDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.adoptTerminalBackground() }
+        }
         // Neither the card nor its insides may shrink to fit what is in them.
         // A container hugs its content at priority 750 by default, which is
         // above the card's own "be a fraction of the window" — so the card
@@ -284,6 +312,14 @@ final class PickerView: NSView {
             // for the same share, quietly, makes the two agree.
             scroll.heightAnchor.constraint(equalTo: heightAnchor, multiplier: 0.62),
         ]
+        // Required, unlike the shares above: a cap that a window could argue
+        // with is not a cap. They are inequalities, so there is nothing for
+        // the window to argue with — it stops growing and nothing else moves.
+        let cardCaps = [
+            card.widthAnchor.constraint(lessThanOrEqualToConstant: Self.widest),
+            card.heightAnchor.constraint(lessThanOrEqualToConstant: Self.tallest),
+            scroll.heightAnchor.constraint(lessThanOrEqualToConstant: Self.tallest),
+        ]
         for constraint in cardSize { constraint.priority = NSLayoutConstraint.Priority(499) }
 
         // The field's row is what the two halves start under; there is no
@@ -291,9 +327,15 @@ final class PickerView: NSView {
         // card is a seam in something that is meant to read as one surface.
         let header = field
 
-        NSLayoutConstraint.activate(cardSize + [
+        NSLayoutConstraint.activate(cardSize + cardCaps + [
             card.centerXAnchor.constraint(equalTo: centerXAnchor),
             card.topAnchor.constraint(equalTo: topAnchor, constant: 90),
+
+            // Exactly the card, so nothing of it is ever visible on its own.
+            backdrop.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            backdrop.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            backdrop.topAnchor.constraint(equalTo: card.topAnchor),
+            backdrop.bottomAnchor.constraint(equalTo: card.bottomAnchor),
 
             field.topAnchor.constraint(equalTo: cardContent.topAnchor, constant: 20),
             field.heightAnchor.constraint(equalToConstant: 24),
@@ -393,6 +435,36 @@ final class PickerView: NSView {
             return
         }
         if !card.frame.contains(point) { onCancel?() }
+    }
+
+    /// The colour the terminal would have painted here, at full strength.
+    ///
+    /// Falls back to the window's own ground rather than to a named grey: a
+    /// terminal that has not reported its background yet is a terminal we
+    /// know nothing about, and a guess would be a rectangle of the wrong
+    /// colour behind glass rather than no rectangle at all.
+    private func adoptTerminalBackground() {
+        let ground = (GhosttyApp.shared.terminalBackground ?? .windowBackgroundColor)
+            .withAlphaComponent(1)
+        // Mostly grey, with the terminal's own colour showing through it —
+        // the mix the glass tint used to make, made here instead now that
+        // there is no glass to tint. Grey and not the terminal's colour
+        // outright: in a theme with a blue-dark background the card came out
+        // blue, which is not a colour anything in here chose.
+        let neutral: NSColor = effectiveAppearance
+            .bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(white: 0.09, alpha: 1)
+            : NSColor(white: 0.97, alpha: 1)
+        let mixed = ground.usingColorSpace(.sRGB)?
+            .blended(withFraction: 0.8, of: neutral) ?? neutral
+        backdrop.layer?.backgroundColor = mixed.cgColor
+    }
+
+    /// The plate is painted per appearance, so it has to be repainted when
+    /// the appearance changes under it.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        adoptTerminalBackground()
     }
 
     /// The terminal's font may change with a config reload, and the preview

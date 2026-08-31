@@ -19,10 +19,25 @@ enum Glass {
         return false
     }
 
+    /// Where a panel's material is allowed to look for what to refract.
+    enum Backdrop {
+        /// The window server's, which is what Liquid Glass samples and is
+        /// not ours to redirect. Under an opaque window that is the window;
+        /// under a see-through one it is the desktop, wallpaper and all.
+        case screen
+        /// This window's own content, and nothing past it. The pre-glass
+        /// material can be told this; `NSGlassEffectView` cannot, which is
+        /// the whole reason the distinction is spelled out here.
+        case window
+    }
+
     /// A view that hosts `content` on glass, or on a plain rounded material
-    /// where glass does not exist.
-    static func panel(_ content: NSView, cornerRadius: CGFloat) -> NSView {
-        if #available(macOS 26.0, *) {
+    /// where glass does not exist — or where glass would reach past the
+    /// window for something to refract and come back with the wallpaper.
+    static func panel(
+        _ content: NSView, cornerRadius: CGFloat, sampling: Backdrop = .screen
+    ) -> NSView {
+        if #available(macOS 26.0, *), sampling == .screen {
             let glass = NSGlassEffectView()
             glass.cornerRadius = cornerRadius
             glass.style = .regular
