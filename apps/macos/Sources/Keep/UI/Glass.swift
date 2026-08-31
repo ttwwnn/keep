@@ -53,9 +53,26 @@ enum Glass {
         effect.layer?.cornerCurve = .continuous
         effect.layer?.borderWidth = 1
         effect.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
+
+        // A material paints as well as blurs, and what it paints is not a
+        // colour anything here chose — `.hudWindow` lays a light grey over
+        // the blur whatever is under it, which on a dark theme is a pale
+        // card on a black terminal. So the caller gets somewhere to put its
+        // own colour: above the blur, below the content, which is the only
+        // place a tint can be and still let the blur through.
+        let tint = NSView()
+        tint.wantsLayer = true
+        tint.identifier = Self.tintIdentifier
+        tint.translatesAutoresizingMaskIntoConstraints = false
+        effect.addSubview(tint)
+
         content.translatesAutoresizingMaskIntoConstraints = false
         effect.addSubview(content)
         NSLayoutConstraint.activate([
+            tint.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
+            tint.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
+            tint.topAnchor.constraint(equalTo: effect.topAnchor),
+            tint.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
             content.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
             content.topAnchor.constraint(equalTo: effect.topAnchor),
@@ -95,9 +112,19 @@ enum Glass {
 
     /// Tint a glass view, if it is one.
     static func tint(_ view: NSView, _ color: NSColor?) {
-        guard #available(macOS 26.0, *), let glass = view as? NSGlassEffectView else { return }
-        glass.tintColor = color
+        if #available(macOS 26.0, *), let glass = view as? NSGlassEffectView {
+            glass.tintColor = color
+            return
+        }
+        // The material path keeps its tint in a view of its own; find it
+        // rather than assuming an index, since the content is in there too.
+        guard let effect = view as? NSVisualEffectView,
+              let tint = effect.subviews.first(where: { $0.identifier == tintIdentifier })
+        else { return }
+        tint.layer?.backgroundColor = color?.cgColor
     }
+
+    private static let tintIdentifier = NSUserInterfaceItemIdentifier("keep.glass.tint")
 }
 
 /// A selection lozenge that is glass on a dark ground and a flat wash on a

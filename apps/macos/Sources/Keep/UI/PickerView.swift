@@ -446,18 +446,53 @@ final class PickerView: NSView {
     private func adoptTerminalBackground() {
         let ground = (GhosttyApp.shared.terminalBackground ?? .windowBackgroundColor)
             .withAlphaComponent(1)
-        // Mostly grey, with the terminal's own colour showing through it —
-        // the mix the glass tint used to make, made here instead now that
-        // there is no glass to tint. Grey and not the terminal's colour
-        // outright: in a theme with a blue-dark background the card came out
-        // blue, which is not a colour anything in here chose.
-        let neutral: NSColor = effectiveAppearance
-            .bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor(white: 0.09, alpha: 1)
-            : NSColor(white: 0.97, alpha: 1)
-        let mixed = ground.usingColorSpace(.sRGB)?
-            .blended(withFraction: 0.8, of: neutral) ?? neutral
-        backdrop.layer?.backgroundColor = mixed.cgColor
+        // Short of opaque, or there is nothing left to blur. The material
+        // over this plate samples what is under it, and a plate at full
+        // strength gives it a flat colour to blur — which is a card that
+        // looks painted rather than one you can see the terminal moving
+        // behind. What gets through with it is the window's own see-through
+        // fraction of the desktop, which at this strength is two parts in a
+        // hundred and behind a blur.
+        //
+        // Decided from the colour rather than from the system's appearance:
+        // a light theme in a dark system is a light card, and it is the
+        // theme this is a card of.
+        let light = (ground.usingColorSpace(.sRGB)?.brightnessComponent ?? 0) >= 0.5
+        let colour = Self.deepened(ground)
+        // Thin. The plate is here to stop the desktop, not to be seen: every
+        // point of it is a point of blur that does not reach the eye.
+        backdrop.layer?.backgroundColor = colour
+            .withAlphaComponent(light ? 0.70 : 0.45).cgColor
+        // And the same colour again inside the card, over the material's
+        // blur. The material paints a light grey of its own on top of
+        // whatever it blurred, which is what made the card read as a pale
+        // panel on a black terminal — this is the colour the card is
+        // supposed to be, laid over that.
+        Glass.tint(card, colour.withAlphaComponent(light ? 0.72 : 0.55))
+    }
+
+    /// The terminal's own colour, a step deeper than it.
+    ///
+    /// The same arithmetic `KeepWindow.recessed` uses to put the sidebar a
+    /// step behind the terminal — a factor on the channels, so the hue is
+    /// the theme's and only the level moves. A panel over a terminal reads
+    /// as floating when the light comes from its edge rather than from its
+    /// face; lifted toward white instead, it was a pale card on a black
+    /// terminal.
+    ///
+    /// This is the whole of the card following the theme. It was once mostly
+    /// a fixed grey with the terminal's colour showing through at a fifth,
+    /// which is a card that changes by a fifth of a theme.
+    private static func deepened(_ color: NSColor) -> NSColor {
+        guard let rgb = color.usingColorSpace(.sRGB) else { return color }
+        // A light theme has less room to go down before it stops being the
+        // same colour, so it takes a smaller step.
+        let factor: CGFloat = rgb.brightnessComponent >= 0.5 ? 0.94 : 0.78
+        return NSColor(
+            srgbRed: rgb.redComponent * factor,
+            green: rgb.greenComponent * factor,
+            blue: rgb.blueComponent * factor,
+            alpha: 1)
     }
 
     /// The plate is painted per appearance, so it has to be repainted when
