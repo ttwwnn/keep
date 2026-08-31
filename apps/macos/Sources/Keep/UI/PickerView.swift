@@ -811,6 +811,8 @@ final class PickerView: NSView {
     /// the keyboard looks exactly like an overlay that will not accept input.
     func prepareForOpen() {
         closeActions()
+        // Opened afresh, so the first highlight is news again.
+        announced = nil
         guard !query.isEmpty else { return }
         query = ""
         field.stringValue = ""
@@ -1041,12 +1043,27 @@ final class PickerView: NSView {
         }
     }
 
+    /// The last row handed outward.
+    ///
+    /// A list that rebuilds under an unchanged selection — which is what a
+    /// tab renaming itself does, several times a second — must not report a
+    /// highlight that has not moved. Announced again, it clears the preview
+    /// and asks for it back, and the picture flickers for as long as the
+    /// program spins.
+    private var announced: String?
+
+    private func announce(_ id: String?) {
+        guard id != announced else { return }
+        announced = id
+        onHighlight?(id)
+    }
+
     private func select(row: Int) {
         defer { updateCounter() }
         guard row >= 0, row < shown.count, shown[row].item != nil else {
             table.deselectAll(nil)
             footer.show(nil)
-            onHighlight?(nil)
+            announce(nil)
             return
         }
         // The table's own delegate reports the change; announcing it here as
@@ -1507,11 +1524,25 @@ private final class PickerRow: NSTableRowView {
 extension PickerView: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int { shown.count }
 
+    private static let rowKind = NSUserInterfaceItemIdentifier("picker.row")
+    private static let headingKind = NSUserInterfaceItemIdentifier("picker.heading")
+
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
         // A heading takes the plain row: `PickerRow` washes under the pointer,
         // and a wash on something that cannot be chosen is an invitation the
         // list will not honour.
-        shown[row].item == nil ? NSTableRowView() : PickerRow()
+        //
+        // Both are reused. A row carries a pane of glass for its selection,
+        // and a list that rebuilds while a program spins its title was
+        // making one of those per visible row per tick.
+        let kind = shown[row].item == nil ? Self.headingKind : Self.rowKind
+        if let reused = tableView.makeView(withIdentifier: kind, owner: self)
+            as? NSTableRowView {
+            return reused
+        }
+        let made = shown[row].item == nil ? NSTableRowView() : PickerRow()
+        made.identifier = kind
+        return made
     }
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
@@ -1918,7 +1949,7 @@ extension PickerView: NSTableViewDataSource, NSTableViewDelegate {
     func tableViewSelectionDidChange(_ notification: Notification) {
         updateCounter()
         footer.show(selectedItem)
-        onHighlight?(selectedItemID)
+        announce(selectedItemID)
     }
 
     @objc private func chooseSelected() {

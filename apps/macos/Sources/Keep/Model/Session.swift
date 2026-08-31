@@ -695,6 +695,11 @@ final class Session {
 
         case .previewPickerItem(let id):
             guard var open = views[window]?.picker else { return }
+            // Already the one being shown. A list rebuilt under an unchanged
+            // selection — which is what a tab renaming itself does — is not a
+            // new question, and answering it again blanks the preview and
+            // asks the daemon for a screen it has already handed over.
+            guard open.previewOf != id else { return }
             open.previewOf = id
             open.previewText = ""
             views[window]?.picker = open
