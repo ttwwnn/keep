@@ -83,6 +83,16 @@ final class TabEntity {
     /// Focus arrives from views, and a view can be handed the responder by
     /// AppKit while it belongs to a tab nobody is looking at; remembering
     /// that would aim the next split or close at another tab's work.
+    /// Adopt a title straight from the surface showing it.
+    ///
+    /// Returns whether it changed anything, so a repaint that says the same
+    /// thing does not publish a snapshot to every window.
+    func noteTitle(_ newTitle: String) -> Bool {
+        guard newTitle != title else { return false }
+        title = newTitle
+        return true
+    }
+
     func noteFocus(pane: UInt32) {
         guard owns(pane: pane) else { return }
         focusedPane = pane

@@ -197,6 +197,11 @@ enum Intent {
     /// belonging to a hidden tab can pick it up — a report with no tab on it
     /// would be written to whichever tab happened to be active.
     case focusPane(TabID, UInt32)
+    /// A pane's program renamed itself, reported by the surface showing it
+    /// rather than found on the daemon's next listing. Titles are polled
+    /// every two seconds and a program that spins one redraws it several
+    /// times a second, so the poll only ever caught a still frame of it.
+    case notePaneTitle(TabID, UInt32, String)
     case setSidebar(SidebarState)     // from the toggle or a divider drag
     /// Fold or unfold one workspace's tab list in this window's sidebar.
     case toggleDisclosure(String)

@@ -44,6 +44,13 @@ final class TerminalSurfaceView: NSView {
 
     /// The active pane reports focus upward; the model owns the fact.
     var onFocusGained: (() -> Void)?
+    /// The title the program inside just set, as it set it.
+    ///
+    /// The daemon reports titles too, and the app has always taken them from
+    /// there — but it asks every two seconds, and a program that spins its
+    /// title is redrawing it several times a second. Two seconds of that is
+    /// a still frame of an animation.
+    var onTitle: ((String) -> Void)?
 
     /// Whether the pointer is currently showing the column-selection shape.
     private var showingColumnCursor = false
@@ -985,6 +992,16 @@ final class TerminalSurfaceView: NSView {
     /// on. Nil until the first prompt, and stale by exactly as long as a
     /// program that changes directory without printing a prompt runs.
     private(set) var currentDirectory: String?
+
+    func noteTitle(_ title: String) {
+        guard title != lastTitle else { return }
+        lastTitle = title
+        onTitle?(title)
+    }
+
+    /// What was last reported, so a program repainting the same title does
+    /// not walk the whole model up to the tab strip to say nothing.
+    private var lastTitle: String?
 
     func noteDirectory(_ raw: String) {
         // Reported as a file URL — file://host/path — and wanted as a path.

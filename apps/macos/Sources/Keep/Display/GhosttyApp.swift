@@ -417,6 +417,21 @@ final class GhosttyApp {
                     GhosttyApp.shared.view(for: surface)?.runtimeRequestedDraw()
                 }
                 return true
+            case GHOSTTY_ACTION_SET_TITLE:
+                // What the program calls itself, the moment it says so.
+                // Every other route to this — the daemon's listing — is a
+                // poll, and a title that spins deserves better than being
+                // sampled.
+                guard target.tag == GHOSTTY_TARGET_SURFACE,
+                    let surface = target.target.surface,
+                    let raw = action.action.set_title.title
+                else { return false }
+                let title = String(cString: raw)
+                DispatchQueue.main.async {
+                    GhosttyApp.shared.view(for: surface)?.noteTitle(title)
+                }
+                return true
+
             case GHOSTTY_ACTION_PWD:
                 // Where a new tab or a new pane should start: whatever the
                 // shell you are in last said it was in.

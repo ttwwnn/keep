@@ -146,6 +146,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             self.send(.setSidebar(
                 SidebarState(isCollapsed: !state.isCollapsed, width: state.width)))
         }
+        container.onPaneTitle = { [weak self] id, pane, title in
+            self?.send(.notePaneTitle(id, pane, title))
+        }
         container.onPaneFocus = { [weak self] id, pane in
             self?.send(.focusPane(id, pane))
         }

@@ -20,6 +20,8 @@ final class TabContentContainer: NSView {
     /// which pane has focus stays a model fact rather than something the UI
     /// is asked for later.
     var onPaneFocus: ((TabID, UInt32) -> Void)?
+    /// A pane's program renamed itself.
+    var onPaneTitle: ((TabID, UInt32, String) -> Void)?
     var onPaneDrop: ((TabID, UInt32, UInt32, Intent.DropSide) -> Void)?
     var onPaneDetach: ((TabID, UInt32) -> Void)?
     /// Where the pointer is while a pane is being carried, in window
@@ -39,6 +41,9 @@ final class TabContentContainer: NSView {
         if let existing = hosts[tab.id] { return existing }
         let host = TabHostView(id: tab.id, window: windowID)
         host.onPaneFocus = { [weak self] id, pane in self?.onPaneFocus?(id, pane) }
+        host.onPaneTitle = { [weak self] id, pane, title in
+            self?.onPaneTitle?(id, pane, title)
+        }
         host.onPaneCarry = { [weak self] id, pane, event in
             self?.carry(from: id, pane: pane, beginning: event)
         }
@@ -206,6 +211,9 @@ final class TabHostView: NSView {
     /// A pane surface took the keyboard; forwarded up with this tab's identity
     /// so a report from a hidden tab cannot be mistaken for the active one's.
     var onPaneFocus: ((TabID, UInt32) -> Void)?
+    /// Carried up with this tab's identity for the same reason focus is: a
+    /// hidden tab renaming itself must not be taken for the active one.
+    var onPaneTitle: ((TabID, UInt32, String) -> Void)?
 
     /// Which way to look for a neighbouring pane.
     enum Direction { case left, right, up, down }
@@ -348,6 +356,10 @@ final class TabHostView: NSView {
             surface.onFocusGained = { [weak self] in
                 guard let self else { return }
                 self.onPaneFocus?(self.id, tab)
+            }
+            surface.onTitle = { [weak self] title in
+                guard let self else { return }
+                self.onPaneTitle?(self.id, tab, title)
             }
             surface.onGripEvent = { [weak self] event, phase in
                 guard let self, phase == .began else { return }

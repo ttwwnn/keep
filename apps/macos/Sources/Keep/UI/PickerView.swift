@@ -31,6 +31,14 @@ final class PickerView: NSView {
     private let table = PickerTable()
     private let preview = NSTextView()
     private let previewScroll = NSScrollView()
+    /// The preview, framed.
+    ///
+    /// A screen of somebody else's terminal, laid straight onto the card,
+    /// reads as this card's own text — the two are the same face on the same
+    /// ground. Inside a frame it reads as a picture *of* a screen, which is
+    /// what it is, and the frame is where its name can be written.
+    private let previewCard = NSView()
+    private let previewTitle = NSTextField(labelWithString: "")
     /// What the card holds; the card itself is glass around it.
     private let cardContent = NSView()
     /// The lit rim around the card.
@@ -308,7 +316,25 @@ final class PickerView: NSView {
         previewScroll.drawsBackground = false
         previewScroll.hasVerticalScroller = false
         previewScroll.translatesAutoresizingMaskIntoConstraints = false
-        cardContent.addSubview(previewScroll)
+
+        previewCard.wantsLayer = true
+        previewCard.layer?.cornerCurve = .continuous
+        previewCard.layer?.cornerRadius = 10
+        // Clipped, or a long line of a terminal runs out through the corner.
+        previewCard.layer?.masksToBounds = true
+        previewCard.layer?.borderWidth = 1
+        previewCard.translatesAutoresizingMaskIntoConstraints = false
+        previewCard.addSubview(previewScroll)
+        cardContent.addSubview(previewCard)
+
+        // The app's own voice — this is a label on a picture, not a line the
+        // terminal printed.
+        previewTitle.font = .systemFont(ofSize: 11, weight: .medium)
+        previewTitle.textColor = .tertiaryLabelColor
+        previewTitle.lineBreakMode = .byTruncatingTail
+        previewTitle.maximumNumberOfLines = 1
+        previewTitle.translatesAutoresizingMaskIntoConstraints = false
+        cardContent.addSubview(previewTitle)
 
         footer.translatesAutoresizingMaskIntoConstraints = false
         footer.onOpen = { [weak self] in
@@ -413,11 +439,25 @@ final class PickerView: NSView {
             // a share of it.
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 240),
 
-            previewScroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 18),
-            previewScroll.leadingAnchor.constraint(equalTo: listBox.trailingAnchor, constant: 8),
-            previewScroll.trailingAnchor.constraint(equalTo: cardContent.trailingAnchor),
-            previewScroll.bottomAnchor.constraint(
+            previewTitle.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 16),
+            previewTitle.leadingAnchor.constraint(
+                equalTo: listBox.trailingAnchor, constant: 10),
+            previewTitle.trailingAnchor.constraint(
+                lessThanOrEqualTo: cardContent.trailingAnchor, constant: -16),
+
+            previewCard.topAnchor.constraint(
+                equalTo: previewTitle.bottomAnchor, constant: 7),
+            previewCard.leadingAnchor.constraint(
+                equalTo: listBox.trailingAnchor, constant: 8),
+            previewCard.trailingAnchor.constraint(
+                equalTo: cardContent.trailingAnchor, constant: -14),
+            previewCard.bottomAnchor.constraint(
                 equalTo: footer.topAnchor, constant: -6),
+
+            previewScroll.topAnchor.constraint(equalTo: previewCard.topAnchor),
+            previewScroll.leadingAnchor.constraint(equalTo: previewCard.leadingAnchor),
+            previewScroll.trailingAnchor.constraint(equalTo: previewCard.trailingAnchor),
+            previewScroll.bottomAnchor.constraint(equalTo: previewCard.bottomAnchor),
 
             // In the corner, floating, sized by what is in it. Pinned to two
             // edges and nothing else: the card's height is a share of the
@@ -526,6 +566,15 @@ final class PickerView: NSView {
         // panel on a black terminal — this is the colour the card is
         // supposed to be, laid over that.
         Glass.tint(card, colour.withAlphaComponent(light ? 0.72 : 0.55))
+        // The frame around the preview is the terminal's own ground, so a
+        // screen inside it sits on the colour it came from — and a hairline,
+        // because a theme whose background matches the card would otherwise
+        // leave the picture with no edge at all.
+        previewCard.layer?.backgroundColor = ground
+            .withAlphaComponent(light ? 0.55 : 0.40).cgColor
+        previewCard.layer?.borderColor = (light
+            ? NSColor.black.withAlphaComponent(0.10)
+            : NSColor.white.withAlphaComponent(0.08)).cgColor
         CATransaction.commit()
     }
 
@@ -597,12 +646,19 @@ final class PickerView: NSView {
             all = model.items
             refilter(preservingSelection: true)
         }
+        // Whose screen this is, over the frame it is in. The row already
+        // says it, but the row is on the other side of the card and the eye
+        // reading a screen has left it behind.
+        let showing = model.previewOf.flatMap { id in
+            model.items.first { $0.id == id }
+        }
+        previewTitle.stringValue = showing.map(Self.previewName) ?? ""
+        previewCard.isHidden = showing == nil
+
         // A theme previews as a screen in it, and a face as a screen set in
         // it. Neither is a question for the daemon: the answer is a file on
         // this machine, and the sample is made here.
-        if let id = model.previewOf,
-           let item = model.items.first(where: { $0.id == id }),
-           Self.isAppearance(item.kind) {
+        if let item = showing, Self.isAppearance(item.kind) {
             showSample(of: item)
             return
         }
@@ -635,6 +691,25 @@ final class PickerView: NSView {
         // Next turn: the card is measured after the window has laid it out,
         // not while the model is still being applied to it.
         if Trace.enabled { DispatchQueue.main.async { [weak self] in self?.traceShape() } }
+    }
+
+    /// What to call the thing being previewed, in as few words as name it.
+    ///
+    /// The workspace column and the title, which together are what tells one
+    /// row from another — and for a folder the path, since a folder's
+    /// preview is the folder.
+    private static func previewName(_ item: PickerModel.Item) -> String {
+        switch item.kind {
+        case .running:
+            let name = item.title.isEmpty ? item.path : item.title
+            return item.context.isEmpty ? name : "\(item.context)  ·  \(name)"
+        case .destination:
+            return item.detail.isEmpty ? item.title : item.detail
+        case .hit:
+            return item.detail
+        case .command, .theme, .fontFamily:
+            return item.title
+        }
     }
 
     private static func isAppearance(_ kind: PickerModel.Item.Kind) -> Bool {

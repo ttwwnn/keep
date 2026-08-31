@@ -460,6 +460,18 @@ final class Session {
             entity.noteFocus(pane: pane)
             publish()
 
+        case .notePaneTitle(let id, let pane, let title):
+            // A tab wears its root pane's title — that is the rule the
+            // daemon's listing follows too, and the two must not disagree
+            // between polls. A split's other panes rename nothing.
+            guard pane == id.root,
+                  let workspace = workspaces.first(where: { $0.name == id.workspace }),
+                  let tab = workspace.tabs.first(where: { $0.id == id }),
+                  tab.noteTitle(title)
+            else { return }
+            refreshOpenLists()
+            publish()
+
         case .setSidebar(let state):
             sidebarStore.save(state, for: window)
             publish()
@@ -973,6 +985,31 @@ final class Session {
             )
         }
         return running + new
+    }
+
+    /// Rebuild the rows of any "go to" list that happens to be open.
+    ///
+    /// A picker's items are a snapshot taken when it opened — which is right
+    /// for a search, whose rows are an answer to a question already asked,
+    /// and wrong for this one, whose rows are a list of what is running. A
+    /// tab that renames itself while you are looking at the list should
+    /// rename itself in the list.
+    ///
+    /// Only the flat list, and only while it is up: a catalog of themes does
+    /// not change because a terminal did something.
+    private func refreshOpenLists() {
+        // The windows first, then the work. `pickerItems` reads `views` to
+        // find out where a window is, and reading it inside a
+        // `views[window]?...` assignment is two accesses to one property at
+        // once — which Swift stops dead at runtime and says nothing about at
+        // build time.
+        let open = views.compactMap { window, view in
+            view.picker?.mode == .goTo ? window : nil
+        }
+        for window in open {
+            let items = pickerItems(for: window)
+            views[window]?.picker?.items = items
+        }
     }
 
     /// What the palette lists, for each of its three questions.
