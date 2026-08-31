@@ -211,7 +211,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         picker.onHighlight = { [weak self] id in
             self?.send(.previewPickerItem(id))
         }
-        picker.onChoose = { [weak self] id in self?.send(.choosePickerItem(id)) }
+        picker.onChoose = { [weak self] id in self?.choose(id) }
+        picker.onBack = { [weak self] in self?.send(.togglePalette(.root)) }
         picker.onDismissItem = { [weak self] id in
             self?.send(.dismissPickerItem(id))
         }
@@ -319,6 +320,96 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             return
         }
         picker.apply(model)
+    }
+
+    /// A chosen row, sorted by who can carry it out.
+    ///
+    /// Going somewhere is the session's business and goes down the one
+    /// channel. Running a command and wearing a theme are not: a window is
+    /// opened by AppKit, a theme by libghostty, and neither is state the
+    /// session holds. Those are done here, and only the closing of the
+    /// overlay travels back through the model.
+    private func choose(_ id: String) {
+        guard let item = applied?.picker?.items.first(where: { $0.id == id }) else {
+            send(.choosePickerItem(id))
+            return
+        }
+        switch item.kind {
+        case .command(let command):
+            run(command)
+        case .theme(let name):
+            wear { $0.theme = name }
+        case .fontFamily(let name):
+            wear { $0.fontFamily = name }
+        case .running, .destination, .hit:
+            send(.choosePickerItem(id))
+        }
+    }
+
+    /// Change the terminal's appearance and put the overlay away.
+    ///
+    /// The overlay first: adopting a config repaints every surface in the
+    /// app, and doing that underneath an open picker means the repaint and
+    /// the dismissal land in different frames.
+    private func wear(_ change: (inout TerminalPrefs) -> Void) {
+        send(.closePicker)
+        var prefs = GhosttyApp.prefs
+        change(&prefs)
+        GhosttyApp.shared.adopt(prefs)
+    }
+
+    /// One of the palette's commands.
+    private func run(_ command: Command) {
+        // A command that opens a list is not a command that finishes: the
+        // overlay stays up and changes what it is asking.
+        if let catalog = command.opens {
+            send(.togglePalette(catalog))
+            return
+        }
+        send(.closePicker)
+        switch command {
+        case .toggleSidebar:
+            (window as? KeepWindow)?.toggleSidebar(nil)
+        case .toggleVerticalTabs:
+            send(.toggleVerticalTabs)
+        case .splitRight:
+            send(.split(1))
+        case .splitDown:
+            send(.split(2))
+        case .closePane:
+            send(.closePane(nil))
+        case .closeTab:
+            send(.closeTab(nil))
+        case .newTab:
+            send(.newTab(in: nil))
+        case .newWindow:
+            // Through the responder chain, because a window is opened by the
+            // app delegate and this controller is one of its windows.
+            NSApp.sendAction(Selector(("newWindow:")), to: nil, from: nil)
+        case .newWorkspace:
+            // Same, and for the same reason: naming it is a sheet.
+            NSApp.sendAction(Selector(("newWorkspace:")), to: nil, from: nil)
+        case .removeWorkspace:
+            guard let name = applied?.active?.id.workspace else { return }
+            send(.removeWorkspace(name))
+        case .killWorkspace:
+            guard let name = applied?.active?.id.workspace else { return }
+            send(.killWorkspace(name))
+        case .fontBigger:
+            wear { $0.fontSize = min(Self.step(GhosttyApp.shared.terminalFontSize, by: 1), 32) }
+        case .fontSmaller:
+            wear { $0.fontSize = max(Self.step(GhosttyApp.shared.terminalFontSize, by: -1), 8) }
+        case .fontReset:
+            wear { $0.fontSize = nil; $0.fontFamily = nil }
+        case .clearTheme:
+            wear { $0.theme = nil }
+        case .chooseTheme, .chooseFont:
+            break
+        }
+    }
+
+    private static func step(_ size: Double, by amount: Double) -> Double {
+        (size + amount).rounded()
     }
 
     /// What the picker's actions panel asked for, on the row it was over.

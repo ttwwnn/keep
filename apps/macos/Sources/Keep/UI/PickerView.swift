@@ -19,6 +19,8 @@ final class PickerView: NSView {
     var onDismissItem: ((String) -> Void)?
     /// Anything the actions panel offers, on the row it was opened over.
     var onAction: ((String, PickerAction) -> Void)?
+    /// Escape, in a catalog the palette opened: back one step.
+    var onBack: (() -> Void)?
     var onCancel: (() -> Void)?
 
     private let field = NSTextField()
@@ -409,6 +411,12 @@ final class PickerView: NSView {
         switch model.mode {
         case .goTo:
             field.placeholderString = "go to a terminal, or a folder to start one in…"
+        case .palette(.root):
+            field.placeholderString = "what would you like to do…"
+        case .palette(.themes):
+            field.placeholderString = "a theme to wear…"
+        case .palette(.fonts):
+            field.placeholderString = "a face to set it in…"
         case .search(let global):
             field.placeholderString = global
                 ? "find everywhere…"
@@ -424,6 +432,16 @@ final class PickerView: NSView {
             all = model.items
             refilter(preservingSelection: true)
         }
+        // A theme previews as a screen in it, and a face as a screen set in
+        // it. Neither is a question for the daemon: the answer is a file on
+        // this machine, and the sample is made here.
+        if let id = model.previewOf,
+           let item = model.items.first(where: { $0.id == id }),
+           Self.isAppearance(item.kind) {
+            showSample(of: item)
+            return
+        }
+        preview.drawsBackground = false
         // A hit previews as the lines around it, which is what tells you
         // whether it is the place you meant; anything else previews as the
         // screen the daemon holds.
@@ -452,6 +470,83 @@ final class PickerView: NSView {
         // Next turn: the card is measured after the window has laid it out,
         // not while the model is still being applied to it.
         if Trace.enabled { DispatchQueue.main.async { [weak self] in self?.traceShape() } }
+    }
+
+    private static func isAppearance(_ kind: PickerModel.Item.Kind) -> Bool {
+        switch kind {
+        case .theme, .fontFamily: return true
+        case .running, .destination, .hit, .command: return false
+        }
+    }
+
+    /// A few lines of a terminal, in the theme or the face being considered.
+    ///
+    /// The same lines every time, on purpose: what is being compared is the
+    /// colours, and a sample whose text changed between two themes would be
+    /// asking you to compare two different things.
+    ///
+    /// The background is painted as an attribute rather than on the view.
+    /// The text view is only as tall as its text and the pane is taller, so a
+    /// background set on the view is a block that stops halfway down the
+    /// card; padded lines carrying their own put the colour exactly where the
+    /// screen would be.
+    private func showSample(of item: PickerModel.Item) {
+        var family: String?
+        var colors: ThemeCatalog.Colors?
+        switch item.kind {
+        case .theme(let name):
+            colors = ThemeCatalog.colors(of: name)
+        case .fontFamily(let name):
+            family = name
+        default: return
+        }
+        let sampleKey = "sample:\(item.id)"
+        guard lastPreview != sampleKey else { return }
+        lastPreview = sampleKey
+
+        let font = family.flatMap { NSFont(name: $0, size: 11) }
+            ?? GhosttyApp.shared.terminalFont(size: 11)
+        let palette = GhosttyApp.shared.terminalPalette()
+        let ink = colors?.foreground ?? palette.foreground
+        func colour(_ slot: Int) -> NSColor {
+            colors.map { $0.ansi[slot] } ?? palette.colors[slot]
+        }
+        // Wide enough that the painted background reads as a screen rather
+        // than as a ragged label.
+        let width = 46
+        let lines: [[(String, NSColor)]] = [
+            [("~/Projects/keep", colour(4)), ("  main", colour(5))],
+            [("$ ", colour(2)), ("git status", ink)],
+            [(" M ", colour(3)), ("crates/keepd/src/tab.rs", ink)],
+            [("?? ", colour(1)), ("apps/macos/Sources/Keep/UI", ink)],
+            [("$ ", colour(2)), ("cargo build --release", ink)],
+            [("   Compiling ", colour(2)), ("keepd v0.1.0", ink)],
+            [("    Finished ", colour(6)), ("in 4.21s", ink)],
+            [("", ink)],
+            [("████", colour(1)), ("████", colour(2)), ("████", colour(3)),
+             ("████", colour(4)), ("████", colour(5)), ("████", colour(6))],
+        ]
+        let text = NSMutableAttributedString()
+        for line in lines {
+            var drawn = 0
+            for (run, tint) in line {
+                text.append(NSAttributedString(
+                    string: run, attributes: [.font: font, .foregroundColor: tint]))
+                drawn += run.count
+            }
+            // Padded, so the background runs to the edge of the sample.
+            let pad = max(width - drawn, 1)
+            text.append(NSAttributedString(
+                string: String(repeating: " ", count: pad) + "\n",
+                attributes: [.font: font, .foregroundColor: ink]))
+        }
+        if let background = colors?.background {
+            text.addAttribute(
+                .backgroundColor, value: background,
+                range: NSRange(location: 0, length: text.length))
+        }
+        preview.textStorage?.setAttributedString(text)
+        preview.scrollToBeginningOfDocument(nil)
     }
 
     /// The field owns the keyboard for as long as the picker is up.
@@ -546,6 +641,15 @@ final class PickerView: NSView {
         if isSearching {
             litColumns = [:]
             shown = all.map(Row.item)
+        } else if case .palette(let catalog) = mode {
+            let (kept, marks) = Self.matches(all, query: query)
+            litColumns = marks
+            // Headings only on the untyped list. Scoring mixes the groups
+            // together, and a heading standing over one row of its own kind
+            // and four of another is worse than no heading at all.
+            shown = catalog == .root && query.isEmpty
+                ? Self.grouped(kept)
+                : kept.map(Row.item)
         } else {
             let (kept, marks) = Self.matches(all, query: query)
             litColumns = marks
@@ -576,7 +680,10 @@ final class PickerView: NSView {
             switch item.kind {
             case .running: terminals.append(item)
             case .destination: folders.append(item)
-            case .hit: loose.append(item)
+            // Neither group, and neither heading. A palette's rows never
+            // reach here — `grouped` takes those — but a kind with nowhere
+            // to go must still land somewhere rather than vanish.
+            case .hit, .command, .theme, .fontFamily: loose.append(item)
             }
         }
         var rows: [Row] = loose.map(Row.item)
@@ -587,6 +694,24 @@ final class PickerView: NSView {
         if !folders.isEmpty {
             rows.append(.heading("open in"))
             rows += folders.map(Row.item)
+        }
+        return rows
+    }
+
+    /// Runs of one group, each under its name.
+    ///
+    /// The order is the list's own — the palette hands its commands over in
+    /// the order they should be read — so this only has to notice where one
+    /// group stops and the next begins.
+    private static func grouped(_ items: [PickerModel.Item]) -> [Row] {
+        var rows: [Row] = []
+        var current: String?
+        for item in items {
+            if item.context != current {
+                current = item.context
+                if !item.context.isEmpty { rows.append(.heading(item.context)) }
+            }
+            rows.append(.item(item))
         }
         return rows
     }
@@ -848,6 +973,14 @@ extension PickerView: NSTextFieldDelegate {
             if let id = selectedItemID { onChoose?(id) }
             return true
         case #selector(NSResponder.cancelOperation(_:)):
+            // A catalog was opened from the palette, so escape goes back to
+            // it rather than out of the overlay: you came here to do
+            // something, and changing your mind about *which* theme is not
+            // changing your mind about the palette.
+            if case .palette(let catalog) = mode, catalog != .root {
+                onBack?()
+                return true
+            }
             onCancel?()
             return true
         case #selector(NSResponder.deleteForward(_:)):
@@ -928,6 +1061,61 @@ private final class FadingBox: NSView {
         ]
         CATransaction.commit()
     }
+}
+
+/// A scrap of a terminal in a theme's own colours.
+///
+/// Its background, five of its sixteen, and a hairline so that a theme whose
+/// background is the same as the card's does not read as a hole. Five rather
+/// than sixteen because at this size sixteen is a smear.
+private final class ThemeSwatchView: NSView {
+    init(colors: ThemeCatalog.Colors?) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        layer?.cornerCurve = .continuous
+        layer?.cornerRadius = 5
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.4).cgColor
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 46),
+            heightAnchor.constraint(equalToConstant: 18),
+        ])
+        guard let colors else {
+            // A theme whose file would not parse: an empty frame, which is
+            // honest, rather than somebody else's colours in its name.
+            layer?.backgroundColor = NSColor.clear.cgColor
+            return
+        }
+        layer?.backgroundColor = colors.background.cgColor
+        // The four that carry a theme's character — red, green, yellow, blue
+        // — and its foreground last, which is what most of the screen is.
+        let shown = [colors.ansi[1], colors.ansi[2], colors.ansi[3], colors.ansi[4],
+                     colors.foreground]
+        let strip = NSStackView(views: shown.map { colour in
+            let dot = NSView()
+            dot.wantsLayer = true
+            dot.layer?.cornerRadius = 1.5
+            dot.layer?.backgroundColor = colour.cgColor
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                dot.widthAnchor.constraint(equalToConstant: 5),
+                dot.heightAnchor.constraint(equalToConstant: 9),
+            ])
+            return dot
+        })
+        strip.orientation = .horizontal
+        strip.spacing = 2
+        strip.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(strip)
+        NSLayoutConstraint.activate([
+            strip.centerXAnchor.constraint(equalTo: centerXAnchor),
+            strip.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
 }
 
 /// A row that lights up the way the sidebar's do.
@@ -1066,7 +1254,13 @@ extension PickerView: NSTableViewDataSource, NSTableViewDelegate {
 
     private func itemCell(_ item: PickerModel.Item) -> NSView {
         let cell = NSView()
-        if case .hit = item.kind { return hitCell(item, in: cell) }
+        switch item.kind {
+        case .command(let command): return commandCell(command, item, in: cell)
+        case .theme(let name): return themeCell(name, item, in: cell)
+        case .fontFamily(let name): return fontCell(name, item, in: cell)
+        case .hit: return hitCell(item, in: cell)
+        case .running, .destination: break
+        }
         // A workspace name and the directory under it are things the terminal
         // would also print, so they are set in the terminal's own face — and
         // in a column, which is the whole repair: three tabs of one project
@@ -1248,6 +1442,138 @@ extension PickerView: NSTableViewDataSource, NSTableViewDelegate {
             label.trailingAnchor.constraint(
                 lessThanOrEqualTo: cell.trailingAnchor, constant: -18),
             label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        ])
+        return cell
+    }
+
+    /// Something to do: the glyph, the words, and the chord that does the
+    /// same thing without coming through here.
+    ///
+    /// Set in the system face, not the terminal's. Everything else in this
+    /// list is a thing the terminal knows about — a directory, a title, a
+    /// line it printed — and is set in the terminal's face for that reason.
+    /// A command is the app talking about itself.
+    private func commandCell(
+        _ command: Command, _ item: PickerModel.Item, in cell: NSView
+    ) -> NSView {
+        let badge = NSImageView()
+        badge.image = NSImage(
+            systemSymbolName: command.symbol, accessibilityDescription: command.title)
+        badge.contentTintColor = command.isDestructive ? .systemRed : .secondaryLabelColor
+        badge.symbolConfiguration = .init(pointSize: 13, weight: .regular)
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(badge)
+
+        let font = NSFont.systemFont(ofSize: 13)
+        let title = NSTextField(labelWithString: command.title)
+        title.font = font
+        title.textColor = command.isDestructive ? .systemRed : .labelColor
+        title.lineBreakMode = .byTruncatingTail
+        title.maximumNumberOfLines = 1
+        title.translatesAutoresizingMaskIntoConstraints = false
+        if let hit = litColumns[item.id], hit.column == .title {
+            title.attributedStringValue = Self.lit(
+                command.title, marks: hit.marks, font: font,
+                base: command.isDestructive ? .systemRed : .secondaryLabelColor,
+                hit: command.isDestructive ? .systemRed : .labelColor)
+        }
+        cell.addSubview(title)
+
+        NSLayoutConstraint.activate([
+            badge.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 18),
+            badge.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            badge.widthAnchor.constraint(equalToConstant: 18),
+            title.leadingAnchor.constraint(equalTo: badge.trailingAnchor, constant: 10),
+            title.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        ])
+
+        guard !command.keys.isEmpty else { return cell }
+        let caps = KeyCapView.row(command.keys)
+        cell.addSubview(caps)
+        NSLayoutConstraint.activate([
+            caps.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            caps.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -16),
+            title.trailingAnchor.constraint(lessThanOrEqualTo: caps.leadingAnchor, constant: -10),
+        ])
+        return cell
+    }
+
+    /// A theme, wearing itself.
+    ///
+    /// The name of a theme says nothing — there are four hundred of them and
+    /// half are named after a mountain. So the row carries a scrap of the
+    /// thing itself: the background it would paint, with its own colours on
+    /// it. That is the whole choice, made without reading.
+    private func themeCell(
+        _ name: String, _ item: PickerModel.Item, in cell: NSView
+    ) -> NSView {
+        let swatch = ThemeSwatchView(colors: ThemeCatalog.colors(of: name))
+        cell.addSubview(swatch)
+
+        let font = GhosttyApp.shared.terminalFont(size: 12.5)
+        let title = NSTextField(labelWithString: name)
+        title.font = font
+        title.textColor = .labelColor
+        title.lineBreakMode = .byTruncatingTail
+        title.maximumNumberOfLines = 1
+        title.translatesAutoresizingMaskIntoConstraints = false
+        if let hit = litColumns[item.id], hit.column == .title {
+            title.attributedStringValue = Self.lit(name, marks: hit.marks, font: font)
+        }
+        cell.addSubview(title)
+
+        // The one being worn says so, since a list of four hundred names has
+        // no other way of telling you where you already are.
+        let worn = NSTextField(labelWithString: item.detail)
+        worn.font = .systemFont(ofSize: 11)
+        worn.textColor = .tertiaryLabelColor
+        worn.translatesAutoresizingMaskIntoConstraints = false
+        worn.setContentCompressionResistancePriority(.required, for: .horizontal)
+        cell.addSubview(worn)
+
+        NSLayoutConstraint.activate([
+            swatch.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 18),
+            swatch.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            title.leadingAnchor.constraint(equalTo: swatch.trailingAnchor, constant: 12),
+            title.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            title.trailingAnchor.constraint(lessThanOrEqualTo: worn.leadingAnchor, constant: -10),
+            worn.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -18),
+            worn.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        ])
+        return cell
+    }
+
+    /// A face, set in itself. Same argument as the theme above: the name of a
+    /// monospaced family tells you almost nothing about its zero.
+    private func fontCell(
+        _ family: String, _ item: PickerModel.Item, in cell: NSView
+    ) -> NSView {
+        let face = NSFont(name: family, size: 13) ?? .monospacedSystemFont(ofSize: 13, weight: .regular)
+        let title = NSTextField(labelWithString: family)
+        title.font = face
+        title.textColor = .labelColor
+        title.lineBreakMode = .byTruncatingTail
+        title.maximumNumberOfLines = 1
+        title.translatesAutoresizingMaskIntoConstraints = false
+        if let hit = litColumns[item.id], hit.column == .title {
+            title.attributedStringValue = Self.lit(family, marks: hit.marks, font: face)
+        }
+        cell.addSubview(title)
+
+        // The glyphs a terminal is actually judged on, in the face itself.
+        let sample = NSTextField(labelWithString: "0O l1I {}[] =>")
+        sample.font = NSFont(name: family, size: 12) ?? face
+        sample.textColor = .tertiaryLabelColor
+        sample.translatesAutoresizingMaskIntoConstraints = false
+        sample.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        cell.addSubview(sample)
+
+        NSLayoutConstraint.activate([
+            title.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 18),
+            title.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            title.trailingAnchor.constraint(lessThanOrEqualTo: sample.leadingAnchor, constant: -12),
+            sample.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -18),
+            sample.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
         return cell
     }

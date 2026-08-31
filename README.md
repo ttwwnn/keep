@@ -76,6 +76,20 @@ children to its parent, so closing one pane never takes the arrangement apart.
 There is a picker (⌘P) over every workspace and tab, search (⌘F, ⌘⇧F), and
 keyboard motion between panes, workspaces and picker rows.
 
+A picker row is also something you can act on. ⌘K, the chip in the corner and
+the right button all open one panel — go there, open a tab in that workspace,
+reveal it in Finder, copy its path, close it — because a right-click does not
+deserve a different menu from the one the keyboard gets.
+
+⌘⇧P is the same overlay asking what you want *done*: the commands worth
+typing three letters to reach, grouped by what they are for, and two lists
+they open into. One is every Ghostty theme installed on the machine, each row
+wearing a scrap of itself and previewed as a screen in it; the other is the
+monospaced faces, each name set in its own face. What is chosen goes into a
+config file Keep writes and loads after yours — yours is read, never edited —
+and `ghostty_app_update_config` applies it live, so the terminal and the
+chrome around it change colour together without a relaunch.
+
 Tabs are labelled with the title the program inside sets (OSC 0/2), which
 shells and editors do on their own, so a tab says what it is without anyone
 naming it. A workspace also reports whether it is *running* something, taken

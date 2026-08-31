@@ -8,6 +8,23 @@ neutral is the terminal's own background colour, read at runtime from the
 ghostty config, so the chrome and the content are literally the same colour
 rather than a guess at it.
 
+Which means the app has no theme of its own to pick, and choosing one is
+choosing the terminal's. The palette (⌘⇧P) lists the themes already on the
+machine — Ghostty ships four hundred and sixty of them — and what is chosen
+is written into a config file of Keep's own, loaded after the person's. Their
+config is read, never edited: it belongs to the Ghostty they also run, and a
+terminal that rewrites another program's file behind its back is a terminal
+you cannot keep two of. An unset field is left unmentioned rather than written
+empty, so a fresh Keep looks exactly like their Ghostty and only what they
+change here stops matching it.
+
+A theme is chosen by looking, not by reading: four hundred names, half of them
+mountains. Each row carries a scrap of the thing — the background it would
+paint, with five of its own colours on it — and the pane beside the list shows
+a few lines of a terminal wearing it. The same lines every time: what is being
+compared is the colours, and a sample whose text changed between two themes
+would be asking you to compare two different things.
+
 ## Colour
 
 Strategy: **restrained**. Tinted neutrals plus one accent, and the accent is
@@ -83,3 +100,17 @@ around it, so it reads as the start of something.
 The picker's rows are 30 rather than 24. They float over content instead of
 being furniture, each carries a selection lozenge inset by two, and they are
 aimed at with a pointer as often as with the arrows.
+
+What the overlay can do is said in the corner rather than along the bottom: a
+chip of glass carrying *Open ↩* and *Actions ⌘K*, and the panel that ⌘K opens
+rises out of it at the same margin, so the two read as one object opening. A
+bar across the full width would be a second surface inside a card meant to
+read as one, and it would take a strip of the list with it.
+
+Both are laid *on* the card rather than in it. Glass refracts what is behind
+it, and inside the card's own glass there is nothing behind it — a pane put
+there comes out flat, a grey rectangle with a corner radius. For the same
+reason the tint on them is thin and, in the dark, black: the card underneath
+is already dark, so lifting the glass off it with white makes a pale chip in
+a dark corner, while taking it down keeps the refraction and lets the edge do
+the lifting.

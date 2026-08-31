@@ -523,6 +523,17 @@ final class Session {
             // known and grows a moment later rather than waiting for it.
             loadDestinations(for: window)
 
+        case .togglePalette(let catalog):
+            guard views[window]?.picker?.mode != .palette(catalog) else {
+                dispatch(.closePicker, from: window)
+                return
+            }
+            let commands = Self.paletteItems(catalog)
+            views[window]?.picker = PickerModel(
+                mode: .palette(catalog), matches: [:], scopeLabel: nil, query: "",
+                items: commands, previewOf: nil, previewText: "")
+            publish()
+
         case .toggleSearch(let global):
             let wanted = PickerModel.Mode.search(global: global)
             guard views[window]?.picker?.mode != wanted else {
@@ -680,7 +691,7 @@ final class Session {
             // The pane that matched, not the tab's root: previewing the root
             // of a split shows something the search never looked at.
             case .hit(let tab, let pane, _, _): loadPreview(of: tab, pane: pane, for: id, in: window)
-            case .destination: break
+            case .destination, .command, .theme, .fontFamily: break
             }
 
         case .choosePickerItem(let id):
@@ -704,6 +715,11 @@ final class Session {
                 Trace.log("scroll", "hit \(tab.workspace)/\(pane) back \(fromEnd)")
                 SurfacePool.shared.existing(window: window, workspace: tab.workspace, tab: pane)?
                     .scrollBack(lines: Int(fromEnd))
+            case .command, .theme, .fontFamily:
+                // Run by the layer that can: a window is opened by AppKit and
+                // a theme is worn by libghostty, and neither is anything this
+                // one holds.
+                break
             }
 
         case .dismissPickerItem(let id):
@@ -942,6 +958,43 @@ final class Session {
             )
         }
         return running + new
+    }
+
+    /// What the palette lists, for each of its three questions.
+    ///
+    /// Built here rather than in the view for the reason every other list is:
+    /// deciding what is in a list is the model's business, and the view's is
+    /// drawing it. Static because none of it depends on this session — the
+    /// commands are a constant, and the themes and faces are what is
+    /// installed on the machine.
+    private static func paletteItems(_ catalog: PickerModel.Catalog) -> [PickerModel.Item] {
+        func item(
+            kind: PickerModel.Item.Kind, context: String, title: String, detail: String = ""
+        ) -> PickerModel.Item {
+            PickerModel.Item(
+                kind: kind, workspace: "", context: context, title: title,
+                detail: detail, command: "", path: "", busy: false, lastActive: nil)
+        }
+        switch catalog {
+        case .root:
+            return Command.allCases.map {
+                item(kind: .command($0), context: $0.group, title: $0.title)
+            }
+        case .themes:
+            let worn = GhosttyApp.prefs.theme
+            return ThemeCatalog.names.map {
+                item(
+                    kind: .theme($0), context: "", title: $0,
+                    detail: $0 == worn ? "worn" : "")
+            }
+        case .fonts:
+            let worn = GhosttyApp.prefs.fontFamily
+            return FontCatalog.monospaced.map {
+                item(
+                    kind: .fontFamily($0), context: "", title: $0,
+                    detail: $0 == worn ? "worn" : "")
+            }
+        }
     }
 
     /// A tab's title with the busy marks its program put there taken off.

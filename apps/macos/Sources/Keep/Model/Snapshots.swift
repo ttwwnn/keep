@@ -220,6 +220,145 @@ enum Intent {
     case choosePickerItem(String)
     /// ⌃D on a row: end what it points at.
     case dismissPickerItem(String)
+    /// The same overlay, asking what you want *done* rather than where you
+    /// want to be — or, on a catalog, which theme or face you want.
+    ///
+    /// Toggling: the list already up is the list this puts away, which is
+    /// what makes ⌘⇧P both halves of the gesture.
+    ///
+    /// Appearance itself is not here. A theme is not session state — no
+    /// window owns it, the daemon has never heard of it, and it outlives
+    /// every tab — so it is set on `GhosttyApp` directly and only the closing
+    /// of the overlay comes back through here.
+    case togglePalette(PickerModel.Catalog)
+}
+
+/// Everything the palette can run.
+///
+/// A closed list rather than a scrape of the menu bar. The menu is built for
+/// the mouse — it nests, it repeats itself, and half of it is AppKit's — and
+/// a palette that mirrored it would inherit that shape. This is the set of
+/// things worth typing three letters to reach.
+enum Command: Hashable, CaseIterable {
+    // Where things are.
+    case toggleSidebar
+    case toggleVerticalTabs
+    case splitRight
+    case splitDown
+    case closePane
+    case newWindow
+
+    // What is running.
+    case newTab
+    case newWorkspace
+    case closeTab
+    case removeWorkspace
+    case killWorkspace
+
+    // How it looks.
+    case chooseTheme
+    case chooseFont
+    case fontBigger
+    case fontSmaller
+    case fontReset
+    case clearTheme
+
+    /// The group it is listed under. Also what it is matched on, so `look`
+    /// finds the theme commands without their titles having to say it.
+    var group: String {
+        switch self {
+        case .toggleSidebar, .toggleVerticalTabs, .splitRight, .splitDown,
+             .closePane, .newWindow:
+            return "window"
+        case .newTab, .newWorkspace, .closeTab, .removeWorkspace, .killWorkspace:
+            return "workspace"
+        case .chooseTheme, .chooseFont, .fontBigger, .fontSmaller, .fontReset,
+             .clearTheme:
+            return "appearance"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .toggleSidebar: return "Toggle the sidebar"
+        case .toggleVerticalTabs: return "Toggle vertical tabs"
+        case .splitRight: return "Split right"
+        case .splitDown: return "Split down"
+        case .closePane: return "Close this pane"
+        case .newWindow: return "New window"
+        case .newTab: return "New tab"
+        case .newWorkspace: return "New workspace…"
+        case .closeTab: return "Close this tab"
+        case .removeWorkspace: return "Remove this workspace from the window"
+        case .killWorkspace: return "Kill this workspace"
+        case .chooseTheme: return "Change the theme…"
+        case .chooseFont: return "Change the font…"
+        case .fontBigger: return "Bigger text"
+        case .fontSmaller: return "Smaller text"
+        case .fontReset: return "Reset the text size"
+        case .clearTheme: return "Use the Ghostty config's own theme"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .toggleSidebar: return "sidebar.left"
+        case .toggleVerticalTabs: return "list.bullet.rectangle"
+        case .splitRight: return "rectangle.split.2x1"
+        case .splitDown: return "rectangle.split.1x2"
+        case .closePane: return "xmark.rectangle"
+        case .newWindow: return "macwindow.badge.plus"
+        case .newTab: return "plus.rectangle"
+        case .newWorkspace: return "folder.badge.plus"
+        case .closeTab: return "xmark"
+        case .removeWorkspace: return "eye.slash"
+        case .killWorkspace: return "bolt.slash"
+        case .chooseTheme: return "paintpalette"
+        case .chooseFont: return "textformat"
+        case .fontBigger: return "textformat.size.larger"
+        case .fontSmaller: return "textformat.size.smaller"
+        case .fontReset: return "arrow.counterclockwise"
+        case .clearTheme: return "arrow.uturn.backward"
+        }
+    }
+
+    /// The chord that does the same thing without the palette, as keys.
+    var keys: [String] {
+        switch self {
+        case .toggleSidebar: return ["⌘", "B"]
+        case .splitRight: return ["⌘", "D"]
+        case .splitDown: return ["⇧", "⌘", "D"]
+        case .closePane: return ["⌘", "W"]
+        case .closeTab: return ["⇧", "⌘", "W"]
+        case .newTab: return ["⌘", "T"]
+        case .newWindow: return ["⇧", "⌘", "N"]
+        // ⌘N belongs to the workspace, not the window: a workspace outlives
+        // every window that ever showed it.
+        case .newWorkspace: return ["⌘", "N"]
+        // The two font commands advertise nothing. Ghostty binds its own
+        // ⌘+ and ⌘− to a size it holds itself, which this would then argue
+        // with on the next reload — so these are reachable from here and
+        // nowhere else, and the row says so by saying nothing.
+        default: return []
+        }
+    }
+
+    /// Whether choosing it opens another list rather than doing something.
+    var opens: PickerModel.Catalog? {
+        switch self {
+        case .chooseTheme: return .themes
+        case .chooseFont: return .fonts
+        default: return nil
+        }
+    }
+
+    /// Said out loud in the row, because these do not undo.
+    var isDestructive: Bool {
+        switch self {
+        case .killWorkspace, .closeTab, .closePane, .removeWorkspace: return true
+        default: return false
+        }
+    }
 }
 
 /// The flat "go to" list.
@@ -239,9 +378,19 @@ struct PickerModel: Hashable {
     /// Which question the overlay is asking. It is one overlay because it is
     /// one gesture — type, move, choose — and splitting it in two would mean
     /// two of everything to keep in step.
+    /// A list a command opened, rather than one the palette starts on.
+    enum Catalog: Hashable {
+        case root
+        case themes
+        case fonts
+    }
+
     enum Mode: Hashable {
         /// Filtering happens locally: the list is already in hand.
         case goTo
+        /// What can be done, rather than where you can go. Also local: the
+        /// list is a fact about this app, not about the daemon.
+        case palette(Catalog)
         /// Every keystroke is a question for the daemon, which is the only
         /// one holding the history. `global` decides whether the question is
         /// about everything or only the pane in front of you.
@@ -258,7 +407,12 @@ struct PickerModel: Hashable {
             /// tab that holds it. A hit is found by pane, and a pane is not a
             /// tab — going to one means opening its tab and focusing it.
             case hit(TabID, pane: UInt32, line: UInt32, fromEnd: UInt32)
-
+            /// Something to do.
+            case command(Command)
+            /// A theme to wear, by name.
+            case theme(String)
+            /// A face to set the terminal in, by family name.
+            case fontFamily(String)
         }
         let kind: Kind
         /// Whose row this is. Empty for a folder, which belongs to nobody yet.
@@ -298,6 +452,9 @@ struct PickerModel: Hashable {
             case .running(let tab): return "run:\(tab)"
             case .destination(let path): return "dir:\(path)"
             case .hit(let tab, let pane, let line, _): return "hit:\(tab):\(pane):\(line)"
+            case .command(let command): return "cmd:\(command)"
+            case .theme(let name): return "theme:\(name)"
+            case .fontFamily(let name): return "font:\(name)"
             }
         }
         /// A place to start something, rather than something already running.

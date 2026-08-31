@@ -88,6 +88,34 @@ struct PickerActionEntry: Equatable {
                     symbol: "doc.on.doc", keys: ["⇧", "⌘", "C"],
                     startsGroup: true),
             ]
+        case .command(let command):
+            // One thing, which Return already does. The panel is here for
+            // consistency — every row in this list answers ⌘K — and because
+            // a panel that names the command is a confirmation of the
+            // destructive ones.
+            return [
+                PickerActionEntry(
+                    action: .open, title: command.title,
+                    symbol: command.symbol, keys: ["↩"]),
+            ]
+        case .theme:
+            return [
+                PickerActionEntry(
+                    action: .open, title: "Wear this theme",
+                    symbol: "paintpalette", keys: ["↩"]),
+                PickerActionEntry(
+                    action: .copyText, title: "Copy its name",
+                    symbol: "doc.on.doc", keys: ["⇧", "⌘", "C"], startsGroup: true),
+            ]
+        case .fontFamily:
+            return [
+                PickerActionEntry(
+                    action: .open, title: "Set the terminal in this face",
+                    symbol: "textformat", keys: ["↩"]),
+                PickerActionEntry(
+                    action: .copyText, title: "Copy its name",
+                    symbol: "doc.on.doc", keys: ["⇧", "⌘", "C"], startsGroup: true),
+            ]
         }
     }
 }

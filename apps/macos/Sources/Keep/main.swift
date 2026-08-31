@@ -255,6 +255,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func newTab(_ sender: Any?) { send(.newTab(in: nil)) }
     @objc func goTo(_ sender: Any?) { send(.togglePicker) }
+    @objc func palette(_ sender: Any?) { send(.togglePalette(.root)) }
     @objc func find(_ sender: Any?) { send(.toggleSearch(global: false)) }
     @objc func findGlobal(_ sender: Any?) { send(.toggleSearch(global: true)) }
     @objc func closePane(_ sender: Any?) { send(.closePane(nil)) }
@@ -375,6 +376,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let goItem = NSMenuItem()
         let goMenu = NSMenu(title: "Go")
         goMenu.addItem(withTitle: "Go To…", action: #selector(goTo(_:)), keyEquivalent: "p")
+        // The same overlay, the other question: what can be done rather than
+        // where to go. ⇧ of the key that asks the first one.
+        let paletteItem = goMenu.addItem(
+            withTitle: "Commands…", action: #selector(palette(_:)), keyEquivalent: "p")
+        paletteItem.keyEquivalentModifierMask = [.command, .shift]
         goMenu.addItem(
             withTitle: "Find in Pane…", action: #selector(find(_:)), keyEquivalent: "f")
         let findAllItem = NSMenuItem(

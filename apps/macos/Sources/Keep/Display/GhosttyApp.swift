@@ -45,6 +45,37 @@ final class GhosttyApp {
     private(set) var terminalBackgroundOpacity: Double = 1
     private(set) var terminalBackgroundBlur: Int16 = 0
 
+    /// What this app has been told about the terminal's appearance, over
+    /// and above the person's own config. Read once at launch and kept here
+    /// rather than fetched: the config file is written from it, and the
+    /// palette reader consults it on every keystroke.
+    ///
+    /// Static because the config is built inside `init`, and anything there
+    /// that reached for `shared` would be re-entering the initializer it is
+    /// running inside.
+    private(set) static var prefs = TerminalPrefs.load()
+
+    /// Adopt a new appearance: write Keep's config, hand it to libghostty,
+    /// and forget everything worked out from the old one.
+    ///
+    /// The reload is the whole mechanism — libghostty resolves the theme for
+    /// the scheme in force and reports the settled background back as a
+    /// config change, which is what repaints the chrome. Nothing here has to
+    /// know what the theme's colours are.
+    func adopt(_ newPrefs: TerminalPrefs) {
+        guard newPrefs != Self.prefs else { return }
+        Self.prefs = newPrefs
+        newPrefs.save()
+        _paletteCache = [:]
+        reloadConfig()
+        // The font is read from files rather than asked of libghostty, so it
+        // does not arrive with the config change; re-read it here.
+        let font = Self.fontSettings()
+        terminalFontFamily = font.family
+        terminalFontSize = font.size
+        NotificationCenter.default.post(name: Self.backgroundDidChange, object: nil)
+    }
+
     /// The font the terminal itself renders with.
     ///
     /// Anywhere the app shows terminal output outside a surface — the picker's
@@ -109,6 +140,12 @@ final class GhosttyApp {
             }
             if family != nil || size != nil { break }
         }
+        // And Keep's own choice over theirs, the same way Keep's config file
+        // is loaded over theirs. Without this the surfaces would take a face
+        // chosen here and everything the app draws terminal text with — the
+        // preview, the picker's columns — would go on using the old one.
+        if let chosen = prefs.fontFamily, !chosen.isEmpty { family = chosen }
+        if let chosen = prefs.fontSize, chosen > 0 { size = chosen }
         return (family, size ?? 13)
     }
 
@@ -198,6 +235,18 @@ final class GhosttyApp {
             break
         }
 
+        // What Keep has been told beats what the config says, the same way
+        // Keep's config file is loaded after theirs. Their own `palette =`
+        // lines lose with it: choosing a theme in here means wanting that
+        // theme, not that theme with somebody's old overrides showing
+        // through.
+        let chosen = prefs.theme.flatMap { $0.isEmpty ? nil : $0 }
+        if let chosen {
+            theme = chosen
+            named = [:]
+            foreground = nil
+        }
+
         // "dark:Catppuccin Mocha,light:Catppuccin Latte" — one name per
         // appearance, and the one in force is the one to follow.
         if let theme {
@@ -207,18 +256,13 @@ final class GhosttyApp {
                 .map { String($0.dropFirst(dark ? 5 : 6)) }
                 ?? (theme.contains(":") ? nil : theme)
             if let wanted = wanted?.trimmingCharacters(in: .whitespaces), !wanted.isEmpty {
-                let candidates = [
-                    (home as NSString).appendingPathComponent(".config/ghostty/themes/\(wanted)"),
-                    "/Applications/Ghostty.app/Contents/Resources/ghostty/themes/\(wanted)",
-                ]
                 // The config's own colours win over the theme's, so the theme
                 // is read first and anything named directly is put back after.
+                // Unless the theme is Keep's own, in which case there is
+                // nothing to put back — it was cleared above.
                 let direct = named
                 let directForeground = foreground
-                for path in candidates where FileManager.default.fileExists(atPath: path) {
-                    read(path)
-                    break
-                }
+                if let path = ThemeCatalog.path(of: wanted) { read(path) }
                 named.merge(direct) { _, own in own }
                 if let directForeground { foreground = directForeground }
             }
@@ -634,9 +678,16 @@ final class GhosttyApp {
         // and from inside there is no way to tell which. `CSI Z` is what the
         // terminal already sends when nobody has turned the protocol on, so
         // naming it here only makes the two agree.
+        // Keep's own settings go in the same file, and it is loaded after
+        // the person's config, so what has been chosen here wins and what has
+        // not been chosen is not mentioned at all.
+        let chosen = prefs.configLines
+            .map { $0 + "\n" }
+            .joined()
         let body = """
             command = \(clientBinary)
             window-padding-y = 0
+            \(chosen)
             keybind = alt+backspace=text:\\x1b\\x7f
             keybind = shift+tab=text:\\x1b[Z
             keybind = super+k=text:\\x0c
