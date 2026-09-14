@@ -7,6 +7,19 @@ final class TerminalTintBackdropView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
+/// The window's split, with a divider that still drags but draws nothing.
+///
+/// The sidebar's recessed backdrop already marks where it ends. On macOS 27
+/// the default divider became a light rule down the full height of the
+/// window, titlebar included — a second boundary on top of the first.
+final class SeamlessSplitView: NSSplitView {
+    override var dividerStyle: NSSplitView.DividerStyle {
+        get { .thin }
+        set {}
+    }
+    override var dividerColor: NSColor { .clear }
+}
+
 /// The rows, observable. Exists so `render` can update the list WITHOUT
 /// replacing the hosting controller's rootView — a rootView swap rebuilds
 /// the whole view tree, and the rebuilt outline view grabs the keyboard from

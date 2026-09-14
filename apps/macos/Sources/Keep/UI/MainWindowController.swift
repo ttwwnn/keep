@@ -95,6 +95,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         terminal.view = content
 
         let split = NSSplitViewController()
+        split.splitView = SeamlessSplitView()
+        split.splitView.isVertical = true
         let sidebarSplitItem = NSSplitViewItem(viewController: sidebarHost)
         sidebarSplitItem.minimumThickness = 200
         sidebarSplitItem.maximumThickness = 320
