@@ -203,6 +203,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         tabStrip.onSelect = { [weak self] id in self?.send(.activateTab(id)) }
         tabStrip.onClose = { [weak self] id in self?.send(.closeTab(id)) }
         tabStrip.onNewTab = { [weak self] in self?.send(.newTab(in: nil)) }
+        tabStrip.onGoTo = { [weak self] in self?.send(.togglePicker) }
+        tabStrip.onCommands = { [weak self] in self?.send(.togglePalette(.root)) }
         tabStrip.onReorder = { [weak self] ids in self?.send(.reorderTabs(ids, in: nil)) }
         tabStrip.onTearOff = { [weak self] id, point, grab in
             self?.onTearOff?(id, point, grab)

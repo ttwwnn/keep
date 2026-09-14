@@ -311,6 +311,9 @@ struct WorkspaceSidebar: View {
                         .foregroundStyle(Palette.inkFaint)
                 }
                 Spacer(minLength: 0)
+                // The close button's room, kept whether or not it is showing,
+                // so a title does not reflow as the pointer passes over it.
+                Color.clear.frame(width: 12, height: 1)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 5)
@@ -318,6 +321,12 @@ struct WorkspaceSidebar: View {
             .background(capsule(chosen: chosen, hovered: hoveredHere))
         }
         .buttonStyle(.plain)
+        // Laid over the row rather than inside its label: a button inside a
+        // button hands its clicks to whichever of the two SwiftUI prefers.
+        .overlay(alignment: .trailing) {
+            closeButton(tab, visible: hoveredHere && dragged == nil)
+                .padding(.trailing, 9)
+        }
         .padding(.leading, 12)
         .padding(.trailing, 8)
         // The same drag the strip has, vertically — and live: while the drag
@@ -357,6 +366,26 @@ struct WorkspaceSidebar: View {
         .contextMenu {
             Button("Close Tab", role: .destructive) { dispatch(.closeTab(tab.id)) }
         }
+    }
+
+    /// The row's ×: there under the pointer, gone otherwise, the way the
+    /// strip's own tabs offer it.
+    private func closeButton(_ tab: SessionSnapshot.SidebarTab, visible: Bool) -> some View {
+        Button {
+            dispatch(.closeTab(tab.id))
+        } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(Palette.inkResting)
+                .frame(width: 16, height: 16)
+                .background(Circle().fill(Palette.wash(0.08)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help("Close Tab")
+        .opacity(visible ? 1 : 0)
+        .allowsHitTesting(visible)
+        .animation(.easeOut(duration: 0.12), value: visible)
     }
 
     /// Commit a header drag: the mirror is the final order, and the intent

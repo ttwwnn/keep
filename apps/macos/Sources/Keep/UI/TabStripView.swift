@@ -15,6 +15,9 @@ final class TabStripView: NSView {
     var onSelect: ((TabID) -> Void)?
     var onClose: ((TabID) -> Void)?
     var onNewTab: (() -> Void)?
+    /// ⌘P and ⌘⇧P, for the pointer: the overlay's two questions.
+    var onGoTo: (() -> Void)?
+    var onCommands: (() -> Void)?
     /// The row, in the order somebody just put it in.
     var onReorder: (([UInt32]) -> Void)?
     /// A tab pulled clear of the row and let go: where it landed, in screen
@@ -61,29 +64,46 @@ final class TabStripView: NSView {
 
     private var items: [SessionSnapshot.StripItem] = []
     private var cells: [TabCellView] = []
-    private let newTabButton = NSButton()
-    /// The button's ground: glass where the system has it.
-    private let newTabBackground: NSView = Glass.lozenge(cornerRadius: 12) ?? NSView()
-    private let newTabIsGlass = Glass.isAvailable
-    private var newTabHovered = false
+    /// A round control at the row's far end, standing on its own ground:
+    /// glass where the system has it.
+    private final class ChromeButton {
+        let button = NSButton()
+        let background: NSView = Glass.lozenge(cornerRadius: 13) ?? NSView()
+        var hovered = false
+    }
+
+    /// Go To, Commands, New Tab — left to right, one family of circles.
+    private var chromeButtons: [ChromeButton] = []
+    private let chromeIsGlass = Glass.isAvailable
     private var backgroundObserver: NSObjectProtocol?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
 
-        newTabBackground.wantsLayer = true
-        addSubview(newTabBackground)
+        let specs: [(symbol: String, label: String, tip: String, action: Selector)] = [
+            ("magnifyingglass", "Go To", "Go To… (⌘P)", #selector(goToPressed)),
+            ("command", "Commands", "Commands… (⌘⇧P)", #selector(commandsPressed)),
+            ("plus", "New Tab", "New Tab (⌘T)", #selector(newTabPressed)),
+        ]
+        for spec in specs {
+            let control = ChromeButton()
+            control.background.wantsLayer = true
+            addSubview(control.background)
 
-        newTabButton.image = NSImage(
-            systemSymbolName: "plus", accessibilityDescription: "New Tab")
-        newTabButton.bezelStyle = .accessoryBarAction
-        newTabButton.isBordered = false
-        newTabButton.imagePosition = .imageOnly
-        newTabButton.target = self
-        newTabButton.action = #selector(newTabPressed)
-        newTabButton.setAccessibilityLabel("New Tab")
-        addSubview(newTabButton)
+            let button = control.button
+            button.image = NSImage(
+                systemSymbolName: spec.symbol, accessibilityDescription: spec.label)
+            button.bezelStyle = .accessoryBarAction
+            button.isBordered = false
+            button.imagePosition = .imageOnly
+            button.target = self
+            button.action = spec.action
+            button.toolTip = spec.tip
+            button.setAccessibilityLabel(spec.label)
+            addSubview(button)
+            chromeButtons.append(control)
+        }
 
         backgroundObserver = NotificationCenter.default.addObserver(
             forName: GhosttyApp.backgroundDidChange, object: nil, queue: .main
@@ -191,12 +211,7 @@ final class TabStripView: NSView {
 
     private func retint() {
         applyCells()
-        newTabButton.contentTintColor = Palette.current.dimText
-        if newTabIsGlass {
-            tintNewTabButton()
-        } else {
-            newTabBackground.layer?.backgroundColor = Palette.current.controlFill.cgColor
-        }
+        for control in chromeButtons { tint(control) }
     }
 
     private func applyCells() {
@@ -224,20 +239,25 @@ final class TabStripView: NSView {
         // A circle with a plus in it, not a bare glyph: it reads as a
         // control, which is what it is. The same across as a tab's capsule is
         // tall, and as the sidebar toggle.
-        let plusSide: CGFloat = 26
-        let plusWidth = plusSide + 12
-        let plusRect = NSRect(
-            x: bounds.width - plusSide - 10, y: (height - plusSide) / 2,
-            width: plusSide, height: plusSide)
-        newTabButton.frame = plusRect
-        newTabBackground.frame = plusRect
-        if newTabIsGlass {
-            Glass.setCornerRadius(newTabBackground, plusSide / 2)
-            tintNewTabButton()
-        } else {
-            newTabBackground.layer?.cornerRadius = plusSide / 2
-            newTabBackground.layer?.backgroundColor = Palette.current.controlFill.cgColor
+        let side: CGFloat = 26
+        let gap: CGFloat = 6
+        // Laid from the far end inward, so New Tab keeps the place it had.
+        var buttonsStart = bounds.width - 10
+        for control in chromeButtons.reversed() {
+            buttonsStart -= side
+            let rect = NSRect(
+                x: buttonsStart, y: (height - side) / 2, width: side, height: side)
+            control.button.frame = rect
+            control.background.frame = rect
+            if chromeIsGlass {
+                Glass.setCornerRadius(control.background, side / 2)
+            } else {
+                control.background.layer?.cornerRadius = side / 2
+            }
+            tint(control)
+            buttonsStart -= gap
         }
+        buttonsStart += gap
 
         if window != nil {
             let edge = convert(NSPoint.zero, to: nil).x
@@ -257,7 +277,7 @@ final class TabStripView: NSView {
 
         guard !cells.isEmpty else { return }
         let left = leadingClearance
-        let available = max(0, bounds.width - left - plusWidth - 8)
+        let available = max(0, buttonsStart - 10 - left)
         // Tabs fill the row rather than sitting in a corner of it, and they
         // share what there is rather than insisting on a width. A floor here
         // was a promise the row could not keep: past the point where the
@@ -478,9 +498,13 @@ final class TabStripView: NSView {
 
     /// Untinted glass at rest, which refracts darker than the bar and reads
     /// as a well rather than a lamp; tinted only under the pointer.
-    private func tintNewTabButton() {
-        Glass.tint(newTabBackground, newTabHovered ? Palette.current.glassTint : nil)
-        newTabButton.contentTintColor = newTabHovered
+    private func tint(_ control: ChromeButton) {
+        if chromeIsGlass {
+            Glass.tint(control.background, control.hovered ? Palette.current.glassTint : nil)
+        } else {
+            control.background.layer?.backgroundColor = Palette.current.controlFill.cgColor
+        }
+        control.button.contentTintColor = control.hovered
             ? Palette.current.text
             : Palette.current.dimText
     }
@@ -512,18 +536,19 @@ final class TabStripView: NSView {
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         updateWindowDragging(pointerAt: point)
-        let overPlus = newTabBackground.frame.contains(point)
-        if overPlus != newTabHovered {
-            newTabHovered = overPlus
-            tintNewTabButton()
+        for control in chromeButtons {
+            let over = control.background.frame.contains(point)
+            guard over != control.hovered else { continue }
+            control.hovered = over
+            tint(control)
         }
     }
 
     override func mouseExited(with event: NSEvent) {
         setWindowDraggable(true)
-        if newTabHovered {
-            newTabHovered = false
-            tintNewTabButton()
+        for control in chromeButtons where control.hovered {
+            control.hovered = false
+            tint(control)
         }
         for cell in cells { cell.clearHover() }
     }
@@ -537,6 +562,14 @@ final class TabStripView: NSView {
 
     @objc private func newTabPressed() {
         onNewTab?()
+    }
+
+    @objc private func goToPressed() {
+        onGoTo?()
+    }
+
+    @objc private func commandsPressed() {
+        onCommands?()
     }
 
     /// Colours resolved from the terminal background's luminance, so the bar
