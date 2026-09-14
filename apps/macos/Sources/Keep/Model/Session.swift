@@ -310,17 +310,17 @@ final class Session {
             publish()
 
         case .nextWorkspace, .previousWorkspace:
-            // In the order the sidebar shows them, which is the order somebody
-            // arranged rather than the alphabet — stepping through them by
-            // keyboard should land where the eye expects.
-            guard workspaces.count > 1,
-                  let current = workspaces.firstIndex(where: { $0.name == views[window]?.workspace })
+            // In the order the sidebar shows them — this window's carried
+            // list, which is the order somebody arranged — so stepping
+            // through them by keyboard lands where the eye expects.
+            guard let view = views[window], view.workspaces.count > 1,
+                  let current = view.workspaces.firstIndex(where: { $0 == view.workspace })
             else { return }
             let step = { if case .nextWorkspace = intent { return 1 } else { return -1 } }()
-            let next = (current + step + workspaces.count) % workspaces.count
+            let next = (current + step + view.workspaces.count) % view.workspaces.count
             // Through the intent rather than around it: entering an empty
             // workspace has to open a tab in it, and that rule lives there.
-            dispatch(.activateWorkspace(workspaces[next].name), from: window)
+            dispatch(.activateWorkspace(view.workspaces[next]), from: window)
 
         case .newTab(let name):
             // A window carrying no workspaces has nowhere to put a tab, and
