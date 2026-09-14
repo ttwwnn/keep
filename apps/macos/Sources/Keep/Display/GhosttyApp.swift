@@ -366,6 +366,21 @@ final class GhosttyApp {
     }
 
     private init() {
+        // A stock theme — `theme = Catppuccin Mocha` — is a file libghostty
+        // looks for in its resources directory, found through
+        // GHOSTTY_RESOURCES_DIR. Launched from a terminal running inside
+        // Ghostty the variable is inherited and everything resolves; launched
+        // from the Finder there is no such variable and the theme silently
+        // does not apply. Keep bundles no resources of its own, so point at
+        // the Ghostty.app that is installed — the same place the theme picker
+        // already reads its list from.
+        if ProcessInfo.processInfo.environment["GHOSTTY_RESOURCES_DIR"] == nil {
+            let ghosttyResources = "/Applications/Ghostty.app/Contents/Resources/ghostty"
+            if FileManager.default.fileExists(atPath: ghosttyResources) {
+                setenv("GHOSTTY_RESOURCES_DIR", ghosttyResources, 1)
+            }
+        }
+
         // libghostty wants the process argv before anything else.
         var argv: [UnsafeMutablePointer<CChar>?] = CommandLine.unsafeArgv[0].map { [$0] } ?? []
         if ghostty_init(UInt(argv.count), &argv) != 0 {
