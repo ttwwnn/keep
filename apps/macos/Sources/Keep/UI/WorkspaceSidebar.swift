@@ -58,8 +58,16 @@ struct WorkspaceSidebar: View {
     /// beside it still hands the keyboard back to the terminal, as it always
     /// has.
     @State private var pointerOnName: Renaming?
-    /// A rename waiting out the double-click interval.
+    /// A rename waiting out the double-click interval, and the watch on the
+    /// keyboard kept for as long as it waits.
     @State private var pendingRename: DispatchWorkItem?
+    @State private var keyWatch: Any?
+    /// What the last click in here landed on: a tab, a header, or nil for
+    /// one of the small buttons on them. A double-click renames only what
+    /// both of its clicks landed on. One whose first click closed a tab and
+    /// whose second landed on the row that slid up into its place is two
+    /// clicks on two things, whatever the click count says.
+    @State private var lastClicked: Renaming?
 
     struct LiveTabOrder: Equatable {
         var workspace: String
@@ -107,8 +115,7 @@ struct WorkspaceSidebar: View {
         // A press that turned into a drag was never a click on a name. The
         // button's action does not fire for a drag anyway; this covers a
         // click that was followed by one before its rename came due.
-        pendingRename?.cancel()
-        pendingRename = nil
+        disarmRename()
     }
 
     /// The terminal's own face, for the strings the terminal would also print.
@@ -187,8 +194,14 @@ struct WorkspaceSidebar: View {
                 selectWholeName()
             } else if old == editing, new != editing {
                 // Finder's rule: clicking away keeps what was typed. The
-                // keyboard is already wherever the click put it.
+                // keyboard is already wherever the click put it, and stays
+                // there. Session hands it to the terminal whenever a name is
+                // kept, and a field the click moved to, the picker's or a new
+                // workspace's, would be left open with nothing reaching it
+                // and what was typed next going to the shell.
+                let taker = fieldHoldingKeyboard()
                 endRename(saving: true, handingBack: false)
+                if let taker { giveKeyboardBack(to: taker) }
             }
         }
     }
@@ -333,6 +346,7 @@ struct WorkspaceSidebar: View {
     private func disclosure(_ row: SessionSnapshot.SidebarRow) -> some View {
         if row.tabRows.count > 0 {
             Button {
+                lastClicked = nil
                 dispatch(.toggleDisclosure(row.name))
             } label: {
                 Image(systemName: "chevron.right")
@@ -357,6 +371,7 @@ struct WorkspaceSidebar: View {
     /// the same x.
     private func newTabButton(_ row: SessionSnapshot.SidebarRow) -> some View {
         Button {
+            lastClicked = nil
             dispatch(.newTab(in: row.name))
         } label: {
             Image(systemName: "plus")
@@ -583,6 +598,7 @@ struct WorkspaceSidebar: View {
     /// strip's own tabs offer it.
     private func closeButton(_ tab: SessionSnapshot.SidebarTab, visible: Bool) -> some View {
         Button {
+            lastClicked = nil
             dispatch(.closeTab(tab.id))
         } label: {
             Image(systemName: "xmark")
@@ -617,9 +633,10 @@ struct WorkspaceSidebar: View {
     /// the file already selected; anything else enters it, as it always did.
     private func clickTab(_ tab: SessionSnapshot.SidebarTab, chosen: Bool) {
         let target = Renaming.tab(tab.id)
-        pendingRename?.cancel()
-        pendingRename = nil
-        if isSecondClick {
+        let again = lastClicked == target
+        lastClicked = target
+        disarmRename()
+        if isSecondClick && again {
             // Not dispatched. Entering a tab hands the keyboard to the
             // terminal, which would take it straight back off the field this
             // is about to open — and the first click of the pair has already
@@ -634,9 +651,10 @@ struct WorkspaceSidebar: View {
     /// The same for a header, whose name is the workspace's.
     private func clickHeader(_ row: SessionSnapshot.SidebarRow) {
         let target = Renaming.workspace(row.name)
-        pendingRename?.cancel()
-        pendingRename = nil
-        if isSecondClick {
+        let again = lastClicked == target
+        lastClicked = target
+        disarmRename()
+        if isSecondClick && again {
             beginRename(target)
             return
         }
@@ -664,8 +682,7 @@ struct WorkspaceSidebar: View {
             pointerOnName = nil
             // Moving off the name is moving on: a rename still waiting for
             // its interval to pass would open under a pointer that has left.
-            pendingRename?.cancel()
-            pendingRename = nil
+            disarmRename()
         }
     }
 
@@ -675,20 +692,37 @@ struct WorkspaceSidebar: View {
     /// taken for a single one.
     private func armRename(_ target: Renaming) {
         let work = DispatchWorkItem {
-            pendingRename = nil
+            disarmRename()
             // Still the chosen one: a switch in the meantime has moved on.
             guard isChosen(target) else { return }
             beginRename(target)
         }
         pendingRename = work
+        // A key pressed while it waits calls it off, as it does in Finder.
+        // The click has already handed the keyboard to the terminal, the way
+        // a click on the current row always has, and whoever types straight
+        // after it is typing a command. A field opening halfway through would
+        // take the rest of the command, and the return after it.
+        keyWatch = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            disarmRename()
+            return event
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval, execute: work)
+    }
+
+    /// Call off a rename that is waiting, and stop watching the keyboard
+    /// for it.
+    private func disarmRename() {
+        pendingRename?.cancel()
+        pendingRename = nil
+        if let keyWatch { NSEvent.removeMonitor(keyWatch) }
+        keyWatch = nil
     }
 
     /// Open the field on what the thing is called now — the title as shown,
     /// its program's busy marks already off it.
     private func beginRename(_ target: Renaming) {
-        pendingRename?.cancel()
-        pendingRename = nil
+        disarmRename()
         guard renaming != target, let seed = title(of: target, in: rows) else { return }
         endRename(saving: true, handingBack: false)
         Trace.log("sidebar", "renaming \(target)")
@@ -713,11 +747,14 @@ struct WorkspaceSidebar: View {
             && title(of: target, in: rows) != nil
             && typed.trimmingCharacters(in: .whitespacesAndNewlines)
                 != renameSeed.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The field's focus is not cleared here. Taking the field out clears
+        // it, and quietly. Cleared by hand, it is applied on SwiftUI's next
+        // update by resigning the keyboard outright, and by then the keyboard
+        // is the terminal's, handed over below in this same turn: the
+        // window itself would hold it, and every key would beep.
         renaming = nil
-        renameFocus = nil
         pointerOnName = nil
-        pendingRename?.cancel()
-        pendingRename = nil
+        disarmRename()
         guard changed else {
             if handingBack { returnKeyboard() }
             return
@@ -738,6 +775,31 @@ struct WorkspaceSidebar: View {
     private func returnKeyboard() {
         guard let shown = rows.lazy.flatMap(\.tabRows).first(where: \.isActive) else { return }
         dispatch(.activateTab(shown.id))
+    }
+
+    /// The text field typing currently goes to, if it goes to one, and where
+    /// its caret stands. Read off the field editor, since that is what holds
+    /// the keyboard for whichever field is being typed in.
+    private func fieldHoldingKeyboard() -> (field: NSView, selection: [NSValue])? {
+        guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView,
+              editor.isFieldEditor,
+              let field = editor.delegate as? NSView
+        else { return nil }
+        return (field, editor.selectedRanges)
+    }
+
+    /// The keyboard back to a field it was taken from, with the caret where
+    /// it stood. Only if it was taken: asked again, a field that still has it
+    /// starts its editing over and selects everything in it, and so does one
+    /// that gets it back, which is why the caret is put back by hand.
+    private func giveKeyboardBack(to taker: (field: NSView, selection: [NSValue])) {
+        guard fieldHoldingKeyboard()?.field !== taker.field,
+              let window = taker.field.window,
+              window.makeFirstResponder(taker.field),
+              let editor = window.firstResponder as? NSTextView,
+              editor.isFieldEditor
+        else { return }
+        editor.selectedRanges = taker.selection
     }
 
     /// The whole name selected, so the first keystroke replaces it and an
