@@ -187,11 +187,17 @@ pub fn attach(
                 // A repaint is the whole screen from the top, not more output
                 // after whatever this terminal was showing: without a clear,
                 // a resync painted below the old lines and left the cursor
-                // somewhere else. The keyboard needs no reset of its own — a
-                // daemon new enough to say declares the flags, off included,
-                // and one too old to say leaves the terminal as it was, which
-                // is what it was doing before.
+                // somewhere else. A daemon new enough to say declares the
+                // keyboard, flags off included, and needs nothing more.
                 out.write_all(b"\x1b[H\x1b[2J")?;
+                // A daemon too old to declare the keyboard cannot say whether
+                // a pop was among the output this repaint replaces. Not
+                // knowing, the terminal's keyboard is reset and input decoded,
+                // which is how every client behaved before any of this.
+                if !KittyFlags::declared_in(&data) {
+                    out.write_all(KittyFlags::FORGET)?;
+                    flags.reset();
+                }
                 flags.observe(&data);
                 kitty.store(flags.current(), Ordering::Release);
                 alternate.store(flags.on_alternate(), Ordering::Release);
@@ -297,8 +303,22 @@ impl KittyFlags {
     /// on for itself switched off — mouse reporting, focus reports, bracketed
     /// paste, application cursor keys and keypad.
     pub const RESTORE: &'static [u8] = b"\x1b[<99u\x1b[>4m\
-        \x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l\
-        \x1b[?1004l\x1b[?2004l\x1b[?1l\x1b>";
+        \x1b[?9l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l\
+        \x1b[?1016l\x1b[?1004l\x1b[?2004l\x1b[?2031l\x1b[?2048l\x1b[?1l\x1b>\
+        \x1b[?6l\x1b[r";
+
+    /// Written before a repaint from a daemon that does not declare the
+    /// keyboard: the flags on this screen popped, modifyOtherKeys off.
+    pub const FORGET: &'static [u8] = b"\x1b[<99u\x1b[>4m";
+
+    /// Whether a repaint says what the keyboard is — the `CSI = n ; 1 u` a
+    /// new daemon ends every repaint with.
+    pub fn declared_in(repaint: &[u8]) -> bool {
+        let Some(start) = repaint.iter().rposition(|b| *b == 0x1b) else { return false };
+        let tail = &repaint[start..];
+        tail.len() > 6 && tail.starts_with(b"\x1b[=") && tail.ends_with(b";1u")
+            && tail[3..tail.len() - 3].iter().all(u8::is_ascii_digit)
+    }
     const LIMIT: usize = 32;
     /// How many pushes a stack holds before the oldest is dropped.
     const DEPTH: usize = 8;
@@ -768,6 +788,14 @@ mod kitty_flags_tests {
         flags.observe(b"\x1b[>1u\x1b[>5u\x1b[>7u");
         flags.observe(KittyFlags::RESTORE);
         assert_eq!(flags.current(), 0);
+    }
+
+    #[test]
+    fn a_repaint_that_declares_the_keyboard_is_told_apart() {
+        assert!(KittyFlags::declared_in(b"\x1b[?1049l\x1b[H\x1b[2J$ \x1b[1;3H\x1b[0m\x1b[=5;1u"));
+        assert!(KittyFlags::declared_in(b"$ \x1b[=0;1u"));
+        assert!(!KittyFlags::declared_in(b"$ claude\r\n> hi\x1b[4;3H\x1b[0m"), "an old daemon's repaint");
+        assert!(!KittyFlags::declared_in(b""));
     }
 
     /// The form a new daemon's repaint ends with, off included.

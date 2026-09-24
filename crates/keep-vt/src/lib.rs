@@ -279,14 +279,35 @@ impl Terminal {
         if format != Format::Vt {
             return Ok(body);
         }
-        let mut out = Vec::with_capacity(body.len() + 24);
-        if let Some(mode) = [1049u16, 1047, 47].into_iter().find(|&m| self.dec_mode(m)) {
-            out.extend_from_slice(format!("\x1b[?{mode}h").as_bytes());
+        let mut out = Vec::with_capacity(body.len() + 160);
+        // The screen, said either way, and cleared once it is the one being
+        // painted: a terminal that missed the program leaving its alternate
+        // screen is taken back to the main one, not painted over where it is.
+        match [1049u16, 1047, 47].into_iter().find(|&m| self.dec_mode(m)) {
+            Some(1049) => out.extend_from_slice(b"\x1b[?1049h"),
+            Some(mode) => out.extend_from_slice(format!("\x1b[?{mode}h\x1b[H\x1b[2J").as_bytes()),
+            None => out.extend_from_slice(b"\x1b[?1049l\x1b[H\x1b[2J"),
         }
+        // The modes that change what the keyboard and mouse send, switched off
+        // where the program has them off — the body below only ever switches
+        // on, so a terminal that missed the program switching one off would
+        // otherwise keep it. modifyOtherKeys likewise: off here, back on in
+        // the body if the program has it.
+        for mode in Self::INPUT_MODES {
+            if !self.dec_mode(mode) {
+                out.extend_from_slice(format!("\x1b[?{mode}l").as_bytes());
+            }
+        }
+        out.extend_from_slice(b"\x1b[>4m");
         out.extend_from_slice(&body);
         out.extend_from_slice(format!("\x1b[={};1u", self.kitty_keyboard_flags()).as_bytes());
         Ok(out)
     }
+
+    /// DEC modes that decide what a key press or a mouse movement writes:
+    /// application cursor keys, mouse reporting in all its encodings, focus
+    /// reports, bracketed paste.
+    const INPUT_MODES: [u16; 11] = [1, 9, 1000, 1002, 1003, 1005, 1006, 1015, 1016, 1004, 2004];
 
     fn formatted(&self, format: Format) -> Result<Vec<u8>, Error> {
         let extra_screen = ffi::ScreenExtra {
@@ -445,6 +466,21 @@ mod tests {
         stale.write(b"\x1b[>5u");
         stale.write(&vt);
         assert_eq!(stale.kitty_keyboard_flags(), 0, "stale flags survived the repaint");
+    }
+
+    /// A terminal that missed the program switching bracketed paste and
+    /// mouse reporting off, or leaving its alternate screen, is set right.
+    #[test]
+    fn snapshot_turns_off_what_the_program_turned_off() {
+        let mut t = Terminal::new(40, 5).unwrap();
+        t.write(b"$ ");
+        let mut stale = Terminal::new(40, 5).unwrap();
+        stale.write(b"\x1b[?1049h\x1b[?2004h\x1b[?1000h\x1b[?1006h\x1b[?1h");
+        stale.write(&t.snapshot(Format::Vt).unwrap());
+        for mode in [1049, 2004, 1000, 1006, 1] {
+            assert!(!stale.dec_mode(mode), "mode {mode} survived the repaint");
+        }
+        assert!(stale.text().unwrap().contains('$'));
     }
 
     /// Origin mode on the alternate screen: the replayed switch must save
