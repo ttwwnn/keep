@@ -167,19 +167,24 @@ enum ClaudeMode: Hashable {
     /// leaves whatever was known before standing.
     static func declared(onScreen text: String) -> ClaudeMode?? {
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        // A rule is a line that starts as one. The one above the prompt
+        // carries the session's name partway along (`──── fix-upload ─`), so
+        // what follows the run of rule is not asked about.
         func isRule(_ line: Substring) -> Bool {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            return trimmed.count >= 20 && trimmed.allSatisfy { $0 == "─" }
+            line.trimmingCharacters(in: .whitespaces)
+                .hasPrefix(String(repeating: "─", count: 12))
         }
         // The prompt box, and only the prompt box: a rule, the prompt, a
-        // rule. A dialog in front draws rules of its own, and the line under
-        // one of those is not a footer.
+        // rule. A dialog in front draws rules of its own and marks its
+        // choices with the same ❯, but opens with its question — the box
+        // opens with the prompt itself.
         guard let rule = lines.lastIndex(where: isRule),
               let opening = lines[..<rule].lastIndex(where: isRule),
-              lines[(opening + 1)..<rule].contains(where: {
-                  let trimmed = $0.trimmingCharacters(in: .whitespaces)
-                  return trimmed.hasPrefix("❯") || trimmed.hasPrefix(">")
-              })
+              let first = lines[(opening + 1)..<rule].first(where: {
+                  !$0.trimmingCharacters(in: .whitespaces).isEmpty
+              }),
+              first.trimmingCharacters(in: .whitespaces).hasPrefix("❯")
+                  || first.trimmingCharacters(in: .whitespaces).hasPrefix(">")
         else { return nil }
         guard let footer = lines[(rule + 1)...].first(where: {
             !$0.trimmingCharacters(in: .whitespaces).isEmpty
