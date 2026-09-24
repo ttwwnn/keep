@@ -1207,8 +1207,21 @@ final class Session {
     /// naming. A guess, and only ever used in place of silence: the moment
     /// the daemon answers, its answer wins.
     private static func program(of tab: TabEntity) -> String {
-        if !tab.command.isEmpty { return tab.command }
-        return tab.title.first.map(spinnerMarks.contains) == true ? "claude" : ""
+        let wearsClaudeMarks = tab.title.first.map(spinnerMarks.contains) == true
+        if !tab.command.isEmpty {
+            // Claude Code's own installer keeps each release as a file named
+            // after its version, and the process is called what the file is:
+            // `2.1.281`, which names nothing. Behind a title wearing its
+            // marks, a bare version number is Claude Code.
+            if wearsClaudeMarks, isVersionNumber(tab.command) { return "claude" }
+            return tab.command
+        }
+        return wearsClaudeMarks ? "claude" : ""
+    }
+
+    private static func isVersionNumber(_ name: String) -> Bool {
+        let parts = name.split(separator: ".", omittingEmptySubsequences: false)
+        return parts.count >= 2 && parts.allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isNumber) }
     }
 
     /// The left column of a terminal row: which workspace, and where in it.
