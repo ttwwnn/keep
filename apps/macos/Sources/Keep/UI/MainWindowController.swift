@@ -202,7 +202,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
         tabStrip.onSelect = { [weak self] id in self?.send(.activateTab(id)) }
         tabStrip.onClose = { [weak self] id in self?.send(.closeTab(id)) }
-        tabStrip.onNewTab = { [weak self] in self?.send(.newTab(in: nil)) }
+        tabStrip.onRename = { [weak self] id, name in self?.renamed(id, to: name) }
         tabStrip.onGoTo = { [weak self] in self?.send(.togglePicker) }
         tabStrip.onCommands = { [weak self] in self?.send(.togglePalette(.root)) }
         tabStrip.onReorder = { [weak self] ids in self?.send(.reorderTabs(ids, in: nil)) }
@@ -306,6 +306,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
               window?.firstResponder !== surface
         else { return }
         window?.makeFirstResponder(surface)
+    }
+
+    /// A name typed over a tab in the row, or nothing typed and the keyboard
+    /// to hand back.
+    ///
+    /// The session puts the keyboard on the terminal after a rename, which is
+    /// where Return means it to go. The one place that is wrong is a name
+    /// left by opening the picker — ⌘P halfway through typing it — where the
+    /// overlay is up and waiting, and a keyboard sent past it types into a
+    /// shell nobody is looking at. So the overlay takes it back.
+    private func renamed(_ id: TabID, to name: String?) {
+        guard let name else {
+            focusActiveTerminal()
+            return
+        }
+        send(.renameTab(id, to: name))
+        if picker.superview != nil, !picker.isHidden { picker.takeFocus() }
     }
 
     /// The picker covers the whole window while it is up, and takes the
