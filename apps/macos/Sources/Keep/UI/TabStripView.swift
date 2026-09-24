@@ -127,6 +127,7 @@ final class TabStripView: NSView {
             NotificationCenter.default.removeObserver(backgroundObserver)
         }
         if let renameWatch { NSEvent.removeMonitor(renameWatch) }
+        if let fieldWatch { NSEvent.removeMonitor(fieldWatch) }
     }
 
     /// Which tab is at a point in this view, if any. Asked while a pane is
@@ -195,23 +196,9 @@ final class TabStripView: NSView {
 
     func apply(_ newItems: [SessionSnapshot.StripItem]) {
         guard newItems != items else { return }
-        // A name being typed belongs to a tab, and a cell belongs to a place
-        // in the row. When the tab is no longer in that place — closed, or
-        // shifted along by one before it closing — the field is settled here
-        // rather than left over whichever tab the place shows next: kept if
-        // its tab is still in the row, dropped if it has gone.
-        for (index, cell) in cells.enumerated() {
-            guard let id = cell.renaming,
-                  index >= newItems.count || newItems[index].id != id
-            else { continue }
-            cell.finishRenaming(keep: newItems.contains { $0.id == id })
-        }
         items = newItems
 
         // Reuse cells in place; a poll that only changes a title touches text.
-        while cells.count > items.count {
-            cells.removeLast().removeFromSuperview()
-        }
         while cells.count < items.count {
             let cell = TabCellView()
             cell.onSelect = { [weak self] id in self?.onSelect?(id) }
@@ -221,6 +208,25 @@ final class TabStripView: NSView {
             cell.onRenameAsked = { [weak self] id in self?.rename(id) }
             addSubview(cell)
             cells.append(cell)
+        }
+        // A name being typed belongs to a tab, and a cell belongs to a place
+        // in the row. When the tab changes place — one before it closing, the
+        // row reordered from another window — the cell goes with it, since
+        // any cell can show any tab. Settling the field instead cut the name
+        // off halfway through a word, and the rest of the word went on into
+        // the shell. Only a tab that has left the row settles its field, and
+        // what was typed goes with it. Moved once the row has every cell it
+        // needs and before any spare ones are let go, so the place it moves
+        // to exists and the cell being typed in is never one of the spares.
+        if let at = cells.firstIndex(where: \.isRenaming), let id = cells[at].renaming {
+            if let place = items.firstIndex(where: { $0.id == id }) {
+                if place != at { cells.insert(cells.remove(at: at), at: place) }
+            } else {
+                cells[at].finishRenaming(keep: false)
+            }
+        }
+        while cells.count > items.count {
+            cells.removeLast().removeFromSuperview()
         }
         applyCells()
         needsLayout = true
@@ -392,14 +398,22 @@ final class TabStripView: NSView {
         // code that moves tabs bailed out early is worse than one that cannot
         // be moved.
         guard let window, cells.count > 1 else {
+            onSelect?(item)
+            guard wasActive, onName else { return }
             // A lone tab is the window's title, and the window is dragged by
             // it: the window server moves the window and the pointer keeps
-            // its place within it, so one press here cannot be told from the
-            // start of a drag. A double-click can, and is what names it.
-            if clicks >= 2, wasActive, onName {
+            // its place within it, so a press here cannot be told from the
+            // start of a drag while the press lasts. Afterwards it can, and
+            // a single click waits out a pause before naming anything in any
+            // case: a window that has moved by the end of it, or a button
+            // still down, was a drag. A double-click is no drag, and names
+            // it at once.
+            if clicks >= 2 {
                 rename(item)
             } else {
-                onSelect?(item)
+                rename(
+                    item, after: NSEvent.doubleClickInterval,
+                    unlessMovedFrom: self.window?.frame.origin)
             }
             return
         }
@@ -497,10 +511,14 @@ final class TabStripView: NSView {
                     self.onReorder?(order)
                 } else if wasActive && onName {
                     // Finder's gesture, on the one tab that selecting would
-                    // not change. Not selected again on the way: selecting
-                    // hands the keyboard to the terminal, and the field is
-                    // about to ask for it.
+                    // not change. Selected all the same, as every click on a
+                    // tab is: that is what brings the keyboard back to the
+                    // terminal from wherever it had gone, and a click that
+                    // stopped doing so on the tab most clicked would be missed
+                    // on the first keystroke. The field asks for the keyboard
+                    // a turn later at the soonest, so it still gets it.
                     Trace.log("strip", "released on the name of \(item.root)")
+                    self.onSelect?(item)
                     self.rename(item, after: clicks >= 2 ? 0 : NSEvent.doubleClickInterval)
                 } else {
                     Trace.log("strip", "released after \(sawDrag) drag events; treated as a click")
@@ -563,6 +581,9 @@ final class TabStripView: NSView {
     /// Listening, while a name waits out its pause, for anything else being
     /// done in the meantime.
     private var renameWatch: Any?
+    /// Listening, while a name is being typed, for a press anywhere else in
+    /// the window.
+    private var fieldWatch: Any?
 
     /// Call off a name that was asked for and has not opened yet.
     private func callOffRename() {
@@ -582,7 +603,14 @@ final class TabStripView: NSView {
     /// field already open is settled first, and its answer is a turn away,
     /// handing the keyboard to the terminal when it lands. Queued behind
     /// it, this field takes the keyboard after rather than having it taken.
-    private func rename(_ id: TabID, after delay: TimeInterval = 0) {
+    ///
+    /// `origin` is where the window was when the press came, for a press
+    /// that may have been the start of a window drag instead: the field does
+    /// not open if the window has moved since, or if the button that might
+    /// be moving it is still down.
+    private func rename(
+        _ id: TabID, after delay: TimeInterval = 0, unlessMovedFrom origin: NSPoint? = nil
+    ) {
         callOffRename()
         let ticket = renameTicket
         for open in cells { open.finishRenaming(keep: true) }
@@ -592,9 +620,15 @@ final class TabStripView: NSView {
             guard let window = self.window, window.isKeyWindow,
                   !self.isHiddenOrHasHiddenAncestor,
                   let cell = self.cells.first(where: { $0.tabID == id }),
-                  delay == 0 || cell.isActive,
-                  cell.beginRenaming()
+                  delay == 0 || cell.isActive
             else { return }
+            if let origin,
+               window.frame.origin != origin || NSEvent.pressedMouseButtons & 1 != 0 {
+                Trace.log("strip", "the press on \(id.root) was a drag")
+                return
+            }
+            guard cell.beginRenaming() else { return }
+            self.watchPresses()
             Trace.log("strip", "renaming \(id.root)")
             self.updateWindowDragging(
                 pointerAt: self.convert(window.mouseLocationOutsideOfEventStream, from: nil))
@@ -616,6 +650,36 @@ final class TabStripView: NSView {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: begin)
     }
 
+    /// Settle the field on a press that would not settle it by itself.
+    ///
+    /// Most presses end it by taking the keyboard — the terminal, a field in
+    /// the sidebar, the overlay. The rest take nothing: the bare row, the
+    /// titlebar, the sidebar's ground, the toggle. Under those the field
+    /// stayed open with its caret, after a click that meant to leave it, and
+    /// took the next keystrokes as more of the name. Kept, as a click that
+    /// does take the keyboard keeps it.
+    private func watchPresses() {
+        guard fieldWatch == nil else { return }
+        fieldWatch = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { [weak self] event in
+            MainActor.assumeIsolated {
+                guard let self, event.window === self.window,
+                      let open = self.cells.first(where: \.isRenaming)
+                else { return }
+                let point = self.convert(event.locationInWindow, from: nil)
+                // A press in the field places the caret or selects. A press on
+                // a tab is the row's own, and `carry` settles the field itself,
+                // having first read what the press was on.
+                if let field = open.editorFrame,
+                   open.convert(field, to: self).contains(point) { return }
+                if event.type == .leftMouseDown, self.tab(at: point) != nil { return }
+                open.finishRenaming(keep: true)
+            }
+            return event
+        }
+    }
+
     /// What a cell's field came to, passed on a turn later.
     ///
     /// Later, because most fields end by losing the keyboard — a click in the
@@ -623,6 +687,10 @@ final class TabStripView: NSView {
     /// inside somebody else's render. Answering there would dispatch inside a
     /// dispatch and render a snapshot while the last one was still going up.
     private func renamed(_ id: TabID, to name: String?) {
+        if let fieldWatch, !cells.contains(where: \.isRenaming) {
+            NSEvent.removeMonitor(fieldWatch)
+            self.fieldWatch = nil
+        }
         if let window {
             updateWindowDragging(
                 pointerAt: convert(window.mouseLocationOutsideOfEventStream, from: nil))

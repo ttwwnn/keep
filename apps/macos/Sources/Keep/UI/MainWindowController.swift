@@ -312,17 +312,35 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// to hand back.
     ///
     /// The session puts the keyboard on the terminal after a rename, which is
-    /// where Return means it to go. The one place that is wrong is a name
-    /// left by opening the picker — ⌘P halfway through typing it — where the
-    /// overlay is up and waiting, and a keyboard sent past it types into a
-    /// shell nobody is looking at. So the overlay takes it back.
+    /// where Return means it to go. It is wrong wherever the name was left
+    /// for another field: the picker, opened with ⌘P halfway through typing
+    /// it, or a field in the sidebar that a click went into. Either one has
+    /// the keyboard by the time the name arrives here, and a keyboard sent
+    /// past it types into a shell nobody is looking at — the Return meant to
+    /// finish the other field included, which runs whatever was typed. So
+    /// the field that had it takes it back, with its caret where it was.
     private func renamed(_ id: TabID, to name: String?) {
         guard let name else {
             focusActiveTerminal()
             return
         }
+        // Asked before the session moves it. The field editor is shared,
+        // so the field is its delegate, and the caret is the editor's.
+        let editor = (window?.firstResponder as? NSTextView).flatMap {
+            $0.isFieldEditor ? $0 : nil
+        }
+        let field = editor?.delegate as? NSView
+        let selection = editor?.selectedRanges
         send(.renameTab(id, to: name))
-        if picker.superview != nil, !picker.isHidden { picker.takeFocus() }
+        if picker.superview != nil, !picker.isHidden {
+            picker.takeFocus()
+        } else if let field, field.window === window, !field.isDescendant(of: tabStrip),
+                  window?.firstResponder !== editor,
+                  window?.makeFirstResponder(field) == true,
+                  let selection,
+                  let restored = window?.firstResponder as? NSTextView, restored.isFieldEditor {
+            restored.selectedRanges = selection
+        }
     }
 
     /// The picker covers the whole window while it is up, and takes the
