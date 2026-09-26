@@ -622,7 +622,7 @@ final class Session {
 
         case .killWorkspace(let name):
             renderer(window)?.confirm(Confirmation(
-                title: "Fechar o workspace “\(name)”?",
+                title: "Fechar o workspace “\(nameStore.workspace(name) ?? name)”?",
                 detail: "Todas as abas dele serão encerradas, em todas as janelas.",
                 action: "Fechar Workspace"
             )) { [weak self] in self?.kill(workspace: name, from: window) }
