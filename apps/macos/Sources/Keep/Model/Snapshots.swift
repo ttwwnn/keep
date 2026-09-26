@@ -227,45 +227,73 @@ enum ClaudeActivity: Hashable {
             line.trimmingCharacters(in: .whitespaces)
                 .hasPrefix(String(repeating: "─", count: 12))
         }
+        func trimmed(_ line: Substring) -> String { line.trimmingCharacters(in: .whitespaces) }
         func isPrompt(_ line: Substring) -> Bool {
-            let t = line.trimmingCharacters(in: .whitespaces)
+            let t = trimmed(line)
             return t.hasPrefix("❯") || t.hasPrefix(">")
         }
-        // A dialog first: Claude Code ends every one it draws (a question,
-        // a permission, trusting a folder) with `Esc to cancel`. Checked
-        // before the box, because a permission shows the prompt that asked
-        // for it (`❯ Crie o arquivo…`) between two rules of its own.
+        // A dialog first: Claude Code ends most it draws (a question, a
+        // permission, trusting a folder, a picker) with `Esc to cancel`.
+        // Checked before the box, because a permission shows the prompt that
+        // asked for it (`❯ Crie o arquivo…`) between two rules of its own.
         let tail = lines.reversed().lazy
             .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
             .prefix(4)
         if tail.contains(where: { $0.contains("Esc to cancel") }) { return .waitingForYou }
         // The prompt box, found the way the mode is: a rule, the prompt, a
         // rule.
-        if let rule = lines.lastIndex(where: isRule),
-           let opening = lines[..<rule].lastIndex(where: isRule),
-           let first = lines[(opening + 1)..<rule].first(where: {
-               !$0.trimmingCharacters(in: .whitespaces).isEmpty
-           }),
-           isPrompt(first)
-        {
-            // Under the box: Claude Code offers the interrupt only while a
-            // turn runs.
-            if lines[(rule + 1)...].contains(where: { $0.lowercased().contains("esc to interrupt") }) {
-                return .working
-            }
-            // Above it: the last status line Claude Code wrote — a glyph of
-            // its spinner and a capitalised word, `✻ Baked for 23s`,
-            // `✶ Roosting… (16m)`. A bullet in the conversation (`· Qual…`
-            // under an answer) is indented under `⎿` or starts lower-case.
-            let status = lines[..<opening].last(where: isStatusLine)
-            guard let status else { return .done }
-            if status.contains("Waiting for"), status.contains("dynamic workflow") {
-                return .waitingForWorkflow
-            }
-            if status.contains("…") { return .working }
-            return .done
+        guard let rule = lines.lastIndex(where: isRule),
+              let opening = lines[..<rule].lastIndex(where: isRule),
+              let first = lines[(opening + 1)..<rule].first(where: { !trimmed($0).isEmpty }),
+              isPrompt(first)
+        else {
+            // No box: the plan's approval draws its choices without the
+            // `Esc to cancel` line — the pointer on a numbered choice
+            // (`❯ 1. Yes, auto-accept edits`) is what is left to go by.
+            if lines.contains(where: isChoicePointer) { return .waitingForYou }
+            return nil
         }
-        return nil
+        let footer = lines[(rule + 1)...]
+        // A view that is not the session's own turn: an agent's conversation
+        // (`❯ Message @general-purpose…`, `stop all agents`) or the detailed
+        // transcript. What it shows says nothing of the main turn.
+        if trimmed(first).hasPrefix("❯ Message @")
+            || footer.contains(where: { $0.contains("stop all agents") || $0.contains("Showing detailed transcript") })
+        {
+            return nil
+        }
+        // Under the box: Claude Code offers the interrupt only while a turn
+        // runs, and the box stays put however the conversation scrolls.
+        if footer.contains(where: { $0.lowercased().contains("esc to interrupt") }) { return .working }
+        // Above it, the conversation — unless it is scrolled back, where the
+        // last status line in sight is an old one.
+        let conversation = lines[..<opening]
+        if conversation.contains(where: { $0.contains("Jump to bottom") || $0.contains(" new message") }) {
+            return nil
+        }
+        // The last status line Claude Code wrote: a glyph of its spinner and
+        // a capitalised word, `✻ Baked for 23s`, `✶ Roosting… (16m)`. A bullet
+        // in the conversation (`· Qual…` under an answer) is indented under
+        // `⎿` or starts lower-case.
+        guard let status = conversation.last(where: isStatusLine) else { return .done }
+        if status.contains("Waiting for"), status.contains("to finish") {
+            // Dynamic workflows or background agents. Still waited on only
+            // while one is listed running under the footer (`◯ name ▰▰ 1/2`);
+            // a turn that went on and was interrupted writes no new line, and
+            // the old one would otherwise stand for good.
+            return footer.contains(where: { trimmed($0).hasPrefix("◯") }) ? .waitingForWorkflow : .done
+        }
+        if status.contains("…") { return .working }
+        return .done
+    }
+
+    /// `❯ 1. Yes`: the pointer of one of Claude Code's numbered choices.
+    private static func isChoicePointer(_ line: Substring) -> Bool {
+        var rest = line.drop { $0 == " " }
+        guard rest.first == "❯" else { return false }
+        rest = rest.dropFirst().drop { $0 == " " }
+        let digits = rest.prefix { $0.isNumber }
+        return !digits.isEmpty && rest.dropFirst(digits.count).first == "."
     }
 
     private static let spinnerGlyphs: Set<Character> = ["✻", "✳", "✢", "✶", "✽", "·", "*"]
