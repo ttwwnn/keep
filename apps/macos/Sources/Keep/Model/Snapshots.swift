@@ -199,6 +199,87 @@ enum ClaudeMode: Hashable {
     }
 }
 
+/// Where Claude Code's turn stands, read off the same screen as the mode.
+///
+/// Claude Code says it in its own words and nowhere else a tab can reach:
+/// a dialog waiting on an answer ends in `Esc to cancel`; a turn still going
+/// shows `esc to interrupt` under the prompt; a turn that ended while
+/// dynamic workflows run on leaves `✻ Waiting for 1 dynamic workflow to
+/// finish` as its last line; any other last line (`✻ Baked for 23s`) is a
+/// turn that is over. The title's spinner cannot tell these apart: it keeps
+/// spinning while a workflow is awaited.
+enum ClaudeActivity: Hashable {
+    /// A turn is running: the mode's colour, as before.
+    case working
+    /// The turn ended waiting on dynamic workflows still running.
+    case waitingForWorkflow
+    /// A question, a permission or a dialog is waiting on an answer.
+    case waitingForYou
+    /// The turn is over.
+    case done
+
+    /// What the screen says, or nil when it says nothing that can be told
+    /// apart — not Claude Code, or caught mid-redraw — leaving what was known
+    /// before standing.
+    static func read(onScreen text: String) -> ClaudeActivity? {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        func isRule(_ line: Substring) -> Bool {
+            line.trimmingCharacters(in: .whitespaces)
+                .hasPrefix(String(repeating: "─", count: 12))
+        }
+        func isPrompt(_ line: Substring) -> Bool {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            return t.hasPrefix("❯") || t.hasPrefix(">")
+        }
+        // A dialog first: Claude Code ends every one it draws (a question,
+        // a permission, trusting a folder) with `Esc to cancel`. Checked
+        // before the box, because a permission shows the prompt that asked
+        // for it (`❯ Crie o arquivo…`) between two rules of its own.
+        let tail = lines.reversed().lazy
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            .prefix(4)
+        if tail.contains(where: { $0.contains("Esc to cancel") }) { return .waitingForYou }
+        // The prompt box, found the way the mode is: a rule, the prompt, a
+        // rule.
+        if let rule = lines.lastIndex(where: isRule),
+           let opening = lines[..<rule].lastIndex(where: isRule),
+           let first = lines[(opening + 1)..<rule].first(where: {
+               !$0.trimmingCharacters(in: .whitespaces).isEmpty
+           }),
+           isPrompt(first)
+        {
+            // Under the box: Claude Code offers the interrupt only while a
+            // turn runs.
+            if lines[(rule + 1)...].contains(where: { $0.lowercased().contains("esc to interrupt") }) {
+                return .working
+            }
+            // Above it: the last status line Claude Code wrote — a glyph of
+            // its spinner and a capitalised word, `✻ Baked for 23s`,
+            // `✶ Roosting… (16m)`. A bullet in the conversation (`· Qual…`
+            // under an answer) is indented under `⎿` or starts lower-case.
+            let status = lines[..<opening].last(where: isStatusLine)
+            guard let status else { return .done }
+            if status.contains("Waiting for"), status.contains("dynamic workflow") {
+                return .waitingForWorkflow
+            }
+            if status.contains("…") { return .working }
+            return .done
+        }
+        return nil
+    }
+
+    private static let spinnerGlyphs: Set<Character> = ["✻", "✳", "✢", "✶", "✽", "·", "*"]
+
+    private static func isStatusLine(_ line: Substring) -> Bool {
+        var rest = line.drop { $0 == " " }
+        guard let glyph = rest.first, spinnerGlyphs.contains(glyph) else { return false }
+        rest = rest.dropFirst()
+        guard rest.first == " " else { return false }
+        rest = rest.drop { $0 == " " }
+        return rest.first?.isUppercase == true
+    }
+}
+
 /// The one downward channel. Every mutation in the app enters as one of
 /// these; nothing in the UI reaches past this into state.
 enum Intent {
@@ -598,6 +679,8 @@ struct SessionSnapshot: Hashable {
         /// Claude Code's permission mode, when Claude Code is what runs here
         /// and it is in one worth a colour.
         let claudeMode: ClaudeMode?
+        /// Where Claude Code's turn stands there, when it can be told.
+        let claudeActivity: ClaudeActivity?
     }
 
     struct StripItem: Hashable, Identifiable {
@@ -613,6 +696,7 @@ struct SessionSnapshot: Hashable {
         let isElsewhere: Bool
         /// As on the sidebar's row.
         let claudeMode: ClaudeMode?
+        let claudeActivity: ClaudeActivity?
     }
 
     struct ActiveTab: Hashable {
