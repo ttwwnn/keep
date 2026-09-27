@@ -377,6 +377,17 @@ struct UsageFooter: View {
             }
             .help(accountHelp(line, now: now))
 
+            // Which login this is, written out: the slot's name says which
+            // one the kit means, the address says which one the service does.
+            if let email = line.account.email {
+                Text(email)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(UsageInk.inkResting)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(accountHelp(line, now: now))
+            }
+
             if let reading = line.reading {
                 ForEach(Array(reading.windows.enumerated()), id: \.offset) { _, window in
                     bar(window, of: line, now: now)
@@ -434,17 +445,21 @@ struct UsageFooter: View {
                 + (until.map { " reinicia em \($0)" } ?? ""))
     }
 
-    /// Folded: the account and the figures of its first two windows, each in
-    /// its own colour — one amber figure must not paint its calm neighbour.
+    /// Folded: the account — by its address, which is what tells two logins
+    /// of one service apart — and the figures of its first two windows, each
+    /// in its own colour: one amber figure must not paint its calm neighbour.
     private func compact(_ line: AccountUsage) -> some View {
         let windows = Array((line.reading?.windows ?? []).prefix(2))
         let figures = windows.map { UsageText.percent($0.percent) }.joined(separator: " · ")
+        // The address alone, cut at its end: its start is what tells the
+        // logins apart, and the service is in the tooltip.
+        let name = line.account.email ?? title(line)
         return HStack(spacing: 5) {
-            Text(title(line))
+            Text(name)
                 .font(numbers)
                 .foregroundStyle(line.account.isActive ? UsageInk.ink : UsageInk.inkResting)
                 .lineLimit(1)
-                .truncationMode(.middle)
+                .truncationMode(.tail)
             Spacer(minLength: 4)
             compactFigures(windows)
                 .font(numbers)
@@ -453,9 +468,10 @@ struct UsageFooter: View {
                 .layoutPriority(1)
         }
         .frame(height: 14)
-        .help(windows.map { "\($0.title): \(UsageText.percent($0.percent))" }.joined(separator: "\n"))
+        .help(([title(line)] + windows.map { "\($0.title): \(UsageText.percent($0.percent))" })
+            .joined(separator: "\n"))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title(line)) \(figures)")
+        .accessibilityLabel("\(line.account.engine.title) \(name) \(figures)")
     }
 
     private func compactFigures(_ windows: [UsageWindow]) -> Text {

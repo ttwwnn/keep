@@ -39,7 +39,7 @@ SOCKET=/tmp/keep-usage-$$.sock
 WORK=$(mktemp -d /tmp/keep-usage-XXXXXX)
 AXTEXT=$WORK/axtext
 AXPOS=$WORK/axpos
-KEEP=./target/release/keep
+KEEP=$APP/Contents/Resources/keep   # the client and daemon the build put in the bundle
 HOME_WS=$(id -un)
 PASSED=0
 FAILED=0
@@ -208,7 +208,7 @@ mkdir -p "$KEEP_STATE_DIR"
 require_scratch_socket
 rm -f "$SOCKET"
 
-./target/release/keepd >>"$WORK/daemon.log" 2>&1 &
+"$APP/Contents/Resources/keepd" >>"$WORK/daemon.log" 2>&1 &
 DAEMON_PID=$!
 waited=0
 while [ ! -S "$SOCKET" ] && [ "$waited" -lt 20 ]; do sleep 0.25; waited=$((waited + 1)); done
@@ -233,6 +233,9 @@ check "its duplicate slot is not a second account" no "$(has "Claude · assinatu
 check "the account whose access lapsed" yes "$(has "Claude · reserva")"
 check "the account the service is holding back" yes "$(has "Claude · limitada")"
 check "the Codex login, named by its mailbox" yes "$(has "GPT · jose")"
+check "each account's address is written out" yes "$(has "um@exemplo.com")"
+check "the lapsed account's address too" yes "$(has "dois@exemplo.com")"
+check "and the Codex one" yes "$(has "jose@exemplo.com")"
 
 say ""
 say "the bars carry what the services answered"
