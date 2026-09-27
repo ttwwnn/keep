@@ -16,7 +16,7 @@ import Foundation
 // the tools that own it renew it.
 
 /// Which service an account belongs to.
-enum AIEngine: String, Equatable {
+enum AIEngine: String, Equatable, Codable {
     case claude
     case codex
 
@@ -66,7 +66,7 @@ struct AIAccount: Equatable {
 }
 
 /// An account with the secret taken out: what the view is allowed to hold.
-struct AIAccountSummary: Equatable {
+struct AIAccountSummary: Equatable, Codable {
     let engine: AIEngine
     let key: String
     let alias: String
@@ -256,7 +256,7 @@ private func nonEmpty(_ text: String) -> String? {
 // MARK: - reading the answers
 
 /// One allowance window: a bar in the footer.
-struct UsageWindow: Equatable {
+struct UsageWindow: Equatable, Codable {
     /// The short name beside the bar ("5h", "7d", "Fable").
     let label: String
     /// The long name, for the tooltip ("Sessão (5h)").
@@ -267,9 +267,11 @@ struct UsageWindow: Equatable {
 }
 
 /// Everything one answer says about one account.
-struct UsageReading: Equatable {
+struct UsageReading: Equatable, Codable {
     let windows: [UsageWindow]
-    /// The service says the account is at its limit now.
+    /// The service says the account is at its limit now — by its general
+    /// windows. A per-model window, extra credits or an additional limit at
+    /// 100% show red on their own bar; the account itself still works.
     let limitReached: Bool
 }
 
@@ -294,24 +296,30 @@ enum UsageParse {
         var windows: [UsageWindow] = []
         var reached = false
 
-        func add(_ label: String, _ title: String, window: [String: Any]?, limit: [String: Any]?) {
+        func add(
+            _ label: String, _ title: String, window: [String: Any]?, limit: [String: Any]?,
+            general: Bool = false
+        ) {
             let percent = number(window?["utilization"]) ?? number(limit?["percent"])
             guard let percent else { return }
             let resets = date(window?["resets_at"]) ?? date(limit?["resets_at"])
             windows.append(UsageWindow(label: label, title: title, percent: percent, resetsAt: resets))
-            if percent >= 100 { reached = true }
+            if general, percent >= 100 { reached = true }
         }
 
         add("5h", "Sessão (5h)",
-            window: root["five_hour"] as? [String: Any], limit: fromLimits("session"))
+            window: root["five_hour"] as? [String: Any], limit: fromLimits("session"), general: true)
         add("7d", "Semanal (7 dias)",
-            window: root["seven_day"] as? [String: Any], limit: fromLimits("weekly_all"))
+            window: root["seven_day"] as? [String: Any], limit: fromLimits("weekly_all"), general: true)
 
         let scoped = limits.filter { ($0["kind"] as? String) == "weekly_scoped" }
         for limit in scoped {
-            let model = ((limit["scope"] as? [String: Any])?["model"] as? [String: Any])?["display_name"]
-                as? String
-            let name = model.flatMap(nonEmpty) ?? "modelo"
+            // Scoped to a model, or to a surface (Claude Code, the app…).
+            let scope = limit["scope"] as? [String: Any]
+            let model = ((scope?["model"] as? [String: Any])?["display_name"] as? String).flatMap(nonEmpty)
+            let surface = ((scope?["surface"] as? [String: Any])?["display_name"] as? String)
+                .flatMap(nonEmpty)
+            let name = model ?? surface ?? "modelo"
             add(name, "Semanal — \(name)", window: nil, limit: limit)
         }
         if scoped.isEmpty {
@@ -341,7 +349,9 @@ enum UsageParse {
 
         func take(_ limit: [String: Any]?, prefix: String?) {
             guard let limit else { return }
-            if (limit["limit_reached"] as? Bool) == true { reached = true }
+            // Only the plan's own limit blocks the account; an additional
+            // one blocks what it is about.
+            if prefix == nil, (limit["limit_reached"] as? Bool) == true { reached = true }
             for key in ["primary_window", "secondary_window"] {
                 guard let window = limit[key] as? [String: Any],
                       let percent = number(window["used_percent"])
@@ -354,7 +364,7 @@ enum UsageParse {
                     title: prefix.map { "\(title) — \($0)" } ?? title,
                     percent: percent,
                     resetsAt: resets))
-                if percent >= 100 { reached = true }
+                if prefix == nil, percent >= 100 { reached = true }
             }
         }
 

@@ -136,8 +136,22 @@ struct WorkspaceSidebar: View {
         // `SidebarRows`).
         VStack(spacing: 0) {
             list
+            // Compressible and clipped: its height is not a minimum the
+            // window must keep, and in a short window it gives way from the
+            // bottom rather than making the window grow. First claim on the
+            // height otherwise, so the list is what scrolls.
             UsageFooter(monitor: .shared)
+                .frame(minHeight: 0, alignment: .top)
+                .clipped()
+                .layoutPriority(1)
         }
+        // A drop that ends on the sidebar's bare ground still ends: without
+        // this, a tab dropped an inch below its group kept its ghost dimmed
+        // and its mirror alive. On the whole stack, footer included — a drop
+        // on the footer is a drop on bare ground. (A drag cancelled with Esc
+        // has no signal at all on macOS; the next drag's onDrag clears what
+        // it left.)
+        .onDrop(of: [.plainText], delegate: CleanupDropDelegate(clear: cancelDrag))
     }
 
     private var list: some View {
@@ -170,11 +184,6 @@ struct WorkspaceSidebar: View {
             // alone keeps the poller's title churn from animating layout.
             .animation(.easeOut(duration: 0.18), value: shape)
         }
-        // A drop that ends on the sidebar's bare ground still ends: without
-        // this, a tab dropped an inch below its group kept its ghost dimmed
-        // and its mirror alive. (A drag cancelled with Esc has no signal at
-        // all on macOS; the next drag's onDrag clears what it left.)
-        .onDrop(of: [.plainText], delegate: CleanupDropDelegate(clear: cancelDrag))
         .onChange(of: model.rows) { _, new in
             // Mid-drag, the poller may replace the snapshot underneath the
             // mirror. The mirror survives — it is the truth of the gesture —

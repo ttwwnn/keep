@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// One account's place in the footer: who it is, and the last it said.
-struct AccountUsage: Identifiable, Equatable {
+struct AccountUsage: Identifiable, Equatable, Codable {
     let account: AIAccountSummary
     /// The last reading that came back, kept through later failures: an old
     /// figure marked as old says more than a blank.
@@ -40,6 +40,8 @@ final class UsageMonitor: ObservableObject {
     /// one pause a click does not get to skip.
     private var pauses: [String: (until: Date, firm: Bool)] = [:]
     private var lastClick = Date.distantPast
+    /// A click that came while a round was running, owed a round of its own.
+    private var clickPending = false
 
     nonisolated static let period: TimeInterval = 300
     nonisolated static let tick: TimeInterval = 60
@@ -62,6 +64,7 @@ final class UsageMonitor: ObservableObject {
 
     func start() {
         guard timer == nil else { return }
+        restore()
         measure(clicked: false)
         let timer = Timer(timeInterval: Self.tick, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.measure(clicked: false) }
@@ -75,6 +78,12 @@ final class UsageMonitor: ObservableObject {
     /// The footer's refresh button: every account, now — within reason.
     func measureNow() {
         guard Date().timeIntervalSince(lastClick) > 15 else { return }
+        guard !inFlight else {
+            // Not dropped: run as soon as the tick in flight lands.
+            clickPending = true
+            measuring = true
+            return
+        }
         lastClick = Date()
         measure(clicked: true)
     }
@@ -104,6 +113,10 @@ final class UsageMonitor: ObservableObject {
             var newPauses: [String: (until: Date, firm: Bool)] = [:]
             let lock = NSLock()
             let group = DispatchGroup()
+            // Started after the loop, not in it: the loop writes the same
+            // arrays the answers write, and must be done before any answer
+            // can arrive.
+            var tasks: [URLSessionDataTask] = []
 
             for (index, account) in accounts.enumerated() {
                 let id = account.summary.id
@@ -135,7 +148,7 @@ final class UsageMonitor: ObservableObject {
 
                 group.enter()
                 let started = Date()
-                session.dataTask(with: request) { data, response, error in
+                tasks.append(session.dataTask(with: request) { data, response, error in
                     defer { group.leave() }
                     let status = (response as? HTTPURLResponse)?.statusCode
                     let outcome = Self.outcome(
@@ -155,8 +168,9 @@ final class UsageMonitor: ObservableObject {
                         lines[index].problem = problem
                         if let pause { newPauses[id] = pause }
                     }
-                }.resume()
+                })
             }
+            tasks.forEach { $0.resume() }
             group.wait()
 
             DispatchQueue.main.async {
@@ -165,8 +179,46 @@ final class UsageMonitor: ObservableObject {
                 self.measuring = false
                 self.pauses = newPauses
                 if lines != self.lines { self.lines = lines }
+                self.remember()
+                if self.clickPending {
+                    self.clickPending = false
+                    self.measureNow()
+                }
             }
         }
+    }
+
+    // MARK: - across relaunches
+
+    /// Readings and the service's "wait until" kept in the app's defaults —
+    /// no token, only figures — so a relaunch shows the last figures at once
+    /// and keeps to the five minutes and to a 429's Retry-After, instead of
+    /// asking every service the moment the app opens. Not when a test points
+    /// the monitor at a home of its own.
+    private var persists: Bool { environment["KEEP_AI_USAGE_HOME"] == nil }
+    private static let linesKey = "usageFooterLines"
+    private static let pausesKey = "usageFooterWaitUntil"
+
+    private func restore() {
+        guard persists else { return }
+        let defaults = UserDefaults.standard
+        if let data = defaults.data(forKey: Self.linesKey),
+           let saved = try? JSONDecoder().decode([AccountUsage].self, from: data) {
+            lines = saved
+        }
+        let now = Date()
+        for (id, until) in (defaults.dictionary(forKey: Self.pausesKey) as? [String: Double]) ?? [:] {
+            let date = Date(timeIntervalSince1970: until)
+            if date > now { pauses[id] = (date, true) }
+        }
+    }
+
+    private func remember() {
+        guard persists else { return }
+        let defaults = UserDefaults.standard
+        if let data = try? JSONEncoder().encode(lines) { defaults.set(data, forKey: Self.linesKey) }
+        let firm = pauses.filter { $0.value.firm }.mapValues { $0.until.timeIntervalSince1970 }
+        defaults.set(firm, forKey: Self.pausesKey)
     }
 
     private enum Outcome {
@@ -218,6 +270,9 @@ final class UsageMonitor: ObservableObject {
 /// never the only thing saying it.
 struct UsageFooter: View {
     @ObservedObject var monitor: UsageMonitor
+    /// Quiet at rest, legible under the pointer (PRODUCT.md).
+    @State private var hoverFold = false
+    @State private var hoverMeasure = false
     /// Folded, it is one line per account. A convenience of this Mac's, so it
     /// lives in the app's defaults rather than in any window's record.
     @AppStorage("usageFooterFolded") private var folded = false
@@ -276,6 +331,8 @@ struct UsageFooter: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .foregroundStyle(hoverFold ? UsageInk.inkResting : UsageInk.inkFaint)
+            .onHover { hoverFold = $0 }
             .accessibilityLabel("Consumo de IA")
             .help(folded ? "Mostrar as janelas de cada conta" : "Uma linha por conta")
             Spacer(minLength: 4)
@@ -288,6 +345,8 @@ struct UsageFooter: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .foregroundStyle(hoverMeasure ? UsageInk.inkResting : UsageInk.inkFaint)
+            .onHover { hoverMeasure = $0 }
             .opacity(monitor.measuring ? 0.35 : 1)
             .help("Medir agora")
         }
@@ -343,7 +402,9 @@ struct UsageFooter: View {
                 .font(.system(size: 10))
                 .foregroundStyle(UsageInk.inkResting)
                 .lineLimit(1)
-                .truncationMode(.tail)
+                // The middle: an additional limit's label ends in the window
+                // ("… 5h", "… 7d") that tells two of them apart.
+                .truncationMode(.middle)
                 .frame(width: 34, alignment: .leading)
             GeometryReader { space in
                 ZStack(alignment: .leading) {
