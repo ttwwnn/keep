@@ -590,7 +590,7 @@ final class Session {
                 title: "Fechar a aba “\(tabName(id))”?",
                 detail: "O que estiver rodando nela será encerrado.",
                 action: "Fechar Aba"
-            ), from: window) { [weak self] in self?.close(tab: id, from: window) ?? false }
+            ), about: "desta aba", from: window) { [weak self] in self?.close(tab: id, from: window) ?? false }
 
         case .closePane(let pane):
             guard let tab = shownTab(in: window) else { return }
@@ -600,13 +600,16 @@ final class Session {
             // ends with it as surely as a tab's does.
             let requested = pane ?? tab.focusedPane
             let ending = tab.owns(pane: requested) ? requested : tab.id.root
+            let asked = tab.id
             askToEnd([Worktrees.Target(workspace: tab.id.workspace, tabs: [ending])], Confirmation(
                 title: alone ? "Fechar a aba “\(tabName(tab.id))”?" : "Fechar este painel?",
                 detail: "O que estiver rodando nele será encerrado.",
                 action: alone ? "Fechar Aba" : "Fechar Painel"
-            ), from: window) { [weak self] in
-                self?.close(pane: pane, from: window)
-                return true
+            ), about: alone ? "desta aba" : "deste painel", from: window) { [weak self] in
+                // The pane the question named, in the tab it named — not
+                // whichever has the focus when yes is clicked.
+                guard let self, self.shownTab(in: window)?.id == asked else { return false }
+                return self.close(pane: ending, from: window)
             }
 
         case .removeWorkspace(let name):
@@ -637,7 +640,9 @@ final class Session {
                 title: "Fechar o workspace “\(nameStore.workspace(name) ?? name)”?",
                 detail: "Todas as abas dele serão encerradas, em todas as janelas.",
                 action: "Fechar Workspace"
-            ), from: window) { [weak self] in self?.kill(workspace: name, from: window) ?? false }
+            ), about: "deste workspace", from: window) { [weak self] in
+                self?.kill(workspace: name, from: window) ?? false
+            }
 
         case .split(let direction):
             guard let workspace = workspace(for: window), let tab = shownTab(in: window) else { return }
@@ -1006,9 +1011,8 @@ final class Session {
                 title: "Fechar a aba “\(tabName(tab))”?",
                 detail: "O que estiver rodando nela será encerrado.",
                 action: "Fechar Aba"
-            ), from: window) { [weak self] in
-                self?.dismiss(tab: tab, from: window)
-                return true
+            ), about: "desta aba", from: window) { [weak self] in
+                self?.dismiss(tab: tab, from: window) ?? false
             }
         }
     }
@@ -1025,8 +1029,8 @@ final class Session {
     /// as the sheet would drop it. `end` reports whether the tabs did close:
     /// nothing moves for a close that failed.
     private func askToEnd(
-        _ targets: [Worktrees.Target], _ question: Confirmation, from window: WindowID,
-        end: @escaping () -> Bool
+        _ targets: [Worktrees.Target], _ question: Confirmation, about subject: String,
+        from window: WindowID, end: @escaping () -> Bool
     ) {
         guard Worktrees.helper != nil, !targets.isEmpty else {
             renderer(window)?.confirm(question) { _ = end() }
@@ -1041,7 +1045,7 @@ final class Session {
                 self.asking.remove(window)
                 let asked = Confirmation(
                     title: question.title,
-                    detail: question.detail + Worktrees.note(for: answer),
+                    detail: question.detail + Worktrees.note(for: answer, about: subject),
                     action: question.action)
                 self.renderer(window)?.confirm(asked) { [weak self] in
                     guard end() else { return }
@@ -1062,15 +1066,39 @@ final class Session {
         }
     }
 
-    /// The move itself, off the main thread; what did not go is said.
+    /// Moves to the Trash still under way. The app waits for them before
+    /// quitting (`onTrashDone`): quitting mid-move would leave a folder half
+    /// dealt with and nobody told.
+    private var trashing = 0
+    var isTrashing: Bool { trashing > 0 }
+    var onTrashDone: (() -> Void)?
+
+    /// The move itself, off the main thread; what did not go is said — in
+    /// the window that asked, or any window still open.
     private func trash(_ listing: Worktrees.Listing, from window: WindowID) {
+        trashing += 1
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let problems = Worktrees.trash(listing)
-            guard !problems.isEmpty else { return }
+            // Finder writes "Put Back" down for a trashed item a moment after
+            // the move; a process that quits at once loses it for all but the
+            // first. The wait is here, off the main thread, so a quit asked
+            // meanwhile waits for it too.
+            Thread.sleep(forTimeInterval: 2)
             DispatchQueue.main.async {
-                self?.renderer(window)?.present(
-                    error: "Nem todas as worktrees foram para a lixeira:\n"
-                        + problems.map { "• " + $0 }.joined(separator: "\n"))
+                guard let self else { return }
+                self.trashing -= 1
+                if !problems.isEmpty {
+                    let text = "Nem todas as worktrees foram para a lixeira:\n"
+                        + problems.map { "• " + $0 }.joined(separator: "\n")
+                    Trace.log("worktree", text)
+                    let shown = self.renderer(window)
+                        ?? self.windowOrder.lazy.compactMap { self.renderer($0) }.first
+                    shown?.present(error: text)
+                }
+                if self.trashing == 0, let done = self.onTrashDone {
+                    self.onTrashDone = nil
+                    done()
+                }
             }
         }
     }
@@ -1105,12 +1133,13 @@ final class Session {
         }
     }
 
-    private func close(pane: UInt32?, from window: WindowID) {
+    @discardableResult
+    private func close(pane: UInt32?, from window: WindowID) -> Bool {
         // Closing the *focused* pane, which for a tab with no splits is
         // the tab itself. A root closed while panes remain is not a hole:
         // the daemon promotes an orphaned pane to stand on its own, so
         // what survives is the rest of the arrangement.
-        guard let workspace = workspace(for: window), let tab = shownTab(in: window) else { return }
+        guard let workspace = workspace(for: window), let tab = shownTab(in: window) else { return false }
         let requested = pane ?? tab.focusedPane
         let target = tab.owns(pane: requested) ? requested : tab.id.root
         // Closing is idempotent on purpose. Pressing ⌘W faster than the
@@ -1123,11 +1152,12 @@ final class Session {
            let heir = tab.panes.first(where: { $0.splitOf == tab.id.root }) {
             nameStore.moveTab(from: tab.id, to: TabID(workspace: tab.id.workspace, root: heir.tab))
         }
-        try? Daemon.closeTab(target, in: workspace.name)
+        let closed = (try? Daemon.closeTab(target, in: workspace.name)) != nil
         SurfacePool.shared.discard(workspace: workspace.name, tab: target)
         refreshFromDaemon()
         publish()
         renderer(window)?.focusActiveTerminal()
+        return closed
     }
 
     @discardableResult
@@ -1152,13 +1182,15 @@ final class Session {
         return killed
     }
 
-    private func dismiss(tab: TabID, from window: WindowID) {
-        try? Daemon.closeTab(tab.root, in: tab.workspace)
+    @discardableResult
+    private func dismiss(tab: TabID, from window: WindowID) -> Bool {
+        let closed = (try? Daemon.closeTab(tab.root, in: tab.workspace)) != nil
         SurfacePool.shared.discard(workspace: tab.workspace, tab: tab.root)
         refreshFromDaemon()
         let items = pickerItems(for: window)
         views[window]?.picker?.items = items
         publish()
+        return closed
     }
 
     // MARK: - internals

@@ -47,7 +47,8 @@ confere(nota.contains("(ramo fix/x; 3 arquivos alterados; 1 commit só nela; ain
 confere(nota.contains("• ~/projetos/wt-solta (sem ramo, em f00ba12)"), "nota: HEAD solta e ~")
 confere(nota.contains("Fica onde está:\n• ~/projetos/wt-g — em uso pela aba “Relatório”"), "nota: mantida com motivo")
 confere(nota.contains("não identifiquei a conversa"), "nota: aviso")
-confere(nota.contains("Colocar de volta"), "nota: como recuperar")
+confere(nota.contains("Colocar de volta") && nota.contains("fora do git"), "nota: como recuperar, sem prometer a worktree")
+confere(Worktrees.note(for: r, about: "deste workspace").contains("As 2 worktrees deste workspace vão para a lixeira:"), "nota: fala do que se fecha")
 escreve("listar.json", ["versao": 1, "abas": [], "lixeira": [], "mantidas": [], "avisos": []])
 confere(Worktrees.note(for: Worktrees.list([.init(workspace: "w", tabs: [1])])) == "", "nota: nada a dizer quando não há worktree")
 escreve("listar.json", ["versao": 2])
@@ -92,6 +93,35 @@ confere(!fm.fileExists(atPath: espera), "processo vivo: tentou de novo e moveu")
 confere(cs.filter { $0 == ["preparar", espera] }.count == 2, "processo vivo: preparou duas vezes", "\(cs)")
 confere(problemas.count == 1, "só um problema", "\(problemas)")
 print(problemas)
+// pid que não morre: nada se move
+let teimoso = Process(); teimoso.executableURL = URL(fileURLWithPath: "/bin/sleep"); teimoso.arguments = ["60"]; try! teimoso.run()
+let fica = dir + "/repo-wt-fica-\(getpid())"
+try! fm.createDirectory(atPath: fica, withIntermediateDirectories: true)
+escreve("listar.json", ["versao": 1, "abas": [["alvo": "w:1", "pids": [teimoso.processIdentifier]]], "lixeira": [item(fica)]])
+guard case .listing(let l3) = Worktrees.list([.init(workspace: "w", tabs: [1])]) else { print("FALHA"); exit(1) }
+limpaChamadas()
+let t3 = Date()
+let p3 = Worktrees.trash(l3)
+confere(fm.fileExists(atPath: fica) && p3.first?.contains("ainda está rodando") == true && !chamadas().contains { ($0["argv"] as? [String])?.first == "preparar" }, "conversa viva: nada move e diz por quê", "\(p3)")
+confere(Date().timeIntervalSince(t3) >= 19, "conversa viva: esperou os 20 s")
+teimoso.terminate(); try? fm.removeItem(atPath: fica)
+// zumbi conta como morto
+var z: pid_t = 0
+let argv: [UnsafeMutablePointer<CChar>?] = [strdup("/usr/bin/true"), nil]
+posix_spawn(&z, "/usr/bin/true", nil, nil, argv, nil)
+Thread.sleep(forTimeInterval: 0.5)
+confere(kill(z, 0) == 0, "(o filho virou zumbi: kill(pid, 0) ainda responde)")
+confere(Worktrees.waitForExit([z], upTo: 1).isEmpty, "zumbi conta como morto")
+var st: Int32 = 0; waitpid(z, &st, 0)
+// nasceu_ns vai para o preparar
+let comId = dir + "/repo-wt-id-\(getpid())"
+try! fm.createDirectory(atPath: comId, withIntermediateDirectories: true)
+escreve("listar.json", ["versao": 1, "abas": [], "lixeira": [["caminho": comId, "nasceu_ns": 1790000000123456789]]])
+guard case .listing(let l4) = Worktrees.list([.init(workspace: "w", tabs: [1])]) else { print("FALHA"); exit(1) }
+limpaChamadas()
+_ = Worktrees.trash(l4)
+confere(chamadas().contains { ($0["argv"] as? [String]) == ["preparar", comId, "--nasceu", "1790000000123456789"] }, "preparar recebe o nascimento listado", "\(chamadas())")
+try? fm.removeItem(atPath: NSHomeDirectory() + "/.Trash/" + (comId as NSString).lastPathComponent)
 for p in [wt, espera] { try? fm.removeItem(atPath: NSHomeDirectory() + "/.Trash/" + (p as NSString).lastPathComponent) }
 try? fm.removeItem(atPath: recusa)
 print("\(casos - falhas)/\(casos) ok"); exit(falhas == 0 ? 0 : 1)

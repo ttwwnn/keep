@@ -57,6 +57,9 @@ enum Worktrees {
             let alteracoes: Int?
             let commits_so_aqui: Int?
             let processos: [Running]?
+            /// When the worktree was born, so `preparar` can refuse a
+            /// different one made at the same path while the question was up.
+            let nasceu_ns: Int64?
         }
 
         struct Kept: Decodable {
@@ -120,21 +123,27 @@ enum Worktrees {
 
     /// What the question adds: which folders go, which stay and why, or that
     /// nothing could be checked. Empty when there is nothing to say.
-    static func note(for answer: Answer) -> String {
+    ///
+    /// `subject` is what is being closed, as the sentence says it: "desta
+    /// aba", "deste painel", "deste workspace".
+    static func note(for answer: Answer, about subject: String = "desta aba") -> String {
         switch answer {
         case .off:
             return ""
         case .failed(let why):
-            return "\n\nNão consegui verificar as worktrees desta aba (\(why)); nenhuma será movida."
+            return "\n\nNão consegui verificar as worktrees \(subject) (\(why)); nenhuma será movida."
         case .listing(let listing):
             var parts: [String] = []
             let going = listing.lixeira ?? []
             if !going.isEmpty {
                 var text = going.count == 1
-                    ? "A worktree desta aba vai para a lixeira:"
-                    : "As \(going.count) worktrees desta aba vão para a lixeira:"
+                    ? "A worktree \(subject) vai para a lixeira:"
+                    : "As \(going.count) worktrees \(subject) vão para a lixeira:"
                 for item in going { text += "\n• " + describe(item) }
-                text += "\nVoltam pelo “Colocar de volta” da Lixeira; os commits ficam guardados em refs/keep-lixeira."
+                // Put Back brings the files, not the worktree: its entry in
+                // the repository is dropped so the branch is free again.
+                text += "\nOs arquivos voltam pelo “Colocar de volta” da Lixeira, já fora do git; "
+                    + "o ramo continua no repositório e os commits e alterações ficam guardados em refs/keep-lixeira."
                 parts.append(text)
             }
             let kept = listing.mantidas ?? []
@@ -194,7 +203,16 @@ enum Worktrees {
         guard let helper else { return [] }
         let going = listing.lixeira ?? []
         guard !going.isEmpty else { return [] }
-        waitForExit(listing.pids, upTo: 5)
+        // The tabs' own processes gone, or nothing moves: a conversation
+        // still running is still using its worktrees, whatever the close
+        // reported. Twenty seconds covers Claude Code's own grace on a hang-up.
+        let running = waitForExit(listing.pids, upTo: 20)
+        guard running.isEmpty else {
+            let pids = running.map(String.init).joined(separator: ", ")
+            return going.map {
+                "\(tilde($0.caminho)): a conversa da aba ainda está rodando (pid \(pids)); nada foi movido"
+            }
+        }
 
         var problems: [String] = []
         for item in going {
@@ -202,8 +220,9 @@ enum Worktrees {
             var ready = false
             var reason = "sem resposta do keep-worktrees"
             let giveUp = Date().addingTimeInterval(60)
+            let identity = item.nasceu_ns.map { ["--nasceu", String($0)] } ?? []
             while true {
-                switch run(helper, ["preparar", item.caminho], within: 30) {
+                switch run(helper, ["preparar", item.caminho] + identity, within: 30) {
                 case .failure(let why):
                     reason = why.description
                 case .success(let data):
@@ -251,13 +270,26 @@ enum Worktrees {
         return problems
     }
 
-    /// Until every one of these is gone, or the time is up.
-    private static func waitForExit(_ pids: [Int32], upTo seconds: TimeInterval) {
+    /// Until every one of these is gone, or the time is up; the ones still
+    /// running then.
+    ///
+    /// A zombie counts as gone: it runs nothing, and a shell killed under
+    /// its parent can stay one until the parent reaps it — which `kill(pid,
+    /// 0)` alone would read as alive for ever.
+    static func waitForExit(_ pids: [Int32], upTo seconds: TimeInterval) -> [Int32] {
         let until = Date().addingTimeInterval(seconds)
-        func alive(_ pid: Int32) -> Bool { pid > 0 && (kill(pid, 0) == 0 || errno == EPERM) }
+        func alive(_ pid: Int32) -> Bool {
+            guard pid > 0, kill(pid, 0) == 0 || errno == EPERM else { return false }
+            var info = kinfo_proc()
+            var size = MemoryLayout<kinfo_proc>.stride
+            var name: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+            guard sysctl(&name, 4, &info, &size, nil, 0) == 0, size > 0 else { return true }
+            return Int32(info.kp_proc.p_stat) != SZOMB
+        }
         while pids.contains(where: alive), Date() < until {
             Thread.sleep(forTimeInterval: 0.1)
         }
+        return pids.filter(alive)
     }
 
     // MARK: - running the helper
