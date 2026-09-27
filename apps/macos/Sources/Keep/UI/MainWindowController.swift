@@ -709,11 +709,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// with one fewer viewer.
     // MARK: - full screen
 
-    /// The strip keeps the height the titlebar gave it, measured while there
-    /// still is one.
+    /// In full screen the row only has to hold the tabs: no traffic lights to
+    /// clear, no titlebar to match. A tab's capsule and the chrome buttons
+    /// are 26 points, and four either side is the row — the rest of the
+    /// screen goes to the terminal.
+    static let fullScreenRowHeight: CGFloat = 34
+
     func windowWillEnterFullScreen(_ notification: Notification) {
-        let windowed = chromeContent.safeAreaInsets.top
-        if windowed > 1 { fullScreenStripHeight.constant = windowed }
+        fullScreenStripHeight.constant = Self.fullScreenRowHeight
         inFullScreen = true
         layOutChrome()
         Trace.log("window", "full screen, strip \(Int(fullScreenStripHeight.constant))")
