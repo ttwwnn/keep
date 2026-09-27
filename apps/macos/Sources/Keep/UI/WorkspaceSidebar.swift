@@ -128,6 +128,19 @@ struct WorkspaceSidebar: View {
     }
 
     var body: some View {
+        // The list, and under it the AI usage footer, pinned: the stack gives
+        // the scroll view whatever height the footer leaves, so the list ends
+        // where the footer begins and scrolls inside that. The footer observes
+        // the usage monitor itself — a reading redraws the footer alone, not
+        // this view, whose rebuilds are what take the keyboard (see
+        // `SidebarRows`).
+        VStack(spacing: 0) {
+            list
+            UsageFooter(monitor: .shared)
+        }
+    }
+
+    private var list: some View {
         // A scroll view over a plain stack, not a List. A List on macOS is an
         // NSTableView underneath, and inside its rows `.draggable` and
         // `.dropDestination` never fire — a tab could be pressed and pulled
