@@ -39,8 +39,8 @@ struct AIAccount: Equatable {
     /// What the account is known by across slots: the service's own id when
     /// there is one, so two slots holding the same login are one account.
     let key: String
-    /// The name it is shown under — the vault's slot name for Claude, the
-    /// mailbox for Codex.
+    /// The name it is shown under — the vault's slot name for Claude,
+    /// "principal" for Codex's single login.
     let alias: String
     /// Every slot name that turned out to hold this same account.
     let aliases: [String]
@@ -180,7 +180,7 @@ enum AIAccounts {
     }
 
     /// Codex's one login, if it is a ChatGPT one. An API key has no
-    /// subscription window to show.
+    /// subscription window to show. Being the only one, it is "principal".
     static func codex(auth: URL) -> AIAccount? {
         guard let data = try? Data(contentsOf: auth),
               let file = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -199,7 +199,10 @@ enum AIAccounts {
         let expires = (claims?["exp"] as? NSNumber).map {
             Date(timeIntervalSince1970: $0.doubleValue)
         }
-        let alias = email.map { String($0.split(separator: "@").first ?? Substring($0)) } ?? "Codex"
+        // Codex keeps one login, so it is the service's principal account —
+        // named as the Claude vault names its own first one; the address is
+        // written under it in the footer.
+        let alias = "principal"
         return AIAccount(
             engine: .codex,
             key: accountID ?? email ?? "codex",

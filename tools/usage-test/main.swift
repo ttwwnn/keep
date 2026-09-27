@@ -110,7 +110,7 @@ confere(u1?.plan == "Max 20x", "plano Max 20x")
 let res = contas.first { $0.key == "U2" }
 confere(res?.warning != nil && res?.plan == "Pro", "refreshMorto vira aviso; tier desconhecido cai na assinatura", "\(String(describing: res?.plan))")
 let gpt = contas.first { $0.engine == .codex }
-confere(gpt?.alias == "jose" && gpt?.plan == "Pro" && gpt?.accountHeader == "ACC", "codex: apelido, plano e conta", "\(String(describing: gpt))")
+confere(gpt?.alias == "principal" && gpt?.email == "jose@z.com" && gpt?.plan == "Pro" && gpt?.accountHeader == "ACC", "codex: a única conta é a principal, com e-mail, plano e conta", "\(String(describing: gpt))")
 confere(gpt?.expiresAt == Date(timeIntervalSince1970: exp), "codex: validade do JWT")
 confere(AIAccounts.discover(home: URL(fileURLWithPath: "/nao/existe")).isEmpty, "sem cofre nem codex: nenhuma conta")
 

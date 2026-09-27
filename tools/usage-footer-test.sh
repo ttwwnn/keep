@@ -7,7 +7,8 @@
 # service how much of the account's allowance is spent, and draws a bar per
 # window at the bottom of the sidebar. What this checks:
 #   - every account is there, one line per login (two vault slots holding the
-#     same login are one account), under the name the tabs know it by;
+#     same login are one account), under the name the tabs know it by and
+#     with its address written out; Codex's single login is its "principal";
 #   - the bars carry the figures the service answered, for Claude and Codex;
 #   - an account whose access has lapsed is not asked at all (nothing here
 #     renews a token) and says so, and a "too many requests" answer is said;
@@ -232,7 +233,7 @@ check "the active account, by the name the tabs know it by" yes "$(has "Claude �
 check "its duplicate slot is not a second account" no "$(has "Claude · assinaturas")"
 check "the account whose access lapsed" yes "$(has "Claude · reserva")"
 check "the account the service is holding back" yes "$(has "Claude · limitada")"
-check "the Codex login, named by its mailbox" yes "$(has "GPT · jose")"
+check "the Codex login, its only one: principal" yes "$(has "GPT · principal")"
 check "each account's address is written out" yes "$(has "um@exemplo.com")"
 check "the lapsed account's address too" yes "$(has "dois@exemplo.com")"
 check "and the Codex one" yes "$(has "jose@exemplo.com")"
@@ -242,7 +243,7 @@ say "the bars carry what the services answered"
 check "Claude's five-hour window" yes "$(has "Claude · principal 5h 17% reinicia em 4h10")"
 check "Claude's weekly window" yes "$(has "Claude · principal 7d 88% reinicia em 1d13h")"
 check "Claude's weekly window for one model" yes "$(has "Claude · principal Fable 32%")"
-check "Codex's weekly window" yes "$(has "GPT · jose 7d 2% reinicia em 6d")"
+check "Codex's weekly window" yes "$(has "GPT · principal 7d 2% reinicia em 6d")"
 check "a lapsed access says so instead of a figure" yes "$(has "acesso vencido")"
 check "a 'too many requests' says so" yes "$(has "consultas demais (HTTP 429)")"
 check "and neither shows a made-up bar" no "$(has "Claude · reserva 5h")"
