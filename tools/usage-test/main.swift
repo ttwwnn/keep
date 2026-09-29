@@ -15,6 +15,18 @@ func confere(_ ok: Bool, _ nome: String, _ detalhe: @autoclosure () -> String = 
     if ok { print("ok   \(nome)") } else { falhas += 1; print("FALHA \(nome) \(detalhe())") }
 }
 
+// Runs under a made-up HOME (tools/usage-test.sh), where the installed
+// helper is a canary: nothing here may reach the real ~/.local/bin/keep-ia
+// and the real vault it acts on, not even with the code under test broken on
+// purpose. Refused outright otherwise.
+let ambiente = ProcessInfo.processInfo.environment
+guard let casaDoTeste = ambiente["HOME"], casaDoTeste != NSHomeDirectory(),
+      AIHelper.installedPath(environment: ambiente) == casaDoTeste + "/.local/bin/keep-ia"
+else {
+    print("FALHA recuso rodar: o HOME tem de ser uma casa falsa, e o ajudante instalado procurado nela (\(AIHelper.installedPath(environment: ambiente)))")
+    exit(2)
+}
+
 // --- respostas reais (formato de 26/09/2026, contas-mac.md), sem segredos
 let claudeReal = """
 {"five_hour":{"utilization":17.0,"resets_at":"2026-09-27T04:50:00.275240+00:00","limit_dollars":null},
@@ -383,6 +395,14 @@ confere(AIHelper.path(environment: ["KEEP_IA_BIN": falso], installed: "/nao/exis
 confere(AIHelper.path(environment: [:], installed: falso) == falso, "ajudante: sem KEEP_IA_BIN, o instalado pelo kit")
 confere(AIHelper.path(environment: [:], installed: "/nao/existe") == nil, "ajudante: sem nenhum, nenhum")
 confere(AIHelper.path(environment: [:], installed: falsoDir) == nil, "ajudante: instalado que é pasta não conta")
+confere(AIHelper.path(environment: ["KEEP_AI_USAGE_HOME": "/x"], installed: falso) == nil,
+        "ajudante: app que lê uma casa falsa não chama o instalado (ele mexe na casa real)")
+confere(AIHelper.path(environment: ["KEEP_AI_USAGE_HOME": "/x", "KEEP_IA_BIN": falso], installed: "/nao/existe") == falso,
+        "ajudante: casa falsa com KEEP_IA_BIN, o dele")
+confere(AIHelper.installedPath(environment: ["HOME": "/x/y"]) == "/x/y/.local/bin/keep-ia", "ajudante: o instalado é procurado sob o HOME")
+confere(AIHelper.installedPath(environment: ["HOME": ""]) == NSHomeDirectory() + "/.local/bin/keep-ia"
+        && AIHelper.installedPath(environment: [:]) == NSHomeDirectory() + "/.local/bin/keep-ia",
+        "ajudante: sem HOME, a casa do usuário")
 confere(AIHelper.isValidKey("claude:reserva") && AIHelper.isValidKey("gpt:principal") && AIHelper.isValidKey(AIHelper.followOrder),
         "chave: formatos válidos")
 for ruim in ["claude:", "gpt:a b", "claude:a/b", "claude:a:b", "--para=x", "outro:x", "claude:x\n"] {
@@ -448,6 +468,9 @@ setenv("KEEP_IA_BIN", "/nao/existe", 1)
 if case .failure(let p) = AIHelper.moveOrder("claude:reserva", up: true) {
     confere(p.reason == "sem-ajudante", "sem ajudante: nada roda")
 } else { confere(false, "sem ajudante") }
+confere(!fm.fileExists(atPath: falsoDir + "/installed-helper-called"),
+        "o ajudante instalado (o canário da casa falsa) nunca foi chamado",
+        (try? String(contentsOfFile: falsoDir + "/installed-helper-called", encoding: .utf8)) ?? "")
 
 try? fm.removeItem(at: home)
 print("\(casos - falhas)/\(casos) ok")

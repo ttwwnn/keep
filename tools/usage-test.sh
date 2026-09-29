@@ -29,7 +29,24 @@ build() {  # build <AIUsage.swift> <AIChoice.swift> <KitHelper.swift>
 # what it was asked, and answers out of the test's made-up home.
 cp tools/ia-test/fake-keep-ia.py "$WORK/fake-keep-ia.py"
 chmod +x "$WORK/fake-keep-ia.py"
-run() { FALSO_IA=$WORK/fake-keep-ia.py FAKE_IA_DIR=$WORK "$WORK/test"; }
+# The real one is never within reach, whatever the code under test does —
+# the sabotages below break exactly the rules that keep it out. The test runs
+# under a made-up HOME, where the app looks for the installed helper, and
+# what it finds there is a canary: it does nothing, and leaves a mark the
+# test fails on. And it runs as an app that reads a made-up home, which never
+# asks the installed helper at all (and the kit's helper refuses such a
+# caller too).
+mkdir -p "$WORK/home/.local/bin"
+cat >"$WORK/home/.local/bin/keep-ia" <<EOF
+#!/bin/sh
+echo "\$*" >>"$WORK/installed-helper-called"
+exit 1
+EOF
+chmod +x "$WORK/home/.local/bin/keep-ia"
+run() {
+    HOME=$WORK/home KEEP_AI_USAGE_HOME=$WORK/home KIT_KEEP_ESTADO=/var/empty KEEP_IA_BIN=/var/empty \
+        FALSO_IA=$WORK/fake-keep-ia.py FAKE_IA_DIR=$WORK "$WORK/test"
+}
 
 build "$USAGE" "$CHOICE" "$HELPER" || exit 1
 run
@@ -96,6 +113,14 @@ sabotage "$CHOICE" "the sidebar naming Codex's own login" \
     'case "gpt" where alias != "principal": return "codex · \(alias)"|||case "gpt": return "codex · \(alias)"' || ok=1
 sabotage "$HELPER" "KEEP_IA_BIN pointing at nothing falling through to the kit's" \
     'if let named = environment["KEEP_IA_BIN"] { return isRunnable(named) ? named : nil }|||if let named = environment["KEEP_IA_BIN"], isRunnable(named) { return named }' || ok=1
+sabotage "$HELPER" "an app reading a made-up home asking the installed helper" \
+    '        if environment["KEEP_AI_USAGE_HOME"] != nil { return nil }
+|||' || ok=1
+sabotage "$HELPER" "the installed helper looked for in the real home, whatever HOME says" \
+    'let home = environment["HOME"].flatMap { $0.hasPrefix("/") ? $0 : nil } ?? NSHomeDirectory()|||let home = NSHomeDirectory()' || ok=1
+sabotage "$HELPER" "both rules gone: what answers is the made-up HOME's canary, and the test says so" \
+    'if let named = environment["KEEP_IA_BIN"] { return isRunnable(named) ? named : nil }
+        if environment["KEEP_AI_USAGE_HOME"] != nil { return nil }|||if let named = environment["KEEP_IA_BIN"], isRunnable(named) { return named }' || ok=1
 sabotage "$HELPER" "a directory taken for the helper" \
     '&& !directory.boolValue|||' || ok=1
 sabotage "$HELPER" "a key with a colon in its name let through" \

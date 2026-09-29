@@ -93,16 +93,29 @@ enum AIHelper {
     ///
     /// `KEEP_IA_BIN`, when it is set, is the only place looked at: a test
     /// that points it at nothing gets no helper, rather than falling through
-    /// to the kit's real one. Otherwise the kit's install. A GUI app inherits
-    /// none of the shell's PATH, so the place is named.
+    /// to the kit's real one. Otherwise the kit's install — but never for an
+    /// app that reads a made-up home (`KEEP_AI_USAGE_HOME`, which every test
+    /// build sets): the kit's helper acts on the real home whatever the app
+    /// reads, so an app showing another one has nothing to ask it. That rule
+    /// stands on its own, so a test stays off the real vault even with the
+    /// first one broken. A GUI app inherits none of the shell's PATH, so the
+    /// place is named.
     static var path: String? { path(environment: ProcessInfo.processInfo.environment) }
 
-    static func path(
-        environment: [String: String],
-        installed: String = (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin/keep-ia")
-    ) -> String? {
+    static func path(environment: [String: String], installed: String? = nil) -> String? {
         if let named = environment["KEEP_IA_BIN"] { return isRunnable(named) ? named : nil }
+        if environment["KEEP_AI_USAGE_HOME"] != nil { return nil }
+        let installed = installed ?? installedPath(environment: environment)
         return isRunnable(installed) ? installed : nil
+    }
+
+    /// Where the kit installs the helper: `~/.local/bin/keep-ia`, `~` being
+    /// the `HOME` the app was started with, as the helper itself reads it —
+    /// so a test run under a made-up `HOME` cannot reach the real one.
+    /// `NSHomeDirectory()` alone would not do: it ignores `HOME`.
+    static func installedPath(environment: [String: String]) -> String {
+        let home = environment["HOME"].flatMap { $0.hasPrefix("/") ? $0 : nil } ?? NSHomeDirectory()
+        return (home as NSString).appendingPathComponent(".local/bin/keep-ia")
     }
 
     /// An executable file. A directory passes `isExecutableFile` — it can be
