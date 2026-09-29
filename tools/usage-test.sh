@@ -4,9 +4,10 @@
 # both services' answers in their real shape, the logins found in a made-up
 # home, the stand-in address refused unless it is on this machine, and the
 # strings the footer prints. And what the AI accounts rest on: the kit's
-# order of priority and the extra GPT logins (AIUsage.swift), and asking the
-# kit's `keep-ia` (Daemon/KitHelper.swift) — against a stand-in that logs
-# what it is asked. No app, no network, no real login, no real kit.
+# order of priority and the extra GPT logins (AIUsage.swift), which account
+# each tab is on and what its menu offers (Model/AIChoice.swift), and asking
+# the kit's `keep-ia` (Daemon/KitHelper.swift) — against a stand-in that
+# logs what it is asked. No app, no network, no real login, no real kit.
 # Seconds.
 #
 #   tools/usage-test.sh              the check
@@ -17,10 +18,11 @@ cd "$(dirname "$0")/.."
 WORK=$(mktemp -d /tmp/keep-usage-model-XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
 USAGE=apps/macos/Sources/Keep/Model/AIUsage.swift
+CHOICE=apps/macos/Sources/Keep/Model/AIChoice.swift
 HELPER=apps/macos/Sources/Keep/Daemon/KitHelper.swift
 
-build() {  # build <AIUsage.swift> <KitHelper.swift>
-    swiftc -O "$1" "$2" tools/usage-test/main.swift -o "$WORK/test" 2>"$WORK/build.log" || {
+build() {  # build <AIUsage.swift> <AIChoice.swift> <KitHelper.swift>
+    swiftc -O "$1" "$2" "$3" tools/usage-test/main.swift -o "$WORK/test" 2>"$WORK/build.log" || {
         grep -E "error" "$WORK/build.log" | head -5; return 1; }
 }
 # The kit's helper, played by the stand-in the app's own tests use: it logs
@@ -29,7 +31,7 @@ cp tools/ia-test/fake-keep-ia.py "$WORK/fake-keep-ia.py"
 chmod +x "$WORK/fake-keep-ia.py"
 run() { FALSO_IA=$WORK/fake-keep-ia.py FAKE_IA_DIR=$WORK "$WORK/test"; }
 
-build "$USAGE" "$HELPER" || exit 1
+build "$USAGE" "$CHOICE" "$HELPER" || exit 1
 run
 status=$?
 [ "${1:-}" = "--sabotage" ] || exit $status
@@ -47,12 +49,13 @@ if s.count(old) != 1:
 open(sys.argv[2], "w").write(s.replace(old, new))
 PY
     [ $? -eq 0 ] || { echo "  could not sabotage: $2"; return 1; }
-    local usage=$USAGE helper=$HELPER
+    local usage=$USAGE choice=$CHOICE helper=$HELPER
     case "$1" in
         "$USAGE") usage=$WORK/Broken.swift ;;
+        "$CHOICE") choice=$WORK/Broken.swift ;;
         "$HELPER") helper=$WORK/Broken.swift ;;
     esac
-    build "$usage" "$helper" || { echo "  broken code did not build: $2"; return 1; }
+    build "$usage" "$choice" "$helper" || { echo "  broken code did not build: $2"; return 1; }
     if run >"$WORK/out.txt" 2>&1; then
         echo "  NOT CAUGHT  $2"; return 1
     fi
@@ -73,6 +76,24 @@ sabotage "$USAGE" "an account at 95% still taking work" \
     '$0.percent >= 95 }|||$0.percent >= 96 }' || ok=1
 sabotage "$USAGE" "the watcher blind to the order" \
     '[".ativa", ".preferida", ".ordem"]|||[".ativa", ".preferida"]' || ok=1
+sabotage "$CHOICE" "following the order onto GPT sent as Claude's order" \
+    'case .codex: return first.account.engine.key(first.account.alias)|||case .codex: return AIHelper.followOrder' || ok=1
+sabotage "$CHOICE" "the dash on every Claude account, not the one in use" \
+    'account.engine == .claude, account.isActive {|||account.engine == .claude {' || ok=1
+sabotage "$CHOICE" "a tab running another program still offered choices" \
+    'let enabled = program.allowsChoice|||let enabled = true' || ok=1
+sabotage "$CHOICE" "Claude Code named by its version taken for another program" \
+    'name == "claude" || Self.isVersionNumber(name)|||name == "claude"' || ok=1
+sabotage "$CHOICE" "a retrato of another daemon believed within 10 ms" \
+    'abs(born - start) < 0.001|||abs(born - start) < 0.01' || ok=1
+sabotage "$CHOICE" "a retrato of another format read" \
+    '(root["versao"] as? NSNumber)?.intValue == 1,|||(root["versao"] as? NSNumber) != nil,' || ok=1
+sabotage "$CHOICE" "a switch made in the app outliving the kit's newer word" \
+    'notes = notes.filter { $0.value.at > written }|||notes = notes.filter { _ in true }' || ok=1
+sabotage "$CHOICE" "a tab back at its shell still said to be on an account" \
+    'guard program.runsAI else { return nil }|||' || ok=1
+sabotage "$CHOICE" "the sidebar naming Codex's own login" \
+    'case "gpt" where alias != "principal": return "codex · \(alias)"|||case "gpt": return "codex · \(alias)"' || ok=1
 sabotage "$HELPER" "KEEP_IA_BIN pointing at nothing falling through to the kit's" \
     'if let named = environment["KEEP_IA_BIN"] { return isRunnable(named) ? named : nil }|||if let named = environment["KEEP_IA_BIN"], isRunnable(named) { return named }' || ok=1
 sabotage "$HELPER" "a directory taken for the helper" \

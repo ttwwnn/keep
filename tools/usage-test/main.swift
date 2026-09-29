@@ -1,7 +1,7 @@
 import Foundation
-// The model test of AIUsage.swift (the usage footer's facts and the kit's
-// order) and the `keep-ia` half of Daemon/KitHelper.swift, run by
-// tools/usage-test.sh.
+// The model test of AIUsage.swift (the usage footer's facts), AIChoice.swift
+// (which account each tab is on, and the menu that changes it) and the
+// `keep-ia` half of Daemon/KitHelper.swift, run by tools/usage-test.sh.
 // Foundation only: no app, no network, no real logins, no real kit.
 
 // The two app types KitHelper.swift reaches for, stubbed.
@@ -262,9 +262,114 @@ confere(!linha(conta(.codex, "a"), [("7d", 99)]).isAvailable, "indisponível: 7d
 confere(!linha(conta(.claude, "a"), [("5h", 10)], limite: true).isAvailable, "indisponível: limitReached")
 confere(!linha(conta(.claude, "a", aviso: "login recusado"), lida: false).isAvailable, "indisponível: aviso da conta")
 
-// --- o ajudante keep-ia, contra o falso que registra o que recebe
+// --- o menu da aba (AIChoices)
+let cheia = linha(conta(.claude, "cheia", email: "c@x"), [("5h", 97), ("7d", 20)])
+let gptP = linha(conta(.codex, "principal", ativa: true, email: "g@x"), [("7d", 3)])
+let ativa = linha(conta(.claude, "principal", ativa: true, apelidos: ["principal", "assinaturas"], email: "p@x"), [("5h", 10), ("7d", 10)])
+let morta = linha(conta(.claude, "reserva", aviso: "login recusado: entre de novo", email: "r@x"), lida: false)
+let fila = [cheia, gptP, ativa, morta]
+let linhasClaude = AIChoices.rows(lines: fila, current: "claude:reserva", program: .claude)
+confere(linhasClaude.map(\.kind) == [.follow, .separator, .account, .account, .account, .account], "menu: seguir, separador, uma linha por conta na ordem")
+confere(linhasClaude.map(\.title) == [AIChoices.followTitle, "", "Claude · cheia · c@x — no limite", "GPT · principal · g@x",
+                                        "Claude · principal · p@x", "Claude · reserva · r@x — login recusado: entre de novo"],
+        "menu: títulos, com 'no limite' ou o aviso", "\(linhasClaude.map(\.title))")
+confere(linhasClaude.map(\.mark) == [.none, .none, .none, .none, .none, .on], "menu: ✓ na conta da aba", "\(linhasClaude.map(\.mark))")
+confere(linhasClaude.allSatisfy { $0.kind == .separator || $0.enabled }, "menu: tudo habilitado para o Claude")
+confere(linhasClaude.map(\.key) == ["gpt:principal", nil, "claude:cheia", "gpt:principal", "claude:principal", "claude:reserva"],
+        "menu: chaves; seguir a ordem vai para a 1ª disponível (GPT)", "\(linhasClaude.map(\.key))")
+confere(linhasClaude.first?.help == "Agora: GPT · principal", "menu: ajuda do seguir diz a conta de agora", "\(String(describing: linhasClaude.first?.help))")
+confere(linhasClaude.map(\.label) == ["a ordem de prioridade", "", "Claude · cheia", "GPT · principal", "Claude · principal", "Claude · reserva"],
+        "menu: cada escolha tem o nome curto com que é dita depois", "\(linhasClaude.map(\.label))")
+let pelaAssinatura = AIChoices.rows(lines: fila, current: "claude:assinaturas", program: .claude)
+confere(pelaAssinatura[4].mark == .on, "menu: ✓ por qualquer apelido da conta")
+let seguindo = AIChoices.rows(lines: fila, current: AIHelper.followOrder, program: .claude)
+confere(seguindo[0].mark == .on && seguindo[4].mark == .mixed && seguindo.filter { $0.mark == .mixed }.count == 1,
+        "menu: ✓ em seguir e traço na Claude ativa", "\(seguindo.map(\.mark))")
+let outro = AIChoices.rows(lines: fila, current: nil, program: AIProgramKind(command: "sleep"))
+confere(outro.first?.title == "Esta aba está rodando sleep" && outro.first?.kind == .note, "outro programa: a linha que diz o quê")
+confere(outro.allSatisfy { !$0.enabled }, "outro programa: tudo desabilitado")
+let concha = AIChoices.rows(lines: fila, current: nil, program: .shell)
+confere(concha.allSatisfy { $0.kind == .separator || $0.enabled } && concha.allSatisfy { $0.mark == .none }, "concha: tudo habilitado, nada marcado")
+confere(AIChoices.followOrderKey([ativa, gptP]) == AIHelper.followOrder, "seguir: 1ª disponível Claude → claude:ordem")
+confere(AIChoices.followOrderKey([cheia, ativa, gptP]) == AIHelper.followOrder, "seguir: pula a cheia e fica na Claude seguinte")
+confere(AIChoices.followOrderKey([cheia, gptP]) == "gpt:principal", "seguir: 1ª disponível GPT → gpt:<apelido>")
+confere(AIChoices.followOrderKey([cheia, morta]) == AIHelper.followOrder, "seguir: nenhuma disponível → a 1ª da fila")
+confere(AIChoices.followOrderKey([]) == AIHelper.followOrder, "seguir: sem contas → claude:ordem")
+confere(AIChoices.rows(lines: [], current: nil, program: .claude).map(\.kind) == [.follow], "sem contas: só seguir a ordem")
+confere(AIChoices.programLabel(command: "claude", account: "claude:reserva") == "claude · reserva", "lateral: claude · <apelido> quando fixa")
+confere(AIChoices.programLabel(command: "claude", account: "claude:ordem") == "claude", "lateral: seguindo a ordem, como hoje")
+confere(AIChoices.programLabel(command: "codex", account: "gpt:trabalho") == "codex · trabalho", "lateral: codex · <apelido> fora do principal")
+confere(AIChoices.programLabel(command: "codex", account: "gpt:principal") == "codex", "lateral: codex no principal, como hoje")
+confere(AIChoices.programLabel(command: "zsh", account: nil) == "zsh", "lateral: sem IA, o programa")
+
+// --- o programa da aba
+confere(AIProgramKind(command: "-zsh") == .shell && AIProgramKind(command: "zsh") == .shell
+        && AIProgramKind(command: "bash") == .shell && AIProgramKind(command: "fish") == .shell, "programa: conchas")
+confere(AIProgramKind(command: "2.1.284") == .claude && AIProgramKind(command: "claude") == .claude, "programa: claude (e número de versão)")
+confere(AIProgramKind(command: "codex") == .codex, "programa: codex")
+confere(AIProgramKind(command: "") == .unknown && AIProgramKind(command: "").allowsChoice, "programa: vazio é desconhecido e liberado")
+confere(AIProgramKind(command: "vim") == .other("vim") && !AIProgramKind(command: "vim").allowsChoice, "programa: outro programa trava o menu")
+confere(AIProgramKind(command: "2.1") == .claude && AIProgramKind(command: "2.") == .other("2."), "programa: versão precisa de números dos dois lados")
+
+// --- retrato.json (o campo ia)
 let estado = home.appendingPathComponent("estado")
 try! fm.createDirectory(at: estado, withIntermediateDirectories: true)
+let nascimento = Date(timeIntervalSince1970: 1_790_000_000.123456)
+func retrato(inicio: Double, versao: Int = 1, gravado: Double, ia: [[String: Any]]) {
+    let corpo: [String: Any] = ["versao": versao, "gravado_em_ms": gravado, "keepd": ["inicio": inicio, "pid": 1], "abas": [], "ia": ia]
+    let tmp = estado.appendingPathComponent("retrato.json.tmp")
+    try! JSONSerialization.data(withJSONObject: corpo).write(to: tmp)
+    _ = try! fm.replaceItemAt(estado.appendingPathComponent("retrato.json"), withItemAt: tmp)
+}
+let entradas: [[String: Any]] = [
+    ["workspace": "w", "aba": 2, "agente": "claude", "conta": "claude:reserva", "vinculo": "exato"],
+    ["workspace": "w", "aba": 3, "agente": "codex", "conta": "gpt:trabalho", "vinculo": "provavel"],
+    ["workspace": "w", "aba": 4, "agente": "claude", "conta": "claude:com espaço", "vinculo": "exato"],
+]
+let agoraMs = Date().timeIntervalSince1970 * 1000
+retrato(inicio: nascimento.timeIntervalSince1970 + 0.0004, gravado: agoraMs - 5000, ia: entradas)
+MainActor.assumeIsolated {
+    let loja = AITabAccounts(directory: estado)
+    confere(loja.reload(daemonStart: nascimento), "retrato: lido (início dentro de 1 ms)")
+    confere(loja.account(workspace: "w", tab: 2, program: .claude) == "claude:reserva", "retrato: conta da aba 2")
+    confere(loja.account(workspace: "w", tab: 3, program: .codex) == "gpt:trabalho", "retrato: conta da aba 3 (codex)")
+    confere(loja.account(workspace: "w", tab: 4, program: .claude) == AIHelper.followOrder, "retrato: chave inválida ignorada (fica o padrão)")
+    confere(loja.account(workspace: "w", tab: 9, program: .claude) == AIHelper.followOrder, "retrato: Claude sem linha segue a ordem")
+    confere(loja.account(workspace: "w", tab: 9, program: .codex) == "gpt:principal", "retrato: Codex sem linha está no principal")
+    confere(loja.account(workspace: "w", tab: 2, program: .shell) == nil, "retrato: aba de volta à concha não tem conta")
+    confere(loja.account(workspace: "w", tab: 2, program: .other("vim")) == nil, "retrato: outro programa não tem conta")
+    confere(!loja.reload(daemonStart: nascimento), "retrato: nada muda sem o arquivo mudar")
+    // anotação otimista: vale até um retrato gravado depois dela
+    loja.note(workspace: "w", tab: 2, key: "claude:principal")
+    confere(loja.account(workspace: "w", tab: 2, program: .claude) == "claude:principal", "otimista: a troca aparece na hora")
+    retrato(inicio: nascimento.timeIntervalSince1970, gravado: agoraMs - 1000, ia: entradas)
+    _ = loja.reload(daemonStart: nascimento)
+    confere(loja.account(workspace: "w", tab: 2, program: .claude) == "claude:principal", "otimista: retrato mais velho que a troca não a desfaz")
+    var novas = entradas
+    novas[0]["conta"] = "claude:assinaturas"
+    retrato(inicio: nascimento.timeIntervalSince1970, gravado: Date().timeIntervalSince1970 * 1000 + 1000, ia: novas)
+    confere(loja.reload(daemonStart: nascimento), "otimista: retrato mais novo publica")
+    confere(loja.account(workspace: "w", tab: 2, program: .claude) == "claude:assinaturas", "otimista: vale o retrato mais novo")
+    // de outro keepd, ou de outra versão: o arquivo inteiro é ignorado
+    retrato(inicio: nascimento.timeIntervalSince1970 + 0.002, gravado: agoraMs + 5000, ia: entradas)
+    confere(loja.reload(daemonStart: nascimento), "retrato de outro keepd: muda (some)")
+    confere(loja.account(workspace: "w", tab: 2, program: .claude) == AIHelper.followOrder, "retrato de outro keepd (2 ms): ignorado")
+    retrato(inicio: nascimento.timeIntervalSince1970, versao: 2, gravado: agoraMs + 6000, ia: entradas)
+    _ = loja.reload(daemonStart: nascimento)
+    confere(loja.account(workspace: "w", tab: 3, program: .codex) == "gpt:principal", "retrato versão 2: ignorado")
+    retrato(inicio: nascimento.timeIntervalSince1970, gravado: agoraMs + 7000, ia: entradas)
+    _ = loja.reload(daemonStart: nascimento)
+    confere(loja.account(workspace: "w", tab: 3, program: .codex) == "gpt:trabalho", "retrato: de volta ao certo")
+    confere(loja.reload(daemonStart: nascimento.addingTimeInterval(10)) && loja.account(workspace: "w", tab: 3, program: .codex) == "gpt:principal",
+            "retrato: keepd novo invalida o que se leu")
+    let vazia = AITabAccounts(directory: URL(fileURLWithPath: "/var/empty"))
+    confere(!vazia.reload(daemonStart: nascimento) && vazia.account(workspace: "w", tab: 2, program: .claude) == AIHelper.followOrder,
+            "retrato ausente: nada a ler, Claude segue a ordem")
+}
+confere(AITabAccounts.directory(environment: ["KIT_KEEP_ESTADO": "/x/y"]).path == "/x/y", "retrato: KIT_KEEP_ESTADO manda")
+confere(AITabAccounts.directory(environment: [:]).path.hasSuffix("/.local/state/kit-keep"), "retrato: padrão do kit")
+
+// --- o ajudante keep-ia, contra o falso que registra o que recebe
 let falso = ProcessInfo.processInfo.environment["FALSO_IA"]!
 let falsoDir = ProcessInfo.processInfo.environment["FAKE_IA_DIR"]!
 func chamadas() -> [[String]] {
