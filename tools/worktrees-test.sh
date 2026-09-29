@@ -19,6 +19,6 @@ cd "$(dirname "$0")/.."
 WORK=$(mktemp -d /tmp/keep-worktrees-XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
 cp tools/worktrees-test/fake-helper.py "$WORK/"
-swiftc -O apps/macos/Sources/Keep/Daemon/Worktrees.swift tools/worktrees-test/main.swift \
-    -o "$WORK/test" 2>&1 | grep -E "error" && exit 1
+swiftc -O apps/macos/Sources/Keep/Daemon/Worktrees.swift apps/macos/Sources/Keep/Daemon/KitHelper.swift \
+    tools/worktrees-test/main.swift -o "$WORK/test" 2>&1 | grep -E "error" && exit 1
 FALSO_DIR=$WORK "$WORK/test"
