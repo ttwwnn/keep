@@ -22,7 +22,8 @@
 #     answer, is what the kit then writes, and is taken back, and said, when
 #     the kit refuses; the arrows are there folded too; and "+" asks the kit
 #     for a login in this window's workspace, whose account shows up within
-#     seconds.
+#     seconds;
+#   - without it, the footer is as it was: no places, no arrows, no "+".
 #
 #   tools/usage-footer-test.sh
 #
@@ -304,6 +305,16 @@ until_text() {  # until_text <text> <tenths>
     done
     echo no
 }
+# The same, but looked for only until a moment on the clock ($SECONDS): for
+# what must happen before something else would do it anyway.
+until_text_by() {  # until_text_by <text> <deadline, in $SECONDS>
+    while [ "$SECONDS" -lt "$2" ]; do
+        ax
+        [ "$(has "$1")" = yes ] && { echo yes; return; }
+        sleep 0.1
+    done
+    echo no
+}
 calls() { python3 -c 'import json,sys
 try:
     for l in open(sys.argv[1]): print(" ".join(json.loads(l)["argv"]))
@@ -351,12 +362,16 @@ check "and after the hold the screen reads it from the file the same" \
 echo 2 >"$WORK/ia/lento"
 touch "$WORK/ia/falha"
 "$AXPRESS" "$APP_NAME" press "Subir Claude · principal"
+pressed=$SECONDS
 sleep 0.5
 ax
 check "up, and the kit will refuse: shown at once all the same" \
     "1 · Claude · principal" "$(first_of "1 · Claude · limitada" "1 · Claude · principal")"
-check "refused: taken back" yes "$(until_text "1 · Claude · limitada" 40)"
-check "and said, in the kit's words" yes "$(has "Não deu para mudar a ordem: falha simulada do keep-ia")"
+# Taken back when the refusal lands, two seconds after the press — not when
+# the hold on the order shown runs out, ten seconds after it.
+check "refused: taken back" yes "$(until_text_by "1 · Claude · limitada" $((pressed + 7)))"
+check "and said, in the kit's words" yes \
+    "$(until_text "Não deu para mudar a ordem: falha simulada do keep-ia" 20)"
 check "the order the kit has is untouched" \
     "claude:limitada claude:principal claude:reserva gpt:principal" "$(ordem)"
 rm -f "$WORK/ia/falha" "$WORK/ia/lento"
@@ -419,9 +434,34 @@ check "the footer comes after the workspaces" yes "$order"
 read -r before bottom <<<"$("$AXPOS" "$APP_NAME" "Consumo de IA")"
 for i in $(seq 1 30); do "$KEEP" new "Espaco$i" >/dev/null 2>&1; done
 sleep 4
-read -r after bottom_after <<<"$("$AXPOS" "$APP_NAME" "Consumo de IA")"
+# The app can still be busy with thirty new rows, and a question put to it
+# meanwhile goes unanswered: asked again for a few seconds.
+after=""
+for _ in 1 2 3 4 5; do
+    read -r after bottom_after <<<"$("$AXPOS" "$APP_NAME" "Consumo de IA")"
+    [ -n "$after" ] && break
+    sleep 1
+done
 check "thirty more workspaces do not move it" "$before" "$after"
 check "and it is still in the window" yes "$([ "$after" -gt 0 ] && [ "$after" -lt "$bottom_after" ] && echo yes || echo no)"
+
+say ""
+say "without the kit's helper, the footer as it was"
+stop_app
+: >"$WORK/app-without-helper.log"
+KEEP_IA_BIN=/var/empty KEEP_TRACE=1 "$BIN" >"$WORK/app-without-helper.log" 2>&1 &
+APP_PID=$!
+waited=0
+while [ "$(grep -ac '^.*usage ' "$WORK/app-without-helper.log")" -lt 3 ] && [ "$waited" -lt 120 ]; do
+    sleep 0.25; waited=$((waited + 1))
+done
+place_on_screen
+sleep 2
+ax
+check "the accounts are there" yes "$(has "Claude · principal")"
+check "with no place in an order" no "$(has "1 · Claude")"
+check "no arrows" no "$(has "Subir Claude")"
+check "and no way to sign in" no "$(has "Entrar em outra conta")"
 
 say ""
 say "$PASSED passed, $FAILED failed"

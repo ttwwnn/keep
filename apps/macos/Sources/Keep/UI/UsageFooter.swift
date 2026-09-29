@@ -485,8 +485,8 @@ final class UsageMonitor: ObservableObject {
 /// mirrors. The figure is always written beside the bar, so the colour is
 /// never the only thing saying it.
 ///
-/// The accounts are listed in the kit's order of priority, each with its
-/// place in it, and — when the kit's helper is here — arrows to move one up
+/// The accounts are listed in the kit's order of priority, and — when the
+/// kit's helper is here — each with its place in it, arrows to move one up
 /// or down, and a "+" in the heading to sign in to another.
 struct UsageFooter: View {
     @ObservedObject var monitor: UsageMonitor
@@ -606,10 +606,13 @@ struct UsageFooter: View {
     private func title(_ line: AccountUsage) -> String { line.account.name }
 
     /// "2 · Claude · reserva": the same, after its place in the order, which
-    /// is what the arrows beside it change.
+    /// is what the arrows beside it change. The place is written only when
+    /// the kit's helper is here to keep the order: without it the footer is
+    /// as it always was.
     private func heading(_ text: String, _ line: AccountUsage, at index: Int) -> Text {
-        Text("\(index + 1) · ").foregroundColor(UsageInk.inkFaint)
-            + Text(text).foregroundColor(line.account.isActive ? UsageInk.ink : UsageInk.inkResting)
+        let name = Text(text).foregroundColor(line.account.isActive ? UsageInk.ink : UsageInk.inkResting)
+        guard monitor.helperAvailable else { return name }
+        return Text("\(index + 1) · ").foregroundColor(UsageInk.inkFaint) + name
     }
 
     private func block(_ line: AccountUsage, at index: Int, now: Date) -> some View {
