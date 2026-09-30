@@ -89,8 +89,10 @@ sabotage "$USAGE" "an extra GPT login that is the principal's shown twice" \
         return merge(found)|||if let account = codex(auth: auth, alias: name) { found.append(account) }
         }
         return found' || ok=1
-sabotage "$USAGE" "an account at 95% still taking work" \
-    '$0.percent >= 95 }|||$0.percent >= 96 }' || ok=1
+sabotage "$USAGE" "an account at its limit still taking work" \
+    '$0.percent >= 100 }|||$0.percent >= 101 }' || ok=1
+sabotage "$USAGE" "an account near its limit (95%) taken for one at it" \
+    '$0.percent >= 100 }|||$0.percent >= 95 }' || ok=1
 sabotage "$USAGE" "the watcher blind to the order" \
     '[".ativa", ".preferida", ".ordem"]|||[".ativa", ".preferida"]' || ok=1
 sabotage "$CHOICE" "following the order onto GPT sent as Claude's order" \

@@ -269,13 +269,17 @@ func conta(_ motor: AIEngine, _ apelido: String, ativa: Bool = false, aviso: Str
 }
 confere(linha(conta(.claude, "a"), lida: false).isAvailable, "disponível: sem leitura")
 confere(linha(conta(.claude, "a"), [("5h", 94.9), ("7d", 50), ("Fable", 100)]).isAvailable, "disponível: 5h/7d abaixo de 95 (janela por modelo não conta)")
-confere(!linha(conta(.claude, "a"), [("5h", 95)]).isAvailable, "indisponível: 5h em 95%")
-confere(!linha(conta(.codex, "a"), [("7d", 99)]).isAvailable, "indisponível: 7d em 99%")
+// a régua do kit (30/09): o serviço só recusa em 100%; de 95 a 99 a conta ainda atende
+confere(linha(conta(.claude, "a"), [("5h", 95)]).isAvailable, "disponível: 5h em 95% (perto do limite, ainda atende)")
+confere(linha(conta(.claude, "a"), [("5h", 6), ("7d", 96)]).isAvailable, "disponível: 7d em 96% (a reserva de 30/09)")
+confere(linha(conta(.codex, "a"), [("7d", 99)]).isAvailable, "disponível: 7d em 99%")
+confere(!linha(conta(.claude, "a"), [("5h", 100)]).isAvailable, "indisponível: 5h em 100%")
+confere(!linha(conta(.claude, "a"), [("5h", 33), ("7d", 100)]).isAvailable, "indisponível: 7d em 100% (a principal de 30/09)")
 confere(!linha(conta(.claude, "a"), [("5h", 10)], limite: true).isAvailable, "indisponível: limitReached")
 confere(!linha(conta(.claude, "a", aviso: "login recusado"), lida: false).isAvailable, "indisponível: aviso da conta")
 
 // --- o menu da aba (AIChoices)
-let cheia = linha(conta(.claude, "cheia", email: "c@x"), [("5h", 97), ("7d", 20)])
+let cheia = linha(conta(.claude, "cheia", email: "c@x"), [("5h", 100), ("7d", 20)])
 let gptP = linha(conta(.codex, "principal", ativa: true, email: "g@x"), [("7d", 3)])
 let ativa = linha(conta(.claude, "principal", ativa: true, apelidos: ["principal", "assinaturas"], email: "p@x"), [("5h", 10), ("7d", 10)])
 let morta = linha(conta(.claude, "reserva", aviso: "login recusado: entre de novo", email: "r@x"), lida: false)
@@ -307,6 +311,10 @@ confere(AIChoices.followOrderKey([cheia, ativa, gptP]) == AIHelper.followOrder, 
 confere(AIChoices.followOrderKey([cheia, gptP]) == "gpt:principal", "seguir: 1ª disponível GPT → gpt:<apelido>")
 confere(AIChoices.followOrderKey([cheia, morta]) == AIHelper.followOrder, "seguir: nenhuma disponível → a 1ª da fila")
 confere(AIChoices.followOrderKey([]) == AIHelper.followOrder, "seguir: sem contas → claude:ordem")
+let perto = linha(conta(.claude, "reserva", email: "r@x"), [("5h", 6), ("7d", 96)])
+confere(AIChoices.followOrderKey([perto, cheia, gptP]) == AIHelper.followOrder,
+        "seguir: a 1ª Claude perto do limite (96%) ainda atende → claude:ordem, não o GPT (30/09)")
+confere(!AIChoices.title(perto).contains("no limite"), "menu: conta perto do limite não diz 'no limite'", AIChoices.title(perto))
 confere(AIChoices.rows(lines: [], current: nil, program: .claude).map(\.kind) == [.follow], "sem contas: só seguir a ordem")
 confere(AIChoices.programLabel(command: "claude", account: "claude:reserva") == "claude · reserva", "lateral: claude · <apelido> quando fixa")
 confere(AIChoices.programLabel(command: "claude", account: "claude:ordem") == "claude", "lateral: seguindo a ordem, como hoje")

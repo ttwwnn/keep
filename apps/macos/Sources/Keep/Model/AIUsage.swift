@@ -454,14 +454,18 @@ struct AccountUsage: Identifiable, Equatable, Codable {
     var id: String { account.id }
 
     /// Whether this account can take work now, as the kit judges it: nothing
-    /// known to be wrong with its login, not at its limit, and its
-    /// five-hour and weekly windows short of the 95% the kit moves on at.
-    /// One not measured yet is given the benefit of the doubt.
+    /// known to be wrong with its login, and not at its limit. The service
+    /// refuses at 100% of the five-hour or the weekly window, and only there
+    /// does an account leave the order — in the kit as in the Clínica's
+    /// panel. At 95% the kit moves on ahead of the limit, but only to an
+    /// account with room; one past 95% still takes work, and taking it for
+    /// one at its limit sent new tabs to GPT while a Claude account still
+    /// answered. One not measured yet is given the benefit of the doubt.
     var isAvailable: Bool {
         guard account.warning == nil else { return false }
         guard let reading else { return true }
         if reading.limitReached { return false }
-        return !reading.windows.contains { ($0.label == "5h" || $0.label == "7d") && $0.percent >= 95 }
+        return !reading.windows.contains { ($0.label == "5h" || $0.label == "7d") && $0.percent >= 100 }
     }
 }
 
@@ -755,7 +759,9 @@ enum UsageText {
     }
 
     /// The same thresholds the Clínica's panel uses: a warning from 75, and
-    /// critical from 90 — the kit switches accounts at 95.
+    /// critical from 90. The kit moves the tabs to an account with room from
+    /// 95, and off an account at its limit — 100 — to the next one in the
+    /// order that still answers.
     enum Level: Equatable { case normal, attention, critical }
 
     static func level(_ percent: Double) -> Level {
