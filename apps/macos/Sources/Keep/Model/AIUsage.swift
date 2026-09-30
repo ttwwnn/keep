@@ -86,6 +86,12 @@ struct AIAccount: Equatable {
 
 /// An account with the secret taken out: what the view is allowed to hold.
 struct AIAccountSummary: Equatable, Codable {
+    func isUsed(by selectedAccount: String?) -> Bool {
+        guard let selectedAccount else { return false }
+        if selectedAccount == "claude:ordem" { return engine == .claude && isActive }
+        return ([alias] + aliases).contains { engine.key($0) == selectedAccount }
+    }
+
     let engine: AIEngine
     let key: String
     let alias: String

@@ -283,6 +283,12 @@ let cheia = linha(conta(.claude, "cheia", email: "c@x"), [("5h", 100), ("7d", 20
 let gptP = linha(conta(.codex, "principal", ativa: true, email: "g@x"), [("7d", 3)])
 let ativa = linha(conta(.claude, "principal", ativa: true, apelidos: ["principal", "assinaturas"], email: "p@x"), [("5h", 10), ("7d", 10)])
 let morta = linha(conta(.claude, "reserva", aviso: "login recusado: entre de novo", email: "r@x"), lida: false)
+confere(gptP.account.isUsed(by: "gpt:principal"), "ponto verde: Codex da aba selecionada")
+confere(!ativa.account.isUsed(by: "gpt:principal"), "ponto verde: Claude ativo não marca aba Codex")
+confere(ativa.account.isUsed(by: "claude:ordem"), "ponto verde: Claude seguindo a ordem resolve a ativa")
+confere(!gptP.account.isUsed(by: "claude:ordem"), "ponto verde: ordem Claude não marca Codex")
+confere(ativa.account.isUsed(by: "claude:assinaturas"), "ponto verde: apelidos da mesma conta")
+confere(!ativa.account.isUsed(by: nil) && !gptP.account.isUsed(by: nil), "ponto verde: sem conta conhecida, sem indicação")
 let fila = [cheia, gptP, ativa, morta]
 let linhasClaude = AIChoices.rows(lines: fila, current: "claude:reserva", program: .claude)
 confere(linhasClaude.map(\.kind) == [.follow, .separator, .account, .account, .account, .account], "menu: seguir, separador, uma linha por conta na ordem")
@@ -380,6 +386,10 @@ MainActor.assumeIsolated {
     retrato(inicio: nascimento.timeIntervalSince1970, gravado: agoraMs + 7000, ia: entradas)
     _ = loja.reload(daemonStart: nascimento)
     confere(loja.account(workspace: "w", tab: 3, program: .codex) == "gpt:trabalho", "retrato: de volta ao certo")
+    confere(loja.confirmedAccount(workspace: "w", tab: 3, program: .codex) == "gpt:trabalho", "indicador: conta Codex confirmada")
+    confere(loja.confirmedAccount(workspace: "w", tab: 3, program: .claude) == nil, "indicador: outro motor invalida registro antigo")
+    confere(loja.confirmedAccount(workspace: "w", tab: 99, program: .codex) == nil, "indicador: não inventa conta principal sem registro")
+    confere(loja.confirmedAccount(workspace: "w", tab: 3, program: .unknown) == nil, "indicador: processo desconhecido não confirma conta")
     confere(loja.reload(daemonStart: nascimento.addingTimeInterval(10)) && loja.account(workspace: "w", tab: 3, program: .codex) == "gpt:principal",
             "retrato: keepd novo invalida o que se leu")
     let vazia = AITabAccounts(directory: URL(fileURLWithPath: "/var/empty"))
