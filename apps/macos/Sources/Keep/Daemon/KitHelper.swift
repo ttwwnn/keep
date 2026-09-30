@@ -143,9 +143,20 @@ enum AIHelper {
 
     /// Why the helper did not do it: its `motivo` (`ocupada`,
     /// `outro-programa`, …) when it gave one, and what to tell the person.
+    ///
+    /// `precisa-login` is a step rather than a failure: the account has no
+    /// login of its own for a tab yet, and the kit has opened one in a tab —
+    /// `aba_login`, in `ws_login` — that puts the tab on the account itself
+    /// once it is through. The conversation has not been touched.
     struct Problem: Error, Equatable {
         let reason: String?
         let detail: String
+        var login: (workspace: String?, tab: UInt32)? = nil
+
+        static func == (a: Problem, b: Problem) -> Bool {
+            a.reason == b.reason && a.detail == b.detail
+                && a.login?.workspace == b.login?.workspace && a.login?.tab == b.login?.tab
+        }
     }
 
     // MARK: - asking
@@ -215,7 +226,10 @@ enum AIHelper {
             if output.status == 0, answer["ok"] as? Bool == true { return .success(answer) }
             let detail = (answer["detalhe"] as? String).flatMap { $0.isEmpty ? nil : $0 }
                 ?? "O keep-ia saiu com \(output.status)."
-            return .failure(Problem(reason: answer["motivo"] as? String, detail: detail))
+            let login = (answer["aba_login"] as? NSNumber).map {
+                (workspace: answer["ws_login"] as? String, tab: $0.uint32Value)
+            }
+            return .failure(Problem(reason: answer["motivo"] as? String, detail: detail, login: login))
         }
     }
 }

@@ -447,6 +447,18 @@ if case .success(let aberta) = AIHelper.signIn(.gpt, workspace: "casa") {
 } else { confere(false, "entrar: ok") }
 confere(chamadas().last == ["entrar", "gpt", "--ws=casa", "--json"], "entrar: argumentos", "\(chamadas())")
 confere(fm.fileExists(atPath: home.appendingPathComponent(".codex-contas/nova/auth.json").path), "entrar (falso): a conta nova aparece no disco")
+// conta fixa sem o login próprio: o kit abre o login numa aba e diz qual
+try! "".write(toFile: falsoDir + "/precisa-login", atomically: true, encoding: .utf8)
+if case .failure(let p) = AIHelper.switchAccount(workspace: "casa", tab: 2, to: "claude:reserva", interrupt: false) {
+    confere(p.reason == "precisa-login" && p.login?.tab == 7 && p.login?.workspace == "casa",
+            "trocar: precisa-login traz a aba do login e o workspace dela", "\(p)")
+} else { confere(false, "trocar: precisa-login") }
+try? fm.removeItem(atPath: falsoDir + "/precisa-login")
+try! "".write(toFile: falsoDir + "/ocupada", atomically: true, encoding: .utf8)
+if case .failure(let p) = AIHelper.switchAccount(workspace: "casa", tab: 2, to: "claude:reserva", interrupt: false) {
+    confere(p.login == nil, "trocar: recusa sem aba de login não inventa uma", "\(p)")
+} else { confere(false, "trocar: ocupada sem login") }
+try? fm.removeItem(atPath: falsoDir + "/ocupada")
 // prazo: o ajudante lento é morto no prazo
 AIHelper.timeScale = 0.2
 try! "5".write(toFile: falsoDir + "/lento", atomically: true, encoding: .utf8)

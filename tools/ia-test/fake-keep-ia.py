@@ -23,6 +23,10 @@ how it answers:
   lento     seconds to wait before answering anything
   falha     `ordem mover` says no
   ocupada   `trocar` without --interromper says the tab is busy
+  precisa-login
+            `trocar` opens a tab in the workspace, as the kit does for an
+            account with no login of its own for tabs yet, and says so: the
+            motivo "precisa-login", with "aba_login" and "ws_login"
   erro      `trocar` says no, with this file's text as the reason
 
 The home is KEEP_AI_USAGE_HOME and the state KIT_KEEP_ESTADO: the ones the
@@ -223,6 +227,15 @@ def trocar(argv):
         sys.exit(2)
     if os.path.exists(flag("ocupada")) and "--interromper" not in argv:
         refuse("ocupada", "A aba está no meio de uma resposta.")
+    if os.path.exists(flag("precisa-login")):
+        keep = os.environ.get("FAKE_IA_KEEP")
+        made = subprocess.run([keep, "new", workspace], capture_output=True, text=True) if keep else None
+        found = re.search(r"opened tab (\d+)", made.stdout) if made else None
+        if not found:
+            refuse("erro", "não abri a aba do login")
+        answer({"motivo": "precisa-login", "aba_login": int(found.group(1)), "ws_login": workspace,
+                "detalhe": "A conta ainda não tem o login próprio das abas fixas. Abri a aba do login: "
+                           "aprove lá e esta aba passa para a conta sozinha."}, ok=False)
     if os.path.exists(flag("erro")):
         with open(flag("erro"), encoding="utf-8") as f:
             refuse("erro", f.read().strip() or "erro simulado")

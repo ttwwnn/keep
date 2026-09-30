@@ -15,6 +15,8 @@
 #     --para=…`;
 #   - a tab the kit says is busy puts a question up, and "Interromper e trocar
 #     agora" asks again with --interromper; "Cancelar" asks nothing;
+#   - an account the kit has to open a login of its own for first: the tab
+#     that login is in is the one shown, under a note saying so;
 #   - a tab running some other program says so and offers nothing;
 #   - a cell of the strip reused for another tab — one before it closed —
 #     acts on the tab it shows now;
@@ -374,6 +376,22 @@ check "and does not start naming the tab" no \
     "$(grep -aqE "strip +renaming 4$" "$WORK/app.log" && echo yes || echo no)"
 check "nor is it a press on the tab, which selects or carries it" no \
     "$(grep -aqE "strip +press on 4 " "$WORK/app.log" && echo yes || echo no)"
+
+say ""
+say "an account with no login of its own for tabs yet"
+touch "$WORK/ia/precisa-login"
+before=$(ncalls)
+choose "strip-ia-$WS/4" "Claude · principal"
+check "the kit is asked for it all the same" \
+    "trocar --ws=$WS --aba=4 --para=claude:principal --json" "$(next_call "$before")"
+check "a note says the login waits in the browser" yes "$(until_text "Falta aprovar Claude · principal no navegador")"
+login_tab=$(trace "waits for a login to claude:principal in $WS/" | grep -aoE "in $WS/[0-9]+" | tail -1 | sed 's#.*/##')
+check "the tab the kit opened the login in is the one shown" yes \
+    "$([ -n "$login_tab" ] && grep -aqE "switch +→ $WS/$login_tab " "$WORK/app.log" && echo yes || echo no)"
+check "and not the failure's words" no "$(has "Não deu para trocar a IA da aba")"
+"$AXPRESS" "$APP_NAME" button OK >/dev/null 2>&1
+check "the note goes when read" no "$(until_text "Falta aprovar Claude · principal no navegador" no)"
+rm -f "$WORK/ia/precisa-login"
 
 say ""
 say "without the kit's helper"
