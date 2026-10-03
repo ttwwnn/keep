@@ -87,6 +87,18 @@ final class GhosttyApp {
         var sameSize = newPrefs
         sameSize.fontSize = Self.prefs.fontSize
         let onlyTheSize = sameSize == Self.prefs
+        // Before the reload, which reaches every surface: one off screen
+        // keeps the text its program is drawing for until it is shown
+        // (`TerminalSurfaceView.holdTextSize`). Not a tab on screen in
+        // another window: its program is told of the zoom through that
+        // window's surface, and the hidden one's text goes with it.
+        if sizeChosen {
+            let views = surfaceViews.values.compactMap(\.value)
+            let seen = Set(views.filter(\.isShowing).map { "\($0.workspace)/\($0.tab)" })
+            for view in views where !seen.contains("\(view.workspace)/\(view.tab)") {
+                view.holdTextSize(at: terminalFontSize)
+            }
+        }
         Self.prefs = newPrefs
         newPrefs.save()
         _paletteCache = [:]

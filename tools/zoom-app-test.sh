@@ -10,7 +10,9 @@
 #
 # What is measured is what the zoom is for: the size the app writes down
 # (terminal.json, in a state directory of the test's own) and the columns and
-# rows the daemon was given for the tab — a larger text is a smaller grid.
+# rows the daemon was given for the tab — a larger text is a smaller grid —
+# and a tab off screen keeps the grid its program draws for until it is
+# shown.
 #
 #   tools/zoom-app-test.sh            (SKIP_BUILD=1 to use the KeepDev built last;
 #                                      KEEP_TEST_APP=<path to an .app> to drive another build)
@@ -145,6 +147,27 @@ present() {
 # tree did not say, so that no comparison is made with an empty number.
 left_of() { local x y w h; read -r x y w h <<<"$(ask frame "$1")"; [ -n "$h" ] && echo "$x"; }
 right_of() { local x y w h; read -r x y w h <<<"$(ask frame "$1")"; [ -n "$h" ] && echo $((x + w)); }
+# The grid the surface of a tab off screen shows, read off the terminal its
+# client runs in: the one client whose `showing` file says 0. What the daemon
+# gave the tab is `grid`. The two part when a hidden tab's text takes a step
+# of the zoom its program was never told of — the program goes on drawing
+# for the old grid, into the new one, and the tab is garbage when it is
+# shown again.
+hidden_grid() {
+    local pid dir tty
+    for pid in $(descendants "$APP_PID"); do
+        case "$(ps -o command= -p "$pid" 2>/dev/null)" in -*/keep) ;; *) continue ;; esac
+        dir=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')
+        [ "$(cat "$dir/showing" 2>/dev/null)" = 0 ] || continue
+        tty=$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')
+        python3 -c 'import fcntl, os, struct, sys, termios
+fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
+rows, cols = struct.unpack("HHHH", fcntl.ioctl(fd, termios.TIOCGWINSZ, bytes(8)))[:2]
+print("%dx%d" % (cols, rows))' "/dev/$tty"
+        return
+    done
+    echo "(none)"
+}
 before() {  # before <a> <b>: yes when a ends at or before b begins
     local a b
     a=$(right_of "$1"); b=$(left_of "$2")
@@ -273,9 +296,12 @@ menu_until File "New Tab" 2 tabs; sleep 1.5
 check "a second tab opens at 100%" "$BASE" "$(grid 2)"
 step keep.zoom.in 110%; grid_leaves 2 "$BASE"
 check "+ on the second tab" "$AT110" "$(grid 2)"
+check "the first, off screen, keeps the grid its program draws for" "$BASE $BASE" \
+    "$(grid 1) $(hidden_grid)"
 menu_until Window "Show Tab 1" "$AT110" grid 1
 check "the first tab is at 110% when it is shown" "$AT110" "$(grid 1)"
 step keep.zoom.reset 100%; grid_leaves 1 "$AT110"
+check "and the second, off screen now, keeps its own" "$AT110 $AT110" "$(grid 2) $(hidden_grid)"
 
 say ""
 say "the ends: 300% and 50%"

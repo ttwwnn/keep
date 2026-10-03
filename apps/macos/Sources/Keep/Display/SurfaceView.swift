@@ -26,7 +26,7 @@ final class TerminalSurfaceView: NSView {
     private var backgroundObserver: NSObjectProtocol?
     private var drawCount = 0
     private var traceTimer: Timer?
-    private let workspace: String
+    let workspace: String
     let tab: UInt32
 
     /// Set once the runtime sends this surface a render request. From then on
@@ -122,6 +122,7 @@ final class TerminalSurfaceView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         observeOcclusion()
+        if isShowing { releaseTextSize() }
         guard window != nil, surface == nil else { return }
         createSurface()
     }
@@ -224,8 +225,59 @@ final class TerminalSurfaceView: NSView {
     /// hidden — the state the tab switch flips.
     private func noteShowing() {
         guard let watchFile else { return }
-        let showing = window != nil && !isHiddenOrHasHiddenAncestor
-        try? (showing ? "1" : "0").write(to: watchFile, atomically: true, encoding: .utf8)
+        try? (isShowing ? "1" : "0").write(to: watchFile, atomically: true, encoding: .utf8)
+    }
+
+    /// On screen, the way the client counts it: mounted and not hidden.
+    var isShowing: Bool {
+        window != nil && !isHiddenOrHasHiddenAncestor
+    }
+
+    // MARK: - the zoom, off screen
+
+    /// Whether this surface keeps the size of text it had, off screen,
+    /// rather than following the config like any other.
+    ///
+    /// A step of the zoom reaches every surface at once, and a new size of
+    /// text is a new grid. A hidden surface's client tells the daemon nothing
+    /// (`noteShowing`), so its tab's program goes on drawing for the grid it
+    /// had, into one the zoom has changed — and an inline program, which
+    /// redraws the bottom of the screen in place by counting the lines it
+    /// drew last time, erases too few of them: its frames pile up, and the
+    /// tab you come back to is garbage. It stays garbage, since the program
+    /// mends only what it thinks it drew. So a surface off screen keeps the
+    /// text its program is drawing for, as it keeps its old pixel size
+    /// (`pendingSize`), and takes the zoom when it is shown — which is when
+    /// its client tells the daemon, so that its grid and its program's
+    /// change together.
+    ///
+    /// libghostty's own rule does the keeping: a surface whose size was set
+    /// by hand is one a config reload leaves alone, and a reset gives it the
+    /// config's size.
+    private var holdingTextSize = false
+
+    /// Keep this surface's text at `points` through the reload about to
+    /// change it, if it is off screen. Once: a surface already held stays at
+    /// the size its program has, however many steps go by.
+    func holdTextSize(at points: Double) {
+        guard surface != nil, !holdingTextSize, !isShowing else { return }
+        holdingTextSize = true
+        textSizeAction("set_font_size:\(points)")
+    }
+
+    /// The config's size again: the zoom's, wherever it has got to.
+    private func releaseTextSize() {
+        guard holdingTextSize else { return }
+        holdingTextSize = false
+        textSizeAction("reset_font_size")
+    }
+
+    private func textSizeAction(_ action: String) {
+        guard let surface else { return }
+        let done = action.withCString {
+            ghostty_surface_binding_action(surface, $0, UInt(action.utf8.count))
+        }
+        Trace.log("zoom", "\(workspace)/\(tab) \(action) done=\(done)")
     }
 
     // MARK: - drawing
@@ -318,6 +370,7 @@ final class TerminalSurfaceView: NSView {
     /// a fresh frame at final geometry before the reveal commits.
     func resumeDrawing() {
         guard let surface else { return }
+        releaseTextSize()
         flushPendingSize()
         ghostty_surface_set_occlusion(surface, true)
         if !renderDriven, let link = displayLink, !CVDisplayLinkIsRunning(link) {
@@ -347,6 +400,7 @@ final class TerminalSurfaceView: NSView {
     override func viewDidUnhide() {
         super.viewDidUnhide()
         noteShowing()
+        if isShowing { releaseTextSize() }
         flushPendingSize()
         if let surface {
             ghostty_surface_set_occlusion(surface, true)
