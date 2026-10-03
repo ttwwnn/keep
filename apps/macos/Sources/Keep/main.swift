@@ -363,6 +363,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func toggleQuickTerminal(_ sender: Any?) { QuickTerminal.shared.toggle() }
 
+    /// Chrome's zoom, for every terminal in the app: the same as the buttons
+    /// above the sidebar (see `TerminalZoom`).
+    @objc func zoomIn(_ sender: Any?) { GhosttyApp.shared.zoom(by: 1) }
+    @objc func zoomOut(_ sender: Any?) { GhosttyApp.shared.zoom(by: -1) }
+    @objc func actualSize(_ sender: Any?) { GhosttyApp.shared.resetZoom() }
+
     /// The appearances the menu offers, by the item's tag: the system's, or
     /// one held whatever the system does.
     private static let appearances: [String?] = [nil, "light", "dark"]
@@ -384,6 +390,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        // Greyed at either end, as Chrome's are. The chord then falls through
+        // to the terminal, which is told to ignore it (`writeCommandOverride`).
+        switch item.action {
+        case #selector(zoomIn(_:)): return GhosttyApp.shared.canZoom(by: 1)
+        case #selector(zoomOut(_:)): return GhosttyApp.shared.canZoom(by: -1)
+        case #selector(actualSize(_:)): return GhosttyApp.shared.isZoomed
+        default: break
+        }
         if item.action == #selector(toggleVerticalTabs(_:)) {
             item.state = focused?.isVerticalTabs == true ? .on : .off
         }
@@ -489,6 +503,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             action: #selector(toggleQuickTerminal(_:)), keyEquivalent: "`")
         quickItem.keyEquivalentModifierMask = [.control]
         quickItem.target = self
+        viewMenu.addItem(.separator())
+        // Chrome's chords. ⌘+ is ⇧= on most keyboards, so ⌘= is taken as well,
+        // by a twin kept out of sight, as browsers take it.
+        let zoomInItem = viewMenu.addItem(
+            withTitle: "Zoom In", action: #selector(zoomIn(_:)), keyEquivalent: "+")
+        zoomInItem.target = self
+        let zoomInTwin = viewMenu.addItem(
+            withTitle: "Zoom In", action: #selector(zoomIn(_:)), keyEquivalent: "=")
+        zoomInTwin.target = self
+        zoomInTwin.isHidden = true
+        zoomInTwin.allowsKeyEquivalentWhenHidden = true
+        let zoomOutItem = viewMenu.addItem(
+            withTitle: "Zoom Out", action: #selector(zoomOut(_:)), keyEquivalent: "-")
+        zoomOutItem.target = self
+        let actualSizeItem = viewMenu.addItem(
+            withTitle: "Actual Size", action: #selector(actualSize(_:)), keyEquivalent: "0")
+        actualSizeItem.target = self
         viewMenu.addItem(.separator())
         let appearanceItem = viewMenu.addItem(
             withTitle: "Appearance", action: nil, keyEquivalent: "")

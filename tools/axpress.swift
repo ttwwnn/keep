@@ -10,6 +10,8 @@
 //   axpress <app name> cancel                 put the menu that is open away
 //   axpress <app name> frame <label>          "x y w h" of an element, screen points from the top left
 //   axpress <app name> value <label>          accessibility value of an element
+//   axpress <app name> title <label>          its title (a button's text)
+//   axpress <app name> enabled <label>        1 if it can be pressed, 0 if not
 //
 // A button is looked for in every window of the app, sheets included, which
 // is where a question before closing lives. Exits 0 when it did what it was
@@ -27,6 +29,7 @@ let arguments = CommandLine.arguments
 let usage = """
     usage: axpress <app> menu <menu> <item> | button <title> | press <label> | open <label>
                    | items | pick <title> | cancel | frame <label> | value <label>
+                   | title <label> | enabled <label>
 
     """
 guard arguments.count >= 3 else {
@@ -224,6 +227,14 @@ case "value" where arguments.count >= 4:
     guard let target = element(labelled: arguments[3]),
           let value = attribute(target, "AXValue") as? String else { exit(1) }
     print(value)
+
+case "title" where arguments.count >= 4:
+    guard let target = element(labelled: arguments[3]), let text = title(target) else { exit(1) }
+    print(text)
+
+case "enabled" where arguments.count >= 4:
+    guard let target = element(labelled: arguments[3]) else { exit(1) }
+    print((attribute(target, "AXEnabled") as? Bool) == true ? 1 : 0)
 
 default:
     FileHandle.standardError.write(usage.data(using: .utf8)!)

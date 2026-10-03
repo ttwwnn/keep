@@ -89,9 +89,7 @@ final class GhosttyApp {
         reloadConfig()
         // The font is read from files rather than asked of libghostty, so it
         // does not arrive with the config change; re-read it here.
-        let font = Self.fontSettings()
-        terminalFontFamily = font.family
-        terminalFontSize = font.size
+        settleFont()
         NotificationCenter.default.post(name: Self.backgroundDidChange, object: nil)
     }
 
@@ -103,6 +101,26 @@ final class GhosttyApp {
     /// named here, so changing the terminal's font changes these too.
     fileprivate(set) var terminalFontFamily: String?
     fileprivate(set) var terminalFontSize: Double = 13
+    /// The size the person's own config gives the text, before anything Keep
+    /// was told: what the zoom calls 100%.
+    fileprivate(set) var ownFontSize: Double = 13
+
+    /// Posted when the terminal's text changes size, for whatever shows how
+    /// big it is.
+    static let textSizeDidChange = Notification.Name("keep.terminalTextSizeDidChange")
+
+    /// Take the font as the files say it now, and tell whoever shows its
+    /// size when that is what moved.
+    fileprivate func settleFont() {
+        let font = Self.fontSettings()
+        let resized = font.size != terminalFontSize || font.own != ownFontSize
+        terminalFontFamily = font.family
+        terminalFontSize = font.size
+        ownFontSize = font.own
+        if resized {
+            NotificationCenter.default.post(name: Self.textSizeDidChange, object: nil)
+        }
+    }
 
     fileprivate func adopt(background: NSColor, opacity: Double, blur: Int16) {
         let opacity = min(max(opacity, 0), 1)
@@ -131,8 +149,9 @@ final class GhosttyApp {
     /// back empty, and font-size is not the width this call expects. Reading
     /// the file the terminal reads is less clever and actually works.
     /// Returns rather than assigns: this is called from `init`, and touching
-    /// `shared` there re-enters the singleton's own initializer.
-    fileprivate static func fontSettings() -> (family: String?, size: Double) {
+    /// `shared` there re-enters the singleton's own initializer. `own` is the
+    /// size before Keep's choice is laid over it.
+    fileprivate static func fontSettings() -> (family: String?, size: Double, own: Double) {
         let home = NSHomeDirectory()
         // XDG first, then the macOS location; the later one wins if both set
         // it, matching how the terminal resolves them.
@@ -165,13 +184,14 @@ final class GhosttyApp {
             }
             if family != nil || size != nil { break }
         }
+        let own = size.flatMap { $0 > 0 ? $0 : nil } ?? 13
         // And Keep's own choice over theirs, the same way Keep's config file
         // is loaded over theirs. Without this the surfaces would take a face
         // chosen here and everything the app draws terminal text with — the
         // preview, the picker's columns — would go on using the old one.
         if let chosen = prefs.fontFamily, !chosen.isEmpty { family = chosen }
         if let chosen = prefs.fontSize, chosen > 0 { size = chosen }
-        return (family, size ?? 13)
+        return (family, size ?? 13, own)
     }
 
     /// The font to show terminal text in outside a surface, at `size` points.
@@ -426,7 +446,8 @@ final class GhosttyApp {
         let font = Self.fontSettings()
         terminalFontFamily = font.family
         terminalFontSize = font.size
-        Trace.log("config", "terminal font: \(font.family ?? "system") @\(font.size)pt")
+        ownFontSize = font.own
+        Trace.log("config", "terminal font: \(font.family ?? "system") @\(font.size)pt (own \(font.own)pt)")
 
         var runtime = ghostty_runtime_config_s()
         runtime.userdata = nil
@@ -557,9 +578,7 @@ final class GhosttyApp {
                 else { return true }
                 DispatchQueue.main.async {
                     GhosttyApp.shared.adopt(background: color, opacity: opacity, blur: blur)
-                    let font = GhosttyApp.fontSettings()
-                    GhosttyApp.shared.terminalFontFamily = font.family
-                    GhosttyApp.shared.terminalFontSize = font.size
+                    GhosttyApp.shared.settleFont()
                 }
                 return true
             case GHOSTTY_ACTION_RELOAD_CONFIG:
@@ -744,6 +763,16 @@ final class GhosttyApp {
         // Keep's own settings go in the same file, and it is loaded after
         // the person's config, so what has been chosen here wins and what has
         // not been chosen is not mentioned at all.
+        //
+        // ⌘=, ⌘+, ⌘- and ⌘0 are the zoom's, and the zoom is the app's: the
+        // View menu takes them and every tab changes size together. Left to
+        // the terminal they change the size of one pane alone, and a pane
+        // sized by hand is one libghostty stops resizing from the config —
+        // it would sit at its own size through every zoom afterwards. The
+        // menu answers first, but not when it has nothing to do (no larger
+        // step past 300%), and then the key comes down to the pane; here
+        // it goes no further. `ignore` and not `unbind`: unbound, the chord
+        // is typed into the program instead.
         let chosen = prefs.configLines
             .map { $0 + "\n" }
             .joined()
@@ -754,6 +783,10 @@ final class GhosttyApp {
             keybind = alt+backspace=text:\\x1b\\x7f
             keybind = shift+tab=text:\\x1b[Z
             keybind = super+k=text:\\x0c
+            keybind = super+==ignore
+            keybind = super+plus=ignore
+            keybind = super+-=ignore
+            keybind = super+0=ignore
 
             """
         do {
@@ -774,6 +807,44 @@ final class GhosttyApp {
     func tick() {
         guard let app else { return }
         ghostty_app_tick(app)
+    }
+
+    // MARK: - zoom
+
+    /// How big the terminal's text is, as Chrome would say it: 1 is the
+    /// person's own size. See `TerminalZoom`.
+    var zoomLevel: Double {
+        TerminalZoom.factor(size: terminalFontSize, base: ownFontSize)
+    }
+
+    /// Whether there is a step to take that way: larger when positive.
+    func canZoom(by direction: Int) -> Bool {
+        TerminalZoom.step(from: zoomLevel, direction) != nil
+    }
+
+    /// Whether the size is Keep's at all, and so anything to go back from.
+    var isZoomed: Bool { Self.prefs.fontSize != nil }
+
+    /// One step larger (positive) or smaller (negative), for every tab in
+    /// every window at once. Through `adopt`, as any other change to the
+    /// terminal's appearance: written down, so the next launch opens at the
+    /// same size, and handed to libghostty, which resizes every surface.
+    func zoom(by direction: Int) {
+        guard let level = TerminalZoom.step(from: zoomLevel, direction) else { return }
+        var next = Self.prefs
+        next.fontSize = TerminalZoom.fontSize(at: level, base: ownFontSize)
+        adopt(next)
+        Trace.log("zoom", "\(TerminalZoom.percent(level)) = \(terminalFontSize)pt")
+    }
+
+    /// Back to the person's own size. The face stays whatever was chosen:
+    /// this is the zoom's reset, not the palette's.
+    func resetZoom() {
+        guard isZoomed else { return }
+        var next = Self.prefs
+        next.fontSize = nil
+        adopt(next)
+        Trace.log("zoom", "100% = \(terminalFontSize)pt")
     }
 }
 
