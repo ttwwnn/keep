@@ -763,16 +763,6 @@ final class GhosttyApp {
         // Keep's own settings go in the same file, and it is loaded after
         // the person's config, so what has been chosen here wins and what has
         // not been chosen is not mentioned at all.
-        //
-        // ⌘=, ⌘+, ⌘- and ⌘0 are the zoom's, and the zoom is the app's: the
-        // View menu takes them and every tab changes size together. Left to
-        // the terminal they change the size of one pane alone, and a pane
-        // sized by hand is one libghostty stops resizing from the config —
-        // it would sit at its own size through every zoom afterwards. The
-        // menu answers first, but not when it has nothing to do (no larger
-        // step past 300%), and then the key comes down to the pane; here
-        // it goes no further. `ignore` and not `unbind`: unbound, the chord
-        // is typed into the program instead.
         let chosen = prefs.configLines
             .map { $0 + "\n" }
             .joined()
@@ -783,10 +773,6 @@ final class GhosttyApp {
             keybind = alt+backspace=text:\\x1b\\x7f
             keybind = shift+tab=text:\\x1b[Z
             keybind = super+k=text:\\x0c
-            keybind = super+==ignore
-            keybind = super+plus=ignore
-            keybind = super+-=ignore
-            keybind = super+0=ignore
 
             """
         do {

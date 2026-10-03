@@ -16,8 +16,11 @@
 # No mouse: the buttons and menu items are pressed through the accessibility
 # tree (tools/axpress.swift), the chords posted to the app's pid alone
 # (tools/sendkey.swift), and the front is handed back to whatever had it, so
-# the test can run behind the app you are working in. Your app, its daemon
-# and its settings are never touched.
+# the test runs behind the app you are working in. Twice, for a few seconds,
+# it comes to the front: a chord reaches a pane only in the window that has
+# the keyboard, so that one question cannot be asked from behind. Anything
+# typed meanwhile lands in the test's own shell. Your app, its daemon and its
+# settings are never touched.
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -76,9 +79,9 @@ waited=0
 while [ ! -S "$SOCKET" ] && [ "$waited" -lt 40 ]; do sleep 0.25; waited=$((waited + 1)); done
 
 # Started, waited for, and put behind whatever was in front before it.
+FRONT=
 launch() {
-    local front
-    front=$(osascript -e 'tell application "System Events" to get bundle identifier of first application process whose frontmost is true' 2>/dev/null)
+    FRONT=$(osascript -e 'tell application "System Events" to get bundle identifier of first application process whose frontmost is true' 2>/dev/null)
     : >"$WORK/app.log"
     KEEP_TRACE=1 "$BIN" >"$WORK/app.log" 2>&1 &
     APP_PID=$!
@@ -87,9 +90,18 @@ launch() {
         sleep 0.25; waited=$((waited + 1))
     done
     sleep 1.5
-    if [ -n "$front" ] && [ "$front" != "missing value" ]; then
-        osascript -e "tell application id \"$front\" to activate" >/dev/null 2>&1
+    give_back
+}
+give_back() {
+    if [ -n "$FRONT" ] && [ "$FRONT" != "missing value" ]; then
+        osascript -e "tell application id \"$FRONT\" to activate" >/dev/null 2>&1
     fi
+}
+# The app in front, its window holding the keyboard; says whether it is.
+to_front() {
+    osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" >/dev/null 2>&1
+    sleep 1
+    osascript -e "tell application \"System Events\" to get frontmost of process \"$APP_NAME\"" 2>/dev/null
 }
 quit_app() {
     kill "$APP_PID" 2>/dev/null
@@ -114,6 +126,9 @@ grid() {  # grid <tab>: "colsxrows" the daemon was given for it
         | sed -nE "s/^ +tab $1 .* ([0-9]+x[0-9]+) .*/\\1/p" | head -1
 }
 cols() { grid "$1" | cut -dx -f1; }
+screen() {  # screen <tab>: what the daemon holds on that tab's screen
+    python3 tools/screen.py "$("$APP/Contents/Resources/keep" ls 2>/dev/null | awk 'NR == 1 { print $1 }')" "$1" 2>/dev/null
+}
 # A change reaches the daemon a moment after the app makes it: wait for the
 # tab's grid to stop being $2, a few seconds at most.
 grid_leaves() {  # grid_leaves <tab> <grid>
@@ -197,20 +212,34 @@ check "seven steps up is 300%" "300%" "$(level)"
 check "39 points written" 39 "$(written)"
 check "larger cannot be pressed" 0 "$(enabled keep.zoom.in)"
 AT300=$(grid 1)
-# Nothing in the menu to do, the chord goes on to the pane, which must not
-# take it as its own font size: the pane would sit at a size of its own
-# through every zoom after.
 chord 24 cmd; sleep 1
-check "⌘= at 300% leaves the tab alone" "300% $AT300" "$(level) $(grid 1)"
+check "⌘= at 300% goes no further" "300% $AT300" "$(level) $(grid 1)"
+# From behind, a chord has only the menu to go to. In front, with the
+# keyboard, it would go on to the pane if the greyed item let it go, and
+# libghostty binds these chords to the size of that pane alone: a pane sized
+# so stops following the zoom. First that the keyboard is there at all —
+# typed text reaches the shell — or the checks after it test nothing.
+check "the app comes to the front" true "$(to_front)"
+"$SENDKEY" "$APP_PID" text "zoomprobe"; sleep 1
+check "in front, the keyboard reaches the terminal" yes \
+    "$(screen 1 | grep -q zoomprobe && echo yes || echo no)"
+chord 24 cmd; sleep 1
+check "in front, ⌘= at 300% does not reach the pane" "300% $AT300" "$(level) $(grid 1)"
 chord 24 shift cmd; sleep 1
-check "⌘+ at 300% leaves the tab alone" "300% $AT300" "$(level) $(grid 1)"
+check "in front, ⌘+ at 300% does not reach the pane" "300% $AT300" "$(level) $(grid 1)"
+chord 32 ctrl   # ⌃U: the probe off the command line
+give_back
 for _ in $(seq 12); do press keep.zoom.out; done
 grid_leaves 1 "$AT300"; sleep 1
 check "twelve steps down is 50%" "50%" "$(level)"
 check "smaller cannot be pressed" 0 "$(enabled keep.zoom.out)"
 AT50=$(grid 1)
 chord 27 cmd; sleep 1
-check "⌘- at 50% leaves the tab alone" "50% $AT50" "$(level) $(grid 1)"
+check "⌘- at 50% goes no further" "50% $AT50" "$(level) $(grid 1)"
+check "the app comes to the front again" true "$(to_front)"
+chord 27 cmd; sleep 1
+check "in front, ⌘- at 50% does not reach the pane" "50% $AT50" "$(level) $(grid 1)"
+give_back
 chord 29 cmd; grid_leaves 1 "$AT50"
 check "⌘0 from 50%" "100% $BASE" "$(level) $(grid 1)"
 chord 29 cmd; sleep 1

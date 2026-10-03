@@ -390,8 +390,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        // Greyed at either end, as Chrome's are. The chord then falls through
-        // to the terminal, which is told to ignore it (`writeCommandOverride`).
+        // Greyed at either end, as Chrome's are. Greyed, an item still takes
+        // its chord: AppKit hands it on to nobody, so it never reaches the
+        // terminal either (see `buildMenu`).
         switch item.action {
         case #selector(zoomIn(_:)): return GhosttyApp.shared.canZoom(by: 1)
         case #selector(zoomOut(_:)): return GhosttyApp.shared.canZoom(by: -1)
@@ -504,16 +505,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         quickItem.keyEquivalentModifierMask = [.control]
         quickItem.target = self
         viewMenu.addItem(.separator())
-        // Chrome's chords. ⌘+ is ⇧= on most keyboards, so ⌘= is taken as well,
-        // by a twin kept out of sight, as browsers take it.
+        // Chrome's chords, and taken here for a second reason: libghostty
+        // binds the same four to the font size of the pane that has the
+        // keyboard, and a pane sized by hand is one it stops resizing from
+        // the config — it would sit at a size of its own through every zoom
+        // after. A menu's chord is matched before the terminal is asked, and
+        // stays the menu's while the item is greyed: AppKit hands it to
+        // nobody. ⌘= needs no item of its own: the + item answers the key
+        // that + is the shift of (both measured, tools/zoom-app-test.sh).
         let zoomInItem = viewMenu.addItem(
             withTitle: "Zoom In", action: #selector(zoomIn(_:)), keyEquivalent: "+")
         zoomInItem.target = self
-        let zoomInTwin = viewMenu.addItem(
-            withTitle: "Zoom In", action: #selector(zoomIn(_:)), keyEquivalent: "=")
-        zoomInTwin.target = self
-        zoomInTwin.isHidden = true
-        zoomInTwin.allowsKeyEquivalentWhenHidden = true
         let zoomOutItem = viewMenu.addItem(
             withTitle: "Zoom Out", action: #selector(zoomOut(_:)), keyEquivalent: "-")
         zoomOutItem.target = self
