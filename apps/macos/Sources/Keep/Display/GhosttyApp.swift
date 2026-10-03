@@ -612,7 +612,7 @@ final class GhosttyApp {
                     let opacity = GhosttyApp.backgroundOpacity(of: config),
                     let blur = GhosttyApp.backgroundBlur(of: config)
                 else { return true }
-                // A reload is reported to the app and then to every surface;
+                // A reload is reported to every surface and then to the app;
                 // the font is the app's, and settling it builds a config of
                 // its own (`configuredFontSize`), so once a reload, not once
                 // a tab.
@@ -804,19 +804,6 @@ final class GhosttyApp {
         // Keep's own settings go in the same file, and it is loaded after
         // the person's config, so what has been chosen here wins and what has
         // not been chosen is not mentioned at all.
-        //
-        // ⌘=, ⌘+, ⌘- and ⌘0 are the zoom's, and the zoom is the app's: the
-        // View menu takes them and every tab changes size together. Left to
-        // the terminal they change the size of the pane with the keyboard
-        // alone, and a pane sized by hand is one libghostty stops resizing
-        // from the config — it sits at its own size through every zoom
-        // after. The menu answers first, but not with its item greyed (at
-        // 300%, at 50%, at 100% for ⌘0): AppKit then hands the chord on, and
-        // it reached the pane — measured. Here it goes no further. `ignore`
-        // and not `unbind`: unbound, it is typed into the program instead.
-        // Both spellings of each chord: the character, which is how
-        // libghostty binds them itself, and the key, which it looks up
-        // first — a person's own `super+equal=…` would otherwise still win.
         let chosen = prefs.configLines
             .map { $0 + "\n" }
             .joined()
@@ -827,14 +814,6 @@ final class GhosttyApp {
             keybind = alt+backspace=text:\\x1b\\x7f
             keybind = shift+tab=text:\\x1b[Z
             keybind = super+k=text:\\x0c
-            keybind = super+==ignore
-            keybind = super+plus=ignore
-            keybind = super+-=ignore
-            keybind = super+0=ignore
-            keybind = super+equal=ignore
-            keybind = super+shift+equal=ignore
-            keybind = super+minus=ignore
-            keybind = super+digit_0=ignore
 
             """
         do {

@@ -134,7 +134,22 @@ item_is() {  # item_is <item> <0|1>: what it says, waiting up to 3 s for <0|1>
     printf '%s\n' "$got"
 }
 choose() { item_is "$1" 1 >/dev/null; menu_until View "$1" "$2" level; }  # choose <item> <percentage it gives>
-present() { [ "$(ask frame "$1")" != "(none)" ] && echo yes || echo no; }
+# Whether something is on screen: yes, no — or "(silent)" when the tree did
+# not answer at all, which is not a no.
+present() {
+    "$AXPRESS" "$APP_NAME" frame "$1" >/dev/null 2>&1 && { echo yes; return; }
+    [ "$(ask frame "Toggle Sidebar")" = "(none)" ] && { echo "(silent)"; return; }
+    "$AXPRESS" "$APP_NAME" frame "$1" >/dev/null 2>&1 && echo yes || echo no
+}
+# Where an element begins and ends across, from "x y w h"; nothing when the
+# tree did not say, so that no comparison is made with an empty number.
+left_of() { local x y w h; read -r x y w h <<<"$(ask frame "$1")"; [ -n "$h" ] && echo "$x"; }
+right_of() { local x y w h; read -r x y w h <<<"$(ask frame "$1")"; [ -n "$h" ] && echo $((x + w)); }
+before() {  # before <a> <b>: yes when a ends at or before b begins
+    local a b
+    a=$(right_of "$1"); b=$(left_of "$2")
+    [ -n "$a" ] && [ -n "$b" ] && [ "$a" -le "$b" ] && echo yes || echo no
+}
 written() {  # the size the app wrote down, or "none"
     python3 -c 'import json, sys
 try: print(json.load(open(sys.argv[1])).get("fontSize", "none"))
@@ -159,7 +174,16 @@ grid_is() {  # grid_is <tab> <grid>
     local waited=0
     while [ "$(grid "$1")" != "$2" ] && [ "$waited" -lt 20 ]; do sleep 0.25; waited=$((waited + 1)); done
 }
-press() { "$AXPRESS" "$APP_NAME" press "$1"; sleep 0.4; }
+grid_settles() {  # grid_settles <tab>: the grid, once two reads half a second apart agree
+    local now then waited=0
+    then=$(grid "$1")
+    while :; do
+        sleep 0.5; now=$(grid "$1")
+        [ "$now" = "$then" ] || [ "$waited" -ge 20 ] && break
+        then=$now; waited=$((waited + 1))
+    done
+    printf '%s\n' "$now"
+}
 # A press waited on until what it does shows (until <command> prints <value>),
 # and made again if it never does — a press can be dropped as a read can. Not
 # twice for one: the second only once the first has had five seconds to show.
@@ -204,9 +228,7 @@ check "larger can be pressed" 1 "$(enabled keep.zoom.in)"
 check "smaller can be pressed" 1 "$(enabled keep.zoom.out)"
 check "View: Zoom In and Zoom Out can be chosen, Actual Size is greyed" "1 1 0" \
     "$(item_is "Zoom In" 1) $(item_is "Zoom Out" 1) $(item_is "Actual Size" 0)"
-read -r ix _ iw _ <<<"$("$AXPRESS" "$APP_NAME" frame keep.zoom.in)"
-read -r tx _ _ _ <<<"$("$AXPRESS" "$APP_NAME" frame "Toggle Sidebar")"
-check "it ends before the toggle" yes "$([ $((ix + iw)) -le "${tx:-0}" ] && echo yes || echo no)"
+check "it ends before the toggle" yes "$(before keep.zoom.in "Toggle Sidebar")"
 BASE=$(grid 1)
 say "        (tab 1 at 100%: $BASE)"
 
@@ -257,19 +279,23 @@ step keep.zoom.reset 100%; grid_leaves 1 "$AT110"
 
 say ""
 say "the ends: 300% and 50%"
-for to in 110% 125% 150% 175% 200% 250% 300%; do step keep.zoom.in "$to"; done
-grid_leaves 1 "$BASE"; sleep 1
+walked=yes
+for to in 110% 125% 150% 175% 200% 250% 300%; do
+    step keep.zoom.in "$to" || walked="no: stopped short of $to"
+done
+check "each press of + is the next step" yes "$walked"
+grid_leaves 1 "$BASE"
 check "seven steps up is 300%" "300%" "$(level)"
 check "39 points written" 39 "$(written)"
 check "larger cannot be pressed" 0 "$(enabled keep.zoom.in)"
 check "View: Zoom In is greyed, Actual Size can be chosen" "0 1" \
     "$(item_is "Zoom In" 0) $(item_is "Actual Size" 1)"
-AT300=$(grid 1)
+AT300=$(grid_settles 1)
 # A greyed item hands its chord on to the terminal, where libghostty binds it
 # to the size of the pane alone — and a pane sized so stops following the
-# zoom — unless Keep's config tells it to ignore the chord. First that what
-# is posted here reaches the terminal at all, or the checks after it test
-# nothing: typed text does, to the shell's command line.
+# zoom — unless the terminal's view keeps it back (`isZoomChord`). First that
+# what is posted here reaches the terminal at all, or the checks after it
+# test nothing: typed text does, to the shell's command line.
 "$SENDKEY" "$APP_PID" text "zoomprobe"; sleep 1
 check "what is typed reaches the terminal" yes "$(screen 1 | grep -q zoomprobe && echo yes || echo no)"
 chord 32 ctrl   # ⌃U: the probe off the command line
@@ -279,14 +305,20 @@ chord 32 ctrl   # ⌃U: the probe off the command line
 TOLD_FROM=$(wc -l <"$WORK/app.log")
 chord 24 cmd; sleep 1
 check "⌘= at 300% does not reach the pane" "300% $AT300" "$(level) $(grid 1)"
+# libghostty binds nothing to ⌘⇧= of its own, so this one is the menu's
+# end alone; the config.ghostty section below gives the pane a binding for it.
 chord 24 shift cmd; sleep 1
-check "⌘+ at 300% does not reach the pane" "300% $AT300" "$(level) $(grid 1)"
-for to in 250% 200% 175% 150% 125% 110% 100% 90% 80% 75% 67% 50%; do step keep.zoom.out "$to"; done
-grid_leaves 1 "$AT300"; sleep 1
+check "⌘+ at 300% goes no further" "300% $AT300" "$(level) $(grid 1)"
+walked=yes
+for to in 250% 200% 175% 150% 125% 110% 100% 90% 80% 75% 67% 50%; do
+    step keep.zoom.out "$to" || walked="no: stopped short of $to"
+done
+check "each press of - is the next step" yes "$walked"
+grid_leaves 1 "$AT300"
 check "twelve steps down is 50%" "50%" "$(level)"
 check "smaller cannot be pressed" 0 "$(enabled keep.zoom.out)"
 check "View: Zoom Out is greyed" 0 "$(item_is "Zoom Out" 0)"
-AT50=$(grid 1)
+AT50=$(grid_settles 1)
 chord 27 cmd; sleep 1
 check "⌘- at 50% does not reach the pane" "50% $AT50" "$(level) $(grid 1)"
 chord 29 cmd; grid_leaves 1 "$AT50"
@@ -317,7 +349,7 @@ press_until "Toggle Sidebar" no present keep.zoom.out
 check "shut: no zoom" "no no no" "$(present keep.zoom.out) $(present keep.zoom.reset) $(present keep.zoom.in)"
 # Where the toggle sits with nothing to ride: hard against the traffic
 # lights. The zoom may never come nearer them than this.
-read -r home _ _ _ <<<"$("$AXPRESS" "$APP_NAME" frame "Toggle Sidebar")"
+home=$(left_of "Toggle Sidebar")
 press_until "Toggle Sidebar" yes present keep.zoom.out
 check "open again: the zoom is back" "yes yes yes" "$(present keep.zoom.out) $(present keep.zoom.reset) $(present keep.zoom.in)"
 
@@ -345,12 +377,10 @@ PY
 launch
 check "200 points wide: smaller, larger, no percentage" "yes yes no" \
     "$(present keep.zoom.out) $(present keep.zoom.in) $(present keep.zoom.reset)"
-read -r nx _ _ _ <<<"$("$AXPRESS" "$APP_NAME" frame keep.zoom.out)"
-read -r ix _ iw _ <<<"$("$AXPRESS" "$APP_NAME" frame keep.zoom.in)"
-read -r tx _ _ _ <<<"$("$AXPRESS" "$APP_NAME" frame "Toggle Sidebar")"
+nx=$(left_of keep.zoom.out)
 check "no nearer the traffic lights than the toggle's home" yes \
-    "$([ "${nx:-0}" -ge "${home:-9999}" ] && echo yes || echo no)"
-check "and still clear of the toggle" yes "$([ $((ix + iw)) -le "${tx:-0}" ] && echo yes || echo no)"
+    "$([ -n "$nx" ] && [ -n "$home" ] && [ "$nx" -ge "$home" ] && echo yes || echo no)"
+check "and still clear of the toggle" yes "$(before keep.zoom.in "Toggle Sidebar")"
 # No percentage to watch here: what the press writes down is watched instead.
 press_until keep.zoom.out none written
 check "and they still zoom: smaller from 110% is 100%" none "$(written)"
@@ -367,9 +397,14 @@ if grep -qsE '^[[:space:]]*font-size[[:space:]]*=' "$SUPPORT/config" "$SUPPORT/c
     say "  skip  your Application Support config sets a font-size, which would win"
 else
     mkdir -p "$WORK/xdg/ghostty"
-    # And a binding of the person's own on the key rather than the
-    # character, which libghostty looks up before the character.
-    printf 'font-size = 16\nkeybind = super+equal=increase_font_size:1\n' \
+    # And bindings of the person's own on every chord, on the keys rather
+    # than the characters — which libghostty looks up first — and ten points
+    # at a time, so no grid can hide them.
+    printf '%s\n' "font-size = 16" \
+        "keybind = super+equal=increase_font_size:10" \
+        "keybind = super+shift+equal=increase_font_size:10" \
+        "keybind = super+minus=decrease_font_size:10" \
+        "keybind = super+digit_0=increase_font_size:10" \
         >"$WORK/xdg/ghostty/config.ghostty"
     rm -f "$STATE/terminal.json"
     python3 - "$STATE/sidebar-state.json" <<'INNER'
@@ -390,12 +425,29 @@ INNER
     step keep.zoom.in 110%; grid_leaves 1 "$AT16"
     check "+ is 110% of 16" "110% 17.6" "$(level) $(written)"
     check "and the text grew: fewer columns" yes "$([ "$(cols 1)" -lt "${AT16%x*}" ] && echo yes || echo no)"
-    for to in 125% 150% 175% 200% 250% 300%; do step keep.zoom.in "$to"; done
-    grid_leaves 1 "$AT16"; sleep 1
-    AT300=$(grid 1)
+    walked=yes
+    for to in 125% 150% 175% 200% 250% 300%; do
+        step keep.zoom.in "$to" || walked="no: stopped short of $to"
+    done
+    check "up to 300% a step at a time" yes "$walked"
+    AT300=$(grid_settles 1)
     chord 24 cmd; sleep 1
-    check "a binding of their own on the = key does not size the pane at 300%" \
-        "300% $AT300" "$(level) $(grid 1)"
+    check "their own ⌘= does not size the pane at 300%" "300% $AT300" "$(level) $(grid 1)"
+    chord 24 shift cmd; sleep 1
+    check "nor their own ⌘+" "300% $AT300" "$(level) $(grid 1)"
+    walked=yes
+    for to in 250% 200% 175% 150% 125% 110% 100% 90% 80% 75% 67% 50%; do
+        step keep.zoom.out "$to" || walked="no: stopped short of $to"
+    done
+    check "down to 50% a step at a time" yes "$walked"
+    AT50=$(grid_settles 1)
+    chord 27 cmd; sleep 1
+    check "nor their own ⌘- at 50%" "50% $AT50" "$(level) $(grid 1)"
+    chord 29 cmd; grid_leaves 1 "$AT50"
+    AT100=$(grid_settles 1)
+    check "⌘0 is still the zoom's" "100% $AT16" "$(level) $AT100"
+    chord 29 cmd; sleep 1
+    check "nor their own ⌘0 at 100%" "100% $AT16" "$(level) $(grid 1)"
 fi
 
 say ""

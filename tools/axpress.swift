@@ -239,7 +239,10 @@ case "menuenabled" where arguments.count >= 5:
     for top in children(barElement) where title(top) == arguments[3] {
         for menu in children(top) {
             for item in children(menu) where title(item) == arguments[4] {
-                print((attribute(item, "AXEnabled") as? Bool) == true ? 1 : 0)
+                // No answer is not a no: a question that ran out of time
+                // says nothing about the item.
+                guard let enabled = attribute(item, "AXEnabled") as? Bool else { exit(1) }
+                print(enabled ? 1 : 0)
                 exit(0)
             }
         }
@@ -247,8 +250,9 @@ case "menuenabled" where arguments.count >= 5:
     exit(1)
 
 case "enabled" where arguments.count >= 4:
-    guard let target = element(labelled: arguments[3]) else { exit(1) }
-    print((attribute(target, "AXEnabled") as? Bool) == true ? 1 : 0)
+    guard let target = element(labelled: arguments[3]),
+          let enabled = attribute(target, "AXEnabled") as? Bool else { exit(1) }
+    print(enabled ? 1 : 0)
 
 default:
     FileHandle.standardError.write(usage.data(using: .utf8)!)

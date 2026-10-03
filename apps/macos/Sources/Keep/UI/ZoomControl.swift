@@ -110,7 +110,7 @@ final class ZoomControl: NSView {
         smaller.isEnabled = app.canZoom(by: -1)
         larger.isEnabled = app.canZoom(by: 1)
         smaller.toolTip = smaller.isEnabled
-            ? "Diminuir o zoom (⌘-)" : "Zoom no mínimo (\(percent))"
+            ? "Diminuir o zoom (⌘−)" : "Zoom no mínimo (\(percent))"
         larger.toolTip = larger.isEnabled
             ? "Aumentar o zoom (⌘+)" : "Zoom no máximo (\(percent))"
         level.title = percent

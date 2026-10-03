@@ -395,7 +395,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// Tabs, Appearance — never showed.
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         // Greyed at either end, as Chrome's are. The chord then goes on to
-        // the terminal, which is told to ignore it (`writeCommandOverride`).
+        // the terminal, which keeps it from libghostty (`isZoomChord`).
         switch item.action {
         case #selector(zoomIn(_:)): return GhosttyApp.shared.canZoom(by: 1)
         case #selector(zoomOut(_:)): return GhosttyApp.shared.canZoom(by: -1)
@@ -509,7 +509,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         quickItem.target = self
         viewMenu.addItem(.separator())
         // Chrome's chords, matched here before the terminal is asked: there
-        // libghostty would size one pane alone (see `writeCommandOverride`).
+        // libghostty would size one pane alone (see `isZoomChord`).
         // ⌘= needs no item of its own: the + item answers the key that + is
         // the shift of (measured, tools/zoom-app-test.sh).
         let zoomInItem = viewMenu.addItem(

@@ -808,6 +808,10 @@ final class TerminalSurfaceView: NSView {
     /// as alt-b.
     override func keyDown(with event: NSEvent) {
         guard surface != nil else { return }
+        if Self.isZoomChord(event) {
+            Trace.log("key", "zoom chord kept from the terminal")
+            return
+        }
         if Self.isChord(event), !(markedText.length > 0 && inputMethodActive && Self.isControlChord(event)) {
             let pending = markedText.length > 0
             commitComposition()
@@ -895,7 +899,32 @@ final class TerminalSurfaceView: NSView {
     }
 
     override func keyUp(with event: NSEvent) {
+        // Its release goes with it: a program told of a key let go that it
+        // was never told was pressed has a stray key on its hands.
+        if Self.isZoomChord(event) { return }
         send(event, action: GHOSTTY_ACTION_RELEASE)
+    }
+
+    /// ⌘=, ⌘+, ⌘- and ⌘0: the zoom's, and the zoom is the app's — View ▸
+    /// Zoom In, Zoom Out and Actual Size, for every tab at once.
+    ///
+    /// The menu takes them first, but not with its item greyed (at 300%, at
+    /// 50%, at 100% for ⌘0): AppKit then hands the chord on, and it comes
+    /// here. libghostty binds all four to the size of this pane alone, and a
+    /// pane sized by hand is one it stops resizing from the config — it sat
+    /// at its own size through every zoom after (measured). So none of them
+    /// reaches it, whatever binds them: a person's own config included.
+    ///
+    /// Told apart by the character, not by the key, so the four are the
+    /// four on any layout and on the keypad, and a key that is `=` here and
+    /// `ß` elsewhere is only kept back where it is `=`. Asked again from the
+    /// key code, as ⌘V is above: after a dead key the event's own characters
+    /// still carry it ("'="), and ⌘= would slip through as something else.
+    private static func isZoomChord(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection([.command, .control, .option]) == .command,
+              let key = event.characters(byApplyingModifiers: event.modifierFlags.intersection(.shift))
+        else { return false }
+        return ["=", "+", "-", "0"].contains(key)
     }
 
     /// A press that holds control, option or command.
