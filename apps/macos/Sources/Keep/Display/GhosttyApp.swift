@@ -612,9 +612,14 @@ final class GhosttyApp {
                     let opacity = GhosttyApp.backgroundOpacity(of: config),
                     let blur = GhosttyApp.backgroundBlur(of: config)
                 else { return true }
+                // A reload is reported to the app and then to every surface;
+                // the font is the app's, and settling it builds a config of
+                // its own (`configuredFontSize`), so once a reload, not once
+                // a tab.
+                let wholeApp = target.tag == GHOSTTY_TARGET_APP
                 DispatchQueue.main.async {
                     GhosttyApp.shared.adopt(background: color, opacity: opacity, blur: blur)
-                    GhosttyApp.shared.settleFont()
+                    if wholeApp { GhosttyApp.shared.settleFont() }
                 }
                 return true
             case GHOSTTY_ACTION_RELOAD_CONFIG:
@@ -809,6 +814,9 @@ final class GhosttyApp {
         // 300%, at 50%, at 100% for ⌘0): AppKit then hands the chord on, and
         // it reached the pane — measured. Here it goes no further. `ignore`
         // and not `unbind`: unbound, it is typed into the program instead.
+        // Both spellings of each chord: the character, which is how
+        // libghostty binds them itself, and the key, which it looks up
+        // first — a person's own `super+equal=…` would otherwise still win.
         let chosen = prefs.configLines
             .map { $0 + "\n" }
             .joined()
@@ -823,6 +831,10 @@ final class GhosttyApp {
             keybind = super+plus=ignore
             keybind = super+-=ignore
             keybind = super+0=ignore
+            keybind = super+equal=ignore
+            keybind = super+shift+equal=ignore
+            keybind = super+minus=ignore
+            keybind = super+digit_0=ignore
 
             """
         do {
@@ -866,6 +878,10 @@ final class GhosttyApp {
     /// terminal's appearance: written down, so the next launch opens at the
     /// same size, and handed to libghostty, which resizes every surface.
     func zoom(by direction: Int) {
+        // From the person's size as it is now, not as the last reload left
+        // it: their config may have changed since, and a step worked out on
+        // the old 100% lands somewhere the next reload calls another name.
+        settleFont()
         guard let level = TerminalZoom.step(from: zoomLevel, direction) else { return }
         var next = Self.prefs
         next.fontSize = TerminalZoom.fontSize(at: level, base: ownFontSize)

@@ -107,8 +107,19 @@ quit_app() {
 stop_app
 launch
 
-level() { "$AXPRESS" "$APP_NAME" title keep.zoom.reset 2>/dev/null || echo "(none)"; }
-enabled() { "$AXPRESS" "$APP_NAME" enabled "$1" 2>/dev/null || echo "(none)"; }
+# Asked of the accessibility tree, which gives the app a second to answer
+# (tools/axpress.swift): under load an answer can be late, so a read that
+# came back with nothing is asked again before it is believed.
+ask() {  # ask <axpress arguments...>: its answer, or "(none)" after eight tries
+    local tries=0 got
+    while [ "$tries" -lt 8 ]; do
+        got=$("$AXPRESS" "$APP_NAME" "$@" 2>/dev/null) && { printf '%s\n' "$got"; return; }
+        tries=$((tries + 1)); sleep 0.5
+    done
+    echo "(none)"
+}
+level() { ask title keep.zoom.reset; }
+enabled() { ask enabled "$1"; }
 item() { "$AXPRESS" "$APP_NAME" menuenabled View "$1" 2>/dev/null || echo "(none)"; }
 # Whether an item of the View menu can be chosen, once AppKit has caught up:
 # it works the menu out again a moment after a change (within a second,
@@ -122,8 +133,8 @@ item_is() {  # item_is <item> <0|1>: what it says, waiting up to 3 s for <0|1>
     done
     printf '%s\n' "$got"
 }
-choose() { item_is "$1" 1 >/dev/null; "$AXPRESS" "$APP_NAME" menu View "$1"; sleep 0.4; }
-present() { "$AXPRESS" "$APP_NAME" frame "$1" >/dev/null 2>&1 && echo yes || echo no; }
+choose() { item_is "$1" 1 >/dev/null; menu_until View "$1" "$2" level; }  # choose <item> <percentage it gives>
+present() { [ "$(ask frame "$1")" != "(none)" ] && echo yes || echo no; }
 written() {  # the size the app wrote down, or "none"
     python3 -c 'import json, sys
 try: print(json.load(open(sys.argv[1])).get("fontSize", "none"))
@@ -149,6 +160,36 @@ grid_is() {  # grid_is <tab> <grid>
     while [ "$(grid "$1")" != "$2" ] && [ "$waited" -lt 20 ]; do sleep 0.25; waited=$((waited + 1)); done
 }
 press() { "$AXPRESS" "$APP_NAME" press "$1"; sleep 0.4; }
+# A press waited on until what it does shows (until <command> prints <value>),
+# and made again if it never does — a press can be dropped as a read can. Not
+# twice for one: the second only once the first has had five seconds to show.
+press_until() {  # press_until <label> <value> <command...>
+    local label=$1 want=$2 tries=0 waited
+    shift 2
+    while [ "$tries" -lt 3 ]; do
+        "$AXPRESS" "$APP_NAME" press "$label" >/dev/null 2>&1
+        waited=0
+        while [ "$("$@")" != "$want" ] && [ "$waited" -lt 20 ]; do sleep 0.25; waited=$((waited + 1)); done
+        [ "$("$@")" = "$want" ] && { sleep 0.3; return 0; }
+        tries=$((tries + 1))
+    done
+    return 1
+}
+# One step of the zoom by its button, to the percentage it should give.
+step() { press_until "$1" "$2" level; }
+menu_until() {  # menu_until <menu> <item> <value> <command...>
+    local menu=$1 entry=$2 want=$3 tries=0 waited
+    shift 3
+    while [ "$tries" -lt 3 ]; do
+        "$AXPRESS" "$APP_NAME" menu "$menu" "$entry" >/dev/null 2>&1
+        waited=0
+        while [ "$("$@")" != "$want" ] && [ "$waited" -lt 20 ]; do sleep 0.25; waited=$((waited + 1)); done
+        [ "$("$@")" = "$want" ] && { sleep 0.3; return 0; }
+        tries=$((tries + 1))
+    done
+    return 1
+}
+tabs() { "$APP/Contents/Resources/keep" ls 2>/dev/null | grep -cE '^ +tab [0-9]+'; }
 chord() { "$SENDKEY" "$APP_PID" key "$@"; sleep 0.6; }
 palette() {  # palette <filter>: run the palette's first command for it
     "$SENDKEY" "$APP_PID" key 35 shift cmd; sleep 0.8   # ⌘⇧P
@@ -171,17 +212,17 @@ say "        (tab 1 at 100%: $BASE)"
 
 say ""
 say "the buttons"
-press keep.zoom.in; grid_leaves 1 "$BASE"
+step keep.zoom.in 110%; grid_leaves 1 "$BASE"
 check "+ says 110%" "110%" "$(level)"
 check "+ writes 110% of 13 points" 14.3 "$(written)"
 AT110=$(grid 1)
 check "+ gives the tab fewer columns" yes "$([ "$(cols 1)" -lt "${BASE%x*}" ] && echo yes || echo no)"
-press keep.zoom.out; grid_is 1 "$BASE"; press keep.zoom.out; grid_leaves 1 "$BASE"
+step keep.zoom.out 100%; grid_is 1 "$BASE"; step keep.zoom.out 90%; grid_leaves 1 "$BASE"
 check "- twice says 90%" "90%" "$(level)"
 check "- twice writes 11.7" 11.7 "$(written)"
 check "- gives it more columns than at 100%" yes "$([ "$(cols 1)" -gt "${BASE%x*}" ] && echo yes || echo no)"
 AT90=$(grid 1)
-press keep.zoom.reset; grid_leaves 1 "$AT90"
+step keep.zoom.reset 100%; grid_leaves 1 "$AT90"
 check "the percentage goes back to 100%" "100%" "$(level)"
 check "and writes nothing down" none "$(written)"
 check "and the tab is as it was" "$BASE" "$(grid 1)"
@@ -199,24 +240,24 @@ check "⌘0 goes back to 100%" "100% $BASE" "$(level) $(grid 1)"
 
 say ""
 say "the View menu"
-choose "Zoom In"; grid_leaves 1 "$BASE"
+choose "Zoom In" 110%; grid_leaves 1 "$BASE"
 check "Zoom In" "110% $AT110" "$(level) $(grid 1)"
-choose "Actual Size"; grid_leaves 1 "$AT110"
+choose "Actual Size" 100%; grid_leaves 1 "$AT110"
 check "Actual Size" "100% $BASE" "$(level) $(grid 1)"
 
 say ""
 say "every tab, not the one on screen"
-"$AXPRESS" "$APP_NAME" menu File "New Tab"; sleep 2
+menu_until File "New Tab" 2 tabs; sleep 1.5
 check "a second tab opens at 100%" "$BASE" "$(grid 2)"
-press keep.zoom.in; grid_leaves 2 "$BASE"
+step keep.zoom.in 110%; grid_leaves 2 "$BASE"
 check "+ on the second tab" "$AT110" "$(grid 2)"
-"$AXPRESS" "$APP_NAME" menu Window "Show Tab 1"; sleep 0.4; grid_leaves 1 "$BASE"
+menu_until Window "Show Tab 1" "$AT110" grid 1
 check "the first tab is at 110% when it is shown" "$AT110" "$(grid 1)"
-press keep.zoom.reset; grid_leaves 1 "$AT110"
+step keep.zoom.reset 100%; grid_leaves 1 "$AT110"
 
 say ""
 say "the ends: 300% and 50%"
-for _ in 1 2 3 4 5 6 7; do press keep.zoom.in; done
+for to in 110% 125% 150% 175% 200% 250% 300%; do step keep.zoom.in "$to"; done
 grid_leaves 1 "$BASE"; sleep 1
 check "seven steps up is 300%" "300%" "$(level)"
 check "39 points written" 39 "$(written)"
@@ -240,7 +281,7 @@ chord 24 cmd; sleep 1
 check "⌘= at 300% does not reach the pane" "300% $AT300" "$(level) $(grid 1)"
 chord 24 shift cmd; sleep 1
 check "⌘+ at 300% does not reach the pane" "300% $AT300" "$(level) $(grid 1)"
-for _ in $(seq 12); do press keep.zoom.out; done
+for to in 250% 200% 175% 150% 125% 110% 100% 90% 80% 75% 67% 50%; do step keep.zoom.out "$to"; done
 grid_leaves 1 "$AT300"; sleep 1
 check "twelve steps down is 50%" "50%" "$(level)"
 check "smaller cannot be pressed" 0 "$(enabled keep.zoom.out)"
@@ -272,17 +313,17 @@ check "the shell that asked was told nothing" 0 \
 
 say ""
 say "a shut sidebar takes the zoom with it"
-press "Toggle Sidebar"; sleep 1
+press_until "Toggle Sidebar" no present keep.zoom.out
 check "shut: no zoom" "no no no" "$(present keep.zoom.out) $(present keep.zoom.reset) $(present keep.zoom.in)"
 # Where the toggle sits with nothing to ride: hard against the traffic
 # lights. The zoom may never come nearer them than this.
 read -r home _ _ _ <<<"$("$AXPRESS" "$APP_NAME" frame "Toggle Sidebar")"
-press "Toggle Sidebar"; sleep 1
+press_until "Toggle Sidebar" yes present keep.zoom.out
 check "open again: the zoom is back" "yes yes yes" "$(present keep.zoom.out) $(present keep.zoom.reset) $(present keep.zoom.in)"
 
 say ""
 say "the next launch opens at the size it was left at"
-press keep.zoom.in; grid_leaves 1 "$BASE"
+step keep.zoom.in 110%; grid_leaves 1 "$BASE"
 quit_app
 launch
 grid_is 1 "$AT110"
@@ -293,8 +334,9 @@ say ""
 say "a narrow sidebar keeps the buttons and drops the percentage"
 quit_app
 python3 - "$STATE/sidebar-state.json" <<'PY'
-import json, sys
-state = json.load(open(sys.argv[1]))
+import json, os, sys
+state = (json.load(open(sys.argv[1])) if os.path.exists(sys.argv[1])
+         else {"0": {"folded": [], "isCollapsed": False, "verticalTabs": False}})
 for window in state.values():
     window["width"] = 200
     window["isCollapsed"] = False
@@ -309,7 +351,8 @@ read -r tx _ _ _ <<<"$("$AXPRESS" "$APP_NAME" frame "Toggle Sidebar")"
 check "no nearer the traffic lights than the toggle's home" yes \
     "$([ "${nx:-0}" -ge "${home:-9999}" ] && echo yes || echo no)"
 check "and still clear of the toggle" yes "$([ $((ix + iw)) -le "${tx:-0}" ] && echo yes || echo no)"
-press keep.zoom.out; grid_leaves 1 "$AT110"
+# No percentage to watch here: what the press writes down is watched instead.
+press_until keep.zoom.out none written
 check "and they still zoom: smaller from 110% is 100%" none "$(written)"
 
 say ""
@@ -324,11 +367,15 @@ if grep -qsE '^[[:space:]]*font-size[[:space:]]*=' "$SUPPORT/config" "$SUPPORT/c
     say "  skip  your Application Support config sets a font-size, which would win"
 else
     mkdir -p "$WORK/xdg/ghostty"
-    echo "font-size = 16" >"$WORK/xdg/ghostty/config.ghostty"
+    # And a binding of the person's own on the key rather than the
+    # character, which libghostty looks up before the character.
+    printf 'font-size = 16\nkeybind = super+equal=increase_font_size:1\n' \
+        >"$WORK/xdg/ghostty/config.ghostty"
     rm -f "$STATE/terminal.json"
     python3 - "$STATE/sidebar-state.json" <<'INNER'
-import json, sys
-state = json.load(open(sys.argv[1]))
+import json, os, sys
+state = (json.load(open(sys.argv[1])) if os.path.exists(sys.argv[1])
+         else {"0": {"folded": [], "isCollapsed": False, "verticalTabs": False}})
 for window in state.values():
     window["width"] = 250
 json.dump(state, open(sys.argv[1], "w"))
@@ -340,9 +387,15 @@ INNER
     check "and the app took 16 points for its own" yes \
         "$(grep -aqE 'terminal font: .*@16\.0pt \(own 16\.0pt\)' "$WORK/app.log" && echo yes || echo no)"
     AT16=$(grid 1)
-    press keep.zoom.in; grid_leaves 1 "$AT16"
+    step keep.zoom.in 110%; grid_leaves 1 "$AT16"
     check "+ is 110% of 16" "110% 17.6" "$(level) $(written)"
     check "and the text grew: fewer columns" yes "$([ "$(cols 1)" -lt "${AT16%x*}" ] && echo yes || echo no)"
+    for to in 125% 150% 175% 200% 250% 300%; do step keep.zoom.in "$to"; done
+    grid_leaves 1 "$AT16"; sleep 1
+    AT300=$(grid 1)
+    chord 24 cmd; sleep 1
+    check "a binding of their own on the = key does not size the pane at 300%" \
+        "300% $AT300" "$(level) $(grid 1)"
 fi
 
 say ""
