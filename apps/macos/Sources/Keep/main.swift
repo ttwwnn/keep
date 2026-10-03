@@ -6,7 +6,7 @@ import AppKit
 /// and the poller, and translates menu items into intents. Every action in
 /// the app funnels through `Session.dispatch`.
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     let session = Session()
     private var controllers: [MainWindowController] = []
     private var poller: DaemonPoller?
@@ -389,10 +389,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.appearance = prefs.nsAppearance
     }
 
+    /// Asked by AppKit only because this class says it answers
+    /// (`NSMenuItemValidation`): without the conformance the method was
+    /// never seen, every item stayed enabled, and the ticks below — Vertical
+    /// Tabs, Appearance — never showed.
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        // Greyed at either end, as Chrome's are. Greyed, an item still takes
-        // its chord: AppKit hands it on to nobody, so it never reaches the
-        // terminal either (see `buildMenu`).
+        // Greyed at either end, as Chrome's are. The chord then goes on to
+        // the terminal, which is told to ignore it (`writeCommandOverride`).
         switch item.action {
         case #selector(zoomIn(_:)): return GhosttyApp.shared.canZoom(by: 1)
         case #selector(zoomOut(_:)): return GhosttyApp.shared.canZoom(by: -1)
@@ -505,14 +508,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         quickItem.keyEquivalentModifierMask = [.control]
         quickItem.target = self
         viewMenu.addItem(.separator())
-        // Chrome's chords, and taken here for a second reason: libghostty
-        // binds the same four to the font size of the pane that has the
-        // keyboard, and a pane sized by hand is one it stops resizing from
-        // the config — it would sit at a size of its own through every zoom
-        // after. A menu's chord is matched before the terminal is asked, and
-        // stays the menu's while the item is greyed: AppKit hands it to
-        // nobody. ⌘= needs no item of its own: the + item answers the key
-        // that + is the shift of (both measured, tools/zoom-app-test.sh).
+        // Chrome's chords, matched here before the terminal is asked: there
+        // libghostty would size one pane alone (see `writeCommandOverride`).
+        // ⌘= needs no item of its own: the + item answers the key that + is
+        // the shift of (measured, tools/zoom-app-test.sh).
         let zoomInItem = viewMenu.addItem(
             withTitle: "Zoom In", action: #selector(zoomIn(_:)), keyEquivalent: "+")
         zoomInItem.target = self

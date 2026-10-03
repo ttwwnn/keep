@@ -34,7 +34,13 @@ final class ZoomControl: NSView {
         didSet {
             guard compact != oldValue else { return }
             level.isHidden = compact
-            if compact, hovered === level { hovered = nil }
+            // Gone from under the pointer, the percentage takes its light
+            // with it: left lit, the capsule came back lit after the sidebar
+            // had been shut and opened with the pointer elsewhere.
+            if compact, hovered === level {
+                hovered = nil
+                retint()
+            }
             needsLayout = true
         }
     }

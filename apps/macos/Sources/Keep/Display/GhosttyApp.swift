@@ -83,13 +83,21 @@ final class GhosttyApp {
     /// know what the theme's colours are.
     func adopt(_ newPrefs: TerminalPrefs) {
         guard newPrefs != Self.prefs else { return }
+        let sizeChosen = newPrefs.fontSize != Self.prefs.fontSize
+        var sameSize = newPrefs
+        sameSize.fontSize = Self.prefs.fontSize
+        let onlyTheSize = sameSize == Self.prefs
         Self.prefs = newPrefs
         newPrefs.save()
         _paletteCache = [:]
         reloadConfig()
         // The font is read from files rather than asked of libghostty, so it
         // does not arrive with the config change; re-read it here.
-        settleFont()
+        settleFont(announcing: sizeChosen)
+        // A step of the zoom changes no colour, and a ground said to have
+        // changed is one every tab tells its program about again
+        // (`tellScheme`) — a question per Claude Code, per click.
+        guard !onlyTheSize else { return }
         NotificationCenter.default.post(name: Self.backgroundDidChange, object: nil)
     }
 
@@ -110,14 +118,16 @@ final class GhosttyApp {
     static let textSizeDidChange = Notification.Name("keep.terminalTextSizeDidChange")
 
     /// Take the font as the files say it now, and tell whoever shows its
-    /// size when that is what moved.
-    fileprivate func settleFont() {
+    /// size when that is what moved — or when Keep's choice of it did
+    /// (`announcing`) without the text moving: 13 points chosen over an own
+    /// 13 is the same text, and still a zoom there is something to undo.
+    fileprivate func settleFont(announcing chosen: Bool = false) {
         let font = Self.fontSettings()
         let resized = font.size != terminalFontSize || font.own != ownFontSize
         terminalFontFamily = font.family
         terminalFontSize = font.size
         ownFontSize = font.own
-        if resized {
+        if resized || chosen {
             NotificationCenter.default.post(name: Self.textSizeDidChange, object: nil)
         }
     }
@@ -142,12 +152,14 @@ final class GhosttyApp {
         NotificationCenter.default.post(name: Self.backgroundDidChange, object: nil)
     }
 
-    /// Read `font-family` and `font-size` from the terminal's own config.
+    /// Read `font-family` from the terminal's own config, and ask libghostty
+    /// for `font-size`.
     ///
-    /// Not from `ghostty_config_get`: it answers for typed scalars like the
-    /// background colour, but font-family is a repeatable string and comes
-    /// back empty, and font-size is not the width this call expects. Reading
-    /// the file the terminal reads is less clever and actually works.
+    /// The face not from `ghostty_config_get`: it answers for typed scalars
+    /// like the background colour, but font-family is a repeatable string and
+    /// comes back empty. Reading the file the terminal reads is less clever
+    /// and actually works. The size is a scalar, asked for as the f32 it is —
+    /// see `configuredFontSize`.
     /// Returns rather than assigns: this is called from `init`, and touching
     /// `shared` there re-enters the singleton's own initializer. `own` is the
     /// size before Keep's choice is laid over it.
@@ -184,14 +196,38 @@ final class GhosttyApp {
             }
             if family != nil || size != nil { break }
         }
-        let own = size.flatMap { $0 > 0 ? $0 : nil } ?? 13
+        // The size found above only decides which file the face is read
+        // from. The size itself is libghostty's.
+        let own = configuredFontSize()
         // And Keep's own choice over theirs, the same way Keep's config file
         // is loaded over theirs. Without this the surfaces would take a face
         // chosen here and everything the app draws terminal text with — the
         // preview, the picker's columns — would go on using the old one.
         if let chosen = prefs.fontFamily, !chosen.isEmpty { family = chosen }
-        if let chosen = prefs.fontSize, chosen > 0 { size = chosen }
-        return (family, size ?? 13, own)
+        let chosenSize = prefs.fontSize.flatMap { $0 > 0 ? $0 : nil }
+        return (family, chosenSize ?? own, own)
+    }
+
+    /// The size the person's own config gives the text, as libghostty itself
+    /// resolves it: out of a config built the way `makeConfig` builds one,
+    /// less Keep's own file, so every file it reads counts, in its order,
+    /// and its default stands where none says.
+    ///
+    /// Not out of the files: libghostty reads `config` and `config.ghostty`,
+    /// in `~/.config/ghostty` and then in Application Support, the last one
+    /// winning, and a reading of the first one alone made a 100% that was not
+    /// the person's size — on which 110% could be smaller than the text was.
+    private static func configuredFontSize() -> Double {
+        guard let config = ghostty_config_new() else { return 13 }
+        defer { ghostty_config_free(config) }
+        ghostty_config_load_default_files(config)
+        ghostty_config_finalize(config)
+        var size: Float = 0
+        let key = "font-size"
+        let found = key.withCString {
+            ghostty_config_get(config, &size, $0, UInt(key.utf8.count))
+        }
+        return found && size > 0 ? Double(size) : 13
     }
 
     /// The font to show terminal text in outside a surface, at `size` points.
@@ -763,6 +799,16 @@ final class GhosttyApp {
         // Keep's own settings go in the same file, and it is loaded after
         // the person's config, so what has been chosen here wins and what has
         // not been chosen is not mentioned at all.
+        //
+        // ⌘=, ⌘+, ⌘- and ⌘0 are the zoom's, and the zoom is the app's: the
+        // View menu takes them and every tab changes size together. Left to
+        // the terminal they change the size of the pane with the keyboard
+        // alone, and a pane sized by hand is one libghostty stops resizing
+        // from the config — it sits at its own size through every zoom
+        // after. The menu answers first, but not with its item greyed (at
+        // 300%, at 50%, at 100% for ⌘0): AppKit then hands the chord on, and
+        // it reached the pane — measured. Here it goes no further. `ignore`
+        // and not `unbind`: unbound, it is typed into the program instead.
         let chosen = prefs.configLines
             .map { $0 + "\n" }
             .joined()
@@ -773,6 +819,10 @@ final class GhosttyApp {
             keybind = alt+backspace=text:\\x1b\\x7f
             keybind = shift+tab=text:\\x1b[Z
             keybind = super+k=text:\\x0c
+            keybind = super+==ignore
+            keybind = super+plus=ignore
+            keybind = super+-=ignore
+            keybind = super+0=ignore
 
             """
         do {

@@ -2,9 +2,11 @@
 #
 # The zoom above the sidebar (UI/ZoomControl.swift), in the app: its buttons,
 # its chords and its menu items change the size of every tab's text, step by
-# Chrome's steps; it stops at 50% and at 300% without the key falling through
-# to a pane; it goes with a shut sidebar, loses its percentage in a narrow
-# one, and opens next time at the size it was left at.
+# Chrome's steps; it stops at 50% and at 300%, the View menu greyed there and
+# the chord going no further than the terminal; it tells no program the
+# colours changed; it goes with a shut sidebar, loses its percentage in a
+# narrow one, opens next time at the size it was left at, and takes for 100%
+# the size the person's own config gives, from whichever file.
 #
 # What is measured is what the zoom is for: the size the app writes down
 # (terminal.json, in a state directory of the test's own) and the columns and
@@ -15,12 +17,10 @@
 #
 # No mouse: the buttons and menu items are pressed through the accessibility
 # tree (tools/axpress.swift), the chords posted to the app's pid alone
-# (tools/sendkey.swift), and the front is handed back to whatever had it, so
-# the test runs behind the app you are working in. Twice, for a few seconds,
-# it comes to the front: a chord reaches a pane only in the window that has
-# the keyboard, so that one question cannot be asked from behind. Anything
-# typed meanwhile lands in the test's own shell. Your app, its daemon and its
-# settings are never touched.
+# (tools/sendkey.swift) — which reach its terminal as well as its menu, in
+# front or not — and the front is handed back to whatever had it at each
+# launch, so the test runs behind the app you are working in. Your app, its
+# daemon and its settings are never touched.
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -97,12 +97,6 @@ give_back() {
         osascript -e "tell application id \"$FRONT\" to activate" >/dev/null 2>&1
     fi
 }
-# The app in front, its window holding the keyboard; says whether it is.
-to_front() {
-    osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" >/dev/null 2>&1
-    sleep 1
-    osascript -e "tell application \"System Events\" to get frontmost of process \"$APP_NAME\"" 2>/dev/null
-}
 quit_app() {
     kill "$APP_PID" 2>/dev/null
     local waited=0
@@ -115,6 +109,20 @@ launch
 
 level() { "$AXPRESS" "$APP_NAME" title keep.zoom.reset 2>/dev/null || echo "(none)"; }
 enabled() { "$AXPRESS" "$APP_NAME" enabled "$1" 2>/dev/null || echo "(none)"; }
+item() { "$AXPRESS" "$APP_NAME" menuenabled View "$1" 2>/dev/null || echo "(none)"; }
+# Whether an item of the View menu can be chosen, once AppKit has caught up:
+# it works the menu out again a moment after a change (within a second,
+# measured), not at the change. Opened by hand, a menu is worked out as it
+# opens; read or pressed through the accessibility tree, it is whatever it
+# was last — Actual Size, greyed at 100%, was still greyed just after 110%.
+item_is() {  # item_is <item> <0|1>: what it says, waiting up to 3 s for <0|1>
+    local waited=0 got
+    while got=$(item "$1"); [ "$got" != "$2" ] && [ "$waited" -lt 12 ]; do
+        sleep 0.25; waited=$((waited + 1))
+    done
+    printf '%s\n' "$got"
+}
+choose() { item_is "$1" 1 >/dev/null; "$AXPRESS" "$APP_NAME" menu View "$1"; sleep 0.4; }
 present() { "$AXPRESS" "$APP_NAME" frame "$1" >/dev/null 2>&1 && echo yes || echo no; }
 written() {  # the size the app wrote down, or "none"
     python3 -c 'import json, sys
@@ -153,6 +161,8 @@ say "the zoom, above the sidebar"
 check "it says 100%" "100%" "$(level)"
 check "larger can be pressed" 1 "$(enabled keep.zoom.in)"
 check "smaller can be pressed" 1 "$(enabled keep.zoom.out)"
+check "View: Zoom In and Zoom Out can be chosen, Actual Size is greyed" "1 1 0" \
+    "$(item_is "Zoom In" 1) $(item_is "Zoom Out" 1) $(item_is "Actual Size" 0)"
 read -r ix _ iw _ <<<"$("$AXPRESS" "$APP_NAME" frame keep.zoom.in)"
 read -r tx _ _ _ <<<"$("$AXPRESS" "$APP_NAME" frame "Toggle Sidebar")"
 check "it ends before the toggle" yes "$([ $((ix + iw)) -le "${tx:-0}" ] && echo yes || echo no)"
@@ -189,9 +199,9 @@ check "⌘0 goes back to 100%" "100% $BASE" "$(level) $(grid 1)"
 
 say ""
 say "the View menu"
-"$AXPRESS" "$APP_NAME" menu View "Zoom In"; sleep 0.4; grid_leaves 1 "$BASE"
+choose "Zoom In"; grid_leaves 1 "$BASE"
 check "Zoom In" "110% $AT110" "$(level) $(grid 1)"
-"$AXPRESS" "$APP_NAME" menu View "Actual Size"; sleep 0.4; grid_leaves 1 "$AT110"
+choose "Actual Size"; grid_leaves 1 "$AT110"
 check "Actual Size" "100% $BASE" "$(level) $(grid 1)"
 
 say ""
@@ -211,39 +221,38 @@ grid_leaves 1 "$BASE"; sleep 1
 check "seven steps up is 300%" "300%" "$(level)"
 check "39 points written" 39 "$(written)"
 check "larger cannot be pressed" 0 "$(enabled keep.zoom.in)"
+check "View: Zoom In is greyed, Actual Size can be chosen" "0 1" \
+    "$(item_is "Zoom In" 0) $(item_is "Actual Size" 1)"
 AT300=$(grid 1)
-chord 24 cmd; sleep 1
-check "⌘= at 300% goes no further" "300% $AT300" "$(level) $(grid 1)"
-# From behind, a chord has only the menu to go to. In front, with the
-# keyboard, it would go on to the pane if the greyed item let it go, and
-# libghostty binds these chords to the size of that pane alone: a pane sized
-# so stops following the zoom. First that the keyboard is there at all —
-# typed text reaches the shell — or the checks after it test nothing.
-check "the app comes to the front" true "$(to_front)"
+# A greyed item hands its chord on to the terminal, where libghostty binds it
+# to the size of the pane alone — and a pane sized so stops following the
+# zoom — unless Keep's config tells it to ignore the chord. First that what
+# is posted here reaches the terminal at all, or the checks after it test
+# nothing: typed text does, to the shell's command line.
 "$SENDKEY" "$APP_PID" text "zoomprobe"; sleep 1
-check "in front, the keyboard reaches the terminal" yes \
-    "$(screen 1 | grep -q zoomprobe && echo yes || echo no)"
-chord 24 cmd; sleep 1
-check "in front, ⌘= at 300% does not reach the pane" "300% $AT300" "$(level) $(grid 1)"
-chord 24 shift cmd; sleep 1
-check "in front, ⌘+ at 300% does not reach the pane" "300% $AT300" "$(level) $(grid 1)"
+check "what is typed reaches the terminal" yes "$(screen 1 | grep -q zoomprobe && echo yes || echo no)"
 chord 32 ctrl   # ⌃U: the probe off the command line
-give_back
+# And the shell asks to be told when the ground goes light or dark, as
+# Claude Code does (mode 2031): see "no step of the zoom" below.
+"$SENDKEY" "$APP_PID" text "printf '\\033[?2031h'"; "$SENDKEY" "$APP_PID" key 36; sleep 1.5
+TOLD_FROM=$(wc -l <"$WORK/app.log")
+chord 24 cmd; sleep 1
+check "⌘= at 300% does not reach the pane" "300% $AT300" "$(level) $(grid 1)"
+chord 24 shift cmd; sleep 1
+check "⌘+ at 300% does not reach the pane" "300% $AT300" "$(level) $(grid 1)"
 for _ in $(seq 12); do press keep.zoom.out; done
 grid_leaves 1 "$AT300"; sleep 1
 check "twelve steps down is 50%" "50%" "$(level)"
 check "smaller cannot be pressed" 0 "$(enabled keep.zoom.out)"
+check "View: Zoom Out is greyed" 0 "$(item_is "Zoom Out" 0)"
 AT50=$(grid 1)
 chord 27 cmd; sleep 1
-check "⌘- at 50% goes no further" "50% $AT50" "$(level) $(grid 1)"
-check "the app comes to the front again" true "$(to_front)"
-chord 27 cmd; sleep 1
-check "in front, ⌘- at 50% does not reach the pane" "50% $AT50" "$(level) $(grid 1)"
-give_back
+check "⌘- at 50% does not reach the pane" "50% $AT50" "$(level) $(grid 1)"
 chord 29 cmd; grid_leaves 1 "$AT50"
 check "⌘0 from 50%" "100% $BASE" "$(level) $(grid 1)"
+check "View: Actual Size is greyed again" 0 "$(item_is "Actual Size" 0)"
 chord 29 cmd; sleep 1
-check "⌘0 at 100% leaves the tab alone" "100% $BASE" "$(level) $(grid 1)"
+check "⌘0 at 100% does not reach the pane" "100% $BASE" "$(level) $(grid 1)"
 
 say ""
 say "the palette's Bigger and Smaller text take the same steps"
@@ -251,6 +260,15 @@ palette "bigger text"; grid_leaves 1 "$BASE"
 check "Bigger text" "110% 14.3" "$(level) $(written)"
 palette "smaller text"; grid_leaves 1 "$AT110"
 check "Smaller text" "100% none" "$(level) $(written)"
+
+say ""
+say "no step of the zoom tells a program the ground changed"
+# A ground said to have changed is told to every program that asked
+# (`tellScheme`, a second after). Fifteen steps since the shell asked — the
+# buttons, ⌘0, the palette — and not one of them a change of colour.
+sleep 2
+check "the shell that asked was told nothing" 0 \
+    "$(tail -n +"$((TOLD_FROM + 1))" "$WORK/app.log" | grep -ac 'scheme .* told')"
 
 say ""
 say "a shut sidebar takes the zoom with it"
@@ -293,6 +311,39 @@ check "no nearer the traffic lights than the toggle's home" yes \
 check "and still clear of the toggle" yes "$([ $((ix + iw)) -le "${tx:-0}" ] && echo yes || echo no)"
 press keep.zoom.out; grid_leaves 1 "$AT110"
 check "and they still zoom: smaller from 110% is 100%" none "$(written)"
+
+say ""
+say "100% is the size the person's config gives, in whichever file libghostty finds it"
+quit_app
+# A font-size in config.ghostty under XDG_CONFIG_HOME: one of the four files
+# libghostty reads, and one a reading of ~/.config/ghostty/config alone never
+# saw. Application Support is read after it and would win, so the section
+# stands aside when that sets a size of its own.
+SUPPORT="$HOME/Library/Application Support/com.mitchellh.ghostty"
+if grep -qsE '^[[:space:]]*font-size[[:space:]]*=' "$SUPPORT/config" "$SUPPORT/config.ghostty"; then
+    say "  skip  your Application Support config sets a font-size, which would win"
+else
+    mkdir -p "$WORK/xdg/ghostty"
+    echo "font-size = 16" >"$WORK/xdg/ghostty/config.ghostty"
+    rm -f "$STATE/terminal.json"
+    python3 - "$STATE/sidebar-state.json" <<'INNER'
+import json, sys
+state = json.load(open(sys.argv[1]))
+for window in state.values():
+    window["width"] = 250
+json.dump(state, open(sys.argv[1], "w"))
+INNER
+    export XDG_CONFIG_HOME=$WORK/xdg
+    launch
+    unset XDG_CONFIG_HOME
+    check "16 points says 100%" "100%" "$(level)"
+    check "and the app took 16 points for its own" yes \
+        "$(grep -aqE 'terminal font: .*@16\.0pt \(own 16\.0pt\)' "$WORK/app.log" && echo yes || echo no)"
+    AT16=$(grid 1)
+    press keep.zoom.in; grid_leaves 1 "$AT16"
+    check "+ is 110% of 16" "110% 17.6" "$(level) $(written)"
+    check "and the text grew: fewer columns" yes "$([ "$(cols 1)" -lt "${AT16%x*}" ] && echo yes || echo no)"
+fi
 
 say ""
 say "$PASSED passed, $FAILED failed"
