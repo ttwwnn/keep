@@ -106,7 +106,6 @@ export function toggleFooter(): void {
 const daemonUp = () => loaded.value && daemonError.value === null;
 const inFront = () => document.visibilityState === "visible" && document.hasFocus();
 
-
 /** Something said in a box with one button. */
 function tell(title: string, message: string): Promise<unknown> {
   return ask({ title, message, buttons: [{ label: "OK", value: "ok", primary: true }] });

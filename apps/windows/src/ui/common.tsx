@@ -109,7 +109,7 @@ export function ContextMenu() {
             aria-checked={current.checkable ? (item.mark === "on" ? "true" : item.mark === "mixed" ? "mixed" : "false") : undefined}
             class={`menu-item ${item.danger ? "danger" : ""}`}
             disabled={item.disabled}
-            title={item.help}
+            title={item.help ?? (current.checkable ? item.label : undefined)}
             onClick={() => {
               menu.value = null;
               item.action();
