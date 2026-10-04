@@ -8,6 +8,7 @@
 pub mod caminhos;
 pub mod cli;
 pub mod contas;
+pub mod processos;
 pub mod programas;
 pub mod rede;
 pub mod uso;
