@@ -120,6 +120,10 @@ fn list_reports_live_workspaces() {
         .unwrap();
     attached.set_read_timeout(Some(Duration::from_secs(5))).ok();
     ServerMsg::read(&mut attached).unwrap();
+    // The viewer is counted once the daemon has taken it on, which is when
+    // the repaint goes out — after `Attached`, so waiting for that alone
+    // raced the count on a busy runner.
+    assert!(matches!(ServerMsg::read(&mut attached), Ok(Some(ServerMsg::Repaint(_)))), "no repaint after attach");
 
     let mut lister = Stream::connect(&path).unwrap();
     ClientMsg::List.write(&mut lister).unwrap();
