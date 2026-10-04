@@ -32,6 +32,7 @@ O núcleo é o mesmo nas duas plataformas (Rust, em `crates/`):
 | `keep-proto` | o protocolo entre daemon e clientes, e o transporte (socket unix ou pipe nomeado) |
 | `keep-vt` | ligação segura com o [libghostty-vt](https://libghostty.tip.ghostty.org/) |
 | `keep` | cliente de linha de comando: anexa a um workspace de dentro de qualquer terminal |
+| `keep-ia` | contas de IA, consumo, IA de cada aba e lixeira de worktrees (`keep ia …`, `keep worktrees …`) |
 
 Cada plataforma tem o seu app nativo por cima (`apps/macos`, `apps/windows`).
 
@@ -71,8 +72,8 @@ Fechar aba ou workspace sempre pede confirmação (não há atalho para fechar).
 
 O app nativo (`apps/macos`, Swift/AppKit com o libghostty completo: Metal, as fontes e
 temas do Ghostty) tem barra lateral de workspaces, abas na barra de título, divisões,
-seletor (⌘P), comandos (⌘⇧P), zoom, cores de estado do Claude Code e do Codex, contas de
-IA por aba e consumo de IA no rodapé.
+seletor (⌘P), comandos (⌘⇧P), zoom, cores de estado do Claude Code e do Codex, e a IA no
+Keep (abaixo).
 
 Compilar:
 
@@ -86,6 +87,26 @@ cd apps/macos && xcodebuild -project Keep.xcodeproj -scheme Keep -configuration 
 O Xcode não copia `keep` e `keepd` para dentro do app: copie `target/release/keep` e
 `target/release/keepd` para `Keep.app/Contents/Resources/` e assine. No Mac do autor isso
 é feito pelo instalador do kit (`instalar-keep-app.sh`), que compila do ramo `main`.
+
+## IA no Keep (macOS e Windows)
+
+Para quem usa o Claude Code e o Codex dentro do Keep, sem nada além do próprio Keep:
+
+- **Consumo de IA**, no rodapé da barra lateral: cada conta do Claude e do GPT, na ordem de
+  prioridade, com o gasto das janelas de 5 h e da semana (e as por modelo), quando recomeçam
+  e o aviso de login com problema. As setas mudam a ordem; o "+" entra em outra conta (o login
+  do Claude Code ou do Codex, numa aba, guardado num lugar só do Keep); ↻ mede agora.
+- **IA de cada aba**: o menu ao lado do título da aba diz em que IA e conta ela roda e troca —
+  de conta (a mesma conversa continua) ou de motor (Claude ↔ Codex, com o contexto da conversa
+  num arquivo privado). Se a aba estiver trabalhando, o Keep pergunta antes de interromper.
+  "Seguir a ordem de prioridade" deixa o Keep levar a aba para a primeira conta disponível
+  quando a dela chega ao limite.
+- **Lixeira de worktrees**: ao fechar uma aba, as worktrees git que a conversa dela criou vão
+  para a Lixeira (com os commits guardados), depois de você confirmar.
+
+O Keep lê os logins que o Claude Code e o Codex já guardam (Chaveiro no macOS, arquivos no
+Windows), nunca os copia nem renova, e mede o consumo nos mesmos endereços que eles usam. O
+desenho completo está em [`docs/ia.md`](docs/ia.md).
 
 ## Linux
 
