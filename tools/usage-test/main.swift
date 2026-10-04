@@ -1,10 +1,11 @@
 import Foundation
-// The model test of AIUsage.swift (the usage footer's facts), AIChoice.swift
-// (which account each tab is on, and the menu that changes it) and the
-// `keep-ia` half of Daemon/KitHelper.swift, run by tools/usage-test.sh.
-// Foundation only: no app, no network, no real logins, no real kit.
+// The model test of AIUsage.swift (what the app holds of the core's usage
+// answer), AIChoice.swift (which account each tab is on, and the menu that
+// changes it) and Daemon/KeepCLI.swift (asking the `keep` inside the app),
+// run by tools/usage-test.sh. Foundation only: no app, no real login, no
+// real kit, no network beyond a stand-in on this machine.
 
-// The two app types KitHelper.swift reaches for, stubbed.
+// The two app types KeepCLI.swift reaches for, stubbed.
 enum Trace { static func log(_ kind: String, _ detail: @autoclosure () -> String) {} }
 enum Daemon { static var socketPath: String { "/tmp/sock-de-teste-uso" } }
 
@@ -15,167 +16,115 @@ func confere(_ ok: Bool, _ nome: String, _ detalhe: @autoclosure () -> String = 
     if ok { print("ok   \(nome)") } else { falhas += 1; print("FALHA \(nome) \(detalhe())") }
 }
 
-// Runs under a made-up HOME (tools/usage-test.sh), where the installed
-// helper is a canary: nothing here may reach the real ~/.local/bin/keep-ia
-// and the real vault it acts on, not even with the code under test broken on
-// purpose. Refused outright otherwise.
+// Runs as an app that reads a made-up home (tools/usage-test.sh): everything
+// handed to a `keep` here is pointed at it. Refused outright otherwise.
 let ambiente = ProcessInfo.processInfo.environment
-guard let casaDoTeste = ambiente["HOME"], casaDoTeste != NSHomeDirectory(),
-      AIHelper.installedPath(environment: ambiente) == casaDoTeste + "/.local/bin/keep-ia"
-else {
-    print("FALHA recuso rodar: o HOME tem de ser uma casa falsa, e o ajudante instalado procurado nela (\(AIHelper.installedPath(environment: ambiente)))")
+guard let casaFalsa = KeepCLI.madeUpHome(ambiente), casaFalsa != NSHomeDirectory() else {
+    print("FALHA recuso rodar: KEEP_AI_USAGE_HOME tem de ser uma casa falsa")
     exit(2)
 }
-
-// --- respostas reais (formato de 26/09/2026, contas-mac.md), sem segredos
-let claudeReal = """
-{"five_hour":{"utilization":17.0,"resets_at":"2026-09-27T04:50:00.275240+00:00","limit_dollars":null},
- "seven_day":{"utilization":88.0,"resets_at":"2026-09-28T10:00:00.275265+00:00"},
- "seven_day_opus":null,"seven_day_sonnet":null,
- "nimbus_quill":{"utilization":0.0,"resets_at":null},
- "extra_usage":{"is_enabled":false,"monthly_limit":null,"used_credits":null,"utilization":null},
- "limits":[
-  {"kind":"session","group":"session","percent":17,"severity":"normal","resets_at":"2026-09-27T04:50:00.275240+00:00","scope":null},
-  {"kind":"weekly_all","group":"weekly","percent":88,"severity":"warning","resets_at":"2026-09-28T10:00:00.275265+00:00","scope":null},
-  {"kind":"weekly_scoped","group":"weekly","percent":32,"severity":"normal","resets_at":"2026-09-28T10:00:00.275265+00:00","scope":{"model":{"id":null,"display_name":"Fable"},"surface":null}}
- ]}
-""".data(using: .utf8)!
-
-let r = UsageParse.claude(claudeReal)
-confere(r?.windows.map(\.label) == ["5h", "7d", "Fable"], "claude: janelas 5h, 7d e Fable", "\(String(describing: r?.windows.map(\.label)))")
-confere(r?.windows.map(\.percent) == [17, 88, 32], "claude: percentuais", "\(String(describing: r?.windows.map(\.percent)))")
-confere(r?.windows.first?.resetsAt == Date(timeIntervalSince1970: 1790484600), "claude: reset com 6 casas e +00:00", "\(String(describing: r?.windows.first?.resetsAt?.timeIntervalSince1970))")
-confere(r?.limitReached == false, "claude: fora do limite")
-confere(r?.windows.contains { $0.label == "Extra" } == false, "claude: extra desligado não aparece")
-
-let claudeAntigo = """
-{"five_hour":{"utilization":1.0,"resets_at":"2026-09-27T04:50:00Z"},"seven_day":{"utilization":100,"resets_at":null},
- "seven_day_opus":{"utilization":40,"resets_at":"2026-09-28T10:00:00Z"},"seven_day_sonnet":null,
- "extra_usage":{"is_enabled":true,"utilization":12.5,"used_credits":1,"monthly_limit":8}}
-""".data(using: .utf8)!
-let a = UsageParse.claude(claudeAntigo)
-confere(a?.windows.map(\.label) == ["5h", "7d", "Opus", "Extra"], "claude sem limits: Opus e Extra", "\(String(describing: a?.windows.map(\.label)))")
-confere(a?.windows.first?.percent == 1.0, "claude: utilization 1.0 é 1%, não 100%")
-confere(a?.limitReached == true, "claude: 100% é limite")
-let zero = UsageParse.claude(#"{"five_hour":{"utilization":0,"resets_at":null},"seven_day":{"utilization":0.0},"extra_usage":{"is_enabled":true,"utilization":true}}"#.data(using: .utf8)!)
-confere(zero?.windows.map(\.label) == ["5h", "7d"] && zero?.windows.map(\.percent) == [0, 0], "0% aparece; booleano não vira número", "\(String(describing: zero?.windows))")
-confere(UsageParse.claude("{}".data(using: .utf8)!) == nil, "claude: resposta sem janelas é nil")
-confere(UsageParse.claude("não é json".data(using: .utf8)!) == nil, "claude: lixo é nil")
-
-let codexReal = """
-{"plan_type":"pro","rate_limit":{"allowed":true,"limit_reached":false,
- "primary_window":{"used_percent":2,"limit_window_seconds":604800,"reset_after_seconds":578124,"reset_at":1791047982},
- "secondary_window":null},"additional_rate_limits":null}
-""".data(using: .utf8)!
-let c = UsageParse.codex(codexReal)
-confere(c?.windows.map(\.label) == ["7d"], "codex: uma janela semanal", "\(String(describing: c?.windows.map(\.label)))")
-confere(c?.windows.first?.percent == 2 && c?.windows.first?.resetsAt == Date(timeIntervalSince1970: 1791047982), "codex: 2% e reset em epoch")
-let codexDois = """
-{"rate_limit":{"limit_reached":true,"primary_window":{"used_percent":100,"limit_window_seconds":18000,"reset_at":1790000000},
- "secondary_window":{"used_percent":55.5,"limit_window_seconds":604800,"reset_at":1790500000}},
- "additional_rate_limits":[{"limit_name":"codex-mini","rate_limit":{"primary_window":{"used_percent":10,"limit_window_seconds":86400,"reset_at":1790100000}}}]}
-""".data(using: .utf8)!
-let c2 = UsageParse.codex(codexDois)
-confere(c2?.windows.map(\.label) == ["5h", "7d", "codex-mini 1d"], "codex: 5h, 7d e adicional", "\(String(describing: c2?.windows.map(\.label)))")
-confere(c2?.limitReached == true, "codex: limit_reached")
-
-let porModelo = UsageParse.claude(#"{"five_hour":{"utilization":10},"seven_day":{"utilization":50},"limits":[{"kind":"weekly_scoped","percent":100,"scope":{"model":null,"surface":{"display_name":"Claude Code"}}}],"extra_usage":{"is_enabled":true,"utilization":100}}"#.data(using: .utf8)!)
-confere(porModelo?.windows.map(\.label) == ["5h", "7d", "Claude Code", "Extra"], "janela por superfície leva o nome dela", "\(String(describing: porModelo?.windows.map(\.label)))")
-confere(porModelo?.limitReached == false, "janela por modelo/extra a 100% não bloqueia a conta")
-let adicional = UsageParse.codex(#"{"rate_limit":{"limit_reached":false,"primary_window":{"used_percent":20,"limit_window_seconds":604800}},"additional_rate_limits":[{"limit_name":"GPT-X","rate_limit":{"limit_reached":true,"primary_window":{"used_percent":100,"limit_window_seconds":18000}}}]}"#.data(using: .utf8)!)
-confere(adicional?.limitReached == false && adicional?.windows.last?.label == "GPT-X 5h", "limite adicional do Codex a 100% não bloqueia a conta", "\(String(describing: adicional))")
-
-// --- descoberta num home falso
 let fm = FileManager.default
-let home = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("keep-uso-\(getpid())")
-try? fm.removeItem(at: home)
-let cofre = home.appendingPathComponent(".claude/contas")
-try! fm.createDirectory(at: cofre, withIntermediateDirectories: true)
-func slot(_ nome: String, _ corpo: [String: Any]) {
-    try! JSONSerialization.data(withJSONObject: corpo).write(to: cofre.appendingPathComponent("\(nome).json"))
+let casa = URL(fileURLWithPath: casaFalsa)
+// Each run from an empty home: the sabotage runs this again on the same one.
+for resto in (try? fm.contentsOfDirectory(at: casa, includingPropertiesForKeys: nil)) ?? [] {
+    try? fm.removeItem(at: resto)
 }
-let agora = Date()
-func oauth(_ token: String, expira: Date, tier: String = "default_claude_max_20x", assinatura: String = "max") -> [String: Any] {
-    ["claudeAiOauth": ["accessToken": token, "refreshToken": "r", "expiresAt": expira.timeIntervalSince1970 * 1000,
-                       "subscriptionType": assinatura, "rateLimitTier": tier]]
+
+// --- a resposta do núcleo, como o `keep ia uso --json` a imprime
+let respostaDoNucleo = """
+{"ok":true,"versao":1,"medidoEm":1791084861.4,"gerenteExterno":true,
+ "ordem":["claude:reserva","gpt:principal","claude:principal"],
+ "linhas":[
+  {"account":{"engine":"claude","key":"4f35c383-uuid","alias":"reserva","aliases":["reserva"],
+              "email":"ds@x.com","plan":"Max 20x","isActive":true,"isPreferred":true,"warning":null,
+              "orderKey":"claude:reserva","hasToken":true,"roda":true,
+              "armazens":[{"tipo":"cofre","arquivo":"/x"},{"tipo":"global"}]},
+   "reading":{"windows":[{"label":"5h","title":"Sessão (5h)","percent":82.0,"resetsAt":1791086400.0},
+                         {"label":"Fable","title":"Semanal — Fable","percent":0.0,"resetsAt":null}],
+              "limitReached":false},
+   "measuredAt":1791084861.45,"problem":null},
+  {"account":{"engine":"codex","key":"acct","alias":"principal","aliases":["principal"],"email":null,
+              "plan":"Pro","isActive":true,"isPreferred":false,"warning":null,"orderKey":"gpt:principal",
+              "hasToken":true,"roda":true,"armazens":[]},
+   "reading":null,"measuredAt":null,"problem":"consultas demais (HTTP 429); tenta de novo hoje às 01:50"},
+  {"account":{"engine":"claude","key":"d32da84e","alias":"principal","aliases":["principal","assinaturas"],
+              "email":"a@y.com","plan":null,"isActive":false,"isPreferred":false,
+              "warning":"login recusado: entre de novo com /login","orderKey":"claude:principal",
+              "hasToken":false,"roda":false,"armazens":[]},
+   "reading":{"windows":[{"label":"7d","title":"Semanal (7 dias)","percent":100,"resetsAt":1791194400}],
+              "limitReached":true},
+   "measuredAt":1791084000,"problem":null}]}
+""".data(using: .utf8)!
+let resposta = UsageAnswer.decode(respostaDoNucleo)
+confere(resposta?.linhas.count == 3, "núcleo: três linhas lidas", "\(String(describing: resposta))")
+confere(resposta?.linhas.map(\.account.order) == ["claude:reserva", "gpt:principal", "claude:principal"],
+        "núcleo: na ordem em que ele as deu")
+confere(resposta?.ordem == ["claude:reserva", "gpt:principal", "claude:principal"] && resposta?.gerenteExterno == true,
+        "núcleo: a ordem e o gerente externo")
+let primeira = resposta?.linhas.first
+confere(primeira?.reading?.windows.first?.resetsAt == Date(timeIntervalSince1970: 1791086400),
+        "núcleo: datas em segundos desde 1970", "\(String(describing: primeira?.reading?.windows.first?.resetsAt?.timeIntervalSince1970))")
+confere(primeira?.measuredAt == Date(timeIntervalSince1970: 1791084861.45), "núcleo: medido em, em segundos desde 1970")
+confere(primeira?.reading?.windows.last?.resetsAt == nil && primeira?.reading?.windows.last?.percent == 0,
+        "núcleo: janela a 0% e sem reinício")
+confere(primeira?.account.hasToken == true && primeira?.account.isActive == true && primeira?.account.plan == "Max 20x",
+        "núcleo: o resumo da conta, sem os campos que o app não usa")
+let segunda = resposta?.linhas[1]
+confere(segunda?.reading == nil && segunda?.problem?.hasPrefix("consultas demais") == true && segunda?.account.email == nil,
+        "núcleo: sem leitura, com o problema dito")
+let terceira = resposta?.linhas[2]
+confere(terceira?.account.keys == ["claude:principal", "claude:assinaturas"] && terceira?.isAvailable == false,
+        "núcleo: apelidos viram chaves; aviso e limite tiram da fila")
+confere(UsageAnswer.decode("{\"ok\":true}".data(using: .utf8)!) == nil, "núcleo: resposta sem linhas não é uma resposta")
+confere(UsageAnswer.decode("lixo".data(using: .utf8)!) == nil, "núcleo: lixo não é uma resposta")
+// O rodapé guarda as linhas como sempre guardou: o script de prioridade do
+// kit lê `measuredAt` em segundos desde 2001.
+if let linhas = resposta?.linhas, let guardado = try? JSONEncoder().encode(linhas),
+   let lido = try? JSONSerialization.jsonObject(with: guardado) as? [[String: Any]] {
+    let medido = lido.first?["measuredAt"] as? Double
+    confere(medido == Date(timeIntervalSince1970: 1791084861.45).timeIntervalSinceReferenceDate,
+            "guardado: no formato do Foundation, que o kit lê", "\(String(describing: medido))")
+    confere((try? JSONDecoder().decode([AccountUsage].self, from: guardado)) == linhas, "guardado: volta igual")
+} else { confere(false, "guardado: codifica") }
+
+// --- a assinatura dos arquivos (o vigia de 2 s)
+let cofre = casa.appendingPathComponent(".claude/contas")
+try! fm.createDirectory(at: cofre.appendingPathComponent("fixas"), withIntermediateDirectories: true)
+let assinatura0 = AIAccounts.signature(home: casa)
+confere(assinatura0 == AIAccounts.signature(home: casa), "assinatura: igual quando nada muda")
+func muda(_ nome: String, _ faz: () -> Void) {
+    let antes = AIAccounts.signature(home: casa)
+    Thread.sleep(forTimeInterval: 0.01)
+    faz()
+    confere(AIAccounts.signature(home: casa) != antes, "assinatura: muda com \(nome)")
 }
-slot("principal", ["apelido": "principal", "email": "a@x", "accountUuid": "U1", "credenciais": oauth("t-velho", expira: agora.addingTimeInterval(3600))])
-slot("assinaturas", ["apelido": "assinaturas", "email": "a@x", "accountUuid": "U1", "credenciais": oauth("t-novo", expira: agora.addingTimeInterval(7200))])
-slot("reserva", ["apelido": "reserva", "email": "b@y", "accountUuid": "U2", "refreshMorto": "abc123", "credenciais": oauth("t2", expira: agora.addingTimeInterval(60), tier: "default_claude_pro", assinatura: "pro")])
-try! "assinaturas\n".write(to: cofre.appendingPathComponent(".ativa"), atomically: true, encoding: .utf8)
-try! "reserva".write(to: cofre.appendingPathComponent(".preferida"), atomically: true, encoding: .utf8)
+muda("a .ordem") { try! "gpt:principal\n".write(to: cofre.appendingPathComponent(".ordem"), atomically: true, encoding: .utf8) }
+muda("um slot do cofre do kit") { try! "{}".write(to: cofre.appendingPathComponent("reserva.json"), atomically: true, encoding: .utf8) }
+muda("uma pasta de login do Keep nova") { try! fm.createDirectory(at: cofre.appendingPathComponent("fixas/k-0001"), withIntermediateDirectories: true) }
+muda("o keep.json dela") { try! "{}".write(to: cofre.appendingPathComponent("fixas/k-0001/keep.json"), atomically: true, encoding: .utf8) }
+muda("o conta.json de uma pasta do kit") {
+    try! fm.createDirectory(at: cofre.appendingPathComponent("fixas/4f35c383"), withIntermediateDirectories: true)
+    try! "{}".write(to: cofre.appendingPathComponent("fixas/4f35c383/conta.json"), atomically: true, encoding: .utf8)
+}
+muda("o login do Codex") {
+    try! fm.createDirectory(at: casa.appendingPathComponent(".codex"), withIntermediateDirectories: true)
+    try! "{}".write(to: casa.appendingPathComponent(".codex/auth.json"), atomically: true, encoding: .utf8)
+}
+muda("uma conta GPT nova") {
+    try! fm.createDirectory(at: casa.appendingPathComponent(".codex-contas/nova"), withIntermediateDirectories: true)
+    try! "{}".write(to: casa.appendingPathComponent(".codex-contas/nova/auth.json"), atomically: true, encoding: .utf8)
+}
+let antesDoOculto = AIAccounts.signature(home: casa)
 try! "{}".write(to: cofre.appendingPathComponent(".oculto.json"), atomically: true, encoding: .utf8)
-
-func b64url(_ o: [String: Any]) -> String {
-    try! JSONSerialization.data(withJSONObject: o).base64EncodedString()
-        .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
-}
-let exp = agora.addingTimeInterval(86400).timeIntervalSince1970.rounded()
-let jwt = "h." + b64url(["exp": exp, "https://api.openai.com/profile": ["email": "jose@z.com"],
-                           "https://api.openai.com/auth": ["chatgpt_plan_type": "pro", "chatgpt_account_id": "ACC"]]) + ".s"
-try! fm.createDirectory(at: home.appendingPathComponent(".codex"), withIntermediateDirectories: true)
-try! JSONSerialization.data(withJSONObject: ["auth_mode": "chatgpt", "tokens": ["access_token": jwt, "account_id": "ACC", "refresh_token": "r"]])
-    .write(to: home.appendingPathComponent(".codex/auth.json"))
-
-let contas = AIAccounts.discover(home: home)
-confere(contas.count == 3, "descoberta: 2 Claude (1 duplicada fundida) + 1 Codex", "\(contas.map(\.alias))")
-confere(contas.first?.alias == "reserva" && contas.first?.isPreferred == true, "ordem: preferida primeiro", "\(contas.map(\.alias))")
-let u1 = contas.first { $0.key == "U1" }
-confere(u1?.alias == "assinaturas" && u1?.isActive == true, "duplicada: mostrada pelo apelido ativo", "\(String(describing: u1?.alias))")
-confere(u1?.aliases.sorted() == ["assinaturas", "principal"], "duplicada: guarda os dois apelidos")
-confere(u1?.token == "t-novo", "duplicada: fica o token mais novo")
-confere(u1?.plan == "Max 20x", "plano Max 20x")
-let res = contas.first { $0.key == "U2" }
-confere(res?.warning != nil && res?.plan == "Pro", "refreshMorto vira aviso; tier desconhecido cai na assinatura", "\(String(describing: res?.plan))")
-let gpt = contas.first { $0.engine == .codex }
-confere(gpt?.alias == "principal" && gpt?.email == "jose@z.com" && gpt?.plan == "Pro" && gpt?.accountHeader == "ACC", "codex: a única conta é a principal, com e-mail, plano e conta", "\(String(describing: gpt))")
-confere(gpt?.expiresAt == Date(timeIntervalSince1970: exp), "codex: validade do JWT")
-confere(AIAccounts.discover(home: URL(fileURLWithPath: "/nao/existe")).isEmpty, "sem cofre nem codex: nenhuma conta")
-
-// --- requisições: URL de teste só em 127.0.0.1
-let v = (claude: "2.1.283", codex: "0.157.0")
-let rq = UsageEndpoint.request(for: u1!, environment: [:], clientVersions: v)
-confere(rq?.url == UsageEndpoint.claude, "claude: URL real")
-confere(rq?.value(forHTTPHeaderField: "Authorization") == "Bearer t-novo", "claude: Bearer")
-confere(rq?.value(forHTTPHeaderField: "User-Agent") == "claude-cli/2.1.283 (external, cli)", "claude: User-Agent do CLI")
-confere(rq?.httpMethod == "GET", "claude: GET")
-let local = UsageEndpoint.request(for: u1!, environment: ["KEEP_AI_USAGE_CLAUDE_URL": "http://127.0.0.1:9999/u"], clientVersions: v)
-confere(local?.url?.absoluteString == "http://127.0.0.1:9999/u", "stand-in local aceito")
-for fora in ["https://evil.example/u", "http://127.0.0.1.evil.example/u", "http://localhost:9999/u", "https://127.0.0.1:9999/u"] {
-    let x = UsageEndpoint.request(for: u1!, environment: ["KEEP_AI_USAGE_CLAUDE_URL": fora], clientVersions: v)
-    confere(x?.url == UsageEndpoint.claude, "stand-in recusado: \(fora)", "\(String(describing: x?.url))")
-}
-let rqc = UsageEndpoint.request(for: gpt!, environment: [:], clientVersions: v)
-confere(rqc?.url == UsageEndpoint.codex && rqc?.value(forHTTPHeaderField: "ChatGPT-Account-Id") == "ACC", "codex: URL e ChatGPT-Account-Id")
-let semToken = AIAccount(engine: .claude, key: "k", alias: "a", aliases: ["a"], email: nil, plan: nil, isActive: false,
-                         isPreferred: false, token: nil, accountHeader: nil, expiresAt: nil, warning: nil)
-confere(UsageEndpoint.request(for: semToken, environment: [:], clientVersions: v) == nil, "sem token: sem requisição")
-confere(!u1!.summary.id.isEmpty && !"\(u1!.summary)".contains("t-novo"), "resumo publicado não leva o token")
-
-// --- versões instaladas
-let bin = home.appendingPathComponent(".local/bin")
-try! fm.createDirectory(at: bin, withIntermediateDirectories: true)
-let vers = home.appendingPathComponent(".local/share/claude/versions")
-try! fm.createDirectory(at: vers, withIntermediateDirectories: true)
-fm.createFile(atPath: vers.appendingPathComponent("9.8.7").path, contents: Data())
-try! fm.createSymbolicLink(at: bin.appendingPathComponent("claude"), withDestinationURL: vers.appendingPathComponent("9.8.7"))
-let rel = home.appendingPathComponent(".codex/packages/standalone/releases/1.2.3-aarch64-apple-darwin/bin")
-try! fm.createDirectory(at: rel, withIntermediateDirectories: true)
-fm.createFile(atPath: rel.appendingPathComponent("codex").path, contents: Data())
-let cur = home.appendingPathComponent(".codex/packages/standalone/current")
-try! fm.createSymbolicLink(at: cur, withDestinationURL: home.appendingPathComponent(".codex/packages/standalone/releases/1.2.3-aarch64-apple-darwin"))
-try! fm.createSymbolicLink(at: bin.appendingPathComponent("codex"), withDestinationURL: cur.appendingPathComponent("bin/codex"))
-let iv = UsageEndpoint.installedVersions(home: home)
-confere(iv.claude == "9.8.7" && iv.codex == "1.2.3", "versões lidas dos links", "\(iv)")
-let iv0 = UsageEndpoint.installedVersions(home: URL(fileURLWithPath: "/nao/existe"))
-confere(iv0.claude == "2.1.283" && iv0.codex == "0.157.0", "versões: padrão sem ferramentas")
+try! fm.createDirectory(at: cofre.appendingPathComponent("fixas/.tmp"), withIntermediateDirectories: true)
+confere(AIAccounts.signature(home: casa) == antesDoOculto, "assinatura: arquivo e pasta ocultos não contam")
 
 // --- texto
 let t0 = Date(timeIntervalSince1970: 1_790_000_000)
 confere(UsageText.until(t0.addingTimeInterval(41 * 60), now: t0) == "41min", "falta 41min")
 confere(UsageText.until(t0.addingTimeInterval(4 * 3600 + 10 * 60), now: t0) == "4h10", "falta 4h10")
 confere(UsageText.until(t0.addingTimeInterval(3 * 3600), now: t0) == "3h", "falta 3h")
-confere(UsageText.until(t0.addingTimeInterval(37 * 3600 + 5), now: t0) == "1d13h", "falta 1d13h", "\(String(describing: UsageText.until(t0.addingTimeInterval(37 * 3600 + 5), now: t0)))")
+confere(UsageText.until(t0.addingTimeInterval(37 * 3600 + 5), now: t0) == "1d13h", "falta 1d13h")
 confere(UsageText.until(t0.addingTimeInterval(-5), now: t0) == "agora", "reset passado: agora")
 confere(UsageText.until(nil, now: t0) == nil, "sem reset: nada")
 confere(UsageText.percent(16.6) == "17%" && UsageText.percent(-3) == "0%", "percentual arredondado e sem negativo")
@@ -187,77 +136,6 @@ confere(UsageText.moment(cal.date(byAdding: .hour, value: 19, to: meioDia)!, now
 confere(UsageText.moment(cal.date(byAdding: .day, value: 2, to: meioDia)!, now: meioDia, calendar: cal) == "em 28/09 às 12:00", "momento: data")
 confere(UsageText.ago(t0.addingTimeInterval(-30), now: t0) == "agora" && UsageText.ago(t0.addingTimeInterval(-23 * 60), now: t0) == "há 23 min", "há quanto tempo")
 
-// --- a ordem de prioridade (.ordem)
-// Sem .ordem: a ordem de hoje (preferida, depois por nome; Claude antes de GPT).
-let semOrdem = AIAccounts.discover(home: home)
-confere(semOrdem.map(\.summary.order) == ["claude:reserva", "claude:assinaturas", "gpt:principal"],
-        "sem .ordem: a ordem de hoje, com a chave de cada uma", "\(semOrdem.map(\.summary.order))")
-let arquivoOrdem = cofre.appendingPathComponent(".ordem")
-func ordem(_ texto: String) { try! texto.write(to: arquivoOrdem, atomically: true, encoding: .utf8) }
-// Cruza motores, comentário e linha vazia, chave repetida, chave sem conta.
-ordem("# prioridade\n\ngpt:principal\nclaude:sumida\nclaude:principal\ngpt:principal\n")
-let comOrdem = AIAccounts.discover(home: home)
-confere(comOrdem.map(\.alias) == ["principal", "assinaturas", "reserva"]
-        && comOrdem.map(\.engine) == [.codex, .claude, .claude],
-        "ordem: GPT na frente, fundida no lugar de um dos apelidos, a não listada no fim",
-        "\(comOrdem.map { "\($0.engine.orderPrefix):\($0.alias)" })")
-let fundida = comOrdem.first { $0.key == "U1" }
-confere(fundida?.orderKey == "claude:principal", "fundida: a chave é a do apelido listado", "\(String(describing: fundida?.orderKey))")
-confere(comOrdem.last?.orderKey == "claude:reserva", "não listada: a chave é a do apelido mostrado")
-// Fundida pela MENOR posição entre os apelidos.
-ordem("claude:reserva\nclaude:principal\ngpt:principal\nclaude:assinaturas\n")
-let menor = AIAccounts.discover(home: home)
-confere(menor.map(\.summary.order) == ["claude:reserva", "claude:principal", "gpt:principal"],
-        "fundida: vale a menor posição entre os apelidos", "\(menor.map(\.summary.order))")
-ordem("claude:assinaturas\ngpt:principal\nclaude:principal\n")
-let menor2 = AIAccounts.discover(home: home)
-confere(menor2.first?.orderKey == "claude:assinaturas" && menor2.first?.alias == "assinaturas",
-        "fundida: a chave é a do apelido da menor posição", "\(menor2.map(\.summary.order))")
-confere(AIOrder.read(URL(fileURLWithPath: "/nao/existe")).isEmpty, "ordem ausente: nada listado")
-try? fm.removeItem(at: arquivoOrdem)
-
-// --- contas GPT extras (.codex-contas/<apelido>/auth.json)
-let extras = home.appendingPathComponent(".codex-contas")
-func extra(_ nome: String, email: String, conta: String) {
-    let pasta = extras.appendingPathComponent(nome)
-    try! fm.createDirectory(at: pasta, withIntermediateDirectories: true)
-    let token = "h." + b64url(["exp": exp, "https://api.openai.com/profile": ["email": email],
-                               "https://api.openai.com/auth": ["chatgpt_plan_type": "plus", "chatgpt_account_id": conta]]) + ".s"
-    try! JSONSerialization.data(withJSONObject: ["tokens": ["access_token": token, "account_id": conta]])
-        .write(to: pasta.appendingPathComponent("auth.json"))
-}
-extra("trabalho", email: "t@z.com", conta: "ACC-T")
-extra("aberta", email: "a@z.com", conta: "ACC-A")
-extra("copia", email: "jose@z.com", conta: "ACC")          // o mesmo login do principal
-try! fm.createDirectory(at: extras.appendingPathComponent(".escondida"), withIntermediateDirectories: true)
-try! fm.createDirectory(at: extras.appendingPathComponent("vazia"), withIntermediateDirectories: true)
-let gpts = AIAccounts.codexAccounts(home: home)
-confere(gpts.map(\.alias) == ["principal", "aberta", "trabalho"], "GPT: principal, depois as extras por nome; a cópia funde; pasta com ponto ou vazia fica de fora", "\(gpts.map(\.alias))")
-confere(gpts.first?.aliases == ["principal", "copia"], "GPT: a cópia do principal é o principal", "\(String(describing: gpts.first?.aliases))")
-confere(gpts.first?.isActive == true && gpts.dropFirst().allSatisfy { !$0.isActive }, "GPT: só o principal está em uso")
-let trabalho = gpts.first { $0.alias == "trabalho" }
-confere(trabalho?.email == "t@z.com" && trabalho?.accountHeader == "ACC-T" && trabalho?.summary.order == "gpt:trabalho",
-        "GPT extra: e-mail, conta e chave gpt:<apelido>", "\(String(describing: trabalho?.summary))")
-let todas = AIAccounts.discover(home: home)
-confere(todas.map(\.summary.order) == ["claude:reserva", "claude:assinaturas", "gpt:principal", "gpt:aberta", "gpt:trabalho"],
-        "descoberta: Claude, depois GPT principal e extras", "\(todas.map(\.summary.order))")
-confere(todas.first { $0.alias == "principal" && $0.engine == .codex }?.summary.keys == ["gpt:principal", "gpt:copia"],
-        "chaves de uma conta: uma por apelido")
-
-// --- a assinatura dos arquivos (o vigia de 2 s)
-let assinatura0 = AIAccounts.signature(home: home)
-confere(assinatura0 == AIAccounts.signature(home: home), "assinatura: igual quando nada muda")
-Thread.sleep(forTimeInterval: 0.01)
-ordem("gpt:trabalho\n")
-let assinatura1 = AIAccounts.signature(home: home)
-confere(assinatura1 != assinatura0, "assinatura: muda com a .ordem")
-extra("nova", email: "n@z.com", conta: "ACC-N")
-confere(AIAccounts.signature(home: home) != assinatura1, "assinatura: muda com uma conta GPT nova")
-let antesDoOculto = AIAccounts.signature(home: home)
-try! "{}".write(to: cofre.appendingPathComponent(".oculto.json"), atomically: true, encoding: .utf8)
-confere(AIAccounts.signature(home: home) == antesDoOculto, "assinatura: arquivo oculto do cofre não conta")
-try? fm.removeItem(at: arquivoOrdem)
-
 // --- disponibilidade
 func linha(_ conta: AIAccountSummary, _ janelas: [(String, Double)] = [], limite: Bool = false, lida: Bool = true) -> AccountUsage {
     AccountUsage(account: conta,
@@ -268,13 +146,12 @@ func conta(_ motor: AIEngine, _ apelido: String, ativa: Bool = false, aviso: Str
                      email: email ?? "\(apelido)@x", plan: nil, isActive: ativa, isPreferred: false, warning: aviso)
 }
 confere(linha(conta(.claude, "a"), lida: false).isAvailable, "disponível: sem leitura")
-confere(linha(conta(.claude, "a"), [("5h", 94.9), ("7d", 50), ("Fable", 100)]).isAvailable, "disponível: 5h/7d abaixo de 95 (janela por modelo não conta)")
-// a régua do kit (30/09): o serviço só recusa em 100%; de 95 a 99 a conta ainda atende
+confere(linha(conta(.claude, "a"), [("5h", 94.9), ("7d", 50), ("Fable", 100)]).isAvailable, "disponível: 5h/7d abaixo de 100 (janela por modelo não conta)")
 confere(linha(conta(.claude, "a"), [("5h", 95)]).isAvailable, "disponível: 5h em 95% (perto do limite, ainda atende)")
-confere(linha(conta(.claude, "a"), [("5h", 6), ("7d", 96)]).isAvailable, "disponível: 7d em 96% (a reserva de 30/09)")
+confere(linha(conta(.claude, "a"), [("5h", 6), ("7d", 96)]).isAvailable, "disponível: 7d em 96%")
 confere(linha(conta(.codex, "a"), [("7d", 99)]).isAvailable, "disponível: 7d em 99%")
 confere(!linha(conta(.claude, "a"), [("5h", 100)]).isAvailable, "indisponível: 5h em 100%")
-confere(!linha(conta(.claude, "a"), [("5h", 33), ("7d", 100)]).isAvailable, "indisponível: 7d em 100% (a principal de 30/09)")
+confere(!linha(conta(.claude, "a"), [("5h", 33), ("7d", 100)]).isAvailable, "indisponível: 7d em 100%")
 confere(!linha(conta(.claude, "a"), [("5h", 10)], limite: true).isAvailable, "indisponível: limitReached")
 confere(!linha(conta(.claude, "a", aviso: "login recusado"), lida: false).isAvailable, "indisponível: aviso da conta")
 
@@ -285,7 +162,7 @@ let ativa = linha(conta(.claude, "principal", ativa: true, apelidos: ["principal
 let morta = linha(conta(.claude, "reserva", aviso: "login recusado: entre de novo", email: "r@x"), lida: false)
 confere(gptP.account.isUsed(by: "gpt:principal"), "ponto verde: Codex da aba selecionada")
 confere(!ativa.account.isUsed(by: "gpt:principal"), "ponto verde: Claude ativo não marca aba Codex")
-confere(ativa.account.isUsed(by: "claude:ordem"), "ponto verde: Claude seguindo a ordem resolve a ativa")
+confere(ativa.account.isUsed(by: "claude:ordem"), "ponto verde: Claude seguindo a ordem, sem a conta dita, marca a ativa")
 confere(!gptP.account.isUsed(by: "claude:ordem"), "ponto verde: ordem Claude não marca Codex")
 confere(ativa.account.isUsed(by: "claude:assinaturas"), "ponto verde: apelidos da mesma conta")
 confere(!ativa.account.isUsed(by: nil) && !gptP.account.isUsed(by: nil), "ponto verde: sem conta conhecida, sem indicação")
@@ -297,8 +174,8 @@ confere(linhasClaude.map(\.title) == [AIChoices.followTitle, "", "Claude · chei
         "menu: títulos, com 'no limite' ou o aviso", "\(linhasClaude.map(\.title))")
 confere(linhasClaude.map(\.mark) == [.none, .none, .none, .none, .none, .on], "menu: ✓ na conta da aba", "\(linhasClaude.map(\.mark))")
 confere(linhasClaude.allSatisfy { $0.kind == .separator || $0.enabled }, "menu: tudo habilitado para o Claude")
-confere(linhasClaude.map(\.key) == ["gpt:principal", nil, "claude:cheia", "gpt:principal", "claude:principal", "claude:reserva"],
-        "menu: chaves; seguir a ordem vai para a 1ª disponível (GPT)", "\(linhasClaude.map(\.key))")
+confere(linhasClaude.map(\.key) == [AIHelper.followOrder, nil, "claude:cheia", "gpt:principal", "claude:principal", "claude:reserva"],
+        "menu: seguir a ordem pede claude:ordem, mesmo com a 1ª disponível no GPT (o núcleo resolve)", "\(linhasClaude.map(\.key))")
 confere(linhasClaude.first?.help == "Agora: GPT · principal", "menu: ajuda do seguir diz a conta de agora", "\(String(describing: linhasClaude.first?.help))")
 confere(linhasClaude.map(\.label) == ["a ordem de prioridade", "", "Claude · cheia", "GPT · principal", "Claude · principal", "Claude · reserva"],
         "menu: cada escolha tem o nome curto com que é dita depois", "\(linhasClaude.map(\.label))")
@@ -306,24 +183,30 @@ let pelaAssinatura = AIChoices.rows(lines: fila, current: "claude:assinaturas", 
 confere(pelaAssinatura[4].mark == .on, "menu: ✓ por qualquer apelido da conta")
 let seguindo = AIChoices.rows(lines: fila, current: AIHelper.followOrder, program: .claude)
 confere(seguindo[0].mark == .on && seguindo[4].mark == .mixed && seguindo.filter { $0.mark == .mixed }.count == 1,
-        "menu: ✓ em seguir e traço na Claude ativa", "\(seguindo.map(\.mark))")
+        "menu: ✓ em seguir e, sem a conta dita, traço na Claude ativa", "\(seguindo.map(\.mark))")
+let rodandoNoGPT = AIChoices.rows(lines: fila, current: AIHelper.followOrder, running: "gpt:principal", program: .codex)
+confere(rodandoNoGPT[0].mark == .on && rodandoNoGPT[3].mark == .mixed && rodandoNoGPT.filter { $0.mark == .mixed }.count == 1,
+        "menu: seguindo a ordem no GPT, o traço vai na conta em que roda", "\(rodandoNoGPT.map(\.mark))")
+let rodandoNaOutra = AIChoices.rows(lines: fila, current: AIHelper.followOrder, running: "claude:assinaturas", program: .claude)
+confere(rodandoNaOutra[4].mark == .mixed && rodandoNaOutra.filter { $0.mark == .mixed }.count == 1,
+        "menu: a conta em que roda casa por qualquer apelido")
+let rodandoSemLinha = AIChoices.rows(lines: fila, current: AIHelper.followOrder, running: "claude:sumida", program: .claude)
+confere(rodandoSemLinha.filter { $0.mark == .mixed }.isEmpty,
+        "menu: a conta em que roda, fora da fila, não põe o traço em outra")
+let fixaComAtual = AIChoices.rows(lines: fila, current: "claude:reserva", running: "claude:principal", program: .claude)
+confere(fixaComAtual[5].mark == .on && fixaComAtual.filter { $0.mark == .mixed }.isEmpty,
+        "menu: aba fixa numa conta: ✓ nela, sem traço")
 let outro = AIChoices.rows(lines: fila, current: nil, program: AIProgramKind(command: "sleep"))
 confere(outro.first?.title == "Esta aba está rodando sleep" && outro.first?.kind == .note, "outro programa: a linha que diz o quê")
 confere(outro.allSatisfy { !$0.enabled }, "outro programa: tudo desabilitado")
 let concha = AIChoices.rows(lines: fila, current: nil, program: .shell)
 confere(concha.allSatisfy { $0.kind == .separator || $0.enabled } && concha.allSatisfy { $0.mark == .none }, "concha: tudo habilitado, nada marcado")
-confere(AIChoices.followOrderKey([ativa, gptP]) == AIHelper.followOrder, "seguir: 1ª disponível Claude → claude:ordem")
-confere(AIChoices.followOrderKey([cheia, ativa, gptP]) == AIHelper.followOrder, "seguir: pula a cheia e fica na Claude seguinte")
-confere(AIChoices.followOrderKey([cheia, gptP]) == "gpt:principal", "seguir: 1ª disponível GPT → gpt:<apelido>")
-confere(AIChoices.followOrderKey([cheia, morta]) == AIHelper.followOrder, "seguir: nenhuma disponível → a 1ª da fila")
-confere(AIChoices.followOrderKey([]) == AIHelper.followOrder, "seguir: sem contas → claude:ordem")
-let perto = linha(conta(.claude, "reserva", email: "r@x"), [("5h", 6), ("7d", 96)])
-confere(AIChoices.followOrderKey([perto, cheia, gptP]) == AIHelper.followOrder,
-        "seguir: a 1ª Claude perto do limite (96%) ainda atende → claude:ordem, não o GPT (30/09)")
-confere(!AIChoices.title(perto).contains("no limite"), "menu: conta perto do limite não diz 'no limite'", AIChoices.title(perto))
 confere(AIChoices.rows(lines: [], current: nil, program: .claude).map(\.kind) == [.follow], "sem contas: só seguir a ordem")
+let perto = linha(conta(.claude, "reserva", email: "r@x"), [("5h", 6), ("7d", 96)])
+confere(!AIChoices.title(perto).contains("no limite"), "menu: conta perto do limite não diz 'no limite'", AIChoices.title(perto))
 confere(AIChoices.programLabel(command: "claude", account: "claude:reserva") == "claude · reserva", "lateral: claude · <apelido> quando fixa")
 confere(AIChoices.programLabel(command: "claude", account: "claude:ordem") == "claude", "lateral: seguindo a ordem, como hoje")
+confere(AIChoices.programLabel(command: "codex", account: "claude:ordem") == "codex", "lateral: Codex seguindo a ordem, o programa")
 confere(AIChoices.programLabel(command: "codex", account: "gpt:trabalho") == "codex · trabalho", "lateral: codex · <apelido> fora do principal")
 confere(AIChoices.programLabel(command: "codex", account: "gpt:principal") == "codex", "lateral: codex no principal, como hoje")
 confere(AIChoices.programLabel(command: "zsh", account: nil) == "zsh", "lateral: sem IA, o programa")
@@ -337,106 +220,150 @@ confere(AIProgramKind(command: "") == .unknown && AIProgramKind(command: "").all
 confere(AIProgramKind(command: "vim") == .other("vim") && !AIProgramKind(command: "vim").allowsChoice, "programa: outro programa trava o menu")
 confere(AIProgramKind(command: "2.1") == .claude && AIProgramKind(command: "2.") == .other("2."), "programa: versão precisa de números dos dois lados")
 
-// --- retrato.json (o campo ia)
-let estado = home.appendingPathComponent("estado")
-try! fm.createDirectory(at: estado, withIntermediateDirectories: true)
-let nascimento = Date(timeIntervalSince1970: 1_790_000_000.123456)
-func retrato(inicio: Double, versao: Int = 1, gravado: Double, ia: [[String: Any]]) {
-    let corpo: [String: Any] = ["versao": versao, "gravado_em_ms": gravado, "keepd": ["inicio": inicio, "pid": 1], "abas": [], "ia": ia]
-    let tmp = estado.appendingPathComponent("retrato.json.tmp")
-    try! JSONSerialization.data(withJSONObject: corpo).write(to: tmp)
-    _ = try! fm.replaceItemAt(estado.appendingPathComponent("retrato.json"), withItemAt: tmp)
+// --- a IA de cada aba (keep ia abas)
+let inicio: UInt64 = 1_791_000_000_123
+func abas(exato: Bool = true, inicioMs: UInt64? = inicio, pid: UInt32 = 4242, versao: Int = 1, ok: Bool = true,
+          ia: [[String: Any]]) -> Data {
+    var keepd: [String: Any] = ["pid": pid]
+    if let inicioMs { keepd["inicioMs"] = inicioMs }
+    return try! JSONSerialization.data(withJSONObject: ["versao": versao, "ok": ok, "exato": exato, "keepd": keepd, "ia": ia])
 }
 let entradas: [[String: Any]] = [
-    ["workspace": "w", "aba": 2, "agente": "claude", "conta": "claude:reserva", "vinculo": "exato"],
-    ["workspace": "w", "aba": 3, "agente": "codex", "conta": "gpt:trabalho", "vinculo": "provavel"],
+    ["workspace": "w", "aba": 2, "agente": "claude", "conta": "claude:ordem", "atual": "claude:reserva", "vinculo": "exato", "pid": 10, "conversa": NSNull()],
+    ["workspace": "w", "aba": 3, "agente": "codex", "conta": "gpt:trabalho", "atual": "gpt:trabalho", "vinculo": "provavel", "pid": 11],
     ["workspace": "w", "aba": 4, "agente": "claude", "conta": "claude:com espaço", "vinculo": "exato"],
+    ["workspace": "w", "aba": 5, "agente": "codex", "conta": "claude:ordem", "atual": "gpt:principal", "vinculo": "exato"],
+    ["workspace": "w", "aba": 6, "agente": "claude", "conta": "claude:reserva", "atual": "claude:ordem", "vinculo": "exato"],
 ]
-let agoraMs = Date().timeIntervalSince1970 * 1000
-retrato(inicio: nascimento.timeIntervalSince1970 + 0.0004, gravado: agoraMs - 5000, ia: entradas)
+func ms(_ d: Date = Date()) -> Double { d.timeIntervalSince1970 * 1000 }
 MainActor.assumeIsolated {
-    let loja = AITabAccounts(directory: estado)
-    confere(loja.reload(daemonStart: nascimento), "retrato: lido (início dentro de 1 ms)")
-    confere(loja.account(workspace: "w", tab: 2, program: .claude) == "claude:reserva", "retrato: conta da aba 2")
-    confere(loja.account(workspace: "w", tab: 3, program: .codex) == "gpt:trabalho", "retrato: conta da aba 3 (codex)")
-    confere(loja.account(workspace: "w", tab: 4, program: .claude) == AIHelper.followOrder, "retrato: chave inválida ignorada (fica o padrão)")
-    confere(loja.account(workspace: "w", tab: 9, program: .claude) == AIHelper.followOrder, "retrato: Claude sem linha segue a ordem")
-    confere(loja.account(workspace: "w", tab: 9, program: .codex) == "gpt:principal", "retrato: Codex sem linha está no principal")
-    confere(loja.account(workspace: "w", tab: 2, program: .shell) == nil, "retrato: aba de volta à concha não tem conta")
-    confere(loja.account(workspace: "w", tab: 2, program: .other("vim")) == nil, "retrato: outro programa não tem conta")
-    confere(!loja.reload(daemonStart: nascimento), "retrato: nada muda sem o arquivo mudar")
-    // anotação otimista: vale até um retrato gravado depois dela
+    let loja = AITabAccounts()
+    _ = loja.daemon(Date(timeIntervalSince1970: 1_791_000_000))
+    confere(!loja.adopt(abas(ia: entradas), askedAt: ms(), daemonPid: nil, daemonStartedMs: nil),
+            "abas: sem saber do daemon do app, nada é crido")
+    confere(loja.adopt(abas(ia: entradas), askedAt: ms(), daemonPid: 4242, daemonStartedMs: inicio + 1),
+            "abas: daemon novo, início dentro de 1 ms: lido")
+    confere(loja.account(workspace: "w", tab: 2, program: .claude) == AIHelper.followOrder, "abas: a escolha da aba 2 (seguir a ordem)")
+    confere(loja.running(workspace: "w", tab: 2, program: .claude) == "claude:reserva", "abas: a conta em que ela roda")
+    confere(loja.confirmedAccount(workspace: "w", tab: 2, program: .claude) == "claude:reserva", "rodapé: marca a conta em que roda")
+    confere(loja.account(workspace: "w", tab: 3, program: .codex) == "gpt:trabalho", "abas: Codex numa conta (vínculo provável também vale)")
+    confere(loja.account(workspace: "w", tab: 4, program: .claude) == AIHelper.followOrder, "abas: chave inválida ignorada (fica o padrão)")
+    confere(loja.account(workspace: "w", tab: 5, program: .codex) == AIHelper.followOrder
+            && loja.running(workspace: "w", tab: 5, program: .codex) == "gpt:principal",
+            "abas: Codex seguindo a ordem: a escolha é claude:ordem, roda no GPT")
+    confere(loja.confirmedAccount(workspace: "w", tab: 5, program: .codex) == "gpt:principal", "rodapé: o Codex que segue a ordem marca o GPT")
+    confere(loja.running(workspace: "w", tab: 6, program: .claude) == nil, "abas: 'atual' que não é conta é ignorado")
+    confere(loja.account(workspace: "w", tab: 9, program: .claude) == AIHelper.followOrder, "abas: Claude sem linha segue a ordem")
+    confere(loja.account(workspace: "w", tab: 9, program: .codex) == "gpt:principal", "abas: Codex sem linha está no principal")
+    confere(loja.account(workspace: "w", tab: 2, program: .shell) == nil && loja.running(workspace: "w", tab: 2, program: .shell) == nil,
+            "abas: aba de volta à concha não tem conta")
+    confere(loja.account(workspace: "w", tab: 2, program: .other("vim")) == nil, "abas: outro programa não tem conta")
+    confere(!loja.adopt(abas(ia: entradas), askedAt: ms(), daemonPid: 4242, daemonStartedMs: inicio), "abas: a mesma resposta não muda nada")
+    // anotação otimista: vale até uma resposta pedida depois dela
+    let antesDaTroca = ms()
+    Thread.sleep(forTimeInterval: 0.01)
     loja.note(workspace: "w", tab: 2, key: "claude:principal")
     confere(loja.account(workspace: "w", tab: 2, program: .claude) == "claude:principal", "otimista: a troca aparece na hora")
-    retrato(inicio: nascimento.timeIntervalSince1970, gravado: agoraMs - 1000, ia: entradas)
-    _ = loja.reload(daemonStart: nascimento)
-    confere(loja.account(workspace: "w", tab: 2, program: .claude) == "claude:principal", "otimista: retrato mais velho que a troca não a desfaz")
+    confere(loja.running(workspace: "w", tab: 2, program: .claude) == nil, "otimista: e a conta antiga não fica dita")
+    _ = loja.adopt(abas(ia: entradas), askedAt: antesDaTroca, daemonPid: 4242, daemonStartedMs: inicio)
+    confere(loja.account(workspace: "w", tab: 2, program: .claude) == "claude:principal", "otimista: resposta pedida antes da troca não a desfaz")
     var novas = entradas
     novas[0]["conta"] = "claude:assinaturas"
-    retrato(inicio: nascimento.timeIntervalSince1970, gravado: Date().timeIntervalSince1970 * 1000 + 1000, ia: novas)
-    confere(loja.reload(daemonStart: nascimento), "otimista: retrato mais novo publica")
-    confere(loja.account(workspace: "w", tab: 2, program: .claude) == "claude:assinaturas", "otimista: vale o retrato mais novo")
-    // de outro keepd, ou de outra versão: o arquivo inteiro é ignorado
-    retrato(inicio: nascimento.timeIntervalSince1970 + 0.002, gravado: agoraMs + 5000, ia: entradas)
-    confere(loja.reload(daemonStart: nascimento), "retrato de outro keepd: muda (some)")
-    confere(loja.account(workspace: "w", tab: 2, program: .claude) == AIHelper.followOrder, "retrato de outro keepd (2 ms): ignorado")
-    retrato(inicio: nascimento.timeIntervalSince1970, versao: 2, gravado: agoraMs + 6000, ia: entradas)
-    _ = loja.reload(daemonStart: nascimento)
-    confere(loja.account(workspace: "w", tab: 3, program: .codex) == "gpt:principal", "retrato versão 2: ignorado")
-    retrato(inicio: nascimento.timeIntervalSince1970, gravado: agoraMs + 7000, ia: entradas)
-    _ = loja.reload(daemonStart: nascimento)
-    confere(loja.account(workspace: "w", tab: 3, program: .codex) == "gpt:trabalho", "retrato: de volta ao certo")
-    confere(loja.confirmedAccount(workspace: "w", tab: 3, program: .codex) == "gpt:trabalho", "indicador: conta Codex confirmada")
-    confere(loja.confirmedAccount(workspace: "w", tab: 3, program: .claude) == nil, "indicador: outro motor invalida registro antigo")
-    confere(loja.confirmedAccount(workspace: "w", tab: 99, program: .codex) == nil, "indicador: não inventa conta principal sem registro")
-    confere(loja.confirmedAccount(workspace: "w", tab: 3, program: .unknown) == nil, "indicador: processo desconhecido não confirma conta")
-    confere(loja.reload(daemonStart: nascimento.addingTimeInterval(10)) && loja.account(workspace: "w", tab: 3, program: .codex) == "gpt:principal",
-            "retrato: keepd novo invalida o que se leu")
-    let vazia = AITabAccounts(directory: URL(fileURLWithPath: "/var/empty"))
-    confere(!vazia.reload(daemonStart: nascimento) && vazia.account(workspace: "w", tab: 2, program: .claude) == AIHelper.followOrder,
-            "retrato ausente: nada a ler, Claude segue a ordem")
+    novas[0]["atual"] = "claude:assinaturas"
+    Thread.sleep(forTimeInterval: 0.01)
+    confere(loja.adopt(abas(ia: novas), askedAt: ms(), daemonPid: 4242, daemonStartedMs: inicio), "otimista: resposta pedida depois publica")
+    confere(loja.account(workspace: "w", tab: 2, program: .claude) == "claude:assinaturas", "otimista: vale o que o núcleo leu")
+    confere(!loja.adopt(abas(ia: entradas), askedAt: antesDaTroca, daemonPid: 4242, daemonStartedMs: inicio)
+            && loja.account(workspace: "w", tab: 2, program: .claude) == "claude:assinaturas",
+            "abas: resposta mais velha que a que se tem é descartada")
+    // de outro keepd, ou fora do contrato: ignorada
+    let agora = ms() + 1000
+    confere(!loja.adopt(abas(ia: entradas), askedAt: agora, daemonPid: 4242, daemonStartedMs: inicio + 2),
+            "abas: daemon novo com início 2 ms diferente: ignorada")
+    confere(!loja.adopt(abas(versao: 2, ia: entradas), askedAt: agora, daemonPid: 4242, daemonStartedMs: inicio), "abas: versão 2 ignorada")
+    confere(!loja.adopt(abas(ok: false, ia: entradas), askedAt: agora, daemonPid: 4242, daemonStartedMs: inicio), "abas: ok false ignorada")
+    confere(loja.account(workspace: "w", tab: 2, program: .claude) == "claude:assinaturas", "abas: as ignoradas não mexeram em nada")
+    // daemon antigo: o núcleo não sabe o início do daemon; vale o processo
+    // do outro lado do socket
+    confere(loja.adopt(abas(exato: false, inicioMs: 1_790_000_000_000, pid: 4242, ia: entradas), askedAt: ms() + 2000,
+                       daemonPid: 4242, daemonStartedMs: nil),
+            "abas: daemon antigo, mesmo processo: lida, qualquer que seja o início que o núcleo viu")
+    confere(loja.account(workspace: "w", tab: 2, program: .claude) == AIHelper.followOrder, "abas: daemon antigo: a escolha lida")
+    confere(!loja.adopt(abas(exato: false, pid: 999, ia: novas), askedAt: ms() + 3000, daemonPid: 4242, daemonStartedMs: nil),
+            "abas: daemon antigo de outro processo: ignorada")
+    confere(!loja.adopt(abas(exato: false, ia: novas), askedAt: ms() + 4000, daemonPid: nil, daemonStartedMs: nil),
+            "abas: daemon antigo, sem saber o processo do app: ignorada")
+    // outro daemon no socket do app: o que se sabia era de abas que acabaram
+    confere(loja.daemon(Date(timeIntervalSince1970: 1_791_000_500)) && loja.account(workspace: "w", tab: 3, program: .codex) == "gpt:principal",
+            "abas: keepd novo apaga o que se leu")
+    confere(!loja.daemon(Date(timeIntervalSince1970: 1_791_000_500)), "abas: o mesmo keepd não apaga nada")
 }
-confere(AITabAccounts.directory(environment: ["KIT_KEEP_ESTADO": "/x/y"]).path == "/x/y", "retrato: KIT_KEEP_ESTADO manda")
-confere(AITabAccounts.directory(environment: [:]).path.hasSuffix("/.local/state/kit-keep"), "retrato: padrão do kit")
 
-// --- o ajudante keep-ia, contra o falso que registra o que recebe
-let falso = ProcessInfo.processInfo.environment["FALSO_IA"]!
-let falsoDir = ProcessInfo.processInfo.environment["FAKE_IA_DIR"]!
-func chamadas() -> [[String]] {
-    ((try? String(contentsOfFile: falsoDir + "/calls.jsonl", encoding: .utf8)) ?? "").split(separator: "\n")
-        .compactMap { (try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any])?["argv"] as? [String] }
+// --- o keep do app: onde, e com que ambiente
+let falso = ambiente["FALSO_IA"]!
+let falsoDir = ambiente["FAKE_IA_DIR"]!
+confere(AIHelper.path(environment: ["KEEP_IA_BIN": "/nao/existe"], bundled: falso) == nil, "ajudante: KEEP_IA_BIN inexistente = nenhum (sem cair no do app)")
+confere(AIHelper.path(environment: ["KEEP_IA_BIN": "/var/empty"], bundled: falso) == nil, "ajudante: KEEP_IA_BIN pasta = nenhum")
+confere(AIHelper.path(environment: ["KEEP_IA_BIN": falso], bundled: "/nao/existe") == falso, "ajudante: KEEP_IA_BIN executável = ele")
+confere(AIHelper.path(environment: [:], bundled: falso) == falso, "ajudante: sem KEEP_IA_BIN, o keep de dentro do app")
+confere(AIHelper.path(environment: [:], bundled: "/nao/existe") == nil, "ajudante: sem nenhum, nenhum")
+confere(AIHelper.path(environment: [:], bundled: falsoDir) == nil, "ajudante: pasta no lugar do keep do app não conta")
+confere(AIHelper.path(environment: [:]) == nil, "ajudante: um binário sem pacote não tem keep dentro")
+confere(KeepCLI.bundledPath.hasSuffix("/Contents/Resources/keep"), "ajudante: o do app é Contents/Resources/keep")
+let real = KeepCLI.environment(["HOME": "/Users/x", "PATH": "/bin"])
+confere(real["KEEP_SOCKET"] == Daemon.socketPath && real["KEEP_IA_HOME"] == nil && real["KEEP_IA_SECURITY"] == nil
+        && real["KEEP_IA_CLAUDE_URL"] == nil && real["PATH"] == "/bin",
+        "ambiente: o app de verdade passa só o socket, por cima do próprio ambiente", "\(real)")
+let teste = KeepCLI.environment(["KEEP_AI_USAGE_HOME": "/casa/falsa"])
+confere(teste["KEEP_IA_HOME"] == "/casa/falsa" && teste["KEEP_IA_ESTADO"] == "/casa/falsa/.keep-ia-estado",
+        "ambiente: app de teste: o núcleo lê e grava só na casa falsa", "\(teste)")
+confere(teste["KEEP_IA_SECURITY"] == "/casa/falsa/.keep-ia-estado/sem-chaveiro",
+        "ambiente: app de teste: o Chaveiro é um que não tem nada")
+confere(teste["KEEP_IA_PERFIL_URL"] == KeepCLI.nowhere && teste["KEEP_IA_CLAUDE_URL"] == KeepCLI.nowhere
+        && teste["KEEP_IA_CODEX_URL"] == KeepCLI.nowhere,
+        "ambiente: app de teste: os serviços apontam para onde nada escuta")
+let comSubstitutos = KeepCLI.environment(["KEEP_AI_USAGE_HOME": "/c", "KEEP_IA_SECURITY": "/meu/security",
+                                          "KEEP_AI_USAGE_CLAUDE_URL": "http://127.0.0.1:5/claude",
+                                          "KEEP_IA_CODEX_URL": "http://127.0.0.1:5/codex", "CLAUDE_KIT_PERFIL_URL": "http://127.0.0.1:5/p"])
+confere(comSubstitutos["KEEP_IA_SECURITY"] == "/meu/security" && comSubstitutos["KEEP_IA_CLAUDE_URL"] == nil
+        && comSubstitutos["KEEP_IA_CODEX_URL"] == "http://127.0.0.1:5/codex" && comSubstitutos["KEEP_IA_PERFIL_URL"] == nil,
+        "ambiente: os substitutos que o teste nomeou (por qualquer dos nomes) ficam", "\(comSubstitutos)")
+confere(KeepCLI.environment(["KEEP_AI_USAGE_HOME": ""])["KEEP_IA_HOME"] == nil, "ambiente: casa falsa vazia não é casa")
+let estadoDoTeste = casa.appendingPathComponent(".keep-ia-estado").path
+let preparado = KeepCLI.environment(ambiente)
+KeepCLI.prepare(preparado)
+let semChaveiro = estadoDoTeste + "/" + KeepCLI.noKeychainName
+confere(preparado["KEEP_IA_SECURITY"] == semChaveiro && fm.isExecutableFile(atPath: semChaveiro),
+        "Chaveiro do app de teste: escrito na casa falsa, executável")
+let pergunta = Process()
+pergunta.executableURL = URL(fileURLWithPath: semChaveiro)
+pergunta.arguments = ["find-generic-password", "-a", "x", "-w", "-s", "Claude Code-credentials"]
+try! pergunta.run()
+pergunta.waitUntilExit()
+confere(pergunta.terminationStatus == 44, "Chaveiro do app de teste: não tem item nenhum (44)")
+KeepCLI.prepare(["KEEP_IA_ESTADO": "/var/empty/x", "KEEP_IA_SECURITY": "/outro/lugar"])
+confere(!fm.fileExists(atPath: "/outro/lugar"), "Chaveiro do app de teste: só onde o próprio ambiente pôs")
+
+// --- perguntas ao núcleo, contra o falso que registra o que recebe
+func registro(_ arquivo: String) -> [[String: Any]] {
+    ((try? String(contentsOfFile: falsoDir + "/" + arquivo, encoding: .utf8)) ?? "").split(separator: "\n")
+        .compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
 }
-func limpa() { try? fm.removeItem(atPath: falsoDir + "/calls.jsonl") }
-confere(AIHelper.path(environment: ["KEEP_IA_BIN": "/nao/existe"], installed: falso) == nil, "ajudante: KEEP_IA_BIN inexistente = nenhum (sem cair no do kit)")
-confere(AIHelper.path(environment: ["KEEP_IA_BIN": "/var/empty"], installed: falso) == nil, "ajudante: KEEP_IA_BIN pasta = nenhum")
-confere(AIHelper.path(environment: ["KEEP_IA_BIN": falso], installed: "/nao/existe") == falso, "ajudante: KEEP_IA_BIN executável = ele")
-confere(AIHelper.path(environment: [:], installed: falso) == falso, "ajudante: sem KEEP_IA_BIN, o instalado pelo kit")
-confere(AIHelper.path(environment: [:], installed: "/nao/existe") == nil, "ajudante: sem nenhum, nenhum")
-confere(AIHelper.path(environment: [:], installed: falsoDir) == nil, "ajudante: instalado que é pasta não conta")
-confere(AIHelper.path(environment: ["KEEP_AI_USAGE_HOME": "/x"], installed: falso) == nil,
-        "ajudante: app que lê uma casa falsa não chama o instalado (ele mexe na casa real)")
-confere(AIHelper.path(environment: ["KEEP_AI_USAGE_HOME": "/x", "KEEP_IA_BIN": falso], installed: "/nao/existe") == falso,
-        "ajudante: casa falsa com KEEP_IA_BIN, o dele")
-confere(AIHelper.installedPath(environment: ["HOME": "/x/y"]) == "/x/y/.local/bin/keep-ia", "ajudante: o instalado é procurado sob o HOME")
-confere(AIHelper.installedPath(environment: ["HOME": ""]) == NSHomeDirectory() + "/.local/bin/keep-ia"
-        && AIHelper.installedPath(environment: [:]) == NSHomeDirectory() + "/.local/bin/keep-ia",
-        "ajudante: sem HOME, a casa do usuário")
-confere(AIHelper.isValidKey("claude:reserva") && AIHelper.isValidKey("gpt:principal") && AIHelper.isValidKey(AIHelper.followOrder),
-        "chave: formatos válidos")
-for ruim in ["claude:", "gpt:a b", "claude:a/b", "claude:a:b", "--para=x", "outro:x", "claude:x\n"] {
-    confere(!AIHelper.isValidKey(ruim), "chave recusada: \(ruim.debugDescription)")
-}
+func chamadas() -> [[String]] { registro("calls.jsonl").compactMap { $0["argv"] as? [String] } }
+func leituras() -> [[String]] { registro("reads.jsonl").compactMap { $0["argv"] as? [String] } }
+func limpa() { try? fm.removeItem(atPath: falsoDir + "/calls.jsonl"); try? fm.removeItem(atPath: falsoDir + "/reads.jsonl") }
 setenv("KEEP_IA_BIN", falso, 1)
-// o falso lê a casa de teste
-setenv("KEEP_AI_USAGE_HOME", home.path, 1)
-setenv("KIT_KEEP_ESTADO", estado.path, 1)
 limpa()
 if case .success(let nova) = AIHelper.moveOrder("claude:assinaturas", up: false) {
-    confere(nova.first == "claude:reserva", "mover: devolve a ordem nova", "\(nova)")
+    confere(nova.contains("claude:assinaturas"), "mover: devolve a ordem nova", "\(nova)")
 } else { confere(false, "mover: ok") }
 confere(chamadas().last == ["ordem", "mover", "claude:assinaturas", "baixo", "--json"], "mover: argumentos", "\(chamadas())")
+let ultima = registro("calls.jsonl").last
+confere(ultima?["grupo"] as? String == "ia", "mover: chamado como o keep do app, com ia na frente")
+confere(ultima?["socket"] as? String == Daemon.socketPath, "mover: com o socket do app")
+confere(ultima?["casa"] as? String == casaFalsa, "mover: com a casa falsa do app de teste")
 limpa()
-if case .failure(let p) = AIHelper.moveOrder("claude:a b", up: true) { confere(p.reason == "uso" && chamadas().isEmpty, "mover: chave inválida nem chega ao ajudante") } else { confere(false, "mover: chave inválida") }
+if case .failure(let p) = AIHelper.moveOrder("claude:a b", up: true) { confere(p.reason == "uso" && chamadas().isEmpty, "mover: chave inválida nem chega ao núcleo") } else { confere(false, "mover: chave inválida") }
 if case .failure = AIHelper.moveOrder(AIHelper.followOrder, up: true) { confere(chamadas().isEmpty, "mover: claude:ordem não é conta da fila") } else { confere(false, "mover: claude:ordem") }
 limpa()
 if case .success(let r) = AIHelper.switchAccount(workspace: "-ws estranho", tab: 7, to: "gpt:trabalho", interrupt: false) {
@@ -447,8 +374,8 @@ try! "".write(toFile: falsoDir + "/ocupada", atomically: true, encoding: .utf8)
 if case .failure(let p) = AIHelper.switchAccount(workspace: "w", tab: 2, to: "claude:reserva", interrupt: false) {
     confere(p.reason == "ocupada" && p.detail == "A aba está no meio de uma resposta.", "trocar: ocupada chega com motivo e detalhe", "\(p)")
 } else { confere(false, "trocar: ocupada") }
-if case .success = AIHelper.switchAccount(workspace: "w", tab: 2, to: "claude:reserva", interrupt: true) {
-    confere(chamadas().last == ["trocar", "--ws=w", "--aba=2", "--para=claude:reserva", "--interromper", "--json"], "trocar: --interromper", "\(chamadas())")
+if case .success = AIHelper.switchAccount(workspace: "w", tab: 2, to: AIHelper.followOrder, interrupt: true) {
+    confere(chamadas().last == ["trocar", "--ws=w", "--aba=2", "--para=claude:ordem", "--interromper", "--json"], "trocar: seguir a ordem, com --interromper", "\(chamadas())")
 } else { confere(false, "trocar: interromper") }
 try? fm.removeItem(atPath: falsoDir + "/ocupada")
 limpa()
@@ -464,8 +391,8 @@ if case .success(let aberta) = AIHelper.signIn(.gpt, workspace: "casa") {
     confere(aberta.workspace == "casa" && aberta.tab == 7, "entrar: devolve workspace e aba", "\(aberta)")
 } else { confere(false, "entrar: ok") }
 confere(chamadas().last == ["entrar", "gpt", "--ws=casa", "--json"], "entrar: argumentos", "\(chamadas())")
-confere(fm.fileExists(atPath: home.appendingPathComponent(".codex-contas/nova/auth.json").path), "entrar (falso): a conta nova aparece no disco")
-// conta fixa sem o login próprio: o kit abre o login numa aba e diz qual
+confere(fm.fileExists(atPath: casa.appendingPathComponent(".codex-contas/nova/auth.json").path), "entrar (falso): a conta nova aparece na casa falsa")
+// conta fixa sem o login próprio: o núcleo abre o login numa aba e diz qual
 try! "".write(toFile: falsoDir + "/precisa-login", atomically: true, encoding: .utf8)
 if case .failure(let p) = AIHelper.switchAccount(workspace: "casa", tab: 2, to: "claude:reserva", interrupt: false) {
     confere(p.reason == "precisa-login" && p.login?.tab == 7 && p.login?.workspace == "casa",
@@ -477,7 +404,32 @@ if case .failure(let p) = AIHelper.switchAccount(workspace: "casa", tab: 2, to: 
     confere(p.login == nil, "trocar: recusa sem aba de login não inventa uma", "\(p)")
 } else { confere(false, "trocar: ocupada sem login") }
 try? fm.removeItem(atPath: falsoDir + "/ocupada")
-// prazo: o ajudante lento é morto no prazo
+// uso, abas e sincronizar: leituras, que o app faz sozinho
+limpa()
+try! JSONSerialization.data(withJSONObject: try! JSONSerialization.jsonObject(with: respostaDoNucleo))
+    .write(to: URL(fileURLWithPath: falsoDir + "/uso.json"))
+for (pedido, argumentos) in [(AIHelper.Measure.due, ["uso", "--json"]), (.now, ["uso", "--agora", "--json"]),
+                             (.cached, ["uso", "--cache", "--json"]), (.only("gpt:trabalho"), ["uso", "--conta=gpt:trabalho", "--json"])] {
+    if case .success(let r) = AIHelper.usage(pedido) {
+        confere(r.linhas.count == 3 && leituras().last == argumentos, "uso \(pedido.label): argumentos e linhas", "\(leituras())")
+    } else { confere(false, "uso \(pedido.label): ok") }
+}
+if case .failure(let p) = AIHelper.usage(.only("claude:ordem")) { confere(p.reason == "uso", "uso: claude:ordem não é uma conta para medir") } else { confere(false, "uso: claude:ordem") }
+confere(chamadas().isEmpty, "uso: leitura não conta como pedido de mudança")
+try! "{\"versao\":1,\"ok\":true}".write(toFile: falsoDir + "/uso.json", atomically: true, encoding: .utf8)
+if case .failure(let p) = AIHelper.usage(.due) { confere(p.detail.contains("não dá para ler"), "uso: resposta sem linhas dita", p.detail) } else { confere(false, "uso: resposta sem linhas") }
+try? fm.removeItem(atPath: falsoDir + "/uso.json")
+try! JSONSerialization.data(withJSONObject: ["ia": entradas]).write(to: URL(fileURLWithPath: falsoDir + "/abas.json"))
+setenv("FAKE_IA_INICIO_MS", String(inicio), 1)
+if case .success(let dados) = AIHelper.tabs() {
+    let lidas = AITabAccounts.parse(dados, daemonPid: 0, daemonStartedMs: nil)
+    confere(lidas?.count == 4 && leituras().last == ["abas", "--json"], "abas: argumentos e entradas", "\(String(describing: lidas))")
+} else { confere(false, "abas: ok") }
+unsetenv("FAKE_IA_INICIO_MS")
+if case .success(let rodada) = AIHelper.sync() {
+    confere(rodada["estado"] as? String == "feito" && leituras().last == ["sincronizar", "--json"], "sincronizar: argumentos e rodada")
+} else { confere(false, "sincronizar: ok") }
+// prazo: o lento é morto no prazo
 AIHelper.timeScale = 0.2
 try! "5".write(toFile: falsoDir + "/lento", atomically: true, encoding: .utf8)
 let t1 = Date()
@@ -496,12 +448,50 @@ if case .failure(let p) = AIHelper.switchAccount(workspace: "w", tab: 1, to: "cl
 } else { confere(false, "resposta ilegível") }
 setenv("KEEP_IA_BIN", "/nao/existe", 1)
 if case .failure(let p) = AIHelper.moveOrder("claude:reserva", up: true) {
-    confere(p.reason == "sem-ajudante", "sem ajudante: nada roda")
-} else { confere(false, "sem ajudante") }
-confere(!fm.fileExists(atPath: falsoDir + "/installed-helper-called"),
-        "o ajudante instalado (o canário da casa falsa) nunca foi chamado",
-        (try? String(contentsOfFile: falsoDir + "/installed-helper-called", encoding: .utf8)) ?? "")
+    confere(p.reason == "sem-ajudante", "sem keep: nada roda")
+} else { confere(false, "sem keep") }
 
-try? fm.removeItem(at: home)
+// --- o núcleo de verdade (crates/keep-ia), o que o app vai mesmo ler
+if let nucleo = ambiente["NUCLEO"], fm.isExecutableFile(atPath: nucleo) {
+    setenv("KEEP_IA_BIN", nucleo, 1)
+    // Uma casa só dele: um slot do cofre do kit e o login do Codex, ambos
+    // medidos pelo substituto dos serviços nesta máquina.
+    let outra = URL(fileURLWithPath: ambiente["CASA_NUCLEO"]!)
+    setenv("KEEP_AI_USAGE_HOME", outra.path, 1)
+    if case .success(let r) = AIHelper.usage(.cached) {
+        confere(r.linhas.map(\.account.order) == ["claude:principal", "gpt:principal"],
+                "núcleo de verdade, sem rede: as contas da casa falsa, na ordem", "\(r.linhas.map(\.account.order))")
+        confere(r.linhas.allSatisfy { $0.reading == nil }, "núcleo de verdade, sem rede: nada medido ainda")
+    } else { confere(false, "núcleo de verdade: --cache respondeu") }
+    if case .success(let r) = AIHelper.usage(.due) {
+        let claude = r.linhas.first { $0.account.engine == .claude }
+        let gpt = r.linhas.first { $0.account.engine == .codex }
+        confere(claude?.reading?.windows.map(\.label) == ["5h", "7d"] && claude?.reading?.windows.first?.percent == 17,
+                "núcleo de verdade: a leitura do Claude chega ao app", "\(String(describing: claude))")
+        confere(claude?.reading?.windows.first?.resetsAt == Date(timeIntervalSince1970: 1_791_100_000),
+                "núcleo de verdade: o reinício chega como data", "\(String(describing: claude?.reading?.windows.first?.resetsAt?.timeIntervalSince1970))")
+        confere(claude?.measuredAt.map { abs($0.timeIntervalSinceNow) < 60 } == true, "núcleo de verdade: medido agora")
+        confere(gpt?.reading?.limitReached == true && gpt?.isAvailable == false,
+                "núcleo de verdade: o GPT no limite sai da fila", "\(String(describing: gpt))")
+        confere(claude?.account.email == "um@exemplo.com" && claude?.account.plan == "Max 20x",
+                "núcleo de verdade: e-mail e plano da conta")
+    } else { confere(false, "núcleo de verdade: a rodada respondeu") }
+    confere(fm.isExecutableFile(atPath: outra.appendingPathComponent(".keep-ia-estado/sem-chaveiro").path),
+            "núcleo de verdade: perguntado com o Chaveiro vazio do app de teste")
+    if case .success(let r) = AIHelper.usage(.only("claude:principal")) {
+        confere(r.linhas.count == 2, "núcleo de verdade: --conta responde todas as linhas")
+    } else { confere(false, "núcleo de verdade: --conta respondeu") }
+    if case .success(let nova) = AIHelper.moveOrder("gpt:principal", up: true) {
+        confere(nova == ["gpt:principal", "claude:principal"], "núcleo de verdade: mover na ordem", "\(nova)")
+    } else { confere(false, "núcleo de verdade: mover respondeu") }
+    if case .success(let r) = AIHelper.usage(.cached) {
+        confere(r.linhas.map(\.account.order) == ["gpt:principal", "claude:principal"] && r.linhas.last?.reading != nil,
+                "núcleo de verdade: a ordem nova e as leituras guardadas", "\(r.linhas.map(\.account.order))")
+    } else { confere(false, "núcleo de verdade: --cache depois de mover") }
+} else {
+    print("(pulado: sem NUCLEO, o keep de verdade)")
+}
+
+try? fm.removeItem(at: casa.appendingPathComponent(".codex-contas"))
 print("\(casos - falhas)/\(casos) ok")
 exit(falhas == 0 ? 0 : 1)

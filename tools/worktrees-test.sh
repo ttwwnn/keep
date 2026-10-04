@@ -3,13 +3,15 @@
 # What closing a tab does with the worktrees its conversation made, from the
 # app's side (apps/macos/Sources/Keep/Daemon/Worktrees.swift).
 #
-# The helper that decides which worktrees those are lives in the kit; here a
-# fake one (tools/worktrees-test/fake-helper.py) answers from files the test
-# writes, so what is checked is the app's half: the arguments and the socket
-# it hands the helper, the question's wording, the deadline, waiting for the
-# tab's processes before anything moves, a folder retried while something
-# still runs in it and left with a reason when refused, and the move itself —
-# into the real Trash, under names no one else uses, taken back out at the end.
+# What decides which worktrees those are is the core (`keep worktrees`, the
+# `keep` inside the app); here a fake one (tools/worktrees-test/fake-helper.py)
+# answers from files the test writes, so what is checked is the app's half:
+# that it is called as the app's `keep` (`worktrees` first) and only where
+# named, the arguments and the socket it is handed, the question's wording,
+# the deadline, waiting for the tab's processes before anything moves, a
+# folder retried while something still runs in it and left with a reason when
+# refused, `indexar`, and the move itself — into the real Trash, under names
+# no one else uses, taken back out at the end.
 #
 #   tools/worktrees-test.sh
 #
@@ -19,6 +21,7 @@ cd "$(dirname "$0")/.."
 WORK=$(mktemp -d /tmp/keep-worktrees-XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
 cp tools/worktrees-test/fake-helper.py "$WORK/"
-swiftc -O apps/macos/Sources/Keep/Daemon/Worktrees.swift apps/macos/Sources/Keep/Daemon/KitHelper.swift \
+swiftc -O apps/macos/Sources/Keep/Daemon/Worktrees.swift apps/macos/Sources/Keep/Daemon/KeepCLI.swift \
+    apps/macos/Sources/Keep/Model/AIUsage.swift \
     tools/worktrees-test/main.swift -o "$WORK/test" 2>&1 | grep -E "error" && exit 1
 FALSO_DIR=$WORK "$WORK/test"

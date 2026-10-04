@@ -17,12 +17,16 @@ func chamadas() -> [[String: Any]] {
 }
 func limpaChamadas() { try? fm.removeItem(atPath: dir + "/chamadas.log") }
 
-// sem ajudante
+// sem um keep para perguntar: o nomeado em KEEP_WORKTREES_BIN é o único
+// procurado (inexistente ou pasta = nenhum), e sem ele o de dentro do app —
+// que um binário de teste não tem
 setenv("KEEP_WORKTREES_BIN", "/nao/existe", 1)
-let semAjudanteNaCasa = !fm.isExecutableFile(atPath: NSHomeDirectory() + "/.local/bin/keep-worktrees")
-if semAjudanteNaCasa {
-    if case .off = Worktrees.list([.init(workspace: "w", tabs: [1])]) { confere(true, "sem ajudante: nada muda") } else { confere(false, "sem ajudante: nada muda") }
-} else { print("(pulado: há ~/.local/bin/keep-worktrees; o caso 'sem ajudante' vale só sem ele)") }
+if case .off = Worktrees.list([.init(workspace: "w", tabs: [1])]) { confere(true, "sem ajudante: nada muda") } else { confere(false, "sem ajudante: nada muda") }
+setenv("KEEP_WORKTREES_BIN", "/var/empty", 1)
+confere(Worktrees.helper == nil, "KEEP_WORKTREES_BIN pasta: nenhum (sem cair no de dentro do app)")
+unsetenv("KEEP_WORKTREES_BIN")
+confere(Worktrees.helper == nil, "sem KEEP_WORKTREES_BIN: o keep de dentro do app, que aqui não há")
+confere(Worktrees.index() == nil && !fm.fileExists(atPath: dir + "/chamadas.log"), "indexar sem ajudante: nada roda")
 setenv("KEEP_WORKTREES_BIN", dir + "/fake-helper.py", 1)
 
 // listar: argumentos e texto
@@ -38,6 +42,7 @@ let r = Worktrees.list([.init(workspace: "Brokerfy", tabs: [4, 7]), .init(worksp
 guard case .listing(let l) = r else { print("FALHA listar não leu"); exit(1) }
 let c = chamadas().first
 confere((c?["argv"] as? [String]) == ["listar", "--prazo", "2.0", "Brokerfy:4,7", "Clinica:2"], "listar: argumentos", "\(String(describing: c?["argv"]))")
+confere((c?["grupo"] as? String) == "worktrees", "listar: chamado como o keep do app, com worktrees na frente", "\(String(describing: c?["grupo"]))")
 confere((c?["socket"] as? String) == "/tmp/sock-de-teste", "listar: passa o socket do app")
 confere(l.pids == [999999], "listar: pids das abas")
 let nota = Worktrees.note(for: r)
@@ -68,7 +73,9 @@ try! fm.createDirectory(atPath: recusa, withIntermediateDirectories: true)
 let espera = dir + "/repo-wt-espera-\(getpid())"
 try! fm.createDirectory(atPath: espera, withIntermediateDirectories: true)
 escreve("preparar-" + (recusa as NSString).lastPathComponent + ".json", [["versao":1,"ok":false,"motivo":"travada: teste"]])
-escreve("preparar-" + (espera as NSString).lastPathComponent + ".json", [["versao":1,"ok":false,"motivo":"processo vivo","processos":[["pid":1]]], ["versao":1,"ok":true]])
+// a primeira recusa sai com 1, como o contrato manda dizer um "não": é uma
+// resposta, lida como a de saída 0, e não uma falha
+escreve("preparar-" + (espera as NSString).lastPathComponent + ".json", [["versao":1,"ok":false,"motivo":"processo vivo","processos":[["pid":1]],"_saida":1], ["versao":1,"ok":true]])
 let dorminhoco = Process(); dorminhoco.executableURL = URL(fileURLWithPath: "/bin/sleep"); dorminhoco.arguments = ["1.5"]; try! dorminhoco.run()
 let pid = dorminhoco.processIdentifier
 setenv("FALSO_PID", String(pid), 1)
@@ -124,4 +131,9 @@ confere(chamadas().contains { ($0["argv"] as? [String]) == ["preparar", comId, "
 try? fm.removeItem(atPath: NSHomeDirectory() + "/.Trash/" + (comId as NSString).lastPathComponent)
 for p in [wt, espera] { try? fm.removeItem(atPath: NSHomeDirectory() + "/.Trash/" + (p as NSString).lastPathComponent) }
 try? fm.removeItem(atPath: recusa)
+// indexar: o que as conversas criam, anotado pelo núcleo
+limpaChamadas()
+confere(Worktrees.index() == nil, "indexar: respondido")
+confere(chamadas().last.map { ($0["argv"] as? [String]) == ["indexar", "--json"] && ($0["grupo"] as? String) == "worktrees" } == true,
+        "indexar: keep worktrees indexar --json", "\(chamadas())")
 print("\(casos - falhas)/\(casos) ok"); exit(falhas == 0 ? 0 : 1)

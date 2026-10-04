@@ -1,51 +1,116 @@
 #!/usr/bin/env bash
 #
-# The usage footer's facts (apps/macos/Sources/Keep/Model/AIUsage.swift):
-# both services' answers in their real shape, the logins found in a made-up
-# home, the stand-in address refused unless it is on this machine, and the
-# strings the footer prints. And what the AI accounts rest on: the kit's
-# order of priority and the extra GPT logins (AIUsage.swift), which account
-# each tab is on and what its menu offers (Model/AIChoice.swift), and asking
-# the kit's `keep-ia` (Daemon/KitHelper.swift) — against a stand-in that
-# logs what it is asked. No app, no network, no real login, no real kit.
-# Seconds.
+# What the app holds of the AI accounts, and how it asks for them
+# (apps/macos/Sources/Keep/Model/AIUsage.swift, Model/AIChoice.swift and
+# Daemon/KeepCLI.swift): the core's usage answer read as the core writes it
+# and kept as the kit reads it, the files watched for a login just made, the
+# strings the footer prints, which account each tab is on and what its menu
+# offers, and asking the `keep` inside the app — where it is, what it is told,
+# and every question in the contract (docs/ia.md), against a stand-in that
+# logs what it is asked. Then the same against the real core
+# (crates/keep-ia, built here), in a home of its own, measuring a stand-in of
+# the services on 127.0.0.1: what the Swift reads is what the Rust writes.
+# No app, no real login, no real kit, no network. Seconds, plus a cargo build.
 #
 #   tools/usage-test.sh              the check
 #   tools/usage-test.sh --sabotage   and then each rule broken in turn, which
 #                                    it must fail on
+#   SKIP_CORE=1 tools/usage-test.sh  without the real core
 set -uo pipefail
 cd "$(dirname "$0")/.."
 WORK=$(mktemp -d /tmp/keep-usage-model-XXXXXX)
-trap 'rm -rf "$WORK"' EXIT
+SERVER_PID=
+cleanup() {
+    [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null
+    rm -rf "$WORK"
+}
+trap cleanup EXIT
 USAGE=apps/macos/Sources/Keep/Model/AIUsage.swift
 CHOICE=apps/macos/Sources/Keep/Model/AIChoice.swift
-HELPER=apps/macos/Sources/Keep/Daemon/KitHelper.swift
+HELPER=apps/macos/Sources/Keep/Daemon/KeepCLI.swift
 
-build() {  # build <AIUsage.swift> <AIChoice.swift> <KitHelper.swift>
+build() {  # build <AIUsage.swift> <AIChoice.swift> <KeepCLI.swift>
     swiftc -O "$1" "$2" "$3" tools/usage-test/main.swift -o "$WORK/test" 2>"$WORK/build.log" || {
         grep -E "error" "$WORK/build.log" | head -5; return 1; }
 }
-# The kit's helper, played by the stand-in the app's own tests use: it logs
-# what it was asked, and answers out of the test's made-up home.
+# The core, played by the stand-in the app's own tests use: it logs what it
+# was asked, and answers out of the test's made-up home.
 cp tools/ia-test/fake-keep-ia.py "$WORK/fake-keep-ia.py"
 chmod +x "$WORK/fake-keep-ia.py"
-# The real one is never within reach, whatever the code under test does —
-# the sabotages below break exactly the rules that keep it out. The test runs
-# under a made-up HOME, where the app looks for the installed helper, and
-# what it finds there is a canary: it does nothing, and leaves a mark the
-# test fails on. And it runs as an app that reads a made-up home, which never
-# asks the installed helper at all (and the kit's helper refuses such a
-# caller too).
-mkdir -p "$WORK/home/.local/bin"
-cat >"$WORK/home/.local/bin/keep-ia" <<EOF
-#!/bin/sh
-echo "\$*" >>"$WORK/installed-helper-called"
-exit 1
-EOF
-chmod +x "$WORK/home/.local/bin/keep-ia"
+mkdir -p "$WORK/home" "$WORK/ia"
+
+# The real core, in a home of its own: a slot of the kit's vault and Codex's
+# login, measured by a stand-in of both services on this machine.
+NUCLEO=
+if [ -z "${SKIP_CORE:-}" ]; then
+    if cargo build -p keep >"$WORK/cargo.log" 2>&1; then
+        NUCLEO=$PWD/target/debug/keep
+    else
+        echo "could not build the core (cargo build -p keep); the tail of its log:"
+        tail -5 "$WORK/cargo.log"
+        exit 1
+    fi
+    CORE_HOME=$WORK/casa-nucleo
+    mkdir -p "$CORE_HOME/.claude/contas" "$CORE_HOME/.codex"
+    python3 - "$CORE_HOME" <<'PY'
+import base64, json, os, sys, time
+home = sys.argv[1]
+now = time.time()
+json.dump({"apelido": "principal", "email": "um@exemplo.com", "accountUuid": "U1",
+           "credenciais": {"claudeAiOauth": {"accessToken": "tok-principal", "refreshToken": "never-used",
+                                             "expiresAt": int((now + 5 * 3600) * 1000),
+                                             "subscriptionType": "max", "rateLimitTier": "default_claude_max_20x"}}},
+          open(os.path.join(home, ".claude/contas/principal.json"), "w"))
+def b64(o):
+    return base64.urlsafe_b64encode(json.dumps(o).encode()).decode().rstrip("=")
+access = "h." + b64({"exp": int(now + 86400), "https://api.openai.com/profile": {"email": "jose@exemplo.com"},
+                     "https://api.openai.com/auth": {"chatgpt_plan_type": "pro", "chatgpt_account_id": "ACC"}}) + ".s"
+json.dump({"auth_mode": "chatgpt", "tokens": {"access_token": access, "account_id": "ACC"}},
+          open(os.path.join(home, ".codex/auth.json"), "w"))
+PY
+    cat >"$WORK/standin.py" <<'PY'
+import json, sys, time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+reset = time.strftime("%Y-%m-%dT%H:%M:%S.123456+00:00", time.gmtime(1791100000))
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        token = self.headers.get("Authorization", "")[len("Bearer "):]
+        if self.path == "/claude" and token == "tok-principal":
+            status, body = 200, {"five_hour": {"utilization": 17.0, "resets_at": reset},
+                                 "seven_day": {"utilization": 50, "resets_at": None}}
+        elif self.path == "/codex" and self.headers.get("ChatGPT-Account-Id") == "ACC":
+            status, body = 200, {"rate_limit": {"limit_reached": True, "primary_window": {
+                "used_percent": 100, "limit_window_seconds": 604800, "reset_at": 1791200000}}}
+        else:
+            status, body = 401, {}
+        data = json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+server = HTTPServer(("127.0.0.1", 0), H)
+open(sys.argv[1], "w").write(str(server.server_address[1]))
+server.serve_forever()
+PY
+    python3 "$WORK/standin.py" "$WORK/port" &
+    SERVER_PID=$!
+    waited=0
+    while [ ! -s "$WORK/port" ] && [ "$waited" -lt 40 ]; do sleep 0.25; waited=$((waited + 1)); done
+    PORT=$(cat "$WORK/port")
+fi
+
 run() {
-    HOME=$WORK/home KEEP_AI_USAGE_HOME=$WORK/home KIT_KEEP_ESTADO=/var/empty KEEP_IA_BIN=/var/empty \
-        FALSO_IA=$WORK/fake-keep-ia.py FAKE_IA_DIR=$WORK "$WORK/test"
+    # The core reads its stand-ins under the names the app's tests have
+    # always set; a measurement starts afresh each run.
+    rm -rf "${CORE_HOME:-/nonexistent}/.keep-ia-estado"
+    rm -f "${CORE_HOME:-/nonexistent}/.claude/contas/.ordem"
+    KEEP_AI_USAGE_HOME=$WORK/home KEEP_IA_BIN=/var/empty \
+        KEEP_AI_USAGE_CLAUDE_URL=http://127.0.0.1:${PORT:-9}/claude \
+        KEEP_AI_USAGE_CODEX_URL=http://127.0.0.1:${PORT:-9}/codex \
+        NUCLEO=$NUCLEO CASA_NUCLEO=${CORE_HOME:-} \
+        FALSO_IA=$WORK/fake-keep-ia.py FAKE_IA_DIR=$WORK/ia "$WORK/test"
 }
 
 build "$USAGE" "$CHOICE" "$HELPER" || exit 1
@@ -79,57 +144,64 @@ PY
     echo "  caught      $2: $(grep -m1 FALHA "$WORK/out.txt" | cut -c7-)"
 }
 ok=0
-sabotage "$USAGE" "a merged account at the later of its places" \
-    'if let first = listed.min(by: { $0.place < $1.place }) {|||if let first = listed.max(by: { $0.place < $1.place }) {' || ok=1
-sabotage "$USAGE" "accounts the order does not name put first" \
-    'return ordered + rest|||return rest + ordered' || ok=1
-sabotage "$USAGE" "an extra GPT login that is the principal's shown twice" \
-    'if let account = codex(auth: auth, alias: name) { found.append(account) }
-        }
-        return merge(found)|||if let account = codex(auth: auth, alias: name) { found.append(account) }
-        }
-        return found' || ok=1
 sabotage "$USAGE" "an account at its limit still taking work" \
     '$0.percent >= 100 }|||$0.percent >= 101 }' || ok=1
 sabotage "$USAGE" "an account near its limit (95%) taken for one at it" \
     '$0.percent >= 100 }|||$0.percent >= 95 }' || ok=1
 sabotage "$USAGE" "the watcher blind to the order" \
     '[".ativa", ".preferida", ".ordem"]|||[".ativa", ".preferida"]' || ok=1
-sabotage "$CHOICE" "following the order onto GPT sent as Claude's order" \
-    'case .codex: return first.account.engine.key(first.account.alias)|||case .codex: return AIHelper.followOrder' || ok=1
+sabotage "$USAGE" "the watcher blind to Keep's own logins" \
+    'for file in ["keep.json", "conta.json"] {|||for file in ["conta.json"] {' || ok=1
+sabotage "$USAGE" "the core's dates read as Foundation's own" \
+    'decoder.dateDecodingStrategy = .secondsSince1970|||' || ok=1
+sabotage "$CHOICE" "following the order sent as the account first in it" \
+    'kind: .follow, title: followTitle, key: AIHelper.followOrder,|||kind: .follow, title: followTitle, key: lines.first(where: \.isAvailable).map { $0.account.engine.key($0.account.alias) } ?? AIHelper.followOrder,' || ok=1
 sabotage "$CHOICE" "the dash on every Claude account, not the one in use" \
-    'account.engine == .claude, account.isActive {|||account.engine == .claude {' || ok=1
+    '} else if account.engine == .claude, account.isActive {|||} else if account.engine == .claude {' || ok=1
+sabotage "$CHOICE" "the dash on the shared login even when the core said where the tab runs" \
+    'if account.keys.contains(running) { mark = .mixed }|||if account.engine == .claude, account.isActive { mark = .mixed }' || ok=1
 sabotage "$CHOICE" "a tab running another program still offered choices" \
     'let enabled = program.allowsChoice|||let enabled = true' || ok=1
 sabotage "$CHOICE" "Claude Code named by its version taken for another program" \
     'name == "claude" || Self.isVersionNumber(name)|||name == "claude"' || ok=1
-sabotage "$CHOICE" "a retrato of another daemon believed within 10 ms" \
-    'abs(born - start) < 0.001|||abs(born - start) < 0.01' || ok=1
-sabotage "$CHOICE" "a retrato of another format read" \
+sabotage "$CHOICE" "an answer about another daemon believed within 2 ms" \
+    'max(saidStart, mine) - min(saidStart, mine) <= 1|||max(saidStart, mine) - min(saidStart, mine) <= 2' || ok=1
+sabotage "$CHOICE" "an old daemon's answer believed from another process" \
+    'guard let mine = daemonPid, let saidPid, saidPid == mine else { return nil }|||guard daemonPid != nil else { return nil }' || ok=1
+sabotage "$CHOICE" "an answer of another format read" \
     '(root["versao"] as? NSNumber)?.intValue == 1,|||(root["versao"] as? NSNumber) != nil,' || ok=1
-sabotage "$CHOICE" "a switch made in the app outliving the kit's newer word" \
-    'notes = notes.filter { $0.value.at > written }|||notes = notes.filter { _ in true }' || ok=1
+sabotage "$CHOICE" "a switch made in the app outliving the core's newer word" \
+    'notes = notes.filter { $0.value.at > askedAt }|||notes = notes.filter { _ in true }' || ok=1
+sabotage "$CHOICE" "an older answer laid over a newer one" \
+    'guard askedAt >= asked,|||guard true,' || ok=1
 sabotage "$CHOICE" "a tab back at its shell still said to be on an account" \
-    'guard program.runsAI else { return nil }|||' || ok=1
+    '    func account(workspace: String, tab: UInt32, program: AIProgramKind) -> String? {
+        guard program.runsAI else { return nil }|||    func account(workspace: String, tab: UInt32, program: AIProgramKind) -> String? {' || ok=1
+sabotage "$CHOICE" "the footer lighting the choice over the account the tab runs on" \
+    'if let running = entry.running, running.hasPrefix(prefix) { return running }|||' || ok=1
 sabotage "$CHOICE" "the sidebar naming Codex's own login" \
     'case "gpt" where alias != "principal": return "codex · \(alias)"|||case "gpt": return "codex · \(alias)"' || ok=1
-sabotage "$HELPER" "KEEP_IA_BIN pointing at nothing falling through to the kit's" \
-    'if let named = environment["KEEP_IA_BIN"] { return isRunnable(named) ? named : nil }|||if let named = environment["KEEP_IA_BIN"], isRunnable(named) { return named }' || ok=1
-sabotage "$HELPER" "an app reading a made-up home asking the installed helper" \
-    '        if environment["KEEP_AI_USAGE_HOME"] != nil { return nil }
-|||' || ok=1
-sabotage "$HELPER" "the installed helper looked for in the real home, whatever HOME says" \
-    'let home = environment["HOME"].flatMap { $0.hasPrefix("/") ? $0 : nil } ?? NSHomeDirectory()|||let home = NSHomeDirectory()' || ok=1
-sabotage "$HELPER" "both rules gone: what answers is the made-up HOME's canary, and the test says so" \
-    'if let named = environment["KEEP_IA_BIN"] { return isRunnable(named) ? named : nil }
-        if environment["KEEP_AI_USAGE_HOME"] != nil { return nil }|||if let named = environment["KEEP_IA_BIN"], isRunnable(named) { return named }' || ok=1
-sabotage "$HELPER" "a directory taken for the helper" \
+sabotage "$HELPER" "KEEP_IA_BIN pointing at nothing falling through to the app's keep" \
+    'if let named { return isRunnable(named) ? named : nil }|||if let named, isRunnable(named) { return named }' || ok=1
+sabotage "$HELPER" "a directory taken for the keep" \
     '&& !directory.boolValue|||' || ok=1
+sabotage "$HELPER" "the core not told which daemon" \
+    'environment["KEEP_SOCKET"] = Daemon.socketPath|||' || ok=1
+sabotage "$HELPER" "a test app handing the core the real home" \
+    'environment["KEEP_IA_HOME"] = home|||' || ok=1
+sabotage "$HELPER" "a test app letting the core at the real Keychain" \
+    'if base["KEEP_IA_SECURITY"] == nil {|||if false {' || ok=1
+sabotage "$HELPER" "a test app letting a token reach the real services" \
+    'environment[name] = nowhere|||' || ok=1
+sabotage "$HELPER" "a stand-in the test named by the older name overridden" \
+    'where !names.contains(where: { base[$0] != nil })|||where base[name] == nil' || ok=1
+sabotage "$HELPER" "the core called without its group" \
+    'switch KeepCLI.run(helper, ["ia"] + arguments,|||switch KeepCLI.run(helper, arguments,' || ok=1
 sabotage "$HELPER" "a key with a colon in its name let through" \
     '#"^(claude|gpt):[^\s/:]+$"#|||#"^(claude|gpt):[^\s/]+$"#' || ok=1
 sabotage "$HELPER" "a workspace passed as a word of its own" \
     'var arguments = ["trocar", "--ws=\(workspace)",|||var arguments = ["trocar", "--ws", workspace,' || ok=1
-sabotage "$HELPER" "a key refused by nobody before the helper" \
+sabotage "$HELPER" "a key refused by nobody before the core" \
     '        guard isValidKey(key) else { return .failure(invalid(key)) }
         var arguments|||        var arguments' || ok=1
 sabotage "$HELPER" "no deadline" \
