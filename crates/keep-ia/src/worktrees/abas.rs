@@ -12,7 +12,9 @@ use serde_json::Value;
 use super::AbaListada;
 use super::ambiente::Ambiente;
 use super::codex;
-use super::estado::{Estado, Historia, chave_keepd, historico_da_concha, nascimento_do_processo};
+use super::estado::{
+    Estado, Historia, adota_historico_do_kit, chave_keepd, historico_da_concha, nascimento_do_processo,
+};
 use super::prazo::Prazo;
 use super::sessoes::SessaoViva;
 use super::texto::{e_uuid, titulo_limpo};
@@ -256,6 +258,14 @@ pub fn resolver(
         }
     };
     let vinc = crate::vinculo::vincular(&r);
+    // O histórico que veio do kit vale aqui se for do daemon que respondeu
+    // (o `indexar` o adota de vez; o `listar` não grava nada).
+    let adotado = est.filter(|e| r.exato && e.historico_do_kit.is_some()).map(|e| {
+        let mut e = e.clone();
+        adota_historico_do_kit(&mut e, &r.daemon, nascimento_do_socket(amb));
+        e
+    });
+    let est = adotado.as_ref().or(est);
     let abas: HashMap<(String, u32), TabInfo> =
         r.abas.iter().filter(|a| !a.info.finished).map(|a| ((a.ws.clone(), a.info.id), a.info.clone())).collect();
     if r.exato {

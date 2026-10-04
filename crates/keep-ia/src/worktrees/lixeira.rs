@@ -20,9 +20,9 @@ use super::ambiente::Ambiente;
 use super::estado::{self, grava_json};
 use super::git::git;
 use super::listar::na_lixeira;
-use super::pastas::{absoluto, base, canon, e_pasta, junta, mesmo, nascimento, nascimento_ns, normaliza, outra_maquina, pai};
+use super::pastas::{absoluto, base, canon, e_pasta, junta, mesmo, nascimento_ns, normaliza, outra_maquina, pai};
 use super::prazo::Estourou;
-use super::repos::{comum_de, repo_de};
+use super::repos::{comum_de, nascimento_do_registro_em, repo_de};
 use super::texto::{agora, iso};
 use super::varredura;
 use super::{DIR_PENDENTES, LOG_LIXEIRA, Conclusao, Preparo, ProcessoDentro};
@@ -101,7 +101,7 @@ fn preparar_(amb: &Ambiente, caminho: &str, nasceu: Option<i64>) -> Result<Prepa
         return Ok(recusa(format!("não é a raiz da worktree (a raiz é {top})")));
     }
     if let Some(n) = nasceu {
-        let agora_ns = std::fs::metadata(&gd).ok().map(|m| nascimento_ns(nascimento(&m)));
+        let agora_ns = nascimento_do_registro_em(&gd).map(nascimento_ns);
         if agora_ns != Some(n) {
             return Ok(recusa("a worktree neste caminho não é a que foi listada (recriada depois da pergunta)"));
         }

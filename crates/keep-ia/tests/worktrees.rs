@@ -41,6 +41,7 @@ fn papel() {
     match std::env::var("KEEP_WT_TESTE_PAPEL").as_deref() {
         Ok("dorme") => std::thread::sleep(Duration::from_secs(90)),
         Ok("concha") => concha(),
+        Ok("keepd-antigo") => keepd_antigo(),
         _ => {}
     }
 }
@@ -62,15 +63,19 @@ fn concha() {
                     "cd" => {
                         std::env::set_current_dir(resto).ok();
                     }
-                    "mata" => {
+                    "mata" | "sai" => {
                         if let Some(mut f) = filho.take() {
                             f.kill().ok();
                             f.wait().ok();
                         }
+                        if cmd == "sai" {
+                            std::fs::write(&feito, "").ok();
+                            return;
+                        }
                     }
                     "sobe" => {
                         let p: Vec<&str> = resto.split(' ').collect();
-                        let f = sobe_processo("dorme", None, Some(p[0]), &p[2..], None);
+                        let f = sobe_processo("dorme", None, Some(p[0]), &p[2..], &[]);
                         std::fs::write(p[1], f.id().to_string()).ok();
                         filho = Some(f);
                     }
@@ -86,6 +91,49 @@ fn concha() {
     }
 }
 
+/// Um keepd de antes do `List3`, num processo só dele: os filhos dele são só
+/// o shell da aba (`KEEP_WT_TESTE_PASTA`), e a lista é a de
+/// `KEEP_WT_TESTE_ABAS` (`[{ws, id, title, cwd}]`), relida a cada pergunta.
+/// O `List3` ele não conhece: fecha a conexão.
+fn keepd_antigo() {
+    let var = |n: &str| std::env::var(n).unwrap();
+    let concha = sobe_processo(
+        "concha",
+        Some(Path::new(&var("KEEP_WT_TESTE_PASTA"))),
+        None,
+        &[],
+        &[("KEEP_WT_TESTE_ORDENS", var("KEEP_WT_TESTE_ORDENS"))],
+    );
+    std::fs::write(var("KEEP_WT_TESTE_PID"), concha.id().to_string()).unwrap();
+    let abas = PathBuf::from(var("KEEP_WT_TESTE_ABAS"));
+    let l = Listener::bind(var("KEEP_WT_TESTE_SOCKET")).unwrap();
+    std::thread::spawn(|| {
+        std::thread::sleep(Duration::from_secs(90));
+        std::process::exit(0);
+    });
+    for conexao in l.incoming() {
+        let Ok(mut s) = conexao else { break };
+        if let Ok(Some(ClientMsg::List2)) = ClientMsg::read(&mut s) {
+            let lista: Vec<Value> = serde_json::from_slice(&std::fs::read(&abas).unwrap_or_default()).unwrap_or_default();
+            let mut ws: Vec<WorkspaceInfo> = Vec::new();
+            for a in lista {
+                let nome = a["ws"].as_str().unwrap_or("W").to_string();
+                let info = TabInfo {
+                    id: a["id"].as_u64().unwrap_or(1) as u32,
+                    title: a["title"].as_str().unwrap_or("").into(),
+                    cwd: a["cwd"].as_str().unwrap_or("").into(),
+                    ..TabInfo::default()
+                };
+                match ws.iter_mut().find(|w| w.name == nome) {
+                    Some(w) => w.tabs.push(info),
+                    None => ws.push(WorkspaceInfo { name: nome, tabs: vec![info] }),
+                }
+            }
+            ServerMsg::Workspaces2(ws).write(&mut s).ok();
+        }
+    }
+}
+
 /// O executável de teste com um nome (`arg0`): no unix pelo `argv[0]`; no
 /// Windows por uma cópia dele com esse nome.
 fn executavel(arg0: Option<&str>) -> (PathBuf, Option<String>) {
@@ -93,11 +141,17 @@ fn executavel(arg0: Option<&str>) -> (PathBuf, Option<String>) {
     match arg0 {
         None => (exe, None),
         Some(nome) if cfg!(windows) => {
+            // Uma cópia por nome, feita uma vez: duas threads copiando o mesmo
+            // arquivo dariam a uma delas um executável pela metade.
+            static COPIAS: Mutex<()> = Mutex::new(());
+            let _vez = COPIAS.lock().unwrap_or_else(|e| e.into_inner());
             let pasta = std::env::temp_dir().join(format!("keep-wt-exe-{}", std::process::id()));
             std::fs::create_dir_all(&pasta).unwrap();
             let copia = pasta.join(format!("{nome}.exe"));
             if !copia.exists() {
-                std::fs::copy(&exe, &copia).ok();
+                let tmp = pasta.join(format!("{nome}.copiando"));
+                std::fs::copy(&exe, &tmp).expect("copiar o executável de teste");
+                std::fs::rename(&tmp, &copia).expect("dar o nome à cópia");
             }
             (copia, None)
         }
@@ -105,7 +159,7 @@ fn executavel(arg0: Option<&str>) -> (PathBuf, Option<String>) {
     }
 }
 
-fn sobe_processo(papel: &str, cwd: Option<&Path>, arg0: Option<&str>, extra: &[&str], ordens: Option<&Path>) -> Child {
+fn sobe_processo(papel: &str, cwd: Option<&Path>, arg0: Option<&str>, extra: &[&str], vars: &[(&str, String)]) -> Child {
     let (exe, nome) = executavel(arg0);
     let mut c = Command::new(exe);
     #[cfg(unix)]
@@ -121,8 +175,8 @@ fn sobe_processo(papel: &str, cwd: Option<&Path>, arg0: Option<&str>, extra: &[&
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    if let Some(o) = ordens {
-        c.env("KEEP_WT_TESTE_ORDENS", o);
+    for (k, v) in vars {
+        c.env(k, v);
     }
     if let Some(d) = cwd {
         c.current_dir(d);
@@ -132,7 +186,7 @@ fn sobe_processo(papel: &str, cwd: Option<&Path>, arg0: Option<&str>, extra: &[&
 
 /// Um processo que só dorme (com a pasta atual em `cwd`).
 fn dorme(cwd: Option<&Path>) -> Child {
-    sobe_processo("dorme", cwd, None, &[], None)
+    sobe_processo("dorme", cwd, None, &[], &[])
 }
 
 fn mata(mut c: Child) {
@@ -154,7 +208,9 @@ fn espera(seg: f64, mut cond: impl FnMut() -> bool) -> bool {
 
 /// Um shell de mentira com um "programa" dentro.
 struct Concha {
-    filho: Child,
+    /// Quando o shell é filho deste processo (e não de um keepd de mentira).
+    filho: Option<Child>,
+    pid: u32,
     ordens: PathBuf,
     agente: Option<u32>,
 }
@@ -162,12 +218,12 @@ struct Concha {
 impl Concha {
     fn nova(m: &Mundo, cwd: &Path) -> Concha {
         let ordens = m.base.join(format!("ordens-{}", uuid()));
-        let filho = sobe_processo("concha", Some(cwd), None, &[], Some(&ordens));
-        Concha { filho, ordens, agente: None }
+        let filho = sobe_processo("concha", Some(cwd), None, &[], &[("KEEP_WT_TESTE_ORDENS", texto(&ordens))]);
+        Concha { pid: filho.id(), filho: Some(filho), ordens, agente: None }
     }
 
     fn pid(&self) -> u32 {
-        self.filho.id()
+        self.pid
     }
 
     fn manda(&self, txt: &str) {
@@ -213,9 +269,11 @@ impl Concha {
     /// Mata o programa e o shell.
     fn fim(self) {
         if processos::vivo(self.pid()) {
-            self.manda("mata");
+            self.manda("sai");
         }
-        mata(self.filho);
+        if let Some(f) = self.filho {
+            mata(f);
+        }
     }
 }
 
@@ -257,7 +315,7 @@ fn g(repo: &str, args: &[&str]) -> String {
 fn nascimento_do_registro(cam: &str) -> f64 {
     let gitdir = std::fs::read_to_string(Path::new(cam).join(".git")).unwrap();
     let adm = gitdir.trim().strip_prefix("gitdir:").unwrap().trim().to_string();
-    pastas::nascimento(&std::fs::metadata(adm).unwrap())
+    repos::nascimento_do_registro_em(&adm).unwrap()
 }
 
 struct Mundo {
@@ -1534,21 +1592,41 @@ fn t22a_vinculo_exato_pela_lista() {
 
 #[test]
 fn t22b_daemon_sem_list3_nao_move_nada() {
-    // O daemon antigo não diz os processos das abas: o shell é deduzido (aqui,
-    // pela pasta, que só ele tem entre os filhos deste processo, que faz de
-    // keepd), e a conversa que roda nele também — mas nada se move por um
-    // vínculo deduzido.
+    // O daemon antigo não diz os processos das abas: o shell é deduzido (os
+    // filhos do keepd, pela pasta), e a conversa que roda nele também — mas
+    // nada se move por um vínculo deduzido.
     let m = Mundo::novo();
-    let k = Keepd::sobe(&m.amb.socket, false);
-    let (c, agente, mut conversa) = aba_com_claude(&m, &k, 1, "✳ Outra coisa");
+    let (ordens, pidf, abas) = (m.base.join("ordens-keepd"), m.base.join("concha.pid"), m.base.join("abas.json"));
+    std::fs::write(&abas, "[]").unwrap();
+    let keepd = sobe_processo(
+        "keepd-antigo",
+        None,
+        None,
+        &[],
+        &[
+            ("KEEP_WT_TESTE_SOCKET", texto(&m.amb.socket)),
+            ("KEEP_WT_TESTE_ABAS", texto(&abas)),
+            ("KEEP_WT_TESTE_ORDENS", texto(&ordens)),
+            ("KEEP_WT_TESTE_PID", texto(&pidf)),
+            ("KEEP_WT_TESTE_PASTA", m.raiz.clone()),
+        ],
+    );
+    assert!(espera(20.0, || std::fs::read_to_string(&pidf).is_ok_and(|s| !s.is_empty())), "o keepd antigo não subiu");
+    let pid: u32 = std::fs::read_to_string(&pidf).unwrap().trim().parse().unwrap();
+    let mut c = Concha { filho: None, pid, ordens, agente: None };
+    let agente = c.sobe("claude", &[]);
+    let mut conversa = Conversa::nova(&m);
+    sessao_claude(&m, agente, &conversa.sid);
     let pasta = texto(&processos::cwd(c.pid()).unwrap());
-    k.aba("W", TabInfo { id: 1, title: "✳ Outra coisa".into(), cwd: pasta, ..TabInfo::default() });
+    std::fs::write(&abas, json!([{"ws": "W", "id": 1, "title": "✳ Outra coisa", "cwd": pasta}]).to_string()).unwrap();
+    assert!(espera(20.0, || keep_proto::net::Stream::connect(&m.amb.socket).is_ok()), "o keepd antigo não atende");
     let (w, t) = m.wt("wt-talvez");
     conversa.chamada(t - 0.3, Some(t + 0.3), &format!("git worktree add {w} HEAD"));
     m.indexar(t + 60.0);
     let r = listar_de_verdade(&m, &["W:1"]);
     let concha = c.pid();
     c.fim();
+    mata(keepd);
     let a = &r.abas[0];
     assert!(a.vinculo == "provavel" && a.agente == "claude" && a.sessoes.is_empty(), "{:?}", r.abas);
     assert_eq!(a.pids, vec![agente, concha]);
@@ -1807,7 +1885,10 @@ fn t24_indexar_sem_novidade_e_barato() {
     let t0 = Instant::now();
     let r = m.indexar(t + 120.0);
     let dt = t0.elapsed().as_secs_f64();
-    assert!(r.decididas_agora == 0 && r.indice["bytes_lidos"] == json!(0) && dt < 1.0, "{r:?} {dt}");
+    // O git do Windows custa mais por chamada (e o indexar refaz o de cada
+    // worktree depois de um minuto).
+    let teto = if cfg!(windows) { 3.0 } else { 1.0 };
+    assert!(r.decididas_agora == 0 && r.indice["bytes_lidos"] == json!(0) && dt < teto, "{r:?} {dt}");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -1867,6 +1948,41 @@ fn decisoes_do_kit_valem_sem_estado_proprio() {
     assert!(r.avisos.is_empty(), "{:?}", r.avisos);
     let est = estado::carrega(&m2.amb).unwrap();
     assert!(est.trazido_do_kit.is_some() && est.nascimentos.values().any(|d| d.caminho.as_deref() == Some(w.as_str())));
+}
+
+#[test]
+fn historico_do_kit_vale_para_o_daemon_que_roda() {
+    // O kit viu, neste shell e sob este daemon, uma conversa que já não roda:
+    // a worktree dela vai com a aba, antes mesmo do primeiro indexar daqui.
+    let m = Mundo::novo();
+    let k = Keepd::sobe(&m.amb.socket, true);
+    let (c, _agente, _atual) = aba_com_claude(&m, &k, 1, "✳ Agora");
+    let mut antiga = Conversa::nova(&m);
+    let (w, t) = m.wt("wt-do-kit-antes");
+    antiga.chamada(t - 0.3, Some(t + 0.3), &format!("git worktree add {w} HEAD"));
+    let kit = m.base.join("kit");
+    std::fs::create_dir_all(&kit).unwrap();
+    let nasceu = processos::um(c.pid()).unwrap().inicio_ms as f64 / 1000.0;
+    // O kit guardava o daemon pelo nascimento do socket ("%.6f"); este diz
+    // que nasceu em 1791000000000 ms.
+    // O mesmo pid sob outro daemon (de antes de um reinício) não vale.
+    let historico = json!({"1791000000.000000": {c.pid().to_string(): {"ids": [antiga.sid], "nasceu": nasceu}},
+                           "1700000000.000000": {c.pid().to_string(): {"ids": ["de-outro-daemon"], "nasceu": nasceu}}});
+    std::fs::write(kit.join("worktrees.json"),
+        json!({"versao": 1, "nascimentos": {}, "historico": historico, "repos": []}).to_string()).unwrap();
+    let mut m = m;
+    m.amb.kit = Some(kit);
+    let r = listar_de_verdade(&m, &["W:1"]);
+    let s = &r.abas[0].sessoes;
+    assert!(s.contains(&antiga.sid) && !s.contains(&"de-outro-daemon".to_string()), "{:?}", r.abas);
+    assert_eq!(caminhos(&r), vec![w.clone()], "{r:?}");
+    m.indexar_de_verdade(t + 60.0); // o indexar o adota de vez, pela chave daqui
+    let est = estado::carrega(&m.amb).unwrap();
+    let chave = format!("{}:1791000000000", std::process::id());
+    let h = &est.historico[&chave][&c.pid().to_string()];
+    c.fim();
+    assert!(h.ids.contains(&antiga.sid) && !h.ids.contains(&"de-outro-daemon".to_string()), "{:?}", est.historico);
+    assert!(est.historico_do_kit.is_none() && est.historico.len() == 1, "{:?}", est.historico);
 }
 
 #[test]

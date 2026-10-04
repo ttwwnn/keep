@@ -156,7 +156,7 @@ pub fn worktrees_do_repo(comum: &str) -> Vec<Worktree> {
         let ramo = le_texto(&junta(&adm, "HEAD"), 4096)
             .ok()
             .and_then(|h| h.trim().strip_prefix("ref: refs/heads/").map(str::to_string));
-        let nasceu = nascimento(&m);
+        let nasceu = nascimento_do_registro(&adm, &m);
         let codex_dono = std::fs::read(junta(&adm, "codex-thread.json"))
             .ok()
             .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
@@ -180,6 +180,35 @@ pub fn worktrees_do_repo(comum: &str) -> Vec<Worktree> {
     saida
 }
 
+/// Quando o registro de uma worktree (`<comum>/worktrees/<id>`) nasceu: o
+/// instante do `git worktree add`, a hora T de quem é dono.
+///
+/// No macOS, o nascimento da pasta do registro (o mesmo número que o kit
+/// gravava). No Windows, o do `commondir` de dentro dela: o NTFS devolve a
+/// uma pasta apagada e recriada com o mesmo nome em até 15 s a hora de
+/// criação da anterior ("tunneling"), e um registro novo nunca herda o que
+/// estava dentro do velho. No Linux sem o nascimento (`statx`), a última
+/// mudança do `commondir`, que o git escreve uma vez só — a da pasta muda a
+/// cada trava que o git cria lá dentro.
+pub fn nascimento_do_registro(adm: &str, m: &std::fs::Metadata) -> f64 {
+    let dentro = || std::fs::metadata(junta(adm, "commondir")).ok();
+    if cfg!(windows) {
+        if let Some(c) = dentro() {
+            return nascimento(&c);
+        }
+        return nascimento(m);
+    }
+    if m.created().is_ok() {
+        return nascimento(m);
+    }
+    nascimento(&dentro().unwrap_or_else(|| m.clone()))
+}
+
+/// O nascimento do registro em `adm`, se ele existe.
+pub fn nascimento_do_registro_em(adm: &str) -> Option<f64> {
+    std::fs::metadata(adm).ok().map(|m| nascimento_do_registro(adm, &m))
+}
+
 /// A chave de uma worktree no registro: o repositório, o id e o nascimento
 /// (um nome reaproveitado é outra worktree).
 pub fn chave(w: &Worktree) -> String {
@@ -200,7 +229,7 @@ pub fn todas(comuns: &BTreeSet<String>) -> Vec<Worktree> {
     comuns.iter().flat_map(|c| worktrees_do_repo(c)).collect()
 }
 
-/// Para os testes: o nascimento como o `listar` o mostra.
-pub fn nascimento_de(p: &Path) -> Option<i64> {
-    std::fs::metadata(p).ok().map(|m| nascimento_ns(nascimento(&m)))
+/// O nascimento como o `listar` o mostra, de um registro.
+pub fn nascimento_ns_do_registro(adm: &Path) -> Option<i64> {
+    nascimento_do_registro_em(&adm.to_string_lossy()).map(nascimento_ns)
 }
