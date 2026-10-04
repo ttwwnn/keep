@@ -3,7 +3,9 @@
 use std::time::{Duration, Instant};
 
 use keepd::Tab;
-use portable_pty::CommandBuilder;
+
+mod common;
+use common::shell;
 
 /// Poll until `cond` holds. PTY output is asynchronous, so tests must wait on
 /// a condition rather than on a fixed sleep.
@@ -18,21 +20,13 @@ fn wait_for(timeout: Duration, mut cond: impl FnMut() -> bool) -> bool {
     false
 }
 
-fn shell() -> CommandBuilder {
-    let mut cmd = CommandBuilder::new("/bin/sh");
-    cmd.env("PS1", "$ ");
-    cmd
-}
-
 fn screen_contains(session: &Tab, needle: &str) -> bool {
     session.screen_text().map(|s| s.contains(needle)).unwrap_or(false)
 }
 
 #[test]
 fn captures_child_output() {
-    let mut cmd = CommandBuilder::new("/bin/echo");
-    cmd.arg("hello-from-pty");
-    let session = Tab::spawn(cmd, 40, 6).expect("spawn");
+    let session = Tab::spawn(common::one_shot("hello-from-pty"), 40, 6).expect("spawn");
 
     assert!(
         wait_for(Duration::from_secs(5), || screen_contains(&session, "hello-from-pty")),
@@ -50,10 +44,11 @@ fn forwards_input_to_child() {
     let session = Tab::spawn(shell(), 60, 10).expect("spawn");
 
     // 42 appears only in the output, never in the echoed command text.
-    session.send(b"echo $((6*7))\n").expect("send");
+    let (input, sentinel) = common::computed("", 6, 36);
+    session.send(&input).expect("send");
 
     assert!(
-        wait_for(Duration::from_secs(5), || screen_contains(&session, "42")),
+        wait_for(Duration::from_secs(10), || screen_contains(&session, &sentinel)),
         "shell never ran the command: {:?}",
         session.screen_text()
     );
@@ -63,12 +58,10 @@ fn forwards_input_to_child() {
 #[test]
 fn repaint_carries_styling_that_plain_text_drops() {
     let session = Tab::spawn(shell(), 60, 10).expect("spawn");
-    session
-        .send(b"printf '\\033[1;31mDANGER\\033[0m\\n'\n")
-        .expect("send");
+    session.send(&common::styled()).expect("send");
 
     assert!(
-        wait_for(Duration::from_secs(5), || screen_contains(&session, "DANGER")),
+        wait_for(Duration::from_secs(10), || screen_contains(&session, "DANGER")),
         "output never appeared"
     );
 
@@ -91,9 +84,7 @@ fn repaint_carries_styling_that_plain_text_drops() {
 fn tab_keeps_running_with_no_one_watching() {
     let session = Tab::spawn(shell(), 60, 20).expect("spawn");
 
-    session
-        .send(b"for i in 1 2 3 4; do echo tick-$i; sleep 0.15; done; echo fin$((20+2))\n")
-        .expect("send");
+    session.send(&common::ticks()).expect("send");
 
     // Simulate a detached client: read nothing at all while the work happens.
     std::thread::sleep(Duration::from_millis(300));
@@ -102,7 +93,7 @@ fn tab_keeps_running_with_no_one_watching() {
     // by the shell so it cannot appear in the echoed command line — matching
     // the echo would let this pass before the work actually ran.
     assert!(
-        wait_for(Duration::from_secs(5), || screen_contains(&session, "fin22")),
+        wait_for(Duration::from_secs(10), || screen_contains(&session, "fin22")),
         "work did not finish: {:?}",
         session.screen_text()
     );
@@ -121,9 +112,9 @@ fn tab_keeps_running_with_no_one_watching() {
 fn attach_has_no_gap_and_no_duplicate() {
     let session = Tab::spawn(shell(), 60, 20).expect("spawn");
 
-    session.send(b"echo before$((1+1))\n").expect("send");
+    session.send(&common::computed("before", 1, 1).0).expect("send");
     assert!(
-        wait_for(Duration::from_secs(5), || screen_contains(&session, "before2")),
+        wait_for(Duration::from_secs(10), || screen_contains(&session, "before2")),
         "setup output never appeared"
     );
 
@@ -131,11 +122,11 @@ fn attach_has_no_gap_and_no_duplicate() {
     let repaint = String::from_utf8_lossy(&repaint_bytes).into_owned();
     assert!(repaint.contains("before2"), "repaint missed prior output");
 
-    session.send(b"echo after$((2+2))\n").expect("send");
+    session.send(&common::computed("after", 2, 2).0).expect("send");
 
     // Collect what the feed delivers after the snapshot.
     let mut streamed = String::new();
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
         match attachment.output.recv_timeout(Duration::from_millis(100)) {
             Ok(chunk) => {
@@ -186,18 +177,20 @@ fn busy_tracks_the_foreground_command() {
 
     // Let the shell reach its prompt before judging it.
     assert!(
-        wait_for(Duration::from_secs(5), || screen_contains(&session, "$")
-            || screen_contains(&session, "%")
-            || screen_contains(&session, "❯")),
+        wait_for(Duration::from_secs(10), || session
+            .screen_text()
+            .map(|s| common::shows_prompt(&s))
+            .unwrap_or(false)),
         "shell never showed a prompt: {:?}",
         session.screen_text()
     );
     assert!(!session.is_busy(), "a shell at its prompt is not busy");
 
-    session.send(b"sleep 3\n").expect("send");
+    session.send(&common::wait_a_while(3)).expect("send");
     assert!(
         wait_for(Duration::from_secs(5), || session.is_busy()),
-        "running sleep did not register as busy"
+        "running {} did not register as busy",
+        common::WAITING_COMMAND
     );
 
     // And it goes quiet again once the command finishes.
@@ -225,7 +218,7 @@ fn a_client_that_stops_reading_is_repainted_not_starved() {
     assert!(!attachment.overflowed(), "a fresh attachment has dropped nothing");
 
     // Far more output than the backlog can hold.
-    session.send(b"seq 1 200000\n").expect("send");
+    session.send(&common::flood()).expect("send");
     assert!(
         wait_for(Duration::from_secs(20), || attachment.overflowed()),
         "the queue never filled, so the drop path was never exercised"
@@ -233,7 +226,7 @@ fn a_client_that_stops_reading_is_repainted_not_starved() {
 
     // The grid keeps up regardless: falling behind costs the client its queued
     // chunks, never the tab's own state.
-    session.send(b"echo sentinel$((7+6))\n").expect("send");
+    session.send(&common::computed("sentinel", 7, 6).0).expect("send");
     assert!(
         wait_for(Duration::from_secs(20), || screen_contains(&session, "sentinel13")),
         "the tab stopped tracking its own screen: {:?}",
@@ -314,7 +307,7 @@ fn closing_a_root_promotes_one_pane_and_keeps_the_rest_with_it() {
 #[test]
 fn snapshot_reports_how_far_back_it_reaches() {
     let session = Tab::spawn(shell(), 80, 10).expect("spawn");
-    session.send(b"seq 1 300\n").expect("send");
+    session.send(&common::count_to_300()).expect("send");
     assert!(
         wait_for(Duration::from_secs(10), || screen_contains(&session, "300")),
         "the tab never produced the output"
@@ -532,20 +525,17 @@ fn moving_a_pane_can_leave_its_own_panes_behind() {
 fn cwd_follows_the_shell() {
     let session = Tab::spawn(shell(), 60, 10).expect("spawn");
 
-    // `/tmp` is a symlink to `/private/tmp` on macOS, and what comes back is
-    // the resolved path either way — so compare against the resolved one.
-    let target = std::fs::canonicalize("/tmp").expect("resolve /tmp");
-    let target = target.to_str().expect("utf-8 path").to_owned();
+    let (go, target) = common::elsewhere();
 
     assert!(
-        wait_for(Duration::from_secs(5), || !session.cwd().is_empty()),
+        wait_for(Duration::from_secs(10), || !session.cwd().is_empty()),
         "the tab never reported a directory"
     );
-    assert_ne!(session.cwd(), target, "the test would prove nothing from /tmp");
+    assert_ne!(session.cwd(), target, "the test would prove nothing from {target}");
 
-    session.send(b"cd /tmp\n").expect("send");
+    session.send(&go).expect("send");
     assert!(
-        wait_for(Duration::from_secs(5), || session.cwd() == target),
+        wait_for(Duration::from_secs(10), || session.cwd().eq_ignore_ascii_case(&target)),
         "cwd did not follow the shell: {:?}",
         session.cwd()
     );
@@ -565,16 +555,15 @@ fn command_names_what_is_running() {
     // `/bin/sh` is bash wearing another name, and this reports what is
     // actually running rather than what was asked for.
     assert!(
-        wait_for(Duration::from_secs(5), || {
-            matches!(session.command().as_str(), "sh" | "bash")
-        }),
+        wait_for(Duration::from_secs(10), || common::is_shell_name(&session.command())),
         "a tab at a prompt did not name its shell: {:?}",
         session.command()
     );
 
-    session.send(b"exec cat\n").expect("send");
+    let (become_it, name) = common::become_waiting_program();
+    session.send(&become_it).expect("send");
     assert!(
-        wait_for(Duration::from_secs(5), || session.command() == "cat"),
+        wait_for(Duration::from_secs(10), || session.command() == name),
         "the running command was not named: {:?}",
         session.command()
     );
@@ -593,15 +582,21 @@ fn output_alone_counts_as_activity() {
         "a fresh tab reported no activity at all"
     );
 
-    session.send(b"sleep 1; echo awake\n").expect("send");
+    session
+        .send(&common::line(if cfg!(windows) {
+            "Start-Sleep 1; Write-Output 'awake'"
+        } else {
+            "sleep 1; echo awake"
+        }))
+        .expect("send");
     assert!(
-        wait_for(Duration::from_secs(5), || screen_contains(&session, "awake")),
+        wait_for(Duration::from_secs(10), || screen_contains(&session, "awake")),
         "the shell never ran the command"
     );
     let after_typing = session.last_active();
 
     // Nothing is sent from here on; only the shell's own output can move it.
-    session.send(b"(sleep 1; echo later) &\n").expect("send");
+    session.send(&common::later("later")).expect("send");
     let sent_at = session.last_active();
     assert!(
         wait_for(Duration::from_secs(8), || session.last_active() > sent_at),

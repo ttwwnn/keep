@@ -29,6 +29,15 @@ pub mod ffi {
 
     pub const SUCCESS: c_int = 0;
 
+    /// `GhosttyTerminalOption` values we set.
+    pub const OPT_USERDATA: c_int = 0;
+    pub const OPT_WRITE_PTY: c_int = 1;
+
+    /// What the terminal calls with the bytes it would write back to the
+    /// PTY: the answers to the questions a program asks its terminal.
+    pub type WritePtyFn =
+        unsafe extern "C" fn(terminal: Terminal, userdata: *mut c_void, data: *const u8, len: usize);
+
     /// `GhosttyTerminalData` values we read.
     pub const DATA_KITTY_KEYBOARD_FLAGS: c_int = 8;
     pub const DATA_TITLE: c_int = 12;
@@ -106,6 +115,7 @@ pub mod ffi {
         ) -> c_int;
         pub fn ghostty_terminal_free(terminal: Terminal);
         pub fn ghostty_terminal_get(terminal: Terminal, data: c_int, out: *mut c_void) -> c_int;
+        pub fn ghostty_terminal_set(terminal: Terminal, option: c_int, value: *const c_void) -> c_int;
         pub fn ghostty_terminal_vt_write(terminal: Terminal, data: *const u8, len: usize);
         pub fn ghostty_terminal_resize(
             terminal: Terminal,
@@ -172,6 +182,29 @@ impl std::error::Error for Error {}
 /// A headless terminal: feed it PTY bytes, ask it for the screen.
 pub struct Terminal {
     raw: ffi::Terminal,
+    /// The answers the terminal has written, waiting to be collected; see
+    /// [`Terminal::answer_queries`]. Boxed so the address the library holds
+    /// stays put when the terminal moves.
+    replies: Option<Box<Vec<u8>>>,
+}
+
+/// How much unanswered reply is kept. A program asking the same question in
+/// a loop with nobody collecting must not grow this without end.
+const REPLY_LIMIT: usize = 64 * 1024;
+
+unsafe extern "C" fn collect_reply(
+    _terminal: ffi::Terminal,
+    userdata: *mut c_void,
+    data: *const u8,
+    len: usize,
+) {
+    if userdata.is_null() || data.is_null() || len == 0 {
+        return;
+    }
+    let buf = unsafe { &mut *(userdata as *mut Vec<u8>) };
+    if buf.len() + len <= REPLY_LIMIT {
+        buf.extend_from_slice(unsafe { std::slice::from_raw_parts(data, len) });
+    }
 }
 
 // The handle is owned exclusively; libghostty-vt forbids concurrent writes.
@@ -184,7 +217,39 @@ impl Terminal {
         if rc != ffi::SUCCESS {
             return Err(Error(rc));
         }
-        Ok(Self { raw })
+        Ok(Self { raw, replies: None })
+    }
+
+    /// Have the terminal answer what programs ask of it — where the cursor
+    /// is, which modes are set — into a buffer, collected with
+    /// [`Terminal::take_replies`].
+    ///
+    /// By default the questions go unanswered here, because whoever is
+    /// watching the tab answers them; this is for when nobody is.
+    pub fn answer_queries(&mut self) -> Result<(), Error> {
+        if self.replies.is_some() {
+            return Ok(());
+        }
+        let mut buf: Box<Vec<u8>> = Box::default();
+        let userdata = &mut *buf as *mut Vec<u8> as *const c_void;
+        let callback: ffi::WritePtyFn = collect_reply;
+        let rc = unsafe { ffi::ghostty_terminal_set(self.raw, ffi::OPT_USERDATA, userdata) };
+        if rc != ffi::SUCCESS {
+            return Err(Error(rc));
+        }
+        let rc = unsafe {
+            ffi::ghostty_terminal_set(self.raw, ffi::OPT_WRITE_PTY, callback as *const c_void)
+        };
+        if rc != ffi::SUCCESS {
+            return Err(Error(rc));
+        }
+        self.replies = Some(buf);
+        Ok(())
+    }
+
+    /// The answers written since the last call, oldest first.
+    pub fn take_replies(&mut self) -> Vec<u8> {
+        self.replies.as_mut().map(|b| std::mem::take(&mut **b)).unwrap_or_default()
     }
 
     /// Feed bytes read from the PTY.
@@ -557,6 +622,37 @@ mod abi {
         assert_eq!(std::mem::size_of::<ffi::ScreenExtra>(), 16, "ScreenExtra");
         assert_eq!(std::mem::size_of::<ffi::TerminalExtra>(), 32, "TerminalExtra");
         assert_eq!(std::mem::size_of::<ffi::FormatterOptions>(), 56, "FormatterOptions");
+    }
+}
+
+#[cfg(test)]
+mod replies {
+    use super::*;
+
+    #[test]
+    fn nothing_is_answered_unless_asked_to() {
+        let mut t = Terminal::new(40, 5).unwrap();
+        t.write(b"\x1b[6n");
+        assert!(t.take_replies().is_empty());
+    }
+
+    #[test]
+    fn the_cursor_position_is_answered() {
+        let mut t = Terminal::new(40, 5).unwrap();
+        t.answer_queries().unwrap();
+        t.write(b"abc\x1b[6n");
+        assert_eq!(t.take_replies(), b"\x1b[1;4R");
+        assert!(t.take_replies().is_empty(), "collected once");
+    }
+
+    #[test]
+    fn answers_survive_the_terminal_moving() {
+        let mut t = Terminal::new(40, 5).unwrap();
+        t.answer_queries().unwrap();
+        let mut moved = vec![t];
+        let t = &mut moved[0];
+        t.write(b"\x1b[2;3H\x1b[6n");
+        assert_eq!(t.take_replies(), b"\x1b[2;3R");
     }
 }
 

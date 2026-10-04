@@ -1,14 +1,16 @@
 //! keep — persistent terminal workspaces.
 
 mod attach;
+#[cfg(windows)]
+mod console;
 mod picker;
 
 use std::io::Write;
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use keep_proto::net::Stream;
 use keep_proto::{ClientMsg, ServerMsg, TAB_ANY, WorkspaceInfo};
 
 fn main() {
@@ -49,7 +51,7 @@ fn run() -> Result<()> {
         Some("new") => {
             let name = args.get(1).context("usage: keep new <workspace>")?;
             ensure_daemon(&socket)?;
-            let mut sock = UnixStream::connect(&socket)?;
+            let mut sock = Stream::connect(&socket)?;
             ClientMsg::NewTab {
                 workspace: name.clone(),
                 // Where it is run from. `keep <name>` has always opened a
@@ -76,7 +78,7 @@ fn run() -> Result<()> {
         Some("kill") => {
             let name = args.get(1).context("usage: keep kill <name>")?;
             ensure_daemon(&socket)?;
-            let mut sock = UnixStream::connect(&socket)?;
+            let mut sock = Stream::connect(&socket)?;
             ClientMsg::Kill { workspace: name.clone() }.write(&mut sock)?;
             match ServerMsg::read(&mut sock)? {
                 Some(ServerMsg::Ok) => {
@@ -138,7 +140,7 @@ fn list(socket: &Path) -> Result<Vec<WorkspaceInfo>> {
 }
 
 fn ask(socket: &Path, question: ClientMsg) -> Result<Vec<WorkspaceInfo>> {
-    let mut sock = UnixStream::connect(socket).context("connect to daemon")?;
+    let mut sock = Stream::connect(socket).context("connect to daemon")?;
     question.write(&mut sock)?;
     match ServerMsg::read(&mut sock)? {
         Some(ServerMsg::Workspaces(list) | ServerMsg::Workspaces2(list)) => Ok(list),
@@ -195,26 +197,53 @@ fn print_list(workspaces: &[WorkspaceInfo]) {
 /// The daemon is deliberately not a child of this process: it must outlive
 /// every client, including the one that happened to start it.
 fn ensure_daemon(socket: &Path) -> Result<()> {
-    if UnixStream::connect(socket).is_ok() {
+    if Stream::connect(socket).is_ok() {
         return Ok(());
     }
 
     let exe = daemon_binary()?;
-    std::process::Command::new(&exe)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .with_context(|| format!("start daemon at {}", exe.display()))?;
+    spawn_daemon(&exe).with_context(|| format!("start daemon at {}", exe.display()))?;
 
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
-        if UnixStream::connect(socket).is_ok() {
+        if Stream::connect(socket).is_ok() {
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(25));
     }
     anyhow::bail!("daemon did not start listening on {}", socket.display())
+}
+
+fn daemon_command(exe: &Path) -> std::process::Command {
+    let mut cmd = std::process::Command::new(exe);
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    cmd
+}
+
+#[cfg(unix)]
+fn spawn_daemon(exe: &Path) -> std::io::Result<()> {
+    daemon_command(exe).spawn().map(|_| ())
+}
+
+/// On Windows a child is tied to its parent's console and, often, to a job
+/// that ends with whatever started it — a terminal closing its window, an
+/// editor quitting. The daemon is detached from both, so it outlives this
+/// client the way it does on unix.
+#[cfg(windows)]
+fn spawn_daemon(exe: &Path) -> std::io::Result<()> {
+    use std::os::windows::process::CommandExt;
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+    let flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
+    match daemon_command(exe).creation_flags(flags | CREATE_BREAKAWAY_FROM_JOB).spawn() {
+        Ok(_) => Ok(()),
+        // A job that does not allow breaking away refuses the flag; inside
+        // one the daemon cannot outlive it anyway, so start it there.
+        Err(_) => daemon_command(exe).creation_flags(flags).spawn().map(|_| ()),
+    }
 }
 
 /// The name of the file an embedder drops in the working directory.
@@ -271,7 +300,7 @@ fn daemon_binary() -> Result<PathBuf> {
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let sibling = dir.join("keepd");
+            let sibling = dir.join(format!("keepd{}", std::env::consts::EXE_SUFFIX));
             if sibling.is_file() {
                 return Ok(sibling);
             }

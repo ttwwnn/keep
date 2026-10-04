@@ -113,11 +113,74 @@ fn rehome(tabs: &mut [Entry], departed: &HashMap<u32, (u32, u8)>) {
     }
 }
 
+/// The shell a new tab runs.
+#[cfg(unix)]
+fn shell_command() -> CommandBuilder {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+    CommandBuilder::new(shell)
+}
+
+/// The shell a new tab runs on Windows: the one named in `KEEP_SHELL`, or
+/// in the file the app writes when it is chosen there, or else the best
+/// PowerShell installed, or else `cmd`.
+///
+/// The file is read for every tab rather than once, so a shell chosen in the
+/// app applies to the next tab without restarting the daemon that holds the
+/// tabs already open.
+#[cfg(windows)]
+fn shell_command() -> CommandBuilder {
+    let chosen = std::env::var("KEEP_SHELL")
+        .ok()
+        .or_else(|| std::fs::read_to_string(shell_setting_path()?).ok())
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty());
+    if let Some(line) = chosen {
+        let args = crate::winproc::split_command_line(&line);
+        if let Some((program, rest)) = args.split_first() {
+            let mut cmd = CommandBuilder::new(program);
+            cmd.args(rest);
+            return cmd;
+        }
+    }
+    if let Some(pwsh) = find_on_path("pwsh.exe").or_else(|| {
+        let program_files = std::env::var("ProgramFiles").ok()?;
+        let path = std::path::Path::new(&program_files).join(r"PowerShell\7\pwsh.exe");
+        path.is_file().then_some(path)
+    }) {
+        let mut cmd = CommandBuilder::new(pwsh);
+        cmd.arg("-NoLogo");
+        return cmd;
+    }
+    let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+    let powershell =
+        std::path::Path::new(&root).join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
+    if powershell.is_file() {
+        let mut cmd = CommandBuilder::new(powershell);
+        cmd.arg("-NoLogo");
+        return cmd;
+    }
+    CommandBuilder::new(std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into()))
+}
+
+/// Where the app keeps the shell chosen in it: `%APPDATA%\Keep\shell.txt`.
+#[cfg(windows)]
+pub fn shell_setting_path() -> Option<std::path::PathBuf> {
+    let appdata = std::env::var("APPDATA").ok()?;
+    Some(std::path::Path::new(&appdata).join("Keep").join("shell.txt"))
+}
+
+#[cfg(windows)]
+fn find_on_path(exe: &str) -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path).map(|dir| dir.join(exe)).find(|p| p.is_file())
+}
+
 /// The terminal to call ourselves, if the system can look it up.
 ///
 /// Checked rather than assumed: ghostty's description is installed with
 /// ghostty, and on a machine without it every program that consults terminfo
 /// would fail to find the terminal it was just told it is in.
+#[cfg(unix)]
 fn term_name() -> &'static str {
     const GHOSTTY: &str = "xterm-ghostty";
     static RESOLVED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -167,10 +230,18 @@ impl Workspace {
         split_of: u32,
         split_dir: u8,
     ) -> Result<(u32, Arc<Tab>)> {
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-        let mut cmd = CommandBuilder::new(shell);
+        let mut cmd = shell_command();
         if let Some(dir) = cwd {
             cmd.cwd(dir);
+        }
+        // A tab nobody gave a directory starts at home. On unix the shell
+        // goes there by itself; a Windows process starts wherever its parent
+        // stands, and the daemon's directory means nothing to anyone.
+        #[cfg(windows)]
+        if cwd.is_none() {
+            if let Ok(home) = std::env::var("USERPROFILE") {
+                cmd.cwd(home);
+            }
         }
         // Programs expect these; without TERM many refuse to draw at all.
         //
@@ -182,7 +253,13 @@ impl Workspace {
         // description behind it is installed, which is not something a daemon
         // may assume — a terminal nobody can look up is worse than a modest
         // one that everybody can.
+        #[cfg(unix)]
         cmd.env("TERM", term_name());
+        // What draws a tab on Windows is the app's own terminal, xterm.js,
+        // and no program there looks a terminal up by name: the name that
+        // says the most to the ones that read it at all is xterm's.
+        #[cfg(windows)]
+        cmd.env("TERM", "xterm-256color");
         // Said outright rather than inherited. What renders here is ghostty,
         // and it renders in twenty-four bit colour — but a daemon is started
         // once and may be started from anywhere, including somewhere with no
@@ -191,7 +268,13 @@ impl Workspace {
         // inheritance, these are right until the day the daemon is started
         // from a login script, and then every colour in every shell is wrong.
         cmd.env("COLORTERM", "truecolor");
+        #[cfg(unix)]
         cmd.env("TERM_PROGRAM", "ghostty");
+        #[cfg(windows)]
+        {
+            cmd.env("TERM_PROGRAM", "keep");
+            cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+        }
         cmd.env("KEEP_WORKSPACE", &self.name);
 
         // Whatever started this daemon does not get to introduce itself to

@@ -1,15 +1,19 @@
-//! End-to-end over a real unix socket: attach, work, disconnect, reattach.
+//! End-to-end over the daemon's real socket — a unix socket, or a named pipe
+//! on Windows: attach, work, disconnect, reattach.
 
-use std::os::unix::net::UnixStream;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use keep_proto::net::Stream;
 use keep_proto::{ClientMsg, ServerMsg, TAB_ANY};
 use keepd::Server;
+
+mod common;
 
 /// Start a daemon on a private socket. Returns the path; the server thread
 /// lives for the rest of the test process.
 fn start_daemon(tag: &str) -> std::path::PathBuf {
+    common::use_test_shell();
     let dir = std::env::temp_dir().join(format!("keep-test-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("keep.sock");
@@ -23,7 +27,7 @@ fn start_daemon(tag: &str) -> std::path::PathBuf {
     // Wait until it actually accepts.
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
-        if UnixStream::connect(&path).is_ok() {
+        if Stream::connect(&path).is_ok() {
             break;
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -35,7 +39,7 @@ fn start_daemon(tag: &str) -> std::path::PathBuf {
 }
 
 /// Read frames until `needle` shows up in the accumulated output.
-fn read_until(stream: &mut UnixStream, needle: &str, timeout: Duration) -> String {
+fn read_until(stream: &mut Stream, needle: &str, timeout: Duration) -> String {
     let mut seen = String::new();
     stream.set_read_timeout(Some(Duration::from_millis(200))).ok();
     let deadline = Instant::now() + timeout;
@@ -60,7 +64,7 @@ fn work_survives_the_client_going_away() {
     let path = start_daemon("survive");
 
     // --- first client attaches and does some work ---
-    let mut c1 = UnixStream::connect(&path).expect("connect");
+    let mut c1 = Stream::connect(&path).expect("connect");
     ClientMsg::Attach { workspace: "demo".into(), tab: TAB_ANY, cols: 80, rows: 24 }
         .write(&mut c1)
         .unwrap();
@@ -76,7 +80,7 @@ fn work_survives_the_client_going_away() {
         other => panic!("expected repaint after attached, got {other:?}"),
     }
 
-    ClientMsg::Input(b"echo alpha$((3+4))\n".to_vec()).write(&mut c1).unwrap();
+    ClientMsg::Input(common::computed("alpha", 3, 4).0).write(&mut c1).unwrap();
     let seen = read_until(&mut c1, "alpha7", Duration::from_secs(10));
     assert!(seen.contains("alpha7"), "shell never ran the command: {seen:?}");
 
@@ -85,7 +89,7 @@ fn work_survives_the_client_going_away() {
     std::thread::sleep(Duration::from_millis(200));
 
     // --- second client attaches to the same name ---
-    let mut c2 = UnixStream::connect(&path).expect("reconnect");
+    let mut c2 = Stream::connect(&path).expect("reconnect");
     ClientMsg::Attach { workspace: "demo".into(), tab: TAB_ANY, cols: 80, rows: 24 }
         .write(&mut c2)
         .unwrap();
@@ -101,7 +105,7 @@ fn work_survives_the_client_going_away() {
     );
 
     // And the same shell is still there, holding its state.
-    ClientMsg::Input(b"echo beta$((5+5))\n".to_vec()).write(&mut c2).unwrap();
+    ClientMsg::Input(common::computed("beta", 5, 5).0).write(&mut c2).unwrap();
     let seen = read_until(&mut c2, "beta10", Duration::from_secs(10));
     assert!(seen.contains("beta10"), "reattached shell is dead: {seen:?}");
 }
@@ -110,14 +114,14 @@ fn work_survives_the_client_going_away() {
 fn list_reports_live_workspaces() {
     let path = start_daemon("list");
 
-    let mut attached = UnixStream::connect(&path).unwrap();
+    let mut attached = Stream::connect(&path).unwrap();
     ClientMsg::Attach { workspace: "one".into(), tab: TAB_ANY, cols: 80, rows: 24 }
         .write(&mut attached)
         .unwrap();
     attached.set_read_timeout(Some(Duration::from_secs(5))).ok();
     ServerMsg::read(&mut attached).unwrap();
 
-    let mut lister = UnixStream::connect(&path).unwrap();
+    let mut lister = Stream::connect(&path).unwrap();
     ClientMsg::List.write(&mut lister).unwrap();
     lister.set_read_timeout(Some(Duration::from_secs(5))).ok();
 
@@ -138,17 +142,17 @@ fn list_reports_live_workspaces() {
 fn attaching_twice_reuses_one_shell() {
     let path = start_daemon("reuse");
 
-    let mut a = UnixStream::connect(&path).unwrap();
+    let mut a = Stream::connect(&path).unwrap();
     ClientMsg::Attach { workspace: "shared".into(), tab: TAB_ANY, cols: 80, rows: 24 }.write(&mut a).unwrap();
     a.set_read_timeout(Some(Duration::from_secs(5))).ok();
     ServerMsg::read(&mut a).unwrap();
 
-    ClientMsg::Input(b"echo mark$((8+1))\n".to_vec()).write(&mut a).unwrap();
+    ClientMsg::Input(common::computed("mark", 8, 1).0).write(&mut a).unwrap();
     assert!(read_until(&mut a, "mark9", Duration::from_secs(10)).contains("mark9"));
 
     // A second client on the same name must land in the same shell, seeing
     // the first client's work in its repaint.
-    let mut b = UnixStream::connect(&path).unwrap();
+    let mut b = Stream::connect(&path).unwrap();
     ClientMsg::Attach { workspace: "shared".into(), tab: TAB_ANY, cols: 80, rows: 24 }.write(&mut b).unwrap();
     b.set_read_timeout(Some(Duration::from_secs(5))).ok();
 
@@ -163,7 +167,7 @@ fn attaching_twice_reuses_one_shell() {
 fn disconnected_client_stops_being_counted() {
     let path = start_daemon("count");
 
-    let mut client = UnixStream::connect(&path).unwrap();
+    let mut client = Stream::connect(&path).unwrap();
     ClientMsg::Attach { workspace: "quiet".into(), tab: TAB_ANY, cols: 80, rows: 24 }.write(&mut client).unwrap();
     client.set_read_timeout(Some(Duration::from_secs(5))).ok();
     ServerMsg::read(&mut client).unwrap();
@@ -185,7 +189,7 @@ fn disconnected_client_stops_being_counted() {
 }
 
 /// Skip past the `Attached` frame and return the repaint payload.
-fn read_repaint(stream: &mut UnixStream) -> Option<Vec<u8>> {
+fn read_repaint(stream: &mut Stream) -> Option<Vec<u8>> {
     for _ in 0..4 {
         match ServerMsg::read(stream) {
             Ok(Some(ServerMsg::Repaint(data))) => return Some(data),
@@ -197,7 +201,7 @@ fn read_repaint(stream: &mut UnixStream) -> Option<Vec<u8>> {
 }
 
 fn clients_of(path: &std::path::Path, name: &str) -> u32 {
-    let mut sock = UnixStream::connect(path).unwrap();
+    let mut sock = Stream::connect(path).unwrap();
     ClientMsg::List.write(&mut sock).unwrap();
     sock.set_read_timeout(Some(Duration::from_secs(5))).ok();
     match ServerMsg::read(&mut sock) {
@@ -214,7 +218,7 @@ fn tabs_are_independent_and_both_survive() {
     let path = start_daemon("tabs");
 
     // First tab, via a plain attach.
-    let mut one = UnixStream::connect(&path).unwrap();
+    let mut one = Stream::connect(&path).unwrap();
     ClientMsg::Attach { workspace: "proj".into(), tab: TAB_ANY, cols: 80, rows: 24 }
         .write(&mut one)
         .unwrap();
@@ -224,11 +228,11 @@ fn tabs_are_independent_and_both_survive() {
         other => panic!("expected attached, got {other:?}"),
     };
     read_repaint(&mut one);
-    ClientMsg::Input(b"echo one$((1+0))\n".to_vec()).write(&mut one).unwrap();
+    ClientMsg::Input(common::computed("one", 1, 0).0).write(&mut one).unwrap();
     assert!(read_until(&mut one, "one1", Duration::from_secs(10)).contains("one1"));
 
     // Ask for a second tab in the same workspace.
-    let mut opener = UnixStream::connect(&path).unwrap();
+    let mut opener = Stream::connect(&path).unwrap();
     ClientMsg::NewTab {
         workspace: "proj".into(),
         cwd: None,
@@ -247,18 +251,18 @@ fn tabs_are_independent_and_both_survive() {
     assert_ne!(first_id, second_id, "second tab reused the first tab's id");
 
     // Work in the second tab.
-    let mut two = UnixStream::connect(&path).unwrap();
+    let mut two = Stream::connect(&path).unwrap();
     ClientMsg::Attach { workspace: "proj".into(), tab: second_id, cols: 80, rows: 24 }
         .write(&mut two)
         .unwrap();
     two.set_read_timeout(Some(Duration::from_secs(5))).ok();
     ServerMsg::read(&mut two).unwrap();
     read_repaint(&mut two);
-    ClientMsg::Input(b"echo two$((1+1))\n".to_vec()).write(&mut two).unwrap();
+    ClientMsg::Input(common::computed("two", 1, 1).0).write(&mut two).unwrap();
     assert!(read_until(&mut two, "two2", Duration::from_secs(10)).contains("two2"));
 
     // One workspace, two tabs.
-    let mut lister = UnixStream::connect(&path).unwrap();
+    let mut lister = Stream::connect(&path).unwrap();
     ClientMsg::List.write(&mut lister).unwrap();
     lister.set_read_timeout(Some(Duration::from_secs(5))).ok();
     let workspaces = match ServerMsg::read(&mut lister).unwrap() {
@@ -273,7 +277,7 @@ fn tabs_are_independent_and_both_survive() {
     drop(two);
     std::thread::sleep(Duration::from_millis(200));
 
-    let mut back = UnixStream::connect(&path).unwrap();
+    let mut back = Stream::connect(&path).unwrap();
     ClientMsg::Attach { workspace: "proj".into(), tab: first_id, cols: 80, rows: 24 }
         .write(&mut back)
         .unwrap();
@@ -290,7 +294,7 @@ fn tabs_are_independent_and_both_survive() {
 fn tab_title_reaches_the_workspace_list() {
     let path = start_daemon("title");
 
-    let mut client = UnixStream::connect(&path).unwrap();
+    let mut client = Stream::connect(&path).unwrap();
     ClientMsg::Attach { workspace: "titled".into(), tab: TAB_ANY, cols: 80, rows: 24 }
         .write(&mut client)
         .unwrap();
@@ -301,9 +305,7 @@ fn tab_title_reaches_the_workspace_list() {
     // Interactive shells retitle on every prompt, so the sleep holds our
     // title long enough to observe. That the shell competes here is the point:
     // real tabs get labelled without anyone doing anything.
-    ClientMsg::Input(b"printf '\\033]2;building orion\\007'; sleep 3\n".to_vec())
-        .write(&mut client)
-        .unwrap();
+    ClientMsg::Input(common::titled("building orion")).write(&mut client).unwrap();
 
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut seen = String::new();
@@ -320,7 +322,7 @@ fn tab_title_reaches_the_workspace_list() {
 }
 
 fn title_of(path: &std::path::Path, workspace: &str) -> Option<String> {
-    let mut sock = UnixStream::connect(path).ok()?;
+    let mut sock = Stream::connect(path).ok()?;
     ClientMsg::List.write(&mut sock).ok()?;
     sock.set_read_timeout(Some(Duration::from_secs(5))).ok();
     match ServerMsg::read(&mut sock) {
@@ -341,7 +343,7 @@ fn splits_are_recorded_and_orphans_promoted() {
     let path = start_daemon("split");
 
     // Base tab.
-    let mut base = UnixStream::connect(&path).unwrap();
+    let mut base = Stream::connect(&path).unwrap();
     ClientMsg::Attach { workspace: "dev".into(), tab: TAB_ANY, cols: 80, rows: 24 }
         .write(&mut base)
         .unwrap();
@@ -352,7 +354,7 @@ fn splits_are_recorded_and_orphans_promoted() {
     };
 
     // A pane split to the right of it.
-    let mut opener = UnixStream::connect(&path).unwrap();
+    let mut opener = Stream::connect(&path).unwrap();
     ClientMsg::NewTab {
         workspace: "dev".into(),
         cwd: None,
@@ -370,7 +372,7 @@ fn splits_are_recorded_and_orphans_promoted() {
     };
 
     // Splitting a tab that does not exist must be refused, not recorded.
-    let mut bad = UnixStream::connect(&path).unwrap();
+    let mut bad = Stream::connect(&path).unwrap();
     ClientMsg::NewTab {
         workspace: "dev".into(),
         cwd: None,
@@ -394,7 +396,7 @@ fn splits_are_recorded_and_orphans_promoted() {
     assert_eq!(pane.split_dir, keep_proto::SPLIT_RIGHT);
 
     // Close the base; the pane must be promoted, not orphaned.
-    let mut closer = UnixStream::connect(&path).unwrap();
+    let mut closer = Stream::connect(&path).unwrap();
     ClientMsg::CloseTab { workspace: "dev".into(), tab: base_id }.write(&mut closer).unwrap();
     closer.set_read_timeout(Some(Duration::from_secs(5))).ok();
     ServerMsg::read(&mut closer).unwrap();
@@ -415,7 +417,7 @@ fn splits_are_recorded_and_orphans_promoted() {
 }
 
 fn tabs_of(path: &std::path::Path, workspace: &str) -> Vec<keep_proto::TabInfo> {
-    let mut sock = UnixStream::connect(path).unwrap();
+    let mut sock = Stream::connect(path).unwrap();
     ClientMsg::List.write(&mut sock).unwrap();
     sock.set_read_timeout(Some(Duration::from_secs(5))).ok();
     match ServerMsg::read(&mut sock) {
@@ -444,8 +446,8 @@ fn size_settles(path: &std::path::Path, workspace: &str, want: (u16, u16)) -> (u
     seen
 }
 
-fn attach(path: &std::path::Path, workspace: &str, cols: u16, rows: u16) -> UnixStream {
-    let mut sock = UnixStream::connect(path).unwrap();
+fn attach(path: &std::path::Path, workspace: &str, cols: u16, rows: u16) -> Stream {
+    let mut sock = Stream::connect(path).unwrap();
     ClientMsg::Attach { workspace: workspace.into(), tab: TAB_ANY, cols, rows }
         .write(&mut sock)
         .unwrap();
@@ -525,7 +527,7 @@ fn the_size_returns_when_the_small_viewer_leaves() {
 fn a_size_change_repaints_the_other_viewer() {
     let path = start_daemon("size-repaint");
     let mut big = attach(&path, "repaint", 200, 50);
-    ClientMsg::Input(b"echo before$((3+4))\n".to_vec()).write(&mut big).unwrap();
+    ClientMsg::Input(common::computed("before", 3, 4).0).write(&mut big).unwrap();
     assert!(read_until(&mut big, "before7", Duration::from_secs(10)).contains("before7"));
 
     let _small = attach(&path, "repaint", 80, 24);
@@ -586,10 +588,10 @@ fn nobody_looking_leaves_the_size_alone() {
 fn a_tab_moves_between_workspaces_with_its_shell() {
     let path = start_daemon("move");
     let mut sock = attach(&path, "origin", 100, 30);
-    ClientMsg::Input(b"echo carried$((10+7))\n".to_vec()).write(&mut sock).unwrap();
+    ClientMsg::Input(common::computed("carried", 10, 7).0).write(&mut sock).unwrap();
     assert!(read_until(&mut sock, "carried17", Duration::from_secs(10)).contains("carried17"));
 
-    let mut mover = UnixStream::connect(&path).unwrap();
+    let mut mover = Stream::connect(&path).unwrap();
     ClientMsg::MoveTab { workspace: "origin".into(), tab: 1, to: "target".into() }
         .write(&mut mover)
         .unwrap();
@@ -607,7 +609,7 @@ fn a_tab_moves_between_workspaces_with_its_shell() {
 
     // And it is the same shell: attaching repaints the history it made
     // before the move.
-    let mut back = UnixStream::connect(&path).unwrap();
+    let mut back = Stream::connect(&path).unwrap();
     ClientMsg::Attach { workspace: "target".into(), tab: moved, cols: 100, rows: 30 }
         .write(&mut back)
         .unwrap();

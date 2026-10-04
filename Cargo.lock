@@ -133,11 +133,15 @@ dependencies = [
  "anyhow",
  "crossterm",
  "keep-proto",
+ "windows-sys",
 ]
 
 [[package]]
 name = "keep-proto"
 version = "0.0.1"
+dependencies = [
+ "windows-sys",
+]
 
 [[package]]
 name = "keep-vt"
@@ -152,6 +156,7 @@ dependencies = [
  "keep-vt",
  "libc",
  "portable-pty",
+ "windows-sys",
 ]
 
 [[package]]

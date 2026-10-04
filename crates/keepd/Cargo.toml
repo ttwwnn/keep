@@ -20,3 +20,15 @@ libc = "0.2"
 
 [dev-dependencies]
 portable-pty = "0.9.0"
+
+# Windows has no foreground process group and no call for a process's working
+# directory: the process tree and the PEB answer instead (see `winproc`).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Wdk_System_Threading",
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Kernel",
+    "Win32_System_Threading",
+] }

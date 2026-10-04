@@ -53,10 +53,15 @@ struct Inner {
 
 pub struct Tab {
     inner: Arc<Mutex<Inner>>,
-    writer: Mutex<Box<dyn Write + Send>>,
+    /// Shared with the reader thread, which on Windows answers the terminal
+    /// queries nobody else is there to answer; see `Tab::spawn`.
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     // Mutex, not a bare Box: MasterPty is Send but not Sync, and the daemon
     // shares each session across connection threads via Arc.
-    master: Mutex<Box<dyn MasterPty + Send>>,
+    ///
+    /// Taken out and dropped when the shell exits on Windows, where that is
+    /// the only way its output reaches its end; see `Tab::spawn`.
+    master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
     child: Mutex<Box<dyn Child + Send + Sync>>,
     finished: Arc<AtomicBool>,
     size: Mutex<(u16, u16)>,
@@ -116,7 +121,7 @@ fn process_cwd(pid: i32) -> Option<String> {
     String::from_utf8(path[..end].to_vec()).ok().filter(|p| !p.is_empty())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 fn process_cwd(pid: i32) -> Option<String> {
     std::fs::read_link(format!("/proc/{pid}/cwd"))
         .ok()
@@ -147,11 +152,21 @@ fn process_name(pid: i32) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 fn process_name(pid: i32) -> Option<String> {
     let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
     let name = comm.trim().to_owned();
     (!name.is_empty()).then_some(name)
+}
+
+#[cfg(windows)]
+fn process_cwd(pid: i32) -> Option<String> {
+    crate::winproc::process_cwd(u32::try_from(pid).ok()?)
+}
+
+#[cfg(windows)]
+fn process_name(pid: i32) -> Option<String> {
+    crate::winproc::process_name(u32::try_from(pid).ok()?)
 }
 
 /// A live feed of everything the tab writes from the moment of attach.
@@ -217,14 +232,53 @@ impl Tab {
         // exits, because this process would still hold the other end open.
         drop(pair.slave);
 
-        let writer = pair.master.take_writer().context("pty writer")?;
+        let writer: Arc<Mutex<Box<dyn Write + Send>>> =
+            Arc::new(Mutex::new(pair.master.take_writer().context("pty writer")?));
         let mut reader = pair.master.try_clone_reader().context("pty reader")?;
 
-        let inner = Arc::new(Mutex::new(Inner {
-            terminal: Terminal::new(cols, rows).map_err(|e| anyhow::anyhow!("terminal: {e}"))?,
-            subscribers: Vec::new(),
-            next_id: 0,
-        }));
+        #[allow(unused_mut)]
+        let mut terminal = Terminal::new(cols, rows).map_err(|e| anyhow::anyhow!("terminal: {e}"))?;
+        // ConPTY starts every console by asking where the cursor is, and
+        // holds the shell's output back until it hears. A tab opened with
+        // nobody watching — which is how the app opens one, before attaching
+        // to it — would wait forever. So on Windows the grid answers what is
+        // asked while no client is there to.
+        #[cfg(windows)]
+        terminal.answer_queries().map_err(|e| anyhow::anyhow!("terminal: {e}"))?;
+
+        let inner = Arc::new(Mutex::new(Inner { terminal, subscribers: Vec::new(), next_id: 0 }));
+        let master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>> =
+            Arc::new(Mutex::new(Some(pair.master)));
+
+        // A pseudoconsole outlives the shell it was made for: its output
+        // stays open until it is closed, so the reader below would wait for
+        // an end that never comes and the tab would never be finished. The
+        // shell exiting is what closes it, here, as the last process leaving
+        // a unix PTY does there.
+        #[cfg(windows)]
+        if let Some(pid) = shell_pid {
+            let slot = Arc::clone(&master);
+            std::thread::Builder::new()
+                .name("keepd-shell-exit".into())
+                .spawn(move || {
+                    use windows_sys::Win32::Foundation::CloseHandle;
+                    use windows_sys::Win32::System::Threading::{
+                        INFINITE, OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+                    };
+                    let process = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+                    if !process.is_null() {
+                        unsafe {
+                            WaitForSingleObject(process, INFINITE);
+                            CloseHandle(process);
+                        }
+                    }
+                    // Out of the lock before it is dropped: closing waits for
+                    // the console host to finish, and nothing else should.
+                    let closed = slot.lock().ok().and_then(|mut m| m.take());
+                    drop(closed);
+                })
+                .context("spawn exit watcher")?;
+        }
         let finished = Arc::new(AtomicBool::new(false));
 
         // Reader thread. The lock is held only for the parse and fan-out, never
@@ -235,6 +289,8 @@ impl Tab {
         let sink = Arc::clone(&inner);
         let done = Arc::clone(&finished);
         let touched = Arc::clone(&last_active);
+        #[cfg(windows)]
+        let answer = Arc::clone(&writer);
         std::thread::Builder::new()
             .name("keepd-pty-reader".into())
             .spawn(move || {
@@ -249,6 +305,14 @@ impl Tab {
                     touched.store(now_ms(), Ordering::Relaxed);
                     let Ok(mut guard) = sink.lock() else { break };
                     guard.terminal.write(&buf[..n]);
+                    // Answered by the grid only while nobody is attached:
+                    // a client is handed the question in the output below
+                    // and answers it itself, and two answers are one too many.
+                    #[cfg(windows)]
+                    let unanswered = {
+                        let replies = guard.terminal.take_replies();
+                        (!replies.is_empty() && guard.subscribers.is_empty()).then_some(replies)
+                    };
                     // One allocation for the whole fan-out: every client gets a
                     // handle to the same bytes rather than its own copy of a
                     // chunk that can be 64 KiB.
@@ -265,6 +329,18 @@ impl Tab {
                         // Drop clients whose receiver is gone.
                         Err(TrySendError::Disconnected(_)) => false,
                     });
+                    // Written after the lock is let go: the PTY's input can
+                    // be full, and the grid must not wait on it.
+                    #[cfg(windows)]
+                    {
+                        drop(guard);
+                        if let Some(replies) = unanswered {
+                            if let Ok(mut w) = answer.lock() {
+                                let _ = w.write_all(&replies);
+                                let _ = w.flush();
+                            }
+                        }
+                    }
                 }
                 done.store(true, Ordering::Release);
                 // Dropping the senders lets attached clients notice the end.
@@ -276,8 +352,8 @@ impl Tab {
 
         Ok(Self {
             inner,
-            writer: Mutex::new(writer),
-            master: Mutex::new(pair.master),
+            writer,
+            master,
             child: Mutex::new(child),
             finished,
             size: Mutex::new((cols, rows)),
@@ -424,9 +500,13 @@ impl Tab {
         }
         {
             let master = self.master.lock().map_err(|_| anyhow::anyhow!("master poisoned"))?;
-            master
-                .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
-                .context("resize pty")?;
+            // Gone only once the shell has exited, when there is nothing left
+            // to tell the size to.
+            if let Some(master) = master.as_ref() {
+                master
+                    .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+                    .context("resize pty")?;
+            }
         }
         if let Ok(mut s) = self.size.lock() {
             *s = (cols, rows);
@@ -462,9 +542,20 @@ impl Tab {
     }
 
     /// Whoever holds the terminal: the running command, or the shell waiting.
+    #[cfg(unix)]
     fn foreground_pid(&self) -> Option<i32> {
         let master = self.master.lock().ok()?;
-        master.process_group_leader()
+        master.as_ref()?.process_group_leader()
+    }
+
+    /// The same question on Windows, answered by the process tree: the
+    /// shell's newest child while it runs one, the shell while it waits.
+    /// See `winproc`.
+    #[cfg(windows)]
+    fn foreground_pid(&self) -> Option<i32> {
+        let shell = self.shell_pid?;
+        let pid = crate::winproc::foreground(shell).unwrap_or(shell);
+        i32::try_from(pid).ok()
     }
 
     /// Where the tab is working right now.

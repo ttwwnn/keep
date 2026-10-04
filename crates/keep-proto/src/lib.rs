@@ -7,6 +7,10 @@
 
 use std::io::{self, IoSlice, Read, Write};
 
+pub mod net;
+#[cfg(windows)]
+mod pipe;
+
 /// Refuse absurd frames rather than trying to allocate them.
 pub const MAX_FRAME: usize = 16 * 1024 * 1024;
 
@@ -678,8 +682,25 @@ impl ServerMsg {
 /// with a real daemon the developer is running.
 pub fn socket_path() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("KEEP_SOCKET") {
+        // On Windows the address is a pipe name, and anything else given
+        // here is folded into one; see `pipe::name_for`.
+        #[cfg(windows)]
+        return pipe::name_for(std::path::Path::new(&p));
+        #[cfg(not(windows))]
         return p.into();
     }
+    default_socket_path()
+}
+
+/// A named pipe rather than a file: see `net`. The name carries the user's
+/// SID for the same reason the socket elsewhere carries their name.
+#[cfg(windows)]
+fn default_socket_path() -> std::path::PathBuf {
+    pipe::default_name()
+}
+
+#[cfg(not(windows))]
+fn default_socket_path() -> std::path::PathBuf {
     let base = std::env::var("XDG_RUNTIME_DIR")
         .or_else(|_| std::env::var("TMPDIR"))
         .unwrap_or_else(|_| "/tmp".into());

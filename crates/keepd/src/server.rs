@@ -1,22 +1,22 @@
-//! The unix socket server.
+//! The socket server: a unix socket, or a named pipe on Windows.
 //!
 //! One thread per connection. After a client attaches, only the pump thread
 //! writes to the socket and only the connection thread reads from it, so the
 //! two never interleave frames on the same stream.
 
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use keep_proto::net::{Listener, Stream};
 use keep_proto::{ClientMsg, ServerMsg, TAB_ANY};
 
 use crate::Registry;
 
 pub struct Server {
-    listener: UnixListener,
+    listener: Listener,
     path: PathBuf,
     registry: Arc<Registry>,
 }
@@ -24,21 +24,29 @@ pub struct Server {
 impl Server {
     /// Bind the socket, refusing to displace a daemon that is already running.
     pub fn bind(path: &Path) -> Result<Self> {
+        #[cfg(unix)]
         if path.exists() {
             // A stale socket from a crashed daemon is safe to remove; a live
             // one is not, so probe it before deciding.
-            match UnixStream::connect(path) {
+            match Stream::connect(path) {
                 Ok(_) => anyhow::bail!("a keep daemon is already listening on {}", path.display()),
                 Err(_) => {
                     std::fs::remove_file(path).ok();
                 }
             }
         }
+        // A pipe leaves nothing behind when its daemon dies, so there is no
+        // stale file to clear — only a live daemon to stand aside for.
+        #[cfg(windows)]
+        if Stream::connect(path).is_ok() {
+            anyhow::bail!("a keep daemon is already listening on {}", path.display());
+        }
+        #[cfg(unix)]
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        let listener = UnixListener::bind(path)
-            .with_context(|| format!("bind {}", path.display()))?;
+        let listener =
+            Listener::bind(path).with_context(|| format!("bind {}", path.display()))?;
 
         Ok(Self { listener, path: path.to_path_buf(), registry: Arc::new(Registry::new()) })
     }
@@ -71,11 +79,12 @@ impl Server {
 
 impl Drop for Server {
     fn drop(&mut self) {
+        #[cfg(unix)]
         std::fs::remove_file(&self.path).ok();
     }
 }
 
-fn handle(stream: UnixStream, registry: Arc<Registry>) -> Result<()> {
+fn handle(stream: Stream, registry: Arc<Registry>) -> Result<()> {
     let mut reader = stream.try_clone().context("clone socket")?;
     let mut writer = stream;
 
@@ -192,8 +201,8 @@ fn handle(stream: UnixStream, registry: Arc<Registry>) -> Result<()> {
 
 #[allow(clippy::too_many_arguments)]
 fn attach(
-    mut reader: UnixStream,
-    mut writer: UnixStream,
+    mut reader: Stream,
+    mut writer: Stream,
     registry: Arc<Registry>,
     name: &str,
     tab_id: u32,

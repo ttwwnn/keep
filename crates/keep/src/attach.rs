@@ -1,13 +1,13 @@
 //! The attach loop: raw terminal in, tab output out.
 
 use std::io::{Read, Write};
-use std::os::unix::net::UnixStream;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use crossterm::terminal;
+use keep_proto::net::Stream;
 use keep_proto::{ClientMsg, ServerMsg};
 
 /// Ctrl-\ detaches. Chosen because almost nothing binds it, so it does not
@@ -19,12 +19,23 @@ struct RawGuard {
     /// Whether the terminal was last put on its alternate screen, followed
     /// from the output; see `KittyFlags`.
     alternate: Arc<AtomicBool>,
+    /// The console as it was, put back after everything else: see
+    /// `console`. A field, so it is restored once `drop` has written the
+    /// terminal's way back, while escape sequences still mean something.
+    #[cfg(windows)]
+    _console: crate::console::Modes,
 }
 
 impl RawGuard {
     fn enter(alternate: Arc<AtomicBool>) -> Result<Self> {
+        #[cfg(windows)]
+        let console = crate::console::enter();
         terminal::enable_raw_mode().context("enable raw mode")?;
-        Ok(Self { alternate })
+        Ok(Self {
+            alternate,
+            #[cfg(windows)]
+            _console: console,
+        })
     }
 }
 
@@ -80,7 +91,7 @@ pub fn attach(
 ) -> Result<Outcome> {
     let (cols, rows) = terminal::size().unwrap_or((80, 24));
 
-    let mut sock = UnixStream::connect(socket).context("connect to daemon")?;
+    let mut sock = Stream::connect(socket).context("connect to daemon")?;
     ClientMsg::Attach { workspace: name.to_string(), tab, cols, rows }.write(&mut sock)?;
 
     // The keyboard protocol the terminal we run in is speaking, and which of
@@ -99,7 +110,10 @@ pub fn attach(
     std::thread::Builder::new()
         .name("keep-stdin".into())
         .spawn(move || {
+            #[cfg(unix)]
             let mut stdin = std::io::stdin();
+            #[cfg(windows)]
+            let mut stdin = crate::console::Input::stdin();
             let mut buf = [0u8; 4096];
             let mut legacy = Legacy::new();
             loop {
@@ -175,8 +189,12 @@ pub fn attach(
     // daemon -> stdout. Locked once for the whole loop: `stdout()` takes the
     // process-wide handle on every call, and this loop runs once per chunk of
     // terminal output.
+    #[cfg(unix)]
     let stdout = std::io::stdout();
+    #[cfg(unix)]
     let mut out = stdout.lock();
+    #[cfg(windows)]
+    let mut out = crate::console::Output::stdout();
     // Reported after the lock is released — the raw-mode guard writes to
     // stdout on its way out.
     let mut failure: Option<String> = None;

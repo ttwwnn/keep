@@ -4,7 +4,8 @@
 use std::time::{Duration, Instant};
 
 use keepd::Registry;
-use portable_pty::CommandBuilder;
+
+mod common;
 
 fn wait_for(timeout: Duration, mut cond: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + timeout;
@@ -17,21 +18,16 @@ fn wait_for(timeout: Duration, mut cond: impl FnMut() -> bool) -> bool {
     false
 }
 
-fn shell() -> CommandBuilder {
-    let mut cmd = CommandBuilder::new("/bin/sh");
-    cmd.env("PS1", "$ ");
-    cmd
-}
-
 /// A workspace with one tab that has said something specific.
 ///
 /// The wait is for a line that IS the marker, not one that merely contains
 /// it: a shell echoes the command before running it, so `contains` is
 /// satisfied by the typing rather than by the output.
 fn workspace_with_output(registry: &Registry, name: &str, marker: &str) -> u32 {
+    common::use_test_shell();
     let workspace = registry.get_or_create(name).expect("workspace");
     let (id, tab) = workspace.new_tab(None, 80, 10, 0, 0).expect("tab");
-    tab.send(format!("printf '%s\\n' {marker}\n").as_bytes()).expect("send");
+    tab.send(&common::print_lines(&[marker])).expect("send");
     assert!(
         wait_for(Duration::from_secs(10), || {
             tab.screen_text()
@@ -91,10 +87,11 @@ fn scope_keeps_the_search_inside_one_pane() {
 
 #[test]
 fn a_hit_carries_the_lines_around_it() {
+    common::use_test_shell();
     let registry = Registry::new();
     let workspace = registry.get_or_create("ctx").expect("workspace");
     let (_, tab) = workspace.new_tab(None, 80, 10, 0, 0).expect("tab");
-    tab.send(b"printf 'above\\nMIDDLE\\nbelow\\n'\n").expect("send");
+    tab.send(&common::print_lines(&["above", "MIDDLE", "below"])).expect("send");
     assert!(
         wait_for(Duration::from_secs(10), || {
             tab.screen_text()

@@ -10,6 +10,8 @@ pub mod registry;
 pub mod server;
 pub mod workspace;
 pub mod tab;
+#[cfg(windows)]
+pub mod winproc;
 
 pub use registry::Registry;
 pub use server::Server;
