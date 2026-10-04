@@ -1,0 +1,47 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Keep",
+  "mainBinaryName": "Keep",
+  "version": "0.1.0",
+  "identifier": "br.ttwwnn.keep",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Keep",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 640,
+        "minHeight": 360,
+        "decorations": false,
+        "dragDropEnabled": true,
+        "backgroundColor": "#282c34"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "publisher": "ttwwnn",
+    "copyright": "MIT — luhw-dev e ttwwnn",
+    "category": "DeveloperTool",
+    "shortDescription": "Workspaces de terminal que sobrevivem à janela",
+    "longDescription": "Keep guarda os terminais num daemon: fechar a janela ou o app não mata nada, e ao reabrir as abas estão onde ficaram."
+  }
+}

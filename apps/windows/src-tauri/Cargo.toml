@@ -1,0 +1,49 @@
+[package]
+name = "keep-app"
+version = "0.1.0"
+description = "Keep para Windows: workspaces de terminal que sobrevivem à janela"
+authors = ["ttwwnn"]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/ttwwnn/keep"
+
+# Its own workspace: the Rust core (../../../crates) is built and tested
+# without the app's GUI dependencies, and the app pulls in only the protocol.
+[workspace]
+
+[lib]
+name = "keep_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "keep-app"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-clipboard-manager = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+keep-proto = { path = "../../../crates/keep-proto" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

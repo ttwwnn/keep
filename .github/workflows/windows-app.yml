@@ -1,0 +1,110 @@
+# The Windows app: built, packaged with the daemon and Microsoft's ConPTY,
+# installed on a real Windows the way a person would, opened, and checked end
+# to end (apps/windows/e2e/run.ps1). The installer and a photograph of the
+# screen are kept with the run.
+name: App do Windows
+
+on:
+  push:
+    branches: [main, windows]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-app-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GHOSTTY_COMMIT: a53771af0165c34a7bd753ddbcbc5dd7126ee87f
+  # Windows Terminal's own console host, from Microsoft's package: newer VT
+  # handling than the one a given Windows ships (MIT).
+  CONPTY_VERSION: 1.25.260930003
+  CARGO_TERM_COLOR: always
+
+jobs:
+  app:
+    name: App (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cache do libghostty-vt
+        id: vt
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: vendor/libghostty-vt-windows-x86_64
+          key: vt-x86_64-windows-msvc-${{ env.GHOSTTY_COMMIT }}-${{ hashFiles('vendor/build-vt.sh') }}
+
+      - name: Zig
+        if: steps.vt.outputs.cache-hit != 'true'
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+
+      - name: Compilar o libghostty-vt
+        if: steps.vt.outputs.cache-hit != 'true'
+        run: ./vendor/build-vt.sh x86_64-windows-msvc vendor/libghostty-vt-windows-x86_64
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: |
+            . -> target
+            apps/windows/src-tauri -> target
+
+      - name: keepd e keep
+        run: cargo build --release -p keep -p keepd
+
+      - name: Binários que vão no instalador
+        run: |
+          bin=apps/windows/src-tauri/resources/bin
+          mkdir -p "$bin"
+          cp target/release/keep.exe target/release/keepd.exe "$bin/"
+          curl -fsSL -o conpty.nupkg "https://api.nuget.org/v3-flatcontainer/microsoft.windows.console.conpty/${CONPTY_VERSION}/microsoft.windows.console.conpty.${CONPTY_VERSION}.nupkg"
+          unzip -j -o conpty.nupkg runtimes/win-x64/native/conpty.dll build/native/runtimes/x64/OpenConsole.exe -d "$bin"
+          ls -la "$bin"
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/windows/package-lock.json
+
+      - name: Dependências da interface
+        working-directory: apps/windows
+        run: npm ci
+
+      - name: Testes da interface
+        working-directory: apps/windows
+        run: npm test -- --passWithNoTests
+
+      - name: Compilar e empacotar
+        working-directory: apps/windows
+        run: npx tauri build --ci
+
+      - name: Ponta a ponta
+        shell: pwsh
+        run: ./apps/windows/e2e/run.ps1 -Out "${{ github.workspace }}/e2e-out"
+
+      - name: Guardar instalador
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Keep-Windows-instalador
+          path: apps/windows/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: ignore
+
+      - name: Guardar resultado do teste
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Keep-Windows-e2e
+          path: e2e-out
+          if-no-files-found: ignore
