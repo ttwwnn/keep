@@ -50,7 +50,11 @@ pub fn abre_aba_com(ws: &str, args: &[String]) -> Result<u32, String> {
         tela::Programa::Shell(nome) => linha::sintaxe(&nome),
         _ => linha::Sintaxe::Posix,
     };
-    let eu = std::env::current_exe().map_err(|e| e.to_string())?;
+    // O `keep` que roda isto; um teste aponta outro por `KEEP_IA_KEEP_BIN`.
+    let eu = match std::env::var_os("KEEP_IA_KEEP_BIN") {
+        Some(p) => PathBuf::from(p),
+        None => std::env::current_exe().map_err(|e| e.to_string())?,
+    };
     let s = Subida { programa: eu.to_string_lossy().into_owned(), args: args.to_vec(), ..Default::default() };
     match trocar::digita(ws, tab, &linha::linha(sintaxe, &s), true) {
         Ok(true) => Ok(tab),
