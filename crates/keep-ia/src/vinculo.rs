@@ -111,9 +111,13 @@ struct Concha {
 
 impl Concha {
     fn de(p: &processos::Processo, lista: &[processos::Processo]) -> Concha {
-        let terminal = processos::terminal(p.pid);
+        // O terminal só diz algo do shell se for o dele: um filho do keepd sem
+        // pty própria herdou o de outro, cuja frente nem é da árvore dele.
+        let debaixo = processos::descendentes_em(lista, p.pid);
+        let terminal = processos::terminal(p.pid)
+            .filter(|t| t.frente.is_some_and(|f| f == p.pid || debaixo.contains(&f)));
         let frente = match terminal.and_then(|t| t.frente) {
-            Some(f) if f != 0 && processos::vivo(f) => f,
+            Some(f) if processos::vivo(f) => f,
             _ if cfg!(windows) => mais_novo(p, lista),
             _ => p.pid,
         };

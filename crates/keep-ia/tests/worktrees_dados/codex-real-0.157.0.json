@@ -1,0 +1,162 @@
+{
+ "fonte": "codex-cli 0.157.0, codex exec -s workspace-write, 27/09/2026 (sanitizado: só cabeçalho, chamadas e saídas; caminhos = @@BASE@@)",
+ "conversas": [
+  {
+   "linhas": [
+    {
+     "timestamp": "2026-09-27T14:38:31.820Z",
+     "type": "session_meta",
+     "payload": {
+      "id": "01a0e34d-a4a9-7302-b87f-2ef45ea7dcc3",
+      "timestamp": "2026-09-27T14:38:31.600Z",
+      "cwd": "@@BASE@@",
+      "originator": "codex_exec",
+      "cli_version": "0.157.0",
+      "source": "exec"
+     }
+    },
+    {
+     "timestamp": "2026-09-27T14:38:48.121Z",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "name": "exec",
+      "call_id": "call_hXZS8oqaEBr9QRsCCqqS9Qak",
+      "status": "completed",
+      "input": "text(await tools.exec_command({cmd:\"git -C repo worktree add -q @@BASE@@/wt-literal -b b-literal\",max_output_tokens:1000}));\n"
+     }
+    },
+    {
+     "timestamp": "2026-09-27T14:38:48.525Z",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call_output",
+      "call_id": "call_hXZS8oqaEBr9QRsCCqqS9Qak",
+      "output": [
+       {
+        "type": "input_text",
+        "text": "Script completed\nWall time 0.2 seconds\nOutput:\n"
+       },
+       {
+        "type": "input_text",
+        "text": "{\"chunk_id\":\"f30bb5\",\"wall_time_seconds\":0.000019167,\"exit_code\":0,\"original_token_count\":0,\"output\":\"\"}"
+       }
+      ]
+     }
+    }
+   ],
+   "worktrees": [
+    {
+     "nome": "wt-literal",
+     "nasceu": 1790519928.4720066
+    }
+   ]
+  },
+  {
+   "linhas": [
+    {
+     "timestamp": "2026-09-27T14:39:06.191Z",
+     "type": "session_meta",
+     "payload": {
+      "id": "01a0e34e-2b91-70c1-895c-14cbc762d080",
+      "timestamp": "2026-09-27T14:39:06.130Z",
+      "cwd": "@@BASE@@",
+      "originator": "codex_exec",
+      "cli_version": "0.157.0",
+      "source": "exec"
+     }
+    },
+    {
+     "timestamp": "2026-09-27T14:39:21.606Z",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "name": "exec",
+      "call_id": "call_7gHJ4qTW6mzdPOQ78TQNUXuS",
+      "status": "completed",
+      "input": "text(await tools.exec_command({cmd:\"for w in a b; do git -C repo worktree add -q @@BASE@@/wt-laco-$w -b b-laco-$w && echo criada @@BASE@@/wt-laco-$w; done\"}));\n"
+     }
+    },
+    {
+     "timestamp": "2026-09-27T14:39:21.864Z",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call_output",
+      "call_id": "call_7gHJ4qTW6mzdPOQ78TQNUXuS",
+      "output": [
+       {
+        "type": "input_text",
+        "text": "Script completed\nWall time 0.2 seconds\nOutput:\n"
+       },
+       {
+        "type": "input_text",
+        "text": "{\"chunk_id\":\"c00744\",\"wall_time_seconds\":0.000005667,\"exit_code\":0,\"original_token_count\":57,\"output\":\"criada @@BASE@@/wt-laco-a\\ncriada @@BASE@@/wt-laco-b\\n\"}"
+       }
+      ]
+     }
+    }
+   ],
+   "worktrees": [
+    {
+     "nome": "wt-laco-a",
+     "nasceu": 1790519961.7909496
+    },
+    {
+     "nome": "wt-laco-b",
+     "nasceu": 1790519961.8218932
+    }
+   ]
+  },
+  {
+   "linhas": [
+    {
+     "timestamp": "2026-09-27T14:39:32.688Z",
+     "type": "session_meta",
+     "payload": {
+      "id": "01a0e34e-931a-7371-9122-7253b9af164b",
+      "timestamp": "2026-09-27T14:39:32.634Z",
+      "cwd": "@@BASE@@",
+      "originator": "codex_exec",
+      "cli_version": "0.157.0",
+      "source": "exec"
+     }
+    },
+    {
+     "timestamp": "2026-09-27T14:39:51.245Z",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "name": "exec",
+      "call_id": "call_uRsJDoxdvwAaDYRO3R3vkFXJ",
+      "status": "completed",
+      "input": "text(await tools.exec_command({cmd:\"./cria.sh @@BASE@@/wt-script\",max_output_tokens:1000}));\n"
+     }
+    },
+    {
+     "timestamp": "2026-09-27T14:39:54.652Z",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call_output",
+      "call_id": "call_uRsJDoxdvwAaDYRO3R3vkFXJ",
+      "output": [
+       {
+        "type": "input_text",
+        "text": "Script completed\nWall time 3.3 seconds\nOutput:\n"
+       },
+       {
+        "type": "input_text",
+        "text": "{\"chunk_id\":\"61fad8\",\"wall_time_seconds\":3.112165041,\"exit_code\":0,\"original_token_count\":0,\"output\":\"\"}"
+       }
+      ]
+     }
+    }
+   ],
+   "worktrees": [
+    {
+     "nome": "wt-script",
+     "nasceu": 1790519994.6112618
+    }
+   ]
+  }
+ ]
+}

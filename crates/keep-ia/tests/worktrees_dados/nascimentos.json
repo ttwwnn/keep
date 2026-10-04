@@ -1,0 +1,69 @@
+{
+ "como": "codex-cli 0.157.0 (codex exec -s workspace-write --skip-git-repo-check -C @RAIZ@, esforço low) num repo descartável @RAIZ@/repo em 27/09/2026; rollouts de ~/.codex/sessions/2026/09/27 passados pelo sanitiza.py. 'nasceu' = st_birthtime real de <comum>/worktrees/<id> (o teste o repõe com os.utime).",
+ "rollouts": {
+  "rollout-a-literal.jsonl": {
+   "thread": "01a0e10e-5e7c-78c0-bb33-6497f33f632b",
+   "caso": "(a) git worktree add <caminho literal> numa célula exec do code mode (sleep 2 antes e depois)",
+   "worktrees": [
+    {
+     "id": "wt-lit-a",
+     "nasceu": 1790482232.2116084,
+     "nasceu_iso": "2026-09-27T04:10:32.211608Z",
+     "caminho": "@RAIZ@/wt-lit-a"
+    }
+   ]
+  },
+  "rollout-bc-laco-e-script.jsonl": {
+   "thread": "01a0e114-c368-76b0-9545-dfd3a203f596",
+   "caso": "(b) laço for w in a b com wt-laco-$w que imprime os caminhos; (c) ./cria-wt.sh <caminho> que não imprime nada",
+   "worktrees": [
+    {
+     "id": "wt-laco-a",
+     "nasceu": 1790482648.286242,
+     "nasceu_iso": "2026-09-27T04:17:28.286242Z",
+     "caminho": "@RAIZ@/wt-laco-a"
+    },
+    {
+     "id": "wt-laco-b",
+     "nasceu": 1790482648.3088212,
+     "nasceu_iso": "2026-09-27T04:17:28.308821Z",
+     "caminho": "@RAIZ@/wt-laco-b"
+    },
+    {
+     "id": "wt-script-c",
+     "nasceu": 1790482667.4886281,
+     "nasceu_iso": "2026-09-27T04:17:47.488628Z",
+     "caminho": "@RAIZ@/wt-script-c"
+    }
+   ]
+  },
+  "rollout-d-processo-longo.jsonl": {
+   "thread": "01a0e115-feab-74c2-9f34-c4dbad52a3a5",
+   "caso": "(d) N=longa; sleep 25; git worktree add wt-$N-d; echo pronta <caminho>: a célula volta em 10 s com session_id (processo vivo), dois write_stdin vazios, nascimento ENTRE as consultas; só o CommandExecution e o processo vivo cobrem T",
+   "worktrees": [
+    {
+     "id": "wt-longa-d",
+     "nasceu": 1790482752.047735,
+     "nasceu_iso": "2026-09-27T04:19:12.047735Z",
+     "caminho": "@RAIZ@/wt-longa-d"
+    }
+   ]
+  },
+  "rollout-e-worktree-gerenciada.jsonl": {
+   "thread": "01a0e118-044d-70b0-8740-9d7d59685472",
+   "caso": "(e) codex exec --worktree: o próprio codex cria @CODEX@/worktrees/85dd/repo (id 'repo') antes do session_meta e grava <comum>/worktrees/repo/codex-thread.json {version, ownerThreadId}",
+   "worktrees": [
+    {
+     "id": "repo",
+     "nasceu": 1790482842.5481548,
+     "nasceu_iso": "2026-09-27T04:20:42.548155Z",
+     "caminho": "@CODEX@/worktrees/85dd/repo",
+     "codex_thread_json": {
+      "version": 1,
+      "ownerThreadId": "01a0e118-044d-70b0-8740-9d7d59685472"
+     }
+    }
+   ]
+  }
+ }
+}
