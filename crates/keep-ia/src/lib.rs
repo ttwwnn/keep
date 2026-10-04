@@ -8,10 +8,13 @@
 pub mod caminhos;
 pub mod cli;
 pub mod contas;
+pub mod daemon;
 pub mod processos;
 pub mod programas;
 pub mod rede;
+pub mod tela;
 pub mod uso;
+pub mod vinculo;
 pub mod worktrees;
 
 /// Versão dos objetos JSON da linha de comando.
