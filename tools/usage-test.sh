@@ -96,9 +96,11 @@ server.serve_forever()
 PY
     python3 "$WORK/standin.py" "$WORK/port" &
     SERVER_PID=$!
+    # A cold Python on a busy CI machine takes its time to listen.
     waited=0
-    while [ ! -s "$WORK/port" ] && [ "$waited" -lt 40 ]; do sleep 0.25; waited=$((waited + 1)); done
-    PORT=$(cat "$WORK/port")
+    while [ ! -s "$WORK/port" ] && [ "$waited" -lt 240 ]; do sleep 0.25; waited=$((waited + 1)); done
+    PORT=$(cat "$WORK/port" 2>/dev/null)
+    [ -n "$PORT" ] || { echo "the stand-in of the services did not start"; exit 1; }
 fi
 
 run() {

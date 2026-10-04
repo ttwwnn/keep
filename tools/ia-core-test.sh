@@ -113,9 +113,11 @@ server.serve_forever()
 PY
 python3 "$WORK/standin.py" "$WORK/port" &
 SERVER_PID=$!
+# A cold Python on a busy CI machine takes its time to listen.
 waited=0
-while [ ! -s "$WORK/port" ] && [ "$waited" -lt 40 ]; do sleep 0.25; waited=$((waited + 1)); done
-PORT=$(cat "$WORK/port")
+while [ ! -s "$WORK/port" ] && [ "$waited" -lt 240 ]; do sleep 0.25; waited=$((waited + 1)); done
+PORT=$(cat "$WORK/port" 2>/dev/null)
+[ -n "$PORT" ] || { echo "the stand-in of the services did not start"; exit 1; }
 
 # ------------------------------------------------------- a daemon of its own
 # Its tabs run /bin/sh with a plain prompt, and the fake AI they start keeps
@@ -133,6 +135,7 @@ export KEEP_IA_BIN=$PWD/target/debug/keep
 KEEP_IA_HOME=$HOME_FAKE SHELL=/bin/sh PS1='$ ' target/debug/keepd >"$WORK/daemon.log" 2>&1 &
 DAEMON_PID=$!
 waited=0
-while [ ! -S "$KEEP_SOCKET" ] && [ "$waited" -lt 40 ]; do sleep 0.25; waited=$((waited + 1)); done
+while [ ! -S "$KEEP_SOCKET" ] && [ "$waited" -lt 120 ]; do sleep 0.25; waited=$((waited + 1)); done
+[ -S "$KEEP_SOCKET" ] || { echo "the test's keepd did not start; its log:"; tail -5 "$WORK/daemon.log"; exit 1; }
 
 KEEPD_PID=$DAEMON_PID DIGITA=$PWD/tools/ia-core-test/digita.py "$WORK/test"
