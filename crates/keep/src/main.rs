@@ -89,6 +89,10 @@ fn run() -> Result<()> {
                 _ => anyhow::bail!("unexpected reply"),
             }
         }
+        // The AI accounts, usage and per-tab AI, and the worktrees a tab's
+        // conversation left: see docs/ia.md. Answered in JSON, for the apps.
+        Some("ia") => std::process::exit(keep_ia::cli::ia(&args[1..])),
+        Some("worktrees") => std::process::exit(keep_ia::cli::worktrees(&args[1..])),
         Some("-h" | "--help" | "help") => {
             print_help();
             Ok(())
