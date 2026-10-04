@@ -338,11 +338,19 @@ confere(preparado["KEEP_IA_SECURITY"] == semChaveiro && fm.isExecutableFile(atPa
 let pergunta = Process()
 pergunta.executableURL = URL(fileURLWithPath: semChaveiro)
 pergunta.arguments = ["find-generic-password", "-a", "x", "-w", "-s", "Claude Code-credentials"]
-try! pergunta.run()
-pergunta.waitUntilExit()
-confere(pergunta.terminationStatus == 44, "Chaveiro do app de teste: não tem item nenhum (44)")
+var respondeu: Int32 = -1
+if (try? pergunta.run()) != nil {
+    pergunta.waitUntilExit()
+    respondeu = pergunta.terminationStatus
+}
+confere(respondeu == 44, "Chaveiro do app de teste: não tem item nenhum (44)", "saiu \(respondeu)")
 KeepCLI.prepare(["KEEP_IA_ESTADO": "/var/empty/x", "KEEP_IA_SECURITY": "/outro/lugar"])
 confere(!fm.fileExists(atPath: "/outro/lugar"), "Chaveiro do app de teste: só onde o próprio ambiente pôs")
+confere(AIHelper.isValidKey("claude:reserva") && AIHelper.isValidKey("gpt:principal") && AIHelper.isValidKey(AIHelper.followOrder),
+        "chave: formatos válidos")
+for ruim in ["claude:", "gpt:a b", "claude:a/b", "claude:a:b", "--para=x", "outro:x", "claude:x\n"] {
+    confere(!AIHelper.isValidKey(ruim), "chave recusada: \(ruim.debugDescription)")
+}
 
 // --- perguntas ao núcleo, contra o falso que registra o que recebe
 func registro(_ arquivo: String) -> [[String: Any]] {
