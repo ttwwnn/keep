@@ -141,6 +141,23 @@ present() {
         sleep 0.5
     done
 }
+# The window, let settle before anything is measured. A window manager may
+# size a new window a moment after it appears: the person's own QuitOnClose
+# fills the screen with a new window whose app comes to the front within
+# three seconds (04/10/2026 09:07: 98x35 at 100% became 144x48 two seconds
+# in, and nine checks were compared with the first). Settled is four seconds
+# after the window is handed back, then two with no new size in the app's
+# trace, twenty at most.
+settle_window() {
+    sleep 4
+    local seen last=-1 still=0 waited=0
+    while [ "$still" -lt 8 ] && [ "$waited" -lt 80 ]; do
+        seen=$(grep -acE "layout +[^ ]+ size [0-9]+x[0-9]+" "$WORK/app.log")
+        if [ "$seen" = "$last" ]; then still=$((still + 1)); else still=0; last=$seen; fi
+        sleep 0.25; waited=$((waited + 1))
+    done
+}
+
 # Started, waited for, and put behind whatever was in front before it.
 FRONT=
 launch() {
@@ -154,6 +171,7 @@ launch() {
     done
     sleep 1.5
     give_back
+    settle_window
     # The window has to be where the accessibility tree can see it. An app in
     # full screen is a Space of its own, and this window opens on the desktop
     # behind it, where no question reaches: every check after would fail and
