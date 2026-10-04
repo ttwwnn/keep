@@ -72,9 +72,31 @@ Get-Process | Where-Object { $_.ProcessName -in @('Keep', 'keepd', 'OpenConsole'
     Select-Object ProcessName, Id, Path | Format-Table -AutoSize | Out-String |
     Tee-Object -FilePath (Join-Path $Out 'processos.txt') | Write-Host
 
-# Leaving: the app first, then this run's daemon, by the pipe name it was
-# given — every keepd here is this run's.
+# An update with the daemon running: the app closes, the installer runs over
+# it, and the daemon — with the tabs in it — must still be there afterwards,
+# running from the copy the installer moved aside.
 Stop-Process -Id $keep.Id -Force -ErrorAction SilentlyContinue
+$daemon = Get-Process keepd -ErrorAction SilentlyContinue | Select-Object -First 1
+$update = 'sem daemon para conferir'
+if ($daemon) {
+    Write-Host "==> atualizando por cima, com o keepd $($daemon.Id) rodando"
+    $p = Start-Process -FilePath $Installer -ArgumentList '/S' -PassThru -Wait
+    $alive = Get-Process -Id $daemon.Id -ErrorAction SilentlyContinue
+    $aside = Get-ChildItem (Join-Path $dir 'bin') -Filter 'keepd.antigo-*.exe' -ErrorAction SilentlyContinue
+    $tabs = if (Test-Path $cli) { (& $cli ls 2>&1) -join "`n" } else { '' }
+    $update = "instalador saiu com $($p.ExitCode); keepd vivo: $([bool]$alive); copia antiga: $([bool]$aside); novo keepd.exe: $(Test-Path (Join-Path $dir 'bin\keepd.exe'))"
+    Write-Host $update
+    Write-Host $tabs
+    $kept = $tabs -and ($tabs -notmatch 'no workspaces')
+    $update += "; abas mantidas: $kept"
+    if ($p.ExitCode -ne 0 -or -not $alive -or -not $aside -or -not $kept -or -not (Test-Path (Join-Path $dir 'bin\keepd.exe'))) {
+        $update = "FALHOU: $update"
+    }
+}
+Set-Content -Path (Join-Path $Out 'atualizacao.txt') -Value $update
+
+# Leaving: this run's daemon, by the pipe name it was given — every keepd
+# here is this run's.
 Get-Process keepd -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
 if (-not (Test-Path $env:KEEP_E2E_REPORT)) {
@@ -85,4 +107,5 @@ if (-not (Test-Path $env:KEEP_E2E_REPORT)) {
 $report = Get-Content $env:KEEP_E2E_REPORT -Raw | ConvertFrom-Json
 $report.steps | Format-Table name, ok, ms, detail -AutoSize | Out-String -Width 220 | Write-Host
 if (-not $report.ok) { throw 'o roteiro do app falhou' }
+if ($update -like 'FALHOU*') { throw "a atualização com o daemon rodando falhou: $update" }
 Write-Host '==> ok'

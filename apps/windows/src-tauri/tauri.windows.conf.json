@@ -7,8 +7,11 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["PortugueseBR"],
-        "displayLanguageSelector": false
+        "languages": [
+          "PortugueseBR"
+        ],
+        "displayLanguageSelector": false,
+        "installerHooks": "./windows/installer-hooks.nsh"
       },
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
