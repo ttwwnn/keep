@@ -114,6 +114,11 @@ fn handle(stream: Stream, registry: Arc<Registry>) -> Result<()> {
             ServerMsg::Workspaces2(registry.list()).write(&mut writer)?;
             Ok(())
         }
+        ClientMsg::List3 => {
+            registry.reap();
+            ServerMsg::Workspaces3(registry.daemon(), registry.list()).write(&mut writer)?;
+            Ok(())
+        }
         ClientMsg::Kill { workspace } => {
             let msg = match registry.kill(&workspace) {
                 Ok(()) => ServerMsg::Ok,

@@ -635,6 +635,20 @@ impl Tab {
         i32::try_from(pid).ok()
     }
 
+    /// The tab's shell process, when the PTY reported one.
+    pub fn shell_pid(&self) -> Option<u32> {
+        self.shell_pid
+    }
+
+    /// Whoever holds the terminal now: the running command, or the shell at
+    /// its prompt. What `busy`, `cwd` and `command` are all asked of.
+    pub fn foreground(&self) -> Option<u32> {
+        if self.is_finished() {
+            return None;
+        }
+        self.foreground_pid().and_then(|p| u32::try_from(p).ok())
+    }
+
     /// Where the tab is working right now.
     ///
     /// The foreground process's directory, which is the command's while one

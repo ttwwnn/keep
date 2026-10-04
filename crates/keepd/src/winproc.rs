@@ -45,7 +45,29 @@ struct Entry {
     exe: String,
 }
 
-fn processes() -> Vec<Entry> {
+/// The process list, taken at most every quarter second: a workspace list
+/// asks each tab three questions of it, and a list of twenty tabs would
+/// otherwise take sixty snapshots of every process on the machine.
+fn processes() -> std::sync::Arc<Vec<Entry>> {
+    use std::sync::{Arc, Mutex, OnceLock};
+    use std::time::{Duration, Instant};
+    static CACHE: OnceLock<Mutex<Option<(Instant, Arc<Vec<Entry>>)>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(None));
+    if let Ok(guard) = cache.lock() {
+        if let Some((at, list)) = guard.as_ref() {
+            if at.elapsed() < Duration::from_millis(250) {
+                return Arc::clone(list);
+            }
+        }
+    }
+    let fresh = Arc::new(take_processes());
+    if let Ok(mut guard) = cache.lock() {
+        *guard = Some((Instant::now(), Arc::clone(&fresh)));
+    }
+    fresh
+}
+
+fn take_processes() -> Vec<Entry> {
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
     if snapshot == INVALID_HANDLE_VALUE {
         return Vec::new();
@@ -92,7 +114,7 @@ fn is_console_host(exe: &str) -> bool {
 pub fn foreground(shell: u32) -> Option<u32> {
     let born = started(shell)?;
     processes()
-        .into_iter()
+        .iter()
         .filter(|p| p.parent == shell && p.pid != shell && !is_console_host(&p.exe))
         .filter_map(|p| started(p.pid).filter(|&t| t >= born).map(|t| (t, p.pid)))
         .max()
@@ -108,7 +130,7 @@ pub fn foreground(shell: u32) -> Option<u32> {
 /// `codex`. Packages installed with npm run that way on Windows, and a tab
 /// called `node` says nothing about which of them it is.
 pub fn process_name(pid: u32) -> Option<String> {
-    let exe = processes().into_iter().find(|p| p.pid == pid)?.exe;
+    let exe = processes().iter().find(|p| p.pid == pid)?.exe.clone();
     let name = exe.strip_suffix(".exe").or_else(|| exe.strip_suffix(".EXE")).unwrap_or(&exe);
     let name = name.to_ascii_lowercase();
     if matches!(name.as_str(), "cmd" | "node" | "bun" | "deno") {

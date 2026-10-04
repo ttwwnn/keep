@@ -617,3 +617,31 @@ fn a_tab_moves_between_workspaces_with_its_shell() {
     let seen = read_until(&mut back, "carried17", Duration::from_secs(10));
     assert!(seen.contains("carried17"), "the shell did not survive the move: {seen:?}");
 }
+
+/// The fuller list names the processes behind each tab and the daemon that
+/// answered: what lets the app tell which conversation runs where.
+#[test]
+fn the_third_list_names_the_processes_and_the_daemon() {
+    let path = start_daemon("list3");
+    let _sock = attach(&path, "procs", 80, 24);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut seen = None;
+    while Instant::now() < deadline {
+        let mut sock = Stream::connect(&path).unwrap();
+        ClientMsg::List3.write(&mut sock).unwrap();
+        sock.set_read_timeout(Some(Duration::from_secs(5))).ok();
+        if let Ok(Some(ServerMsg::Workspaces3(daemon, list))) = ServerMsg::read(&mut sock) {
+            if let Some(tab) = list.iter().find(|w| w.name == "procs").and_then(|w| w.tabs.first()) {
+                if tab.shell_pid > 0 && tab.pid > 0 {
+                    seen = Some((daemon, tab.clone()));
+                    break;
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let (daemon, tab) = seen.expect("no tab with its processes named");
+    assert_eq!(daemon.pid, std::process::id(), "the daemon here is this test process");
+    assert!(daemon.started_ms > 0);
+    assert_eq!(tab.pid, tab.shell_pid, "a shell at its prompt holds its own terminal");
+}

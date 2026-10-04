@@ -4,18 +4,30 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, anyhow};
-use keep_proto::{SearchHit, TabInfo, WorkspaceInfo};
+use keep_proto::{DaemonInfo, SearchHit, TabInfo, WorkspaceInfo};
 
 use crate::Workspace;
 
 #[derive(Default)]
 pub struct Registry {
     workspaces: Mutex<HashMap<String, Arc<Workspace>>>,
+    /// When this daemon started, in unix milliseconds: with its pid, what
+    /// tells one daemon's tab 3 from the next one's.
+    started_ms: u64,
 }
 
 impl Registry {
     pub fn new() -> Self {
-        Self::default()
+        let started_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        Self { started_ms, ..Self::default() }
+    }
+
+    /// Which daemon this is.
+    pub fn daemon(&self) -> DaemonInfo {
+        DaemonInfo { pid: std::process::id(), started_ms: self.started_ms }
     }
 
     pub fn list(&self) -> Vec<WorkspaceInfo> {
@@ -45,6 +57,8 @@ impl Registry {
                             cwd: t.tab.cwd(),
                             last_active: t.tab.last_active(),
                             command: t.tab.command(),
+                            shell_pid: t.tab.shell_pid().unwrap_or(0),
+                            pid: t.tab.foreground().unwrap_or(0),
                         }
                     })
                     .collect(),

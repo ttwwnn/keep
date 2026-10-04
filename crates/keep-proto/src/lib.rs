@@ -31,6 +31,10 @@ const T_MOVE_TAB: u8 = 0x0c;
 // no length of their own, so a decoder that stops short of the new fields
 // reads the next tab's id out of the middle of this one.
 const T_LIST2: u8 = 0x0d;
+// The same question again, from a client that wants to know which processes
+// stand behind each tab and which daemon is answering — what the app needs to
+// tell which conversation runs in which tab without guessing from timestamps.
+const T_LIST3: u8 = 0x0e;
 
 const T_WORKSPACES: u8 = 0x81;
 const T_ERROR: u8 = 0x84;
@@ -44,6 +48,9 @@ const T_PREVIEW_TEXT: u8 = 0x89;
 const T_SEARCH_HITS: u8 = 0x9a;
 /// The answer to [`T_LIST2`], with `cwd` and `last_active` on every tab.
 const T_WORKSPACES2: u8 = 0x9b;
+/// The answer to [`T_LIST3`]: the daemon first, then the list with each tab's
+/// shell and foreground process.
+const T_WORKSPACES3: u8 = 0x9c;
 
 // Blob frames carry their payload raw, with no length inside it — the frame
 // header already has one. They were renumbered when that redundant length was
@@ -71,6 +78,10 @@ pub enum ClientMsg {
     /// too. A daemon that predates them answers "unknown client tag" and
     /// closes, which is the caller's cue to ask the old question instead.
     List2,
+    /// [`ClientMsg::List2`] from a client that also wants the processes
+    /// behind each tab and the daemon's identity. Refused by a daemon that
+    /// predates it, like `List2` before it.
+    List3,
     /// Attach to a tab. `tab` may be [`TAB_ANY`], meaning "the first live tab,
     /// creating one if the workspace has none". The workspace itself is
     /// created on demand.
@@ -121,7 +132,7 @@ pub enum ClientMsg {
     MoveTab { workspace: String, tab: u32, to: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TabInfo {
     pub id: u32,
     pub cols: u16,
@@ -151,6 +162,18 @@ pub struct TabInfo {
     /// A title says what a program calls itself, which it may not do, and
     /// which several tabs may say identically. This says what it *is*.
     pub command: String,
+    /// The tab's shell, and whoever holds the terminal now (the shell itself
+    /// at a prompt). Zero when unknown — always, on the older answers.
+    pub shell_pid: u32,
+    pub pid: u32,
+}
+
+/// Which daemon answered: its process and when it started, in unix
+/// milliseconds. A tab id means something only within one daemon's life.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DaemonInfo {
+    pub pid: u32,
+    pub started_ms: u64,
 }
 
 /// One line of history that matched, where it lives, and enough around it to
@@ -212,6 +235,8 @@ pub enum ServerMsg {
     /// only in answer to [`ClientMsg::List2`], so a client that cannot read
     /// them never meets one.
     Workspaces2(Vec<WorkspaceInfo>),
+    /// The answer to [`ClientMsg::List3`].
+    Workspaces3(DaemonInfo, Vec<WorkspaceInfo>),
     /// Which tab the attach landed on. Sent before the repaint, because a
     /// client that asked for [`TAB_ANY`] does not know yet.
     Attached { tab: u32 },
@@ -305,7 +330,9 @@ fn bad(msg: &str) -> io::Error {
 /// Written once rather than twice: the layouts differ by two fields at the
 /// tail of each tab record, and two copies of this loop would be two places
 /// for the next field to be added to only one of.
-fn write_workspaces(b: &mut Buf, list: &[WorkspaceInfo], with_cwd: bool) {
+/// How much a workspace list says: 1 the original fields, 2 with `cwd`,
+/// `last_active` and `command`, 3 with the processes as well.
+fn write_workspaces(b: &mut Buf, list: &[WorkspaceInfo], level: u8) {
     b.u32(list.len() as u32);
     for s in list {
         b.str(&s.name);
@@ -320,16 +347,20 @@ fn write_workspaces(b: &mut Buf, list: &[WorkspaceInfo], with_cwd: bool) {
             b.bool(t.busy);
             b.u32(t.split_of);
             b.u8(t.split_dir);
-            if with_cwd {
+            if level >= 2 {
                 b.str(&t.cwd);
                 b.u64(t.last_active);
                 b.str(&t.command);
+            }
+            if level >= 3 {
+                b.u32(t.shell_pid);
+                b.u32(t.pid);
             }
         }
     }
 }
 
-fn read_workspaces(c: &mut Cursor, with_cwd: bool) -> io::Result<Vec<WorkspaceInfo>> {
+fn read_workspaces(c: &mut Cursor, level: u8) -> io::Result<Vec<WorkspaceInfo>> {
     let n = c.u32()? as usize;
     let mut list = Vec::with_capacity(n.min(1024));
     for _ in 0..n {
@@ -347,14 +378,16 @@ fn read_workspaces(c: &mut Cursor, with_cwd: bool) -> io::Result<Vec<WorkspaceIn
                 busy: c.bool()?,
                 split_of: c.u32()?,
                 split_dir: c.u8()?,
-                cwd: String::new(),
-                last_active: 0,
-                command: String::new(),
+                ..TabInfo::default()
             };
-            if with_cwd {
+            if level >= 2 {
                 tab.cwd = c.str()?;
                 tab.last_active = c.u64()?;
                 tab.command = c.str()?;
+            }
+            if level >= 3 {
+                tab.shell_pid = c.u32()?;
+                tab.pid = c.u32()?;
             }
             tabs.push(tab);
         }
@@ -427,6 +460,7 @@ impl ClientMsg {
         let tag = match self {
             ClientMsg::List => T_LIST,
             ClientMsg::List2 => T_LIST2,
+            ClientMsg::List3 => T_LIST3,
             ClientMsg::Attach { workspace, tab, cols, rows } => {
                 b.str(workspace);
                 b.u32(*tab);
@@ -509,6 +543,7 @@ impl ClientMsg {
         let msg = match tag {
             T_LIST => ClientMsg::List,
             T_LIST2 => ClientMsg::List2,
+            T_LIST3 => ClientMsg::List3,
             T_ATTACH => ClientMsg::Attach {
                 workspace: c.str()?,
                 tab: c.u32()?,
@@ -575,12 +610,18 @@ impl ServerMsg {
         let mut b = Buf::new();
         let tag = match self {
             ServerMsg::Workspaces(list) => {
-                write_workspaces(&mut b, list, false);
+                write_workspaces(&mut b, list, 1);
                 T_WORKSPACES
             }
             ServerMsg::Workspaces2(list) => {
-                write_workspaces(&mut b, list, true);
+                write_workspaces(&mut b, list, 2);
                 T_WORKSPACES2
+            }
+            ServerMsg::Workspaces3(daemon, list) => {
+                b.u32(daemon.pid);
+                b.u64(daemon.started_ms);
+                write_workspaces(&mut b, list, 3);
+                T_WORKSPACES3
             }
             ServerMsg::Attached { tab } => {
                 b.u32(*tab);
@@ -639,8 +680,12 @@ impl ServerMsg {
         }
         let mut c = Cursor(&payload);
         let msg = match tag {
-            T_WORKSPACES => ServerMsg::Workspaces(read_workspaces(&mut c, false)?),
-            T_WORKSPACES2 => ServerMsg::Workspaces2(read_workspaces(&mut c, true)?),
+            T_WORKSPACES => ServerMsg::Workspaces(read_workspaces(&mut c, 1)?),
+            T_WORKSPACES2 => ServerMsg::Workspaces2(read_workspaces(&mut c, 2)?),
+            T_WORKSPACES3 => {
+                let daemon = DaemonInfo { pid: c.u32()?, started_ms: c.u64()? };
+                ServerMsg::Workspaces3(daemon, read_workspaces(&mut c, 3)?)
+            }
             T_ATTACHED => ServerMsg::Attached { tab: c.u32()? },
             T_TAB_CREATED => ServerMsg::TabCreated { tab: c.u32()? },
             T_ERROR => ServerMsg::Error(c.str()?),
@@ -828,6 +873,8 @@ mod tests {
                         cwd: String::new(),
                         last_active: 0,
                         command: String::new(),
+                        shell_pid: 0,
+                        pid: 0,
                     },
                     TabInfo {
                         id: 2,
@@ -842,6 +889,8 @@ mod tests {
                         cwd: String::new(),
                         last_active: 0,
                         command: String::new(),
+                        shell_pid: 0,
+                        pid: 0,
                     },
                 ],
             },
@@ -869,6 +918,8 @@ mod tests {
                 cwd: "/Users/someone/www/projeto/api".into(),
                 last_active: 1_756_600_000_123,
                 command: "claude".into(),
+                shell_pid: 0,
+                pid: 0,
             },
             TabInfo {
                 id: 2,
@@ -883,10 +934,24 @@ mod tests {
                 cwd: String::new(),
                 last_active: u64::MAX,
                 command: String::new(),
+                shell_pid: 0,
+                pid: 0,
             },
         ];
         let list = vec![WorkspaceInfo { name: "projeto".into(), tabs: tabs.clone() }];
         roundtrip_server(ServerMsg::Workspaces2(list.clone()));
+        let mut with_pids = list.clone();
+        for w in &mut with_pids {
+            for (i, t) in w.tabs.iter_mut().enumerate() {
+                t.shell_pid = 4000 + i as u32;
+                t.pid = 5000 + i as u32;
+            }
+        }
+        roundtrip_server(ServerMsg::Workspaces3(
+            DaemonInfo { pid: 696, started_ms: 1_791_000_000_000 },
+            with_pids,
+        ));
+        roundtrip_client(ClientMsg::List3);
 
         // Down the old tag, the same tabs come back stripped of both.
         let mut buf = Vec::new();
@@ -924,6 +989,8 @@ mod tests {
                     cwd: String::new(),
                     last_active: 0,
                     command: String::new(),
+                    shell_pid: 0,
+                    pid: 0,
                 },
                 TabInfo {
                     id: 2,
@@ -938,6 +1005,8 @@ mod tests {
                     cwd: String::new(),
                     last_active: 0,
                     command: String::new(),
+                    shell_pid: 0,
+                    pid: 0,
                 },
             ],
         };

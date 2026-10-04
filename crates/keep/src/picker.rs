@@ -167,6 +167,8 @@ mod tests {
                 cwd: String::new(),
                 last_active: 0,
                 command: String::new(),
+                shell_pid: 0,
+                pid: 0,
             }],
         }
     }
