@@ -113,6 +113,12 @@ enum Worktrees {
         case .failure(let why):
             return .failed(why.description)
         case .success(let data):
+            // A refusal in the contract's words is a failure to list, said
+            // as the core says it — not a list with nothing in it.
+            let answer = object(data)
+            if answer["ok"] as? Bool == false {
+                return .failed(answer["motivo"] as? String ?? "o keep worktrees recusou")
+            }
             guard let listing = try? JSONDecoder().decode(Listing.self, from: data), listing.versao == 1
             else { return .failed("resposta ilegível do keep worktrees") }
             return .listing(listing)

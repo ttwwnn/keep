@@ -58,6 +58,10 @@ escreve("listar.json", ["versao": 1, "abas": [], "lixeira": [], "mantidas": [], 
 confere(Worktrees.note(for: Worktrees.list([.init(workspace: "w", tabs: [1])])) == "", "nota: nada a dizer quando não há worktree")
 escreve("listar.json", ["versao": 2])
 if case .failed = Worktrees.list([.init(workspace: "w", tabs: [1])]) { confere(true, "versão desconhecida: falha dita") } else { confere(false, "versão desconhecida: falha dita") }
+escreve("listar.json", ["versao": 1, "ok": false, "motivo": "o git não respondeu a tempo"])
+if case .failed(let why) = Worktrees.list([.init(workspace: "w", tabs: [1])]) {
+    confere(why == "o git não respondeu a tempo", "recusa do listar: falha dita com o motivo do núcleo", why)
+} else { confere(false, "recusa do listar: falha dita, não lista vazia") }
 escreve("listar.json", ["versao": 1]); escreve("demora-listar.json", 5)
 let t0 = Date()
 let lento = Worktrees.list([.init(workspace: "w", tabs: [1])], deadline: 1)
