@@ -29,6 +29,10 @@ impl Drop for Casa {
             "KEEP_IA_CLAUDE_URL",
             "KEEP_IA_CODEX_URL",
             "KEEP_IA_GERENTE_EXTERNO",
+            "KEEP_IA_CLAUDE_BIN",
+            "KEEP_IA_CODEX_BIN",
+            "KEEP_IA_KEEP_BIN",
+            "KEEP_SOCKET",
             "USER",
         ] {
             // SAFETY: a trava garante um teste por vez mexendo no ambiente.
