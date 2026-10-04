@@ -335,9 +335,10 @@ export interface TabAccount {
 export function tabAccount(workspace: string, pane: TabInfo): TabAccount {
   const id = viewKey(workspace, pane.id);
   const entry = tabAIs.value.get(id);
-  let program = programKind(pane.command, pane.title);
-  // The core looked at the process itself: a Claude Code run by `node` is Claude Code.
-  if (entry && (program.kind === "other" || program.kind === "unknown")) program = { kind: entry.agente };
+  // The core looked at the process holding the tab (List3): a Claude Code run
+  // by `node`, or a tab that follows the order and runs on Codex now, is what
+  // the core says it is. Without its word, the daemon's name for the process.
+  const program: ProgramKind = entry ? { kind: entry.agente } : programKind(pane.command, pane.title);
   if (!runsAI(program)) return { key: null, running: null, program, source: null };
   const note = notes.value.get(id);
   if (note) return { key: note.key, running: null, program, source: "note" };
