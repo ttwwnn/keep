@@ -9,11 +9,11 @@
 # anything, and Fechar Aba, after which the worktree is in the Trash and the
 # helper was asked to prepare it before and to conclude after.
 #
-# The helper is the fake one (tools/worktrees-test/fake-helper.py): which
-# worktrees a conversation made is the kit's to decide and the kit's tests
-# prove it. The worktree is a real one, in a repository made for the test,
-# and goes to the real Trash under a name no one else uses; it is taken back
-# out at the end.
+# The core is the fake one (tools/worktrees-test/fake-helper.py), called as
+# the app's `keep` (`worktrees` first): which worktrees a conversation made is
+# the core's to decide, and the core's tests prove it. The worktree is a real
+# one, in a repository made for the test, and goes to the real Trash under a
+# name no one else uses; it is taken back out at the end.
 #
 #   tools/close-trash-test.sh          (SKIP_BUILD=1 to use the KeepDev built last)
 #
@@ -105,9 +105,9 @@ while ! grep -aqE "sidebar +order" "$WORK/app.log" && [ "$waited" -lt 120 ]; do 
 place_on_screen
 sleep 2
 
-asked() {  # the helper's calls, by their first word
+asked() {  # the helper's calls, by their first word — but `indexar`, which the app asks on its own
     python3 -c 'import json,sys
-try: print(" ".join(json.loads(l)["argv"][0] for l in open(sys.argv[1])))
+try: print(" ".join(a for a in (json.loads(l)["argv"][0] for l in open(sys.argv[1])) if a != "indexar"))
 except FileNotFoundError: print("")' "$WORK/chamadas.log"
 }
 question_up() {  # wait for the question naming the worktree

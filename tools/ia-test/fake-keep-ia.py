@@ -1,61 +1,82 @@
 #!/usr/bin/env python3
-"""A stand-in for the kit's `keep-ia`, for the app's tests.
+"""A stand-in for `keep ia`, the core the app asks about AI accounts, for the
+app's tests.
 
-It answers as the kit's contract has it — `--json`, one object printed,
-"versao": 1, exit 0 for ok and 1 for not — out of a home and a state
-directory of the test's own, never the real ones:
+Called as the app calls the `keep` inside it — `ia` first, then the command
+(the `ia` may also be left out) — it answers as the contract has it
+(docs/ia.md): `--json`, one object printed, "versao": 1, exit 0 for ok and 1
+for not. Out of a home and a directory of the test's own, never the real ones:
 
   ordem --json
   ordem mover <key> cima|baixo --json
       the order in <home>/.claude/contas/.ordem, with every account the home
       holds that it does not list yet put at its end, the key moved one
-      place, written back whole (a new file, as the kit writes it)
+      place, written back whole (a new file, as the core writes it)
   entrar claude|gpt --ws=<W> --json
       a new tab in W, opened with the client named in FAKE_IA_KEEP, and the
-      login the kit would have made there: a slot "nova" in the vault, or a
+      login the core would have made there: a slot "nova" in the vault, or a
       folder "nova" in .codex-contas, put at the end of the order
   trocar --ws=<W> --aba=<N> --para=<key> [--interromper] --json
-      the tab's account written into <state>/retrato.json's "ia" list
+      the tab's account written into $FAKE_IA_DIR/abas.json
+  abas --json
+      the "ia" list of $FAKE_IA_DIR/abas.json, said to be about the daemon
+      at KEEP_SOCKET: its process and start, asked of it with the third list
+      (or FAKE_IA_INICIO_MS, when set, and process 0)
+  uso [--agora|--cache|--conta=<key>] --json
+      the real core's answer when FAKE_IA_CORE names a `keep` (it reads the
+      same made-up home, and the stand-in services the test points it at);
+      else $FAKE_IA_DIR/uso.json, or no accounts at all
+  sincronizar --json
+      a round that moved nothing
 
-Every call is logged, one JSON line each, to $FAKE_IA_DIR/calls.jsonl: its
-arguments and the socket it was told to use. Files in $FAKE_IA_DIR change
-how it answers:
-  lento     seconds to wait before answering anything
+The commands that change something (ordem mover, entrar, trocar) are logged,
+one JSON line each, to $FAKE_IA_DIR/calls.jsonl: their arguments (without
+the `ia`, and whether it came: "grupo"), the socket they were told to use
+and the home (KEEP_IA_HOME); the ones that only read (ordem, uso, abas,
+sincronizar), to $FAKE_IA_DIR/reads.jsonl — the app asks those on its own,
+every few seconds, and a test counting what was asked of it counts the first.
+Files in $FAKE_IA_DIR change how it answers:
+  lento     seconds to wait before answering anything that changes something
   falha     `ordem mover` says no
   ocupada   `trocar` without --interromper says the tab is busy
   precisa-login
-            `trocar` opens a tab in the workspace, as the kit does for an
+            `trocar` opens a tab in the workspace, as the core does for an
             account with no login of its own for tabs yet, and says so: the
             motivo "precisa-login", with "aba_login" and "ws_login"
   erro      `trocar` says no, with this file's text as the reason
 
-The home is KEEP_AI_USAGE_HOME and the state KIT_KEEP_ESTADO: the ones the
-app under test was given, which it hands on to its helper.
+The home is KEEP_IA_HOME — the one the app hands its `keep` when it reads a
+made-up home — or else KEEP_AI_USAGE_HOME.
 """
 
 import base64
 import json
 import os
 import re
+import socket
+import struct
 import subprocess
 import sys
 import time
 
 DIR = os.environ.get("FAKE_IA_DIR") or os.path.dirname(os.path.abspath(__file__))
-HOME = os.environ.get("KEEP_AI_USAGE_HOME") or "/nonexistent"
-STATE = os.environ.get("KIT_KEEP_ESTADO") or "/nonexistent"
+HOME = os.environ.get("KEEP_IA_HOME") or os.environ.get("KEEP_AI_USAGE_HOME") or "/nonexistent"
 VAULT = os.path.join(HOME, ".claude", "contas")
 ORDER = os.path.join(VAULT, ".ordem")
+TABS = os.path.join(DIR, "abas.json")
 KEY = re.compile(r"^(claude|gpt):[^\s/:]+$")
+READS = ("uso", "abas", "sincronizar")
 
 
 def flag(name):
     return os.path.join(DIR, name)
 
 
-def log(argv):
-    with open(flag("calls.jsonl"), "a", encoding="utf-8") as out:
-        out.write(json.dumps({"argv": argv, "socket": os.environ.get("KEEP_SOCKET")}) + "\n")
+def log(argv, group):
+    reads = (bool(argv) and argv[0] in READS) or argv == ["ordem", "--json"]
+    with open(flag("reads.jsonl" if reads else "calls.jsonl"), "a", encoding="utf-8") as out:
+        out.write(json.dumps({"argv": argv, "grupo": group, "socket": os.environ.get("KEEP_SOCKET"),
+                              "casa": os.environ.get("KEEP_IA_HOME")}) + "\n")
 
 
 def answer(body, ok=True):
@@ -151,6 +172,39 @@ def jwt(claims):
     return "h." + part + ".s"
 
 
+def daemon_info():
+    """The daemon's process and start, as its third list says them: the
+    frame's first twelve bytes are its pid and its start in unix ms."""
+    if os.environ.get("FAKE_IA_INICIO_MS"):
+        return 0, int(os.environ["FAKE_IA_INICIO_MS"])
+    path = os.environ.get("KEEP_SOCKET")
+    if not path:
+        return None
+    try:
+        c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        c.settimeout(3)
+        c.connect(path)
+        c.sendall(bytes([0x0E]) + struct.pack(">I", 0))
+        head = b""
+        while len(head) < 5:
+            part = c.recv(5 - len(head))
+            if not part:
+                return None
+            head += part
+        body = b""
+        while len(body) < 12:
+            part = c.recv(12 - len(body))
+            if not part:
+                return None
+            body += part
+        c.close()
+        if head[0] != 0x9C:
+            return None
+        return struct.unpack(">IQ", body)
+    except OSError:
+        return None
+
+
 # ------------------------------------------------------------------ commands
 
 
@@ -159,7 +213,7 @@ def ordem(argv):
         if len(argv) < 4 or not KEY.match(argv[2]) or argv[3] not in ("cima", "baixo"):
             sys.exit(2)
         if os.path.exists(flag("falha")):
-            refuse("erro", "falha simulada do keep-ia")
+            refuse("erro", "falha simulada do keep ia")
         order = full_order()
         key = argv[2]
         if key not in order:
@@ -239,32 +293,59 @@ def trocar(argv):
     if os.path.exists(flag("erro")):
         with open(flag("erro"), encoding="utf-8") as f:
             refuse("erro", f.read().strip() or "erro simulado")
-    retrato = os.path.join(STATE, "retrato.json")
-    photo = read_json(retrato)
-    if isinstance(photo, dict):
-        entries = [e for e in photo.get("ia") or []
+    tabs = read_json(TABS)
+    if isinstance(tabs, dict):
+        entries = [e for e in tabs.get("ia") or []
                    if not (e.get("workspace") == workspace and e.get("aba") == int(tab))]
         entries.append({"workspace": workspace, "aba": int(tab),
                         "agente": "codex" if key.startswith("gpt:") else "claude",
-                        "conta": key, "vinculo": "exato"})
-        photo["ia"] = entries
-        photo["gravado_em_ms"] = int(time.time() * 1000)
-        write_atomically(retrato, json.dumps(photo))
+                        "conta": key, "atual": None if key == "claude:ordem" else key,
+                        "vinculo": "exato"})
+        tabs["ia"] = entries
+        write_atomically(TABS, json.dumps(tabs))
     answer({"feito": "aba %s/%s em %s" % (workspace, tab, key)})
+
+
+def abas(argv):
+    tabs = read_json(TABS) or {}
+    info = daemon_info()
+    if info is None:
+        refuse("erro", "o daemon não respondeu à terceira lista")
+    pid, start = info
+    answer({"keepd": {"pid": pid, "inicioMs": start}, "exato": True, "ia": tabs.get("ia") or []})
+
+
+def uso(argv):
+    core = os.environ.get("FAKE_IA_CORE")
+    if core:
+        os.execv(core, [core, "ia"] + argv + ["--json"])
+    saved = read_json(flag("uso.json"))
+    if isinstance(saved, dict):
+        answer(saved)
+    answer({"linhas": [], "ordem": [], "gerenteExterno": False, "medidoEm": time.time()})
+
+
+def sincronizar(argv):
+    answer({"estado": "feito", "alvo": None, "alteradas": [], "pendentes": []})
 
 
 def main():
     argv = sys.argv[1:]
-    log(argv)
-    try:
-        with open(flag("lento"), encoding="utf-8") as f:
-            time.sleep(float(f.read().strip() or "0"))
-    except (OSError, ValueError):
-        pass
+    group = argv[0] if argv[:1] == ["ia"] else None
+    if group:
+        argv = argv[1:]
+    log(argv, group)
     if "--json" not in argv or not argv:
         sys.exit(2)
     argv = [item for item in argv if item != "--json"]
-    commands = {"ordem": ordem, "entrar": entrar, "trocar": trocar}
+    if argv[0] not in READS:
+        try:
+            with open(flag("lento"), encoding="utf-8") as f:
+                time.sleep(float(f.read().strip() or "0"))
+        except (OSError, ValueError):
+            pass
+    commands = {"ordem": ordem, "entrar": entrar, "trocar": trocar,
+                "abas": abas, "uso": uso, "sincronizar": sincronizar}
     if argv[0] not in commands:
         sys.exit(2)
     commands[argv[0]](argv)

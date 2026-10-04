@@ -59,27 +59,28 @@ restore_app() {
     local bundle=$1
     ( unset KEEP_SOCKET KEEP_TRACE KEEP_STATE_DIR KEEP_APP_NAME \
         KEEP_AI_USAGE_HOME KEEP_AI_USAGE_CLAUDE_URL KEEP_AI_USAGE_CODEX_URL \
-        KEEP_IA_BIN KIT_KEEP_ESTADO
+        KEEP_IA_BIN KEEP_WORKTREES_BIN KEEP_IA_SECURITY KEEP_IA_PERFIL_URL
       open "$bundle" >/dev/null 2>&1 ) &
 }
 
-# A test build reads no logins. The sidebar's usage footer asks the real AI
-# services with the real tokens it finds in this home, and every suite that
-# opens KeepDev would otherwise do that on each launch. An empty place to look
-# in; the footer's own test points it at a made-up home instead.
+# A test build reads no logins. The sidebar's usage footer has the core
+# (`keep ia uso`) measure every login it finds in this home, with the real
+# tokens and the real services, and every suite that opens KeepDev would
+# otherwise do that on each launch. An empty place to look in — the app hands
+# it to the core as its home, with a Keychain that holds nothing and the
+# services' addresses pointing nowhere (Daemon/KeepCLI.swift) — and the
+# footer's own test points it at a made-up home instead.
 export KEEP_AI_USAGE_HOME="${KEEP_AI_USAGE_HOME:-/var/empty}"
 
-# Nor does it ask the kit to change anything. With `keep-ia` installed, a
-# build would offer arrows in the footer, a "+", and a chevron beside every
-# tab's title, each a way for a test to reach the real vault and the real
-# tabs; and it would read the account of every tab from the kit's own
-# `retrato.json`. `KEEP_IA_BIN` set is the only helper the app looks at, and
-# an empty directory is none; the tests of those features point both at
-# stand-ins of their own. And an app reading a made-up home, as above, never
-# asks the installed helper even without `KEEP_IA_BIN`
-# (Daemon/KitHelper.swift): that one acts on the real home.
+# Nor does it ask the core for anything. With the `keep` inside the build
+# there to ask, it would offer arrows in the footer, a "+", and a chevron
+# beside every tab's title, ask what every tab runs on, follow the order of
+# priority every half minute and look for the worktrees of every tab that
+# closes. `KEEP_IA_BIN` and `KEEP_WORKTREES_BIN`, when set, are the only
+# places the app looks, and an empty directory is none; the tests of those
+# features point them at stand-ins of their own.
 export KEEP_IA_BIN="${KEEP_IA_BIN:-/var/empty}"
-export KIT_KEEP_ESTADO="${KIT_KEEP_ESTADO:-/var/empty}"
+export KEEP_WORKTREES_BIN="${KEEP_WORKTREES_BIN:-/var/empty}"
 
 # Put the client and daemon that were just built inside the app bundle.
 #

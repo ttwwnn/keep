@@ -11,6 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var controllers: [MainWindowController] = []
     private var poller: DaemonPoller?
     private var claudeModes: ClaudeModeWatcher?
+    private var tabAccounts: AITabWatcher?
+    private var chores: AIChores?
     private let windowStore = WindowStateStore()
     /// Set the moment quitting becomes certain. On the way out AppKit closes
     /// every window, and each of those is indistinguishable — from here —
@@ -278,6 +280,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         claudeModes.start()
         self.claudeModes = claudeModes
         UsageMonitor.shared.start()
+        let tabAccounts = AITabWatcher(session: session)
+        tabAccounts.start()
+        self.tabAccounts = tabAccounts
+        let chores = AIChores()
+        chores.start()
+        self.chores = chores
 
         // ⌃` from anywhere: the drop-down terminal. Registered after launch,
         // once — a Carbon hotkey outlives whoever registered it, and two

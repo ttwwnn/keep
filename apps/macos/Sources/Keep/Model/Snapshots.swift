@@ -823,15 +823,18 @@ struct SessionSnapshot: Hashable {
         let claudeActivity: ClaudeActivity?
         /// When it started waiting on you, if it is: see `Attention`.
         let wantsYouSince: Date?
-        /// The account its AI runs on, as the kit wrote it down
-        /// (`AITabAccounts`): `claude:ordem`, `claude:<slot>`, `gpt:<name>`.
+        /// The account its AI was put on, as the core said
+        /// (`AITabAccounts`): `claude:ordem`, `claude:<name>`, `gpt:<name>`.
         /// Nil when no AI runs there.
         let account: String?
-        /// Whether its AI and account can be chosen from here: the kit's
-        /// helper is installed.
+        /// Whether its AI and account can be chosen from here: there is a
+        /// `keep` to ask.
         let offersAccounts: Bool
         /// Verified account for this tab's current program, used by the footer.
         var usageAccount: String? = nil
+        /// The account its AI runs on now, when the core could tell — what
+        /// following the order has it on. For the menu's dash.
+        var runningAccount: String? = nil
     }
 
     struct StripItem: Hashable, Identifiable {
@@ -855,6 +858,7 @@ struct SessionSnapshot: Hashable {
         let command: String
         let account: String?
         let offersAccounts: Bool
+        var runningAccount: String? = nil
     }
 
     struct ActiveTab: Hashable {
