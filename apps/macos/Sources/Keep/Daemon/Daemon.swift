@@ -96,6 +96,7 @@ enum Daemon {
 
     private static let tagList: UInt8 = 0x01
     private static let tagList2: UInt8 = 0x0d
+    private static let tagList3: UInt8 = 0x0e
     private static let tagNewTab: UInt8 = 0x03
     private static let tagKill: UInt8 = 0x06
     private static let tagCloseTab: UInt8 = 0x07
@@ -105,6 +106,7 @@ enum Daemon {
     private static let tagSearch: UInt8 = 0x09
     private static let tagSessions: UInt8 = 0x81
     private static let tagSessions2: UInt8 = 0x9b
+    private static let tagSessions3: UInt8 = 0x9c
     private static let tagError: UInt8 = 0x84
     private static let tagOk: UInt8 = 0x85
     private static let tagTabCreated: UInt8 = 0x88
@@ -176,31 +178,119 @@ enum Daemon {
     /// app will meet one older than itself whenever it is rebuilt — and that
     /// is exactly when nobody wants to be told to restart it and lose their
     /// sessions.
+    ///
+    /// The third question comes first, for the daemon's own identity that
+    /// travels with it (`lastInfo`); a daemon that refuses it is not asked it
+    /// again for the rest of its life.
     static func list() throws -> [Workspace] {
-        do {
-            return try askForList(tag: tagList2)
-        } catch {
-            return try askForList(tag: tagList)
+        let born = startedAt
+        if !refusedThird(born) {
+            do {
+                let (info, listing) = try askForList3()
+                remember(info)
+                return listing
+            } catch Failure.protocolError {
+                refuseThird(born)
+            } catch {
+                // Not reached at all: the older questions will say why.
+            }
         }
+        let answer: (listing: [Workspace], peer: UInt32?)
+        do {
+            answer = try askForList(tag: tagList2)
+        } catch {
+            answer = try askForList(tag: tagList)
+        }
+        remember(answer.peer.map { Info(pid: $0, startedMs: nil) })
+        return answer.listing
     }
 
-    private static func askForList(tag question: UInt8) throws -> [Workspace] {
+    /// Which daemon answered: its process, and — from one that knows the
+    /// third question — when it started, in unix milliseconds. The same two
+    /// figures `keep ia abas` says it read, which is how an answer about the
+    /// tabs is known to be about these tabs. An older daemon does not say
+    /// either; its process is the one at the other end of the socket.
+    struct Info: Equatable {
+        let pid: UInt32
+        let startedMs: UInt64?
+    }
+
+    /// The daemon behind the last list, or nil before one answered.
+    static var lastInfo: Info? {
+        infoLock.lock()
+        defer { infoLock.unlock() }
+        return info
+    }
+
+    private static let infoLock = NSLock()
+    nonisolated(unsafe) private static var info: Info?
+    /// The daemon, by the birth of its socket, that refused the third
+    /// question.
+    nonisolated(unsafe) private static var refusedThirdBy: Date?
+
+    private static func remember(_ answer: Info?) {
+        infoLock.lock()
+        info = answer
+        infoLock.unlock()
+    }
+
+    private static func refusedThird(_ born: Date?) -> Bool {
+        infoLock.lock()
+        defer { infoLock.unlock() }
+        guard let born, let refused = refusedThirdBy else { return false }
+        return abs(born.timeIntervalSince(refused)) < 0.001
+    }
+
+    private static func refuseThird(_ born: Date?) {
+        infoLock.lock()
+        refusedThirdBy = born
+        infoLock.unlock()
+    }
+
+    private static func askForList3() throws -> (Info, [Workspace]) {
         let sock = try connect()
         defer { close(sock) }
-        try send(sock, tag: question, payload: Data())
-
+        try send(sock, tag: tagList3, payload: Data())
         let (tag, payload) = try recv(sock)
         switch tag {
-        case tagSessions:
-            return try decodeWorkspaces(payload, withCwd: false)
-        case tagSessions2:
-            return try decodeWorkspaces(payload, withCwd: true)
+        case tagSessions3:
+            var r = Reader(payload)
+            let info = Info(pid: try r.u32(), startedMs: try r.u64())
+            return (info, try decodeWorkspaces(&r, level: 3))
         case tagError:
             var r = Reader(payload)
             throw Failure.protocolError(try r.string())
         default:
             throw Failure.protocolError("unexpected reply tag \(tag)")
         }
+    }
+
+    private static func askForList(tag question: UInt8) throws -> (listing: [Workspace], peer: UInt32?) {
+        let sock = try connect()
+        defer { close(sock) }
+        try send(sock, tag: question, payload: Data())
+
+        let (tag, payload) = try recv(sock)
+        var r = Reader(payload)
+        switch tag {
+        case tagSessions:
+            return (try decodeWorkspaces(&r, level: 1), peer(sock))
+        case tagSessions2:
+            return (try decodeWorkspaces(&r, level: 2), peer(sock))
+        case tagError:
+            throw Failure.protocolError(try r.string())
+        default:
+            throw Failure.protocolError("unexpected reply tag \(tag)")
+        }
+    }
+
+    /// The process at the other end of a connection to the socket — the
+    /// daemon — as the kernel says it.
+    private static func peer(_ fd: Int32) -> UInt32? {
+        var pid: pid_t = 0
+        var size = socklen_t(MemoryLayout<pid_t>.size)
+        guard getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &size) == 0, pid > 0 else { return nil }
+        return UInt32(pid)
     }
 
     /// Open a new tab in a workspace, creating the workspace if needed.
@@ -487,14 +577,13 @@ enum Daemon {
         return out
     }
 
-    /// The two layouts differ only by two fields at the tail of each tab, so
+    /// The three layouts differ only by fields at the tail of each tab, so
     /// they are read by one function: tab records sit back to back with no
     /// length of their own, and a decoder that reads the wrong number of them
     /// finds the next tab's id inside the middle of this one.
     private static func decodeWorkspaces(
-        _ payload: Data, withCwd: Bool
+        _ r: inout Reader, level: Int
     ) throws -> [Workspace] {
-        var r = Reader(payload)
         let count = try r.u32()
         var out: [Workspace] = []
         out.reserveCapacity(Int(min(count, 4096)))
@@ -515,7 +604,7 @@ enum Daemon {
                     splitOf: try r.u32(),
                     splitDir: try r.u8()
                 )
-                if withCwd {
+                if level >= 2 {
                     tab.cwd = try r.string()
                     let stamp = try r.u64()
                     // Zero is the daemon saying it does not know, which is not
@@ -523,6 +612,14 @@ enum Daemon {
                     tab.lastActive = stamp == 0
                         ? nil : Date(timeIntervalSince1970: Double(stamp) / 1000)
                     tab.command = try r.string()
+                }
+                if level >= 3 {
+                    // The shell's process and the one holding the terminal:
+                    // read past, not kept. The core's `keep ia abas` is what
+                    // reads processes, and a figure that changes with every
+                    // command run would have the sidebar redrawn for nothing.
+                    _ = try r.u32()
+                    _ = try r.u32()
                 }
                 tabs.append(tab)
             }
