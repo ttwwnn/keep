@@ -63,6 +63,15 @@ impl Server {
         for stream in self.listener.incoming() {
             let stream = match stream {
                 Ok(s) => s,
+                // A pipe that cannot open its next instance fails every
+                // accept until it can; a moment between tries keeps that from
+                // spinning a core.
+                #[cfg(windows)]
+                Err(_) => {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    continue;
+                }
+                #[cfg(not(windows))]
                 Err(_) => continue,
             };
             let registry = Arc::clone(&self.registry);
