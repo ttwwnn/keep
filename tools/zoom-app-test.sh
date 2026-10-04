@@ -58,6 +58,13 @@ check() {  # check <what> <wanted> <got>
         say "  ok    $1"
         PASSED=$((PASSED + 1))
     else
+        # Gone out of sight since it was opened — another app taken to full
+        # screen mid-run (see `launch`) — and every check after would fail
+        # for the same reason: said, and stopped, rather than counted.
+        if [ -n "${APP_PID:-}" ] && [ "$(present "Toggle Sidebar")" != yes ]; then
+            say "the test's window went out of sight mid-run: is another app in full screen? not run"
+            exit 3
+        fi
         say "  FAIL  $1"
         say "        wanted: $2"
         say "        got:    $3"
@@ -299,21 +306,6 @@ palette() {  # palette <filter>: run the palette's first command for it
 }
 
 say ""
-say "a question the app is too busy to answer is asked again, not taken for a no"
-# An app stopped for longer than eight tries take is a machine under load at
-# its worst: no question reaches it, and once it is back the answer is the
-# one it would have given. An item that is not there is still a no, and
-# still at once: the patience is for silence, not for absence.
-kill -STOP "$APP_PID"
-( sleep 15; kill -CONT "$APP_PID" 2>/dev/null ) &
-check "a read made while the app answers nothing for 15 s gets its answer" 1 "$(item "Zoom In")"
-kill -CONT "$APP_PID" 2>/dev/null
-asked=$SECONDS
-gone=$(ask menuenabled View "No Such Item")
-check "an item that is not there is a no, in under ten seconds" "(none) yes" \
-    "$gone $([ $((SECONDS - asked)) -lt 10 ] && echo yes || echo no)"
-
-say ""
 say "the zoom, above the sidebar"
 check "it says 100%" "100%" "$(level)"
 check "larger can be pressed" 1 "$(enabled keep.zoom.in)"
@@ -497,6 +489,23 @@ check "and still clear of the toggle" yes "$(before keep.zoom.in "Toggle Sidebar
 # No percentage to watch here: what the press writes down is watched instead.
 press_until keep.zoom.out none written
 check "and they still zoom: smaller from 110% is 100%" none "$(written)"
+
+say ""
+say "a question the app is too busy to answer is asked again, not taken for a no"
+# Last but one, since an app that was stopped is asked nothing more: the
+# section after quits it and opens a fresh one. An app stopped for longer
+# than eight tries take is a machine under load at its worst: no question
+# reaches it, and once it is back the answer is the one it would have given.
+# An item that is not there is still a no, and still at once: the patience
+# is for silence, not for absence.
+kill -STOP "$APP_PID"
+( sleep 15; kill -CONT "$APP_PID" 2>/dev/null ) &
+check "a read made while the app answers nothing for 15 s gets its answer" 1 "$(item "Zoom In")"
+kill -CONT "$APP_PID" 2>/dev/null
+asked=$SECONDS
+gone=$(ask menuenabled View "No Such Item")
+check "an item that is not there is a no, in under ten seconds" "(none) yes" \
+    "$gone $([ $((SECONDS - asked)) -lt 10 ] && echo yes || echo no)"
 
 say ""
 say "100% is the size the person's config gives, in whichever file libghostty finds it"
