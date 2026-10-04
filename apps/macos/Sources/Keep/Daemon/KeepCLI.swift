@@ -26,7 +26,12 @@ enum KeepCLI {
 
     struct Failure: Error, CustomStringConvertible {
         let description: String
-        init(_ description: String) { self.description = description }
+        /// How the process exited, when that is what went wrong.
+        var status: Int32?
+        init(_ description: String, status: Int32? = nil) {
+            self.description = description
+            self.status = status
+        }
     }
 
     /// `name` is how the helper is called in what goes wrong: "o keep ia

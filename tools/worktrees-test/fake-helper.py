@@ -19,6 +19,10 @@ cmd = args[0]
 def resp(name, default):
     p = os.path.join(d, name)
     return json.load(open(p)) if os.path.exists(p) else default
+if os.path.exists(os.path.join(d, "sem-worktrees")):
+    # um keep de antes do `keep worktrees`: não conhece a pergunta
+    print("keep worktrees: ainda não implementado", file=sys.stderr)
+    sys.exit(2)
 if cmd == "listar":
     time.sleep(float(resp("demora-listar.json", 0)))
     print(json.dumps(resp("listar.json", {"versao": 1})))

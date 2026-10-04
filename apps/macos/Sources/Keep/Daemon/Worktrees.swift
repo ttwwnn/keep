@@ -110,6 +110,12 @@ enum Worktrees {
         guard !targets.isEmpty else { return .listing(Listing(versao: 1, abas: [], lixeira: [], mantidas: [], avisos: [])) }
         let arguments = ["listar", "--prazo", String(format: "%.1f", deadline)] + targets.map(\.argument)
         switch run(helper, arguments, within: deadline + 1.5) {
+        case .failure(let why) where why.status == 2:
+            // A `keep` that does not know the question — one from before
+            // `keep worktrees` — is no core to ask: the question stays as it
+            // was, as with none at all.
+            Trace.log("worktree", "listar: \(why.description)")
+            return .off
         case .failure(let why):
             return .failed(why.description)
         case .success(let data):
@@ -132,6 +138,7 @@ enum Worktrees {
     static func index(within seconds: TimeInterval = 120) -> String? {
         guard let helper else { return nil }
         switch run(helper, ["indexar", "--json"], within: seconds) {
+        case .failure(let why) where why.status == 2: return nil
         case .failure(let why): return why.description
         case .success: return nil
         }
@@ -327,7 +334,7 @@ enum Worktrees {
             if $0.status == 1, (object($0.data)["versao"] as? NSNumber)?.intValue == 1 {
                 return .success($0.data)
             }
-            return .failure(RunFailure("o keep worktrees saiu com \($0.status)"))
+            return .failure(RunFailure("o keep worktrees saiu com \($0.status)", status: $0.status))
         }
     }
 
