@@ -259,7 +259,7 @@ fn depois_do_login(alvos: &[(String, u32, String)]) {
 }
 
 /// `keep ia login claude [--conta=<apelido>] [--email=<e>]`.
-fn login_claude(conta: Option<&str>, email_dado: Option<&str>) -> Result<(), String> {
+fn login_claude(conta: Option<&str>, email_dado: Option<&str>, apelido_dado: Option<&str>) -> Result<(), String> {
     let contas_agora = contas::listar(true);
     let pedida = conta.and_then(|ap| contas_agora.iter().find(|c| c.engine == Motor::Claude && c.aliases.iter().any(|a| a == ap)));
     if conta.is_some() && pedida.is_none() {
@@ -351,7 +351,10 @@ fn login_claude(conta: Option<&str>, email_dado: Option<&str>) -> Result<(), Str
                 base = format!("{}-{n}", contas::apelido_de_email(&dono.email));
                 n += 1;
             }
-            let ap = pergunta("Apelido no Keep", &base);
+            let ap = match apelido_dado {
+                Some(a) => a.to_string(),
+                None => pergunta("Apelido no Keep", &base),
+            };
             if !contas::apelido_valido(&ap) || ap == "ordem" || usados.contains(&Motor::Claude.chave(&ap)) {
                 desfaz(&pasta);
                 return Err(format!("Apelido inválido ou já usado: {ap}"));
@@ -504,7 +507,7 @@ pub fn cli_login(a: &crate::cli::Args) -> i32 {
                     }
                 });
             }
-            let r = login_claude(conta, a.opcao("email"));
+            let r = login_claude(conta, a.opcao("email"), a.opcao("apelido"));
             let alvos = chave_espera
                 .and_then(|k| {
                     com_espera(&k, |e| {
@@ -521,7 +524,7 @@ pub fn cli_login(a: &crate::cli::Args) -> i32 {
             r
         }
         "gpt" => login_gpt(a.opcao("apelido")),
-        _ => return crate::cli::uso_errado("keep ia login claude [--conta=<apelido>] | gpt [--apelido=<A>]"),
+        _ => return crate::cli::uso_errado("keep ia login claude [--conta=<apelido>] [--email=<e>] [--apelido=<A>] | gpt [--apelido=<A>]"),
     };
     match resultado {
         Ok(()) => {
@@ -531,6 +534,84 @@ pub fn cli_login(a: &crate::cli::Args) -> i32 {
         Err(e) => {
             println!("\n{e}");
             1
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod testes {
+    use super::*;
+    use crate::contas::testes::{casa, perfis};
+
+    /// Um `claude auth login` de mentira: grava o login no armazém que o
+    /// ambiente indica, com o token dado, como o de verdade grava.
+    fn claude_que_entra(raiz: &Path, token: &str) -> PathBuf {
+        let p = raiz.join("claude-login");
+        let json = format!(
+            r#"{{"claudeAiOauth":{{"accessToken":"{token}","refreshToken":"r","expiresAt":9999999999999,"subscriptionType":"max"}}}}"#
+        );
+        std::fs::write(
+            &p,
+            format!(
+                "#!/bin/sh\n[ \"$1\" = auth ] || exit 2\nD=\"$CLAUDE_SECURESTORAGE_CONFIG_DIR\"\nJ='{json}'\n\
+                 if [ \"$(uname)\" = Darwin ]; then S='Claude Code-credentials'; \
+                 [ -n \"$D\" ] && S=\"$S-$(printf %s \"$D\" | shasum -a 256 | cut -c1-8)\"; \
+                 printf %s \"$J\" > \"$KEEP_IA_TESTE_CHAVEIRO/$S\"; \
+                 else mkdir -p \"${{D:-$KEEP_IA_HOME/.claude}}\"; printf %s \"$J\" > \"${{D:-$KEEP_IA_HOME/.claude}}/.credentials.json\"; fi\n"
+            ),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        p
+    }
+
+    fn pastas(raiz: &Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(raiz.join(".claude/contas/fixas"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn uma_conta_nova_ganha_pasta_propria_e_entra_na_fila() {
+        let c = casa("login-nova");
+        perfis(&[("G", "u-1", "ana@x.com"), ("NOVO", "u-3", "cara@z.com")]);
+        c.global("G", "r");
+        let bin = claude_que_entra(&c.raiz, "NOVO");
+        // SAFETY: a casa (e a trava) está de pé.
+        unsafe { std::env::set_var("KEEP_IA_CLAUDE_BIN", &bin) };
+        let _ = contas::listar(true);
+        login_claude(None, Some("cara@z.com"), Some("cara")).unwrap();
+        let lista = contas::listar(false);
+        let cara = lista.iter().find(|c| c.alias == "cara").expect("a conta nova");
+        assert!(cara.roda && cara.fixa().is_some());
+        assert_eq!(cara.email.as_deref(), Some("cara@z.com"));
+        assert!(contas::ler_ordem().contains(&"claude:cara".to_string()));
+        assert_eq!(contas::ambiente(cara).unwrap()[0].0, "CLAUDE_SECURESTORAGE_CONFIG_DIR");
+    }
+
+    #[test]
+    fn o_login_que_cai_noutra_conta_nao_deixa_nada() {
+        let c = casa("login-errado");
+        perfis(&[("G", "u-1", "ana@x.com"), ("OUTRO", "u-9", "zed@z.com")]);
+        c.global("G", "r");
+        // bia existe (pasta com keep.json, sem login): o login próprio dela é pedido.
+        c.fixa("k-2", None, Some(("bia", "bia@y.com", "u-2")));
+        let bin = claude_que_entra(&c.raiz, "OUTRO");
+        // SAFETY: a casa (e a trava) está de pé.
+        unsafe { std::env::set_var("KEEP_IA_CLAUDE_BIN", &bin) };
+        let _ = contas::listar(true);
+        let antes = pastas(&c.raiz);
+        let e = login_claude(Some("bia"), None, None).unwrap_err();
+        assert!(e.contains("OUTRA conta"), "{e}");
+        assert_eq!(pastas(&c.raiz), antes, "a pasta do login errado saiu");
+        let itens: Vec<_> = std::fs::read_dir(c.raiz.join("chaveiro")).unwrap().flatten().map(|e| e.file_name()).collect();
+        if cfg!(target_os = "macos") {
+            assert_eq!(itens.len(), 1, "só o global ficou no Chaveiro: {itens:?}");
         }
     }
 }

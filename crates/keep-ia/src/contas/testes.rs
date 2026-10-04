@@ -52,8 +52,9 @@ pub fn casa(nome: &str) -> Casa {
     let security = raiz.join("security");
     std::fs::write(
         &security,
-        "#!/bin/sh\nS=\nwhile [ $# -gt 0 ]; do [ \"$1\" = -s ] && { shift; S=\"$1\"; }; shift; done\n\
-         F=\"$KEEP_IA_TESTE_CHAVEIRO/$S\"\n[ -f \"$F\" ] || exit 44\ncat \"$F\"\n",
+        "#!/bin/sh\nOP=\"$1\"; S=\nwhile [ $# -gt 0 ]; do [ \"$1\" = -s ] && { shift; S=\"$1\"; }; shift; done\n\
+         F=\"$KEEP_IA_TESTE_CHAVEIRO/$S\"\n[ -f \"$F\" ] || exit 44\n\
+         [ \"$OP\" = delete-generic-password ] && { rm -f \"$F\"; exit 0; }\ncat \"$F\"\n",
     )
     .unwrap();
     #[cfg(unix)]
