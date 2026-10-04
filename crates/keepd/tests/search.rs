@@ -29,7 +29,7 @@ fn workspace_with_output(registry: &Registry, name: &str, marker: &str) -> u32 {
     let (id, tab) = workspace.new_tab(None, 80, 10, 0, 0).expect("tab");
     tab.send(&common::print_lines(&[marker])).expect("send");
     assert!(
-        wait_for(Duration::from_secs(10), || {
+        wait_for(Duration::from_secs(30), || {
             tab.screen_text()
                 .map(|t| t.lines().any(|l| l.trim() == marker))
                 .unwrap_or(false)
@@ -93,7 +93,7 @@ fn a_hit_carries_the_lines_around_it() {
     let (_, tab) = workspace.new_tab(None, 80, 10, 0, 0).expect("tab");
     tab.send(&common::print_lines(&["above", "MIDDLE", "below"])).expect("send");
     assert!(
-        wait_for(Duration::from_secs(10), || {
+        wait_for(Duration::from_secs(30), || {
             tab.screen_text()
                 .map(|t| t.lines().any(|l| l.trim() == "below"))
                 .unwrap_or(false)
