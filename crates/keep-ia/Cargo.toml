@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 anyhow = "1.0.104"
 base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 keep-proto = { version = "0.0.1", path = "../keep-proto" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
