@@ -279,6 +279,338 @@ button {
   flex: 1;
 }
 
+/* The title and, for an AI kept on an account of its own, which one. */
+.tab-label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tab-label .tab-title,
+.row-badge .tab-title {
+  flex: 0 1 auto;
+}
+
+.tab-program {
+  flex: none;
+  color: var(--ink-faint);
+  font-size: calc(11.5px * var(--zoom));
+  white-space: nowrap;
+}
+
+.row-badge .tab-program {
+  color: rgba(33, 22, 12, 0.62);
+}
+
+/* The chevron that opens a tab's menu of AI and account: quiet at rest,
+   there on the chosen tab and under the pointer, as the close button is. */
+.ai-chevron {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: currentColor;
+  opacity: 0;
+  transition: opacity 150ms var(--ease), background-color 150ms var(--ease);
+}
+
+.tab:hover .ai-chevron,
+.tab.selected .ai-chevron,
+.tab-row:hover .ai-chevron,
+.tab-row.selected .ai-chevron {
+  opacity: 0.6;
+}
+
+.ai-chevron:hover,
+.ai-chevron:focus-visible {
+  opacity: 1 !important;
+  background: var(--wash-strong);
+}
+
+/* ------------------------------------------------------------ usage footer */
+
+.usage-footer {
+  flex: none;
+  max-height: 48vh;
+  overflow-y: auto;
+  padding: 2px calc(var(--gutter) + 8px) 8px;
+  border-top: 1px solid var(--rule);
+  scrollbar-width: thin;
+}
+
+.usage-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+}
+
+.usage-fold {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-faint);
+  font-size: 11px;
+  font-weight: 600;
+  transition: color 150ms var(--ease);
+}
+
+.usage-fold:hover {
+  color: var(--ink-resting);
+}
+
+.usage-spacer {
+  flex: 1;
+}
+
+.usage-icon {
+  width: 20px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--ink-faint);
+  transition: color 150ms var(--ease), background-color 150ms var(--ease);
+}
+
+.usage-icon:hover {
+  color: var(--ink-resting);
+  background: var(--wash);
+}
+
+.usage-icon.busy {
+  opacity: 0.35;
+}
+
+.usage-notice {
+  margin: 0 0 6px;
+  font-size: 10.5px;
+  color: var(--attention);
+}
+
+.usage-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.usage-lines.folded {
+  gap: 3px;
+}
+
+.usage-empty {
+  font-size: 10.5px;
+  color: var(--ink-faint);
+}
+
+.usage-block {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.usage-title-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.usage-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.usage-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 11px var(--mono);
+  color: var(--ink-resting);
+}
+
+.usage-name.used {
+  color: var(--ink);
+}
+
+.usage-place {
+  color: var(--ink-faint);
+}
+
+.usage-live {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--live);
+}
+
+.usage-email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--ink-resting);
+}
+
+.usage-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.usage-bars.stale {
+  opacity: 0.55;
+}
+
+.usage-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 13px;
+}
+
+.usage-bar-label {
+  width: 34px;
+  flex: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--ink-resting);
+}
+
+.usage-track {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--wash-strong);
+  overflow: hidden;
+}
+
+.usage-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 2px;
+  background: var(--ink-resting);
+}
+
+.usage-fill.attention {
+  background: var(--attention);
+}
+
+.usage-fill.critical {
+  background: var(--critical);
+}
+
+.usage-percent {
+  width: 34px;
+  flex: none;
+  text-align: right;
+  font: 11px var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-resting);
+}
+
+.usage-percent.attention,
+.usage-percent-inline.attention {
+  color: var(--attention);
+}
+
+.usage-percent.critical,
+.usage-percent-inline.critical {
+  color: var(--critical);
+}
+
+.usage-until {
+  width: 40px;
+  flex: none;
+  text-align: right;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--ink-faint);
+}
+
+.usage-note {
+  font-size: 10px;
+  color: var(--ink-faint);
+}
+
+.usage-note.critical {
+  color: var(--critical);
+}
+
+.usage-arrows {
+  display: inline-flex;
+  flex: none;
+  gap: 1px;
+}
+
+.usage-arrow {
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--ink-faint);
+  transition: color 150ms var(--ease), background-color 150ms var(--ease);
+}
+
+.usage-arrow:hover {
+  color: var(--ink-resting);
+  background: var(--wash);
+}
+
+.usage-arrow.hidden {
+  visibility: hidden;
+}
+
+.usage-compact {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  height: 16px;
+}
+
+.usage-compact-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+.usage-compact-figures {
+  flex: none;
+  font: 11px var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-resting);
+}
+
+.faint {
+  color: var(--ink-faint);
+}
+
 .tab-title {
   min-width: 0;
   overflow: hidden;
@@ -969,6 +1301,11 @@ button.danger.primary {
 .dialog p {
   margin: 0 0 8px;
   color: var(--ink-resting);
+  /* A question can carry a list: the worktrees that go with a tab. */
+  white-space: pre-line;
+  max-height: 50vh;
+  overflow-y: auto;
+  user-select: text;
 }
 
 .dialog-field {
@@ -1023,6 +1360,35 @@ button.danger.primary {
 .menu-hint {
   color: var(--ink-faint);
   font: 11.5px var(--mono);
+}
+
+.menu-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A menu of choices: a column for the check, the label beside it. */
+.context-menu.checkable {
+  max-width: min(520px, calc(100vw - 12px));
+}
+
+.context-menu.checkable .menu-item {
+  justify-content: flex-start;
+  gap: 6px;
+  padding-left: 6px;
+}
+
+.context-menu.checkable .menu-label {
+  flex: 1;
+}
+
+.menu-mark {
+  width: 14px;
+  flex: none;
+  text-align: center;
+  color: var(--ink-resting);
 }
 
 .menu-separator {

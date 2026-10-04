@@ -5,6 +5,7 @@ import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 import { render } from "preact";
 import { installInput, terminalKey } from "./input";
+import { startIA } from "./iaStore";
 import { connect, info, start } from "./store";
 import { App } from "./ui/App";
 
@@ -13,6 +14,8 @@ async function boot() {
   await start({ onKey: terminalKey });
   render(<App />, document.getElementById("app")!);
   await connect();
+  // The AI layer after the daemon: its tabs' AI is asked of the daemon the window found.
+  await startIA();
   if (info.value?.e2eReport) {
     const { runE2E } = await import("./e2e");
     // After the first layout, so every terminal has a size to attach with.

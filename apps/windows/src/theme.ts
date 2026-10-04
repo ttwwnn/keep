@@ -120,6 +120,12 @@ export function applyPalette(palette: Palette): void {
     "--dot-busy": "oklch(0.82 0.15 85)",
     "--dot-idle": "oklch(0.70 0.05 250)",
     "--danger": palette.dark ? "#ff6b6b" : "#c42b1c",
+    // The usage footer's: amber from 75%, red from 90% (the Clínica panel's
+    // thresholds), and the attached green for the account a tab is on — a
+    // step darker on a light ground, as the macOS footer's are.
+    "--attention": palette.dark ? "oklch(0.82 0.15 85)" : "oklch(0.60 0.15 85)",
+    "--critical": palette.dark ? "oklch(0.70 0.19 27)" : "oklch(0.48 0.19 27)",
+    "--live": palette.dark ? "oklch(0.76 0.14 150)" : "oklch(0.54 0.14 150)",
   };
   for (const [name, value] of Object.entries(vars)) root.style.setProperty(name, value);
   document.body.style.background = palette.ground;

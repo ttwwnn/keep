@@ -6,9 +6,12 @@
 import * as api from "./api";
 import { SPLIT_RIGHT } from "./api";
 import { readActivity } from "./claude";
+import { lineId } from "./ia";
+import { chooseAccount, e2eHooks, iaAvailable, measureNow, moveOrder, signIn, usageLines } from "./iaStore";
 import {
   activeTab,
   answer,
+  closeTab,
   dialog,
   fontSize,
   gui,
@@ -19,11 +22,14 @@ import {
   renameTab,
   select,
   split,
+  tabLabel,
   tabsByWorkspace,
   terminals,
+  trashing,
   workspaces,
   zoom,
 } from "./store";
+import { menu } from "./ui/common";
 
 interface Step {
   name: string;
@@ -38,6 +44,17 @@ async function waitFor<T>(what: () => T | undefined | null | false, timeoutMs: n
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const value = what();
+    if (value) return value as T;
+    if (Date.now() > deadline) throw new Error(`não aconteceu em ${timeoutMs} ms`);
+    await sleep(everyMs);
+  }
+}
+
+/** The same, for a question that has to be asked of something that answers later. */
+async function waitForAsync<T>(what: () => Promise<T | undefined | null | false>, timeoutMs: number, everyMs = 500): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await what().catch(() => null);
     if (value) return value as T;
     if (Date.now() > deadline) throw new Error(`não aconteceu em ${timeoutMs} ms`);
     await sleep(everyMs);
@@ -153,6 +170,8 @@ export async function runE2E(): Promise<void> {
     return "done";
   });
 
+  if (info.value?.e2eIa) await aiSteps(step, info.value.e2eIa === "real");
+
   const tab = firstTab();
   const report = {
     ok: steps.every((s) => s.ok),
@@ -164,4 +183,167 @@ export async function runE2E(): Promise<void> {
     renderer: document.querySelector(".tab-view.shown canvas") ? "webgl" : "dom",
   };
   await api.e2eReport(JSON.stringify(report, null, 2));
+}
+
+type StepRunner = (name: string, run: () => Promise<string>) => Promise<void>;
+
+/** The menu's rows as shown: the mark, then the label. */
+function shownMenu(): string[] {
+  return [...document.querySelectorAll(".context-menu .menu-item")].map((e) =>
+    [...e.querySelectorAll(".menu-mark, .menu-label")].map((x) => x.textContent ?? "").join(" ").trim(),
+  );
+}
+
+/** Open the menu of a tab's AI by its chevron in the strip, as a click does. */
+async function openTabMenu(tab: number): Promise<string[]> {
+  menu.value = null;
+  // Found by its data, not by a selector: a workspace may be named anything.
+  const chevron = await waitFor(
+    () =>
+      [...document.querySelectorAll<HTMLElement>(".strip .ai-chevron")].find(
+        (e) => e.dataset.iaWs === WORKSPACE && e.dataset.iaTab === String(tab),
+      ),
+    5000,
+  );
+  chevron.click();
+  return waitFor(() => (menu.value && shownMenu().length > 0 ? shownMenu() : null), 3000);
+}
+
+/**
+ * The AI layer: the footer on the made-up home that run.ps1 wrote, against
+ * made-up services; the tabs' menu, a switch that asks first, a login and a
+ * close that sends a worktree to the Recycle Bin — against a stand-in core
+ * (e2e/ia-falso.mjs) until the core answers those itself (`real`).
+ */
+async function aiSteps(step: StepRunner, real: boolean): Promise<void> {
+  await step("IA: o rodapé lista as contas da casa falsa", async () => {
+    if (!iaAvailable.value) throw new Error("o app não achou o keep.exe");
+    const lines = await waitFor(
+      () => (usageLines.value.length >= 3 && usageLines.value.every((l) => l.reading || l.problem) ? usageLines.value : null),
+      60000,
+    );
+    const names = await waitFor(() => {
+      const shown = [...document.querySelectorAll(".usage-footer .usage-name")].map((e) => e.textContent ?? "");
+      return shown.length >= 3 ? shown : null;
+    }, 5000);
+    const figures = lines.map(
+      (l) => `${l.account.alias}: ${l.reading?.windows.map((w) => `${w.label} ${Math.round(w.percent)}%`).join(", ") ?? l.problem}`,
+    );
+    return `${names.join(" | ")} — ${figures.join("; ")}`;
+  });
+  await step("IA: foto do rodapé", async () => {
+    await api.e2eShot("rodape");
+    return "telas/rodape.png";
+  });
+
+  await step("IA: medir agora", async () => {
+    const before = Math.max(...usageLines.value.map((l) => l.measuredAt ?? 0));
+    measureNow();
+    const after = await waitFor(() => {
+      const latest = Math.max(...usageLines.value.map((l) => l.measuredAt ?? 0));
+      return latest > before ? latest : null;
+    }, 30000);
+    return `medido de novo (${Math.round(after - before)} s depois)`;
+  });
+
+  await step("IA: subir o GPT na ordem pelas setas", async () => {
+    const gpt = usageLines.value.find((l) => l.account.engine === "codex");
+    if (!gpt) throw new Error("sem conta do GPT");
+    const at = usageLines.value.indexOf(gpt);
+    moveOrder(gpt, -1);
+    const shown = await waitFor(() => (usageLines.value.findIndex((l) => lineId(l) === lineId(gpt)) === at - 1 ? true : null), 2000);
+    // What the core wrote, asked of it directly.
+    const order = await waitForAsync(async () => {
+      const answer = await api.iaAsk(["ia", "ordem", "--json"]);
+      const list = (answer.ordem as string[]) ?? [];
+      return list.indexOf("gpt:principal") === at - 1 ? list : null;
+    }, 15000);
+    return `${shown ? "na tela e " : ""}no núcleo: ${order.join(" ")}`;
+  });
+
+  const tabs = tabsByWorkspace.value.get(WORKSPACE) ?? [];
+  const first = tabs[0];
+  const second = tabs[1];
+  if (!first || !second) {
+    await step("IA: abas do workspace", async () => {
+      throw new Error(`o roteiro precisa de duas abas em ${WORKSPACE}`);
+    });
+    return;
+  }
+  select(WORKSPACE, first.root.id);
+  const firstName = tabLabel(WORKSPACE, first, 0);
+  // The worktree run.ps1 made goes with the second tab when it closes.
+  if (!real) await api.e2eFake({ worktreeAlvo: { workspace: WORKSPACE, aba: second.root.id } });
+  await e2eHooks.readTabs();
+
+  await step("IA: o menu da aba lista a ordem e as contas", async () => {
+    const rows = await openTabMenu(first.root.id);
+    if (!rows[0]?.includes("Seguir a ordem de prioridade")) throw new Error(`sem seguir a ordem: ${rows.join(" | ")}`);
+    if (!rows.some((r) => r.includes("Claude · semlogin") && r.includes("sem login próprio"))) {
+      throw new Error(`sem a conta sem login: ${rows.join(" | ")}`);
+    }
+    await api.e2eShot("menu");
+    return rows.join(" | ");
+  });
+
+  await step("IA: uma conta sem login próprio abre o login dela", async () => {
+    const item = [...document.querySelectorAll<HTMLElement>(".context-menu .menu-item")].find((e) =>
+      (e.textContent ?? "").includes("Claude · semlogin"),
+    );
+    if (!item) throw new Error("sem a linha da conta no menu");
+    item.click();
+    const said = await waitFor(() => dialog.value, 45000);
+    const title = said.title;
+    const message = said.message ?? "";
+    await api.e2eShot("precisa-login");
+    answer("ok");
+    if (!title.startsWith("Falta aprovar")) throw new Error(`${title}: ${message}`);
+    const shown = activeTab.value?.root.id;
+    if (shown === first.root.id) throw new Error("a aba do login não veio para a frente");
+    return `${title} — aba do login ${shown}: ${message.slice(0, 160)}`;
+  });
+
+  await step("IA: uma conta que não existe é recusada com as palavras do núcleo", async () => {
+    select(WORKSPACE, first.root.id);
+    void chooseAccount(WORKSPACE, first.root.id, "claude:ninguem", "Claude · ninguem", firstName);
+    const said = await waitFor(() => dialog.value, 45000);
+    const text = `${said.title}: ${said.message ?? ""}`;
+    answer("ok");
+    if (!said.title.startsWith("Não deu para trocar")) throw new Error(text);
+    return text;
+  });
+
+  await step("IA: entrar em outra conta abre a aba do login", async () => {
+    const before = new Set((tabsByWorkspace.value.get(WORKSPACE) ?? []).map((t) => t.root.id));
+    await signIn("claude");
+    if (dialog.value) {
+      const said = `${dialog.value.title}: ${dialog.value.message ?? ""}`;
+      answer(null);
+      throw new Error(said);
+    }
+    const shown = activeTab.value?.root.id;
+    if (shown === undefined || before.has(shown)) throw new Error(`a aba em frente (${shown}) não é nova`);
+    await sleep(1500);
+    await api.e2eShot("entrar");
+    return `aba do login: ${shown}`;
+  });
+
+  await step("IA: fechar a aba manda a worktree para a Lixeira", async () => {
+    const tab = (tabsByWorkspace.value.get(WORKSPACE) ?? []).find((t) => t.root.id === second.root.id);
+    if (!tab) throw new Error("a segunda aba sumiu");
+    const closing = closeTab(WORKSPACE, tab, tabLabel(WORKSPACE, tab, 1));
+    const question = await waitFor(() => dialog.value, 15000);
+    const message = question.message ?? "";
+    if (!real && !message.includes("vai para a Lixeira")) throw new Error(`a pergunta não fala da worktree: ${message}`);
+    await api.e2eShot("fechar");
+    answer("close");
+    await closing;
+    await waitFor(() => trashing.value === 0, 90000, 300);
+    if (dialog.value?.title === "Worktrees") {
+      const said = dialog.value.message ?? "";
+      answer(null);
+      throw new Error(said);
+    }
+    return message.split("\n").filter((l) => l.trim()).slice(0, 4).join(" / ");
+  });
 }

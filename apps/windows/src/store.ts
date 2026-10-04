@@ -26,6 +26,15 @@ import { baseName, isPathTitle, rootTabs, type RootTab } from "./layout";
 import { defaultState, normalizeState, tabKey, type GuiState, type RestoreWorkspace } from "./state";
 import { TerminalManager, viewKey, type TermView } from "./terminals";
 import { DEFAULT_FONT_SIZE, applyPalette, defaultFontFamily, onSystemAppearanceChange, resolvePalette } from "./theme";
+import {
+  listingPids,
+  readListing,
+  targetArgument,
+  trashProblems,
+  worktreeNote,
+  type WorktreeAnswer,
+  type WorktreeTarget,
+} from "./worktrees";
 import { zoomStep, zoomedSize } from "./zoom";
 
 // ------------------------------------------------------------------ state
@@ -58,6 +67,10 @@ export const focusedPane = signal<Record<string, number>>({});
 /** A clock for things that change with time: badges breathing, "há 5 min". */
 export const now = signal(Date.now());
 export const maximized = signal(false);
+/** The core's word on the AI layer: there to ask, and from which home (see iaStore.ts). */
+export const iaInfo = signal<api.IaInfo | null>(null);
+/** Worktrees on their way to the Recycle Bin. */
+export const trashing = signal(0);
 
 export interface DialogButton {
   label: string;
@@ -555,57 +568,141 @@ export async function newWorkspace(): Promise<void> {
   await createWorkspace(name, cwd || null);
 }
 
+// ------------------------------------------------------------------ closing, and the worktrees that go with it
+
+/**
+ * The worktrees that go with these tabs (worktrees.ts). Asked before the
+ * question, because after the tab closes the conversation in it is gone and
+ * so is the link between the tab and what it made; the question waits for
+ * it, up to the core's three seconds.
+ */
+async function listWorktrees(targets: WorktreeTarget[]): Promise<WorktreeAnswer> {
+  if (!iaInfo.value?.available || targets.length === 0) return { kind: "off" };
+  try {
+    const answer = await api.iaAsk(["worktrees", "listar", "--prazo", "3.0", ...targets.map(targetArgument)]);
+    return readListing(answer);
+  } catch (error) {
+    return readListing(null, String(error));
+  }
+}
+
+/** Each tab with its panes: every daemon tab closing it ends. */
+const targetOf = (workspace: string, tab: RootTab): WorktreeTarget => ({
+  workspace,
+  tabs: [...new Set([tab.root.id, ...tab.panes.map((p) => p.id)])],
+});
+
+/**
+ * After a yes, and only once the tabs did close: send the listed worktrees to
+ * the Recycle Bin, in the backend — it finishes even if the window does not —
+ * and say what did not go.
+ */
+function trashAfter(answer: WorktreeAnswer): void {
+  if (answer.kind !== "listing") return;
+  const going = answer.listing.lixeira ?? [];
+  if (going.length === 0) return;
+  trashing.value += 1;
+  void api
+    .iaTrash(
+      going.map((item) => ({ caminho: item.caminho, nasceu_ns: item.nasceu_ns ?? null })),
+      listingPids(answer.listing),
+    )
+    .catch((error) => [String(error)])
+    .then((problems) => {
+      if (problems.length === 0) return;
+      void ask({
+        title: "Worktrees",
+        message: trashProblems(problems),
+        buttons: [{ label: "OK", value: "ok", primary: true }],
+      });
+    })
+    .finally(() => (trashing.value -= 1));
+}
+
+/** A question about ending something, with what goes to the Recycle Bin with it said. */
+async function askToEnd(
+  targets: WorktreeTarget[],
+  subject: string,
+  question: { title: string; message: string; action: string },
+): Promise<WorktreeAnswer | null> {
+  if (asking) return null;
+  asking = true;
+  try {
+    const worktrees = await listWorktrees(targets);
+    const result = await ask({
+      title: question.title,
+      message: question.message + worktreeNote(worktrees, subject, info.value?.home ?? ""),
+      buttons: [
+        { label: "Cancelar", value: "cancel" },
+        { label: question.action, value: "close", danger: true, primary: true },
+      ],
+    });
+    return result?.button === "close" ? worktrees : null;
+  } finally {
+    asking = false;
+  }
+}
+
+/** A question about ending something is up, or on its way: a second one waits its turn. */
+let asking = false;
+
 /** Close a whole tab — its panes with it — after asking. */
 export async function closeTab(workspace: string, tab: RootTab, label: string): Promise<boolean> {
-  const result = await ask({
+  const worktrees = await askToEnd([targetOf(workspace, tab)], "desta aba", {
     title: `Fechar a aba “${label}”?`,
     message: "O que estiver rodando nela será encerrado.",
-    buttons: [
-      { label: "Cancelar", value: "cancel" },
-      { label: "Fechar a aba", value: "close", danger: true, primary: true },
-    ],
+    action: "Fechar a aba",
   });
-  if (result?.button !== "close") return false;
+  if (!worktrees) return false;
   // The panes first: closing the root alone would hand them a tab of their own.
+  let closed = true;
   for (const pane of [...tab.panes].reverse()) {
-    await api.closeTab(workspace, pane.id).catch(() => {});
+    await api.closeTab(workspace, pane.id).catch(() => (closed = false));
   }
   await refresh();
+  if (closed) trashAfter(worktrees);
   return true;
 }
 
 export async function closePane(workspace: string, pane: number): Promise<boolean> {
-  const result = await ask({
+  const worktrees = await askToEnd([{ workspace, tabs: [pane] }], "deste painel", {
     title: "Fechar este painel?",
     message: "O que estiver rodando nele será encerrado.",
-    buttons: [
-      { label: "Cancelar", value: "cancel" },
-      { label: "Fechar o painel", value: "close", danger: true, primary: true },
-    ],
+    action: "Fechar o painel",
   });
-  if (result?.button !== "close") return false;
-  await api.closeTab(workspace, pane).catch(() => {});
+  if (!worktrees) return false;
+  const closed = await api.closeTab(workspace, pane).then(
+    () => true,
+    () => false,
+  );
   await refresh();
+  if (closed) trashAfter(worktrees);
   return true;
 }
 
 export async function closeWorkspace(workspace: string): Promise<boolean> {
   const label = workspaceLabel(workspace);
-  const count = tabsByWorkspace.value.get(workspace)?.length ?? 0;
-  const result = await ask({
-    title: `Fechar o workspace “${label}”?`,
-    message:
-      count === 1
-        ? "A aba dele e o que estiver rodando nela serão encerrados."
-        : `As ${count} abas dele e o que estiver rodando nelas serão encerrados.`,
-    buttons: [
-      { label: "Cancelar", value: "cancel" },
-      { label: "Fechar o workspace", value: "close", danger: true, primary: true },
-    ],
-  });
-  if (result?.button !== "close") return false;
-  await api.killWorkspace(workspace).catch(() => {});
+  const tabs = tabsByWorkspace.value.get(workspace) ?? [];
+  const count = tabs.length;
+  const worktrees = await askToEnd(
+    tabs.map((tab) => targetOf(workspace, tab)),
+    "deste workspace",
+    {
+      title: `Fechar o workspace “${label}”?`,
+      message:
+        count === 1
+          ? "A aba dele e o que estiver rodando nela serão encerrados."
+          : `As ${count} abas dele e o que estiver rodando nelas serão encerrados.`,
+      action: "Fechar o workspace",
+    },
+  );
+  if (!worktrees) return false;
+  const closed = await api.killWorkspace(workspace).then(
+    () => true,
+    () => false,
+  );
   await refresh();
+  if (closed) trashAfter(worktrees);
   return true;
 }
 

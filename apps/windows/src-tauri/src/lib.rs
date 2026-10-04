@@ -5,6 +5,7 @@
 //! sidebar, tab strip, terminals — is in `../src`.
 
 mod daemon;
+mod ia;
 mod sessions;
 mod settings;
 
@@ -39,6 +40,9 @@ struct Startup {
     version: &'static str,
     /// Set by tests: the page runs its scripted check and reports here.
     e2e_report: Option<String>,
+    /// Set by tests: the scripted check covers the AI layer too, against a
+    /// stand-in core ("falso") or the real one ("real").
+    e2e_ia: Option<String>,
 }
 
 #[tauri::command]
@@ -52,6 +56,7 @@ fn startup() -> Startup {
         address: daemon::address().display().to_string(),
         version: env!("CARGO_PKG_VERSION"),
         e2e_report: std::env::var("KEEP_E2E_REPORT").ok(),
+        e2e_ia: std::env::var("KEEP_E2E_IA").ok().filter(|v| !v.is_empty()),
     }
 }
 
@@ -220,6 +225,86 @@ fn choose_shell(command: String) -> Answer<()> {
     settings::choose_shell(&command).map_err(text)
 }
 
+/// Whether the core is here to ask about AI accounts and worktrees.
+#[tauri::command]
+fn ia_info(app: AppHandle) -> ia::Info {
+    ia::info(resources(&app).as_deref())
+}
+
+/// One question to the core (`keep ia …`, `keep worktrees …`), answered with
+/// what it printed; see `ia`.
+#[tauri::command]
+async fn ia(app: AppHandle, args: Vec<String>) -> Answer<serde_json::Value> {
+    let dir = resources(&app);
+    tauri::async_runtime::spawn_blocking(move || ia::ask(dir.as_deref(), &daemon::address(), &args))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// The login files as they stand, to notice a new one without the network.
+#[tauri::command]
+async fn ia_signature() -> Answer<String> {
+    tauri::async_runtime::spawn_blocking(ia::signature).await.map_err(|e| e.to_string())
+}
+
+/// Send the worktrees a closed tab left to the Recycle Bin; what did not go.
+#[tauri::command]
+async fn ia_trash(app: AppHandle, items: Vec<ia::Going>, pids: Vec<u32>) -> Answer<Vec<String>> {
+    let dir = resources(&app);
+    tauri::async_runtime::spawn_blocking(move || ia::trash(dir.as_deref(), &daemon::address(), items, pids))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// For the scripted check: whether a path is still there.
+#[tauri::command]
+fn path_exists(path: String) -> bool {
+    std::path::Path::new(&path).exists()
+}
+
+/// For the scripted check: have the test photograph the screen now, as
+/// `<name>.png` beside the report, and wait until it has.
+#[tauri::command]
+async fn e2e_shot(name: String) -> Answer<()> {
+    let report = std::env::var("KEEP_E2E_REPORT").map_err(|_| "sem KEEP_E2E_REPORT".to_string())?;
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err(format!("nome de tela inválido: {name}"));
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = std::path::Path::new(&report).parent().map(|d| d.join("telas")).unwrap_or_default();
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let picture = dir.join(format!("{name}.png"));
+        let _ = std::fs::remove_file(&picture);
+        std::fs::write(dir.join(format!("{name}.pedido")), b"").map_err(|e| e.to_string())?;
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while std::time::Instant::now() < until {
+            if picture.is_file() {
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        Err(format!("a tela {name} não foi fotografada em 15 s"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// For the scripted check: what the stand-in core answers about the tabs.
+#[tauri::command]
+fn e2e_fake(state: serde_json::Value) -> Answer<()> {
+    let path = std::env::var("KEEP_E2E_FAKE_STATE").map_err(|_| "sem KEEP_E2E_FAKE_STATE".to_string())?;
+    let mut current: serde_json::Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    if let (Some(into), Some(from)) = (current.as_object_mut(), state.as_object()) {
+        for (k, v) in from {
+            into.insert(k.clone(), v.clone());
+        }
+    }
+    std::fs::write(&path, serde_json::to_vec_pretty(&current).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
+}
+
 /// Where a scripted run writes what it found, for the test that started it.
 #[tauri::command]
 fn e2e_report(report: String) -> Answer<()> {
@@ -275,15 +360,35 @@ pub fn run() {
             save_state,
             shells,
             choose_shell,
+            ia_info,
+            ia,
+            ia_signature,
+            ia_trash,
+            path_exists,
+            e2e_shot,
+            e2e_fake,
             e2e_report,
         ])
         .build(tauri::generate_context!())
         .expect("erro ao iniciar o Keep")
-        .run(move |_app, event| {
+        .run(move |app, event| match event {
+            // Worktrees on their way to the Recycle Bin: the window may go,
+            // the app waits for them. A folder half dealt with and nobody
+            // told is worse than a process that lingers a few seconds.
+            tauri::RunEvent::ExitRequested { api, .. } if ia::trashing() > 0 => {
+                api.prevent_exit();
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    let until = std::time::Instant::now() + std::time::Duration::from_secs(180);
+                    while ia::trashing() > 0 && std::time::Instant::now() < until {
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+                    }
+                    app.exit(0);
+                });
+            }
             // Leaving lets go of every tab and nothing more: the shells are
             // the daemon's, and they keep running.
-            if let tauri::RunEvent::Exit = event {
-                on_exit.detach_all();
-            }
+            tauri::RunEvent::Exit => on_exit.detach_all(),
+            _ => {}
         });
 }

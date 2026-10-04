@@ -23,6 +23,7 @@ import {
   tabsByWorkspace,
   toggleSidebar,
 } from "../store";
+import { AccountChevron } from "./AccountMenu";
 import { InlineEditor, openMenu } from "./common";
 import * as icon from "./icons";
 import { tabLook, useBreath } from "./tabLook";
@@ -79,6 +80,7 @@ function TabCapsule(props: { workspace: string; tab: RootTab; index: number; sel
           {look.label}
         </span>
       )}
+      {!renaming && <AccountChevron workspace={workspace} tab={tab} label={look.label} />}
       <button
         class="tab-close"
         title="Fechar a aba"
