@@ -51,6 +51,11 @@ impl Drop for RawGuard {
             let _ = out.write_all(b"\x1b[<99u\x1b[?1049l");
         }
         let _ = out.write_all(KittyFlags::RESTORE);
+        // And win32-input-mode, which the tab's console asked this one for
+        // through its output: the shell this client returns to reads keys
+        // the ordinary way.
+        #[cfg(windows)]
+        let _ = out.write_all(b"\x1b[?9001l");
         // Leave the cursor somewhere sane and re-show it: the session may
         // have hidden it or parked it mid-screen.
         let _ = out.write_all(b"\x1b[?25h\r\n");
@@ -277,12 +282,29 @@ fn detach_at(bytes: &[u8]) -> Option<usize> {
                 if end < bytes.len() && bytes[end] == b'u' && is_detach_key(&bytes[at + 2..end]) {
                     return Some(at);
                 }
+                if end < bytes.len() && bytes[end] == b'_' && is_win32_detach_key(&bytes[at + 2..end]) {
+                    return Some(at);
+                }
                 at = end.max(at + 1);
             }
             _ => at += 1,
         }
     }
     None
+}
+
+/// Ctrl-\\ pressed, in win32-input-mode: `CSI Vk ; Sc ; Uc ; Kd ; Cs ; Rc _`,
+/// the character 28 going down.
+///
+/// A Windows console speaks this to a program that asked for it, and the
+/// program inside a tab asks: ConPTY does, as it opens, and the request
+/// reaches this client's console in the tab's output like everything else.
+/// From then on every key arrives in that form, the detach key included.
+fn is_win32_detach_key(params: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(params) else { return false };
+    let fields: Vec<u32> = text.split(';').map(|f| f.parse().unwrap_or(0)).collect();
+    // Unicode character, then key down; a release is not a press.
+    fields.get(2) == Some(&28) && fields.get(3) == Some(&1)
 }
 
 fn is_detach_key(params: &[u8]) -> bool {
@@ -625,6 +647,21 @@ impl Legacy {
             return u8::try_from(code).ok();
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod win32_detach {
+    use super::*;
+
+    #[test]
+    fn ctrl_backslash_in_win32_input_mode_detaches() {
+        // Vk 220 (OEM 5), scan 43, char 28, down, Ctrl (8), once.
+        assert_eq!(detach_at(b"ab\x1b[220;43;28;1;8;1_"), Some(2));
+        // The release of the same key is not a press.
+        assert_eq!(detach_at(b"\x1b[220;43;28;0;8;1_"), None);
+        // Another key in the same mode is not the detach key.
+        assert_eq!(detach_at(b"\x1b[65;30;97;1;0;1_"), None);
     }
 }
 
