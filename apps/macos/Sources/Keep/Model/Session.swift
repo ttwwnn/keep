@@ -1113,6 +1113,10 @@ final class Session {
                     Trace.log("ia", "\(id) on \(key): \(done)")
                     self.aiAccounts.note(workspace: id.workspace, tab: id.root, key: key)
                     self.publish()
+                    // What the tab runs on now — the account following the
+                    // order took it to — asked at once rather than in five
+                    // seconds.
+                    AITabWatcher.current?.refresh()
                 case .failure(let problem) where problem.reason == "ocupada" && !interrupting:
                     Trace.log("ia", "\(id) is busy: asking")
                     self.renderer(window)?.ask(Confirmation(
