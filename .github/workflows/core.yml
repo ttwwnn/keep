@@ -1,0 +1,84 @@
+# The Rust half of Keep — daemon, protocol, terminal client — built and tested
+# on every platform it runs on. libghostty-vt is built here from the pinned
+# ghostty commit with Zig (vendor/build-vt.sh) and cached by that commit.
+name: Núcleo
+
+on:
+  push:
+    branches: [main, windows]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GHOSTTY_COMMIT: a53771af0165c34a7bd753ddbcbc5dd7126ee87f
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Testes (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            zig_target: x86_64-windows-msvc
+            slice: libghostty-vt-windows-x86_64
+          - name: macOS
+            os: macos-latest
+            zig_target: aarch64-macos
+            slice: libghostty-vt
+          - name: Linux
+            os: ubuntu-24.04
+            zig_target: x86_64-linux-gnu
+            slice: libghostty-vt-linux-x86_64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cache do libghostty-vt
+        id: vt
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: vendor/${{ matrix.slice }}
+          key: vt-${{ matrix.zig_target }}-${{ env.GHOSTTY_COMMIT }}-${{ hashFiles('vendor/build-vt.sh') }}
+
+      - name: Zig
+        if: steps.vt.outputs.cache-hit != 'true'
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+
+      - name: Compilar o libghostty-vt
+        if: steps.vt.outputs.cache-hit != 'true'
+        run: ./vendor/build-vt.sh "${{ matrix.zig_target }}" "vendor/${{ matrix.slice }}"
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Testes
+        run: cargo test --workspace -- --test-threads=4
+
+      - name: Binários
+        run: cargo build --release -p keep -p keepd
+
+      - name: Guardar os binários
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: keep-cli-${{ matrix.name }}
+          path: |
+            target/release/keep
+            target/release/keepd
+            target/release/keep.exe
+            target/release/keepd.exe
+          if-no-files-found: error
