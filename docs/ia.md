@@ -57,9 +57,9 @@ Uma conta do Claude é um **armazém de credenciais** do Claude Code:
 ### Gerente externo
 
 Se o kit do autor estiver instalado (`~/.claude/contas/.ativa` e `~/.local/bin/claude-melhor-conta`),
-quem troca a conta do armazém global é ele: no Keep, `claude:ordem` passa a ser "o global", e a
-sincronização automática do Keep não move abas de um Claude para outro (só de motor). Sem o kit, o
-Keep faz tudo.
+quem troca a conta do armazém global é ele: no Keep, `claude:ordem` passa a ser "o global", uma aba
+presa numa conta roda sempre na pasta própria dela (nunca no global, que muda de dono), e
+`sincronizar` não faz nada (o kit tem a própria). Sem o kit, o Keep faz tudo.
 
 ## Consumo
 
@@ -70,13 +70,21 @@ Keep faz tudo.
 
 ## IA de cada aba
 
-- O daemon diz o processo da frente de cada aba (`List3`). Daemon antigo, sem `List3`: casamento por
-  programa + pasta + tamanho, marcado `provavel` (só leitura; trocar exige `exato`).
-- Conta da aba = ambiente do processo (`KEEP_IA_ESCOLHA`, `CLAUDE_SECURESTORAGE_CONFIG_DIR`,
-  `CODEX_HOME`). O Keep põe `KEEP_IA_ESCOLHA=<chave>` na linha que sobe a IA, para lembrar a escolha
-  ("seguir a ordem" ou uma conta) mesmo quando ela roda numa pasta fixa.
-- Conversa da aba: Claude por `~/.claude/sessions/<pid>.json`; Codex pela linha de comando
-  (`resume <id>`) e pelo daemon dele.
+- O daemon diz o processo da frente de cada aba (`List3`): vínculo `exato`. Daemon antigo, sem
+  `List3`: os shells filhos do keepd casados com as abas pelo título da conversa do Claude, pelo
+  tamanho do terminal, pelo programa e pela pasta, só onde o par é único: vínculo `provavel`. Digitar
+  numa aba vai sempre pelo daemon (a aba certa); o vínculo só diz de que processo ler a conta e a
+  conversa, e o id da conversa vem, de preferência, da própria tela ao sair do programa.
+- Conta da aba = ambiente do processo (`KEEP_IA_ESCOLHA`, ou o `CLAUDE_KIT_CONTA` do kit;
+  `CLAUDE_SECURESTORAGE_CONFIG_DIR`; `CODEX_HOME`). O Keep põe `KEEP_IA_ESCOLHA=<chave>` na linha que
+  sobe a IA, para lembrar a escolha ("seguir a ordem" ou uma conta) em qualquer conta e motor. Sem
+  marca: Claude no global = seguir a ordem; numa pasta própria = presa nessa conta; Codex = preso na
+  conta dele.
+- Conversa da aba: Claude por `~/.claude/sessions/<pid>.json` (conferido pelo `procStart`, que diz
+  também se ele está `busy`/`waiting`); Codex pela linha de comando (`resume <id>`) e pelo daemon dele
+  (`app-server-control.sock`, só leitura e `turn/interrupt`; no Windows, só a tela).
+- Os parâmetros com que a pessoa abriu a IA (modelo, esforço, permissões…) seguem para a próxima vez
+  que ela subir na aba; a conversa, o texto inicial e os modos de rodar (`--print`, `--bg`…) não.
 
 ### Trocar
 
@@ -95,9 +103,13 @@ fim da ordem e diz que terminou.
 
 ### Seguir a ordem
 
-`sincronizar` (o app chama a cada 30 s): a aba que segue a ordem e está numa conta indisponível (ou
-parada na tela de limite) vai para a primeira disponível da fila, quando está livre. No máximo 3 abas
-por rodada; esperas guardadas por aba.
+"Seguir a ordem de prioridade" no menu manda sempre `claude:ordem`; o núcleo escolhe a primeira conta
+disponível da fila (Claude ou GPT) em que uma aba pode rodar, e a aba leva a marca de que segue a
+ordem. `sincronizar` (o app chama a cada 30 s): a aba que segue a ordem e está numa conta que não pode
+trabalhar (no limite, login recusado, parada na tela de limite) vai para a primeira disponível da fila,
+quando está livre; a que está numa conta abaixo da primeira disponível sobe para ela depois de 2 min
+sem uso. No máximo 3 abas por rodada; uma aba que recusou espera 30 s (5 min se for trabalho em
+segundo plano). Uma janela cheia cujo recomeço já passou não conta.
 
 ## Lixeira de worktrees
 
@@ -167,4 +179,6 @@ O app passa `KEEP_SOCKET` (o daemon dele). Um app de teste que lê uma casa fals
 
 Variáveis para teste: `KEEP_IA_HOME` (casa falsa), `KEEP_IA_ESTADO` (estado), `KEEP_IA_SECURITY`
 (o `security` do macOS), `KEEP_IA_CLAUDE_URL`/`KEEP_IA_CODEX_URL`/`KEEP_IA_PERFIL_URL` (só
-`http://127.0.0.1`), `KEEP_IA_CLAUDE_BIN`, `KEEP_IA_CODEX_BIN`, `KEEP_SOCKET`.
+`http://127.0.0.1`), `KEEP_IA_CLAUDE_BIN`, `KEEP_IA_CODEX_BIN`, `KEEP_IA_KEEP_BIN` (o `keep` que uma aba nova roda), `KEEP_SOCKET`.
+Teste de ponta a ponta: `trocar::ponta_a_ponta`, com um daemon do próprio teste e a IA falsa de
+`examples/ia_falsa.rs` (`cargo build -p keep-ia --examples`).
