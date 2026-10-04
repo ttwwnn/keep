@@ -102,7 +102,7 @@ impl Casa {
 
     /// Uma pasta fixa, com login (ou sem) e metadados do Keep (ou sem).
     pub fn fixa(&self, nome: &str, login: Option<(&str, &str)>, meta: Option<(&str, &str, &str)>) -> PathBuf {
-        let pasta = self.raiz.join(".claude/contas/fixas").join(nome);
+        let pasta = crate::caminhos::fixas().join(nome);
         std::fs::create_dir_all(&pasta).unwrap();
         if let Some((acesso, refresh)) = login {
             let json = Self::login(acesso, refresh);
@@ -129,7 +129,7 @@ impl Casa {
             r#"{{"apelido":"{apelido}","accountUuid":"{uuid}","email":"{email}","credenciais":{}}}"#,
             Self::login(acesso, "r")
         );
-        std::fs::write(self.raiz.join(".claude/contas").join(format!("{apelido}.json")), json).unwrap();
+        std::fs::write(crate::caminhos::contas().join(format!("{apelido}.json")), json).unwrap();
     }
 
     pub fn codex(&self, pasta: &Path, email: &str, conta: &str) {
@@ -149,7 +149,7 @@ impl Casa {
     }
 
     pub fn ordem(&self, linhas: &[&str]) {
-        std::fs::write(self.raiz.join(".claude/contas/.ordem"), linhas.join("\n") + "\n").unwrap();
+        std::fs::write(crate::caminhos::ordem(), linhas.join("\n") + "\n").unwrap();
     }
 }
 
@@ -212,7 +212,7 @@ fn sem_kit_o_global_as_fixas_e_o_codex_viram_contas() {
     assert_eq!(ambiente(&contas[2]), Ok(vec![]));
     assert_eq!(
         ambiente(&contas[3]),
-        Ok(vec![("CODEX_HOME".into(), c.raiz.join(".codex-contas/outra").to_string_lossy().into_owned())])
+        Ok(vec![("CODEX_HOME".into(), crate::caminhos::codex_contas().join("outra").to_string_lossy().into_owned())])
     );
     assert_eq!(contas[2].plan.as_deref(), Some("Pro"));
     assert!(contas[2].is_active, "o GPT principal é o que as abas usam");
