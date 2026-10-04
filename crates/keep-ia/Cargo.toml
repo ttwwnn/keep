@@ -11,6 +11,8 @@ anyhow = "1.0.104"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 keep-proto = { version = "0.0.1", path = "../keep-proto" }
+memchr = "2"
+ruzstd = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
@@ -27,6 +29,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Diagnostics_Debug",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Kernel",
+    "Win32_Storage_FileSystem",
     "Win32_System_Threading",
     "Win32_UI_Shell",
 ] }
