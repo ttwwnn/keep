@@ -8,11 +8,16 @@
 //   node ia-falso.mjs servidor <file>   the services the core asks — owners and
 //                                       usage — on 127.0.0.1; the port goes in <file>
 //   node ia-falso.mjs keep <args…>      `keep` for the app (KEEP_IA_BIN, through
-//                                       keep-falso.cmd): `ia contas|uso|ordem` go
-//                                       to the real core (KEEP_E2E_REAL_KEEP);
-//                                       the rest is answered as docs/ia.md says,
-//                                       from the state in KEEP_E2E_FAKE_STATE,
-//                                       every call written to <state>.chamadas.log
+//                                       keep-falso.cmd): the real core
+//                                       (KEEP_E2E_REAL_KEEP) answers everything it
+//                                       knows; this run's worktree, which no
+//                                       conversation made, is added to its answer
+//                                       for the tab the check names, so the move to
+//                                       the Recycle Bin is exercised; a question the
+//                                       core does not know yet (exit 2) is answered
+//                                       as docs/ia.md says. State in
+//                                       KEEP_E2E_FAKE_STATE, every call in
+//                                       <state>.chamadas.log.
 //
 // The tokens are made up and the services answer only on this machine.
 
@@ -44,6 +49,10 @@ function home(dir) {
   const own = path.join(dir, ".claude", "contas", "fixas", "k-e2e0001");
   write(path.join(own, ".credentials.json"), login("tok-bia"));
   write(path.join(own, "keep.json"), { versao: 1, apelido: "trabalho", email: "bia@exemplo.com", uuid: "u-2", criadaEm: Date.now() });
+  // An account the Keep knows with no login of its own yet: a tab put on it
+  // makes the core open the login, and the switch waits for it.
+  const pending = path.join(dir, ".claude", "contas", "fixas", "k-e2e0002");
+  write(path.join(pending, "keep.json"), { versao: 1, apelido: "semlogin", email: "carla@exemplo.com", uuid: "u-3", criadaEm: Date.now() });
   const part = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
   const claims = {
     exp: Math.floor(until / 1000),
@@ -181,26 +190,49 @@ function answer(args, state) {
   return [2, { ok: false, motivo: "uso", detalhe: `keep (falso): pedido desconhecido: ${args.join(" ")}` }];
 }
 
+const samePath = (a, b) => !!a && !!b && a.replace(/\//g, "\\").toLowerCase() === b.replace(/\//g, "\\").toLowerCase();
+
 function core(args) {
   const stateFile = process.env.KEEP_E2E_FAKE_STATE;
-  if (stateFile) fs.appendFileSync(`${stateFile}.chamadas.log`, `${args.join(" ")}\n`);
-  const real = process.env.KEEP_E2E_REAL_KEEP;
-  if (args[0] === "ia" && ["contas", "uso", "ordem"].includes(args[1]) && real && fs.existsSync(real)) {
-    const run = spawnSync(real, args, { stdio: ["ignore", "pipe", "pipe"], env: process.env, windowsHide: true });
-    process.stdout.write(run.stdout ?? "");
-    if (stateFile && run.status !== 0) fs.appendFileSync(`${stateFile}.chamadas.log`, `  -> ${run.status}: ${run.stderr ?? ""}\n`);
-    process.exit(run.status ?? 1);
-  }
+  const log = (line) => stateFile && fs.appendFileSync(`${stateFile}.chamadas.log`, `${line}\n`);
+  log(args.join(" "));
   let state = {};
   try {
     state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
   } catch {
     state = {};
   }
-  const [code, body] = answer(args, state);
-  if (stateFile) fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
-  process.stdout.write(JSON.stringify({ versao: 1, ...body }).replace('"@BORN@"', BORN) + "\n");
-  process.exit(code);
+  const reply = (code, body) => {
+    if (stateFile) fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
+    process.stdout.write(JSON.stringify({ versao: 1, ...body }).replace('"@BORN@"', BORN) + "\n");
+    process.exit(code);
+  };
+  // This run's worktree is the stand-in's own: preparing and concluding it
+  // is recorded here, whatever the core knows.
+  const [area, command, subject] = args;
+  if (area === "worktrees" && ["preparar", "concluir"].includes(command) && samePath(subject, state.caminhoWorktree)) {
+    return reply(...answer(args, state));
+  }
+  const real = process.env.KEEP_E2E_REAL_KEEP;
+  const run = real && fs.existsSync(real)
+    ? spawnSync(real, args, { stdio: ["ignore", "pipe", "pipe"], env: process.env, windowsHide: true, encoding: "utf8" })
+    : { status: 2, stdout: "", stderr: "sem o keep de verdade" };
+  if (run.status !== 0) log(`  -> ${run.status}: ${(run.stderr ?? "").trim().slice(0, 400)}`);
+  if (run.status === 2) return reply(...answer(args, state));
+  if (area === "worktrees" && command === "listar" && run.status === 0) {
+    // The core's answer, with this run's worktree among the ones that go when
+    // the check closes the tab it names.
+    try {
+      const real = JSON.parse(run.stdout.trim().split("\n").pop());
+      const [, canned] = answer(args, state);
+      real.lixeira = [...(real.lixeira ?? []), ...(canned.lixeira ?? [])];
+      return reply(0, real);
+    } catch {
+      /* the core's own answer, as it came */
+    }
+  }
+  process.stdout.write(run.stdout ?? "");
+  process.exit(run.status ?? 1);
 }
 
 if (mode === "casa") home(rest[0]);

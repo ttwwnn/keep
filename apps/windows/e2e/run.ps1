@@ -4,12 +4,14 @@
 #
 #   pwsh apps/windows/e2e/run.ps1 [-Installer <setup.exe>] [-Out <dir>] [-NucleoReal]
 #
-# The AI layer is checked too (docs/ia.md): the usage footer on a made-up home
-# against made-up services, and — through a stand-in core for what the core
-# does not answer yet (e2e/ia-falso.mjs), or the real one with -NucleoReal —
-# a tab's AI menu, a switch that asks first, a login, and a close that sends a
-# worktree to the Recycle Bin. Each moment worth seeing is photographed when
-# the app asks (telas/<name>.png).
+# The AI layer is checked too (docs/ia.md), with the installed core on a
+# made-up home against made-up services: the usage footer, the order, a tab's
+# AI menu, a switch to an account without a login of its own (the core opens
+# its login) and to one that does not exist (refused), a login, and a close
+# that sends a worktree to the Recycle Bin — this run's worktree, which no
+# conversation made, is added to the core's answer by a stand-in in front of
+# it (e2e/ia-falso.mjs); -NucleoReal leaves the stand-in out. Each moment
+# worth seeing is photographed when the app asks (telas/<name>.png).
 #
 # Exit 0 only when the app reported every step done.
 param(
@@ -89,8 +91,8 @@ if (-not (Test-Path (Join-Path $worktree '.git'))) { throw 'não consegui criar 
 if ($NucleoReal) {
     $env:KEEP_E2E_IA = 'real'
 } else {
-    # What the core does not answer yet comes from the stand-in; what it
-    # does (accounts, usage, order) still goes to the installed keep.exe.
+    # The installed keep.exe answers; the stand-in only adds this run's
+    # worktree, and answers what an older core would not know.
     $env:KEEP_E2E_IA = 'falso'
     $env:KEEP_IA_BIN = Join-Path $here 'keep-falso.cmd'
     $env:KEEP_E2E_REAL_KEEP = Join-Path $dir 'bin\keep.exe'

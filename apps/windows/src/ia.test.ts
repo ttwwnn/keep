@@ -22,6 +22,8 @@ import {
   programKind,
   programLabel,
   readStoredLines,
+  readSwitch,
+  refusalText,
   untilText,
   type Account,
   type UsageLine,
@@ -233,5 +235,37 @@ describe("worktrees in the close question", () => {
     );
     expect(tilde("C:/Users/ana/x", home)).toBe("~/x");
     expect(tilde("C:\\Users\\Anabela", home)).toBe("C:\\Users\\Anabela");
+  });
+});
+
+describe("the answer to a switch", () => {
+  const answer = (over: Record<string, unknown>) => ({ versao: 1, _saida: 1, ...over });
+  it("done, in the core's words", () => {
+    expect(readSwitch(answer({ ok: true, _saida: 0, feito: "retomou GPT · principal" }), "", false)).toEqual({
+      kind: "done",
+      text: "retomou GPT · principal",
+    });
+  });
+  it("a busy tab is asked about once; asked again with the yes, it is a failure to say", () => {
+    const busy = answer({ ok: false, motivo: "ocupada", detalhe: "A aba está trabalhando." });
+    expect(readSwitch(busy, "", false)).toEqual({ kind: "busy", detail: "A aba está trabalhando." });
+    expect(readSwitch(busy, "", true)).toEqual({ kind: "failed", detail: "A aba está trabalhando." });
+  });
+  it("an account without a login of its own sends the person to the tab the core opened", () => {
+    const login = answer({ ok: false, motivo: "precisa-login", detalhe: "Abri a aba", ws_login: "e2e", aba_login: 7 });
+    expect(readSwitch(login, "", false)).toEqual({ kind: "login", detail: "Abri a aba", workspace: "e2e", tab: 7 });
+    expect(readSwitch(answer({ ok: false, motivo: "precisa-login", detalhe: "x" }), "", false)).toMatchObject({ workspace: null, tab: null });
+  });
+  it("anything else is said as the core said it; an older core, as not known yet", () => {
+    expect(readSwitch(answer({ ok: false, motivo: "sem-conta", detalhe: "Não há a conta Claude · x." }), "", false)).toEqual({
+      kind: "failed",
+      detail: "Não há a conta Claude · x.",
+    });
+    expect(readSwitch(answer({ ok: false, motivo: "uso", _saida: 2 }), "", false)).toEqual({
+      kind: "failed",
+      detail: "Esta versão do Keep ainda não sabe trocar a IA das abas.",
+    });
+    expect(readSwitch(null, "o keep passou de 40 s", false)).toEqual({ kind: "failed", detail: "o keep passou de 40 s" });
+    expect(refusalText(answer({ ok: false }), "mudar a ordem")).toBe("O keep saiu com 1.");
   });
 });

@@ -60,7 +60,8 @@ export function AccountChevron(props: { workspace: string; tab: RootTab; label: 
       title="IA e conta desta aba"
       aria-label={`Escolher a IA da aba ${props.label}`}
       aria-haspopup="menu"
-      data-ai-chevron={`${props.workspace}\u0000${props.tab.root.id}`}
+      data-ia-ws={props.workspace}
+      data-ia-tab={props.tab.root.id}
       onMouseDown={(e) => e.stopPropagation()}
       onDblClick={(e) => e.stopPropagation()}
       onClick={(e) => {

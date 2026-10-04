@@ -23,6 +23,8 @@ import {
   orderKeyOf,
   programKind,
   readStoredLines,
+  readSwitch,
+  refusalText as refusal,
   runsAI,
   type Engine,
   type MenuRow,
@@ -104,11 +106,6 @@ export function toggleFooter(): void {
 const daemonUp = () => loaded.value && daemonError.value === null;
 const inFront = () => document.visibilityState === "visible" && document.hasFocus();
 
-/** What a refusal says, or that this core does not know the question (exit 2). */
-export function refusal(answer: CoreAnswer, what: string): string {
-  if (answer._saida === 2) return `Esta versão do Keep ainda não sabe ${what}.`;
-  return answer.detalhe || answer.motivo || `O keep saiu com ${answer._saida}.`;
-}
 
 /** Something said in a box with one button. */
 function tell(title: string, message: string): Promise<unknown> {
@@ -406,38 +403,39 @@ export async function chooseAccount(
     switching.delete(id);
     if (notice.value === working) notice.value = null;
   }
-  if (answer?.ok === true) {
-    notes.value = new Map(notes.value).set(id, { key, at: Date.now() });
-    const done = typeof answer.feito === "string" && answer.feito ? answer.feito : `em ${label}`;
-    say(`Aba “${tabName}”: ${done}`);
-    void refresh();
-    setTimeout(() => void readTabs(), 1500);
-    return;
-  }
-  if (answer?.motivo === "ocupada" && !interrupting) {
-    const result = await ask({
-      title: `A aba “${tabName}” está ocupada`,
-      message: `${refusal(answer, "trocar a IA das abas")}\n\nPassar agora para ${label} interrompe o que ela está fazendo.`,
-      buttons: [
-        { label: "Cancelar", value: "cancel" },
-        { label: "Interromper e trocar agora", value: "go", danger: true, primary: true },
-      ],
-    });
-    if (result?.button === "go") await chooseAccount(workspace, tab, key, label, tabName, true);
-    return;
-  }
-  if (answer?.motivo === "precisa-login") {
-    // Not a failure: the account has no login of its own for a tab yet, the
-    // core opened one in a tab, and switches this one when it is through.
-    const where = typeof answer.ws_login === "string" && answer.ws_login ? answer.ws_login : workspace;
-    if (typeof answer.aba_login === "number") {
-      await refresh();
-      select(where, answer.aba_login);
+  const outcome = readSwitch(answer, error, interrupting);
+  switch (outcome.kind) {
+    case "done":
+      notes.value = new Map(notes.value).set(id, { key, at: Date.now() });
+      say(`Aba “${tabName}”: ${outcome.text || `em ${label}`}`);
+      void refresh();
+      setTimeout(() => void readTabs(), 1500);
+      return;
+    case "busy": {
+      const result = await ask({
+        title: `A aba “${tabName}” está ocupada`,
+        message: `${outcome.detail}\n\nPassar agora para ${label} interrompe o que ela está fazendo.`,
+        buttons: [
+          { label: "Cancelar", value: "cancel" },
+          { label: "Interromper e trocar agora", value: "go", danger: true, primary: true },
+        ],
+      });
+      if (result?.button === "go") await chooseAccount(workspace, tab, key, label, tabName, true);
+      return;
     }
-    await tell(`Falta aprovar ${label} no navegador`, refusal(answer, "trocar a IA das abas"));
-    return;
+    case "login":
+      // Not a failure: the account has no login of its own for a tab yet,
+      // the core opened one in a tab, and switches this one when it is
+      // through. That tab is where the person goes next.
+      if (outcome.tab !== null) {
+        await refresh();
+        select(outcome.workspace ?? workspace, outcome.tab);
+      }
+      await tell(`Falta aprovar ${label} no navegador`, outcome.detail);
+      return;
+    case "failed":
+      await tell("Não deu para trocar a IA da aba", outcome.detail);
   }
-  await tell("Não deu para trocar a IA da aba", answer ? refusal(answer, "trocar a IA das abas") : error);
 }
 
 /** The tab's menu as it stands now, and what choosing a row of it does. */

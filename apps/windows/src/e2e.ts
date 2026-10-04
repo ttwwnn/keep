@@ -6,8 +6,8 @@
 import * as api from "./api";
 import { SPLIT_RIGHT } from "./api";
 import { readActivity } from "./claude";
-import { FOLLOW_ORDER, accountName, lineId } from "./ia";
-import { e2eHooks, iaAvailable, measureNow, moveOrder, signIn, tabAccount, usageLines } from "./iaStore";
+import { lineId } from "./ia";
+import { chooseAccount, e2eHooks, iaAvailable, measureNow, moveOrder, signIn, usageLines } from "./iaStore";
 import {
   activeTab,
   answer,
@@ -18,7 +18,6 @@ import {
   info,
   newTab,
   newWorkspace,
-  notice,
   refresh,
   renameTab,
   select,
@@ -198,8 +197,12 @@ function shownMenu(): string[] {
 /** Open the menu of a tab's AI by its chevron in the strip, as a click does. */
 async function openTabMenu(tab: number): Promise<string[]> {
   menu.value = null;
+  // Found by its data, not by a selector: a workspace may be named anything.
   const chevron = await waitFor(
-    () => document.querySelector<HTMLElement>(`.strip [data-ai-chevron="${WORKSPACE}\u0000${tab}"]`),
+    () =>
+      [...document.querySelectorAll<HTMLElement>(".strip .ai-chevron")].find(
+        (e) => e.dataset.iaWs === WORKSPACE && e.dataset.iaTab === String(tab),
+      ),
     5000,
   );
   chevron.click();
@@ -268,55 +271,47 @@ async function aiSteps(step: StepRunner, real: boolean): Promise<void> {
     return;
   }
   select(WORKSPACE, first.root.id);
-
-  if (!real) {
-    await api.e2eFake({
-      abas: { [`${WORKSPACE}:${first.root.id}`]: { agente: "claude", conta: FOLLOW_ORDER, atual: "claude:ana" } },
-      ocupada: { [`${WORKSPACE}:${first.root.id}`]: true },
-      abaLogin: second.root.id,
-      worktreeAlvo: { workspace: WORKSPACE, aba: second.root.id },
-    });
-  }
+  const firstName = tabLabel(WORKSPACE, first, 0);
+  // The worktree run.ps1 made goes with the second tab when it closes.
+  if (!real) await api.e2eFake({ worktreeAlvo: { workspace: WORKSPACE, aba: second.root.id } });
   await e2eHooks.readTabs();
 
-  await step("IA: o menu da aba marca a escolha e a conta em uso", async () => {
+  await step("IA: o menu da aba lista a ordem e as contas", async () => {
     const rows = await openTabMenu(first.root.id);
-    if (!real) {
-      if (!rows[0]?.startsWith("✓ Seguir a ordem de prioridade")) throw new Error(`sem ✓ em seguir a ordem: ${rows.join(" | ")}`);
-      if (!rows.some((r) => r.startsWith("– Claude · ana"))) throw new Error(`sem – na conta em uso: ${rows.join(" | ")}`);
+    if (!rows[0]?.includes("Seguir a ordem de prioridade")) throw new Error(`sem seguir a ordem: ${rows.join(" | ")}`);
+    if (!rows.some((r) => r.includes("Claude · semlogin") && r.includes("sem login próprio"))) {
+      throw new Error(`sem a conta sem login: ${rows.join(" | ")}`);
     }
     await api.e2eShot("menu");
     return rows.join(" | ");
   });
 
-  if (!real) {
-    await step("IA: trocar para o GPT, que pergunta antes de interromper", async () => {
-      const gpt = usageLines.value.find((l) => l.account.engine === "codex")!;
-      const item = [...document.querySelectorAll<HTMLElement>(".context-menu .menu-item")].find((e) =>
-        (e.textContent ?? "").includes(accountName(gpt.account)),
-      );
-      if (!item) throw new Error("sem a linha do GPT no menu");
-      item.click();
-      const question = await waitFor(() => (dialog.value?.title.includes("ocupada") ? dialog.value : null), 15000);
-      await api.e2eShot("ocupada");
-      answer("go");
-      const switched = await waitFor(() => {
-        const account = tabAccount(WORKSPACE, first.root);
-        return account.key === "gpt:principal" ? account : null;
-      }, 20000);
-      return `${question.title} → ${switched.key}${notice.value ? ` (${notice.value})` : ""}`;
-    });
-    await step("IA: o menu depois da troca", async () => {
-      await e2eHooks.readTabs();
-      const rows = await openTabMenu(first.root.id);
-      await api.e2eShot("menu-depois");
-      menu.value = null;
-      if (!rows.some((r) => r.startsWith("✓ GPT · principal"))) throw new Error(`sem ✓ no GPT: ${rows.join(" | ")}`);
-      return rows.join(" | ");
-    });
-  } else {
-    menu.value = null;
-  }
+  await step("IA: uma conta sem login próprio abre o login dela", async () => {
+    const item = [...document.querySelectorAll<HTMLElement>(".context-menu .menu-item")].find((e) =>
+      (e.textContent ?? "").includes("Claude · semlogin"),
+    );
+    if (!item) throw new Error("sem a linha da conta no menu");
+    item.click();
+    const said = await waitFor(() => dialog.value, 45000);
+    const title = said.title;
+    const message = said.message ?? "";
+    await api.e2eShot("precisa-login");
+    answer("ok");
+    if (!title.startsWith("Falta aprovar")) throw new Error(`${title}: ${message}`);
+    const shown = activeTab.value?.root.id;
+    if (shown === first.root.id) throw new Error("a aba do login não veio para a frente");
+    return `${title} — aba do login ${shown}: ${message.slice(0, 160)}`;
+  });
+
+  await step("IA: uma conta que não existe é recusada com as palavras do núcleo", async () => {
+    select(WORKSPACE, first.root.id);
+    void chooseAccount(WORKSPACE, first.root.id, "claude:ninguem", "Claude · ninguem", firstName);
+    const said = await waitFor(() => dialog.value, 45000);
+    const text = `${said.title}: ${said.message ?? ""}`;
+    answer("ok");
+    if (!said.title.startsWith("Não deu para trocar")) throw new Error(text);
+    return text;
+  });
 
   await step("IA: entrar em outra conta abre a aba do login", async () => {
     const before = new Set((tabsByWorkspace.value.get(WORKSPACE) ?? []).map((t) => t.root.id));
@@ -327,9 +322,10 @@ async function aiSteps(step: StepRunner, real: boolean): Promise<void> {
       throw new Error(said);
     }
     const shown = activeTab.value?.root.id;
-    if (!real && shown !== second.root.id) throw new Error(`foi para a aba ${shown}, não para ${second.root.id}`);
-    const now = (tabsByWorkspace.value.get(WORKSPACE) ?? []).map((t) => t.root.id);
-    return `aba em frente: ${shown}; abas novas: ${now.filter((id) => !before.has(id)).join(", ") || "nenhuma"}`;
+    if (shown === undefined || before.has(shown)) throw new Error(`a aba em frente (${shown}) não é nova`);
+    await sleep(1500);
+    await api.e2eShot("entrar");
+    return `aba do login: ${shown}`;
   });
 
   await step("IA: fechar a aba manda a worktree para a Lixeira", async () => {

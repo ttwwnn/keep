@@ -262,6 +262,42 @@ export function programLabel(command: string, account: string | null | undefined
   return command;
 }
 
+// ------------------------------------------------------------------ the core's answers
+
+/** What a refusal says, or that this core does not know the question yet (exit 2). */
+export function refusalText(answer: CoreAnswer, what: string): string {
+  if (answer._saida === 2) return `Esta versão do Keep ainda não sabe ${what}.`;
+  return answer.detalhe || answer.motivo || `O keep saiu com ${answer._saida}.`;
+}
+
+export type SwitchOutcome =
+  /** Done: what the core did, in its words. */
+  | { kind: "done"; text: string }
+  /** The tab is at work: ask before interrupting it, and ask the core again if yes. */
+  | { kind: "busy"; detail: string }
+  /** The account has no login of its own for a tab yet: the core opened one in a tab, which comes forward. */
+  | { kind: "login"; detail: string; workspace: string | null; tab: number | null }
+  | { kind: "failed"; detail: string };
+
+/** What the answer to `trocar` means for the window. */
+export function readSwitch(answer: CoreAnswer | null, error: string, interrupting: boolean): SwitchOutcome {
+  if (!answer) return { kind: "failed", detail: error || "O keep não respondeu." };
+  if (answer.ok === true) {
+    return { kind: "done", text: typeof answer.feito === "string" ? answer.feito : "" };
+  }
+  const detail = refusalText(answer, "trocar a IA das abas");
+  if (answer.motivo === "ocupada" && !interrupting) return { kind: "busy", detail };
+  if (answer.motivo === "precisa-login") {
+    return {
+      kind: "login",
+      detail,
+      workspace: typeof answer.ws_login === "string" && answer.ws_login ? answer.ws_login : null,
+      tab: typeof answer.aba_login === "number" ? answer.aba_login : null,
+    };
+  }
+  return { kind: "failed", detail };
+}
+
 // ------------------------------------------------------------------ saying it
 
 /** "17%", whole numbers. */

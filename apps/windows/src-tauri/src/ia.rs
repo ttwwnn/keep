@@ -170,11 +170,18 @@ pub fn parse(data: &[u8], code: i32) -> Result<Value, String> {
             .find_map(|l| serde_json::from_str::<Value>(l).ok().filter(Value::is_object))
     });
     let Some(mut answer) = answer else {
-        return Err(if code == 2 {
-            "o keep não entendeu o pedido".to_string()
-        } else {
-            format!("o keep respondeu algo que não dá para ler (saiu com {code})")
-        });
+        // A question this core does not know, said in words rather than in
+        // JSON: the page reads it as "not here yet", as it reads exit 2.
+        if code == 2 {
+            return Ok(serde_json::json!({
+                "versao": 1,
+                "ok": false,
+                "motivo": "uso",
+                "detalhe": "o keep não entendeu o pedido",
+                "_saida": 2,
+            }));
+        }
+        return Err(format!("o keep respondeu algo que não dá para ler (saiu com {code})"));
     };
     if answer.get("versao").and_then(Value::as_i64) != Some(1) {
         return Err(format!("o keep respondeu noutra versão do contrato (saiu com {code})"));
@@ -557,7 +564,9 @@ mod tests {
         // Pretty-printed, or after a line of something else.
         assert!(parse(b"aviso\n{\"versao\":1,\"ok\":true}\n", 0).is_ok());
         assert!(parse(b"{\n  \"versao\": 1,\n  \"ok\": true\n}\n", 0).is_ok());
-        assert_eq!(parse(b"uso: keep ...", 2).unwrap_err(), "o keep não entendeu o pedido");
+        let older = parse(b"keep worktrees: ainda n\xc3\xa3o implementado", 2).unwrap();
+        assert_eq!((older["_saida"].as_i64(), older["motivo"].as_str()), (Some(2), Some("uso")));
+        assert!(parse(b"panic", 101).is_err());
         assert!(parse(b"{\"versao\":2}", 0).is_err());
     }
 
