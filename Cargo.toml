@@ -6,4 +6,4 @@ members = ["crates/keep", "crates/keep-proto", "crates/keep-vt", "crates/keepd"]
 version = "0.0.1"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/luhw-dev/keep"
+repository = "https://github.com/ttwwnn/keep"

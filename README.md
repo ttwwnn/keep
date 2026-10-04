@@ -1,174 +1,135 @@
-# keep
+# Keep
 
-Persistent terminal workspaces, built on [libghostty-vt](https://libghostty.tip.ghostty.org/).
+Terminal com **workspaces que sobrevivem à janela**, para **macOS** e **Windows**.
 
-> Working name. Early, but usable: phase 1 works end to end.
+Fechar a janela — ou o app inteiro — não fecha nada: os shells continuam rodando num
+daemon, e ao reabrir cada aba está onde ficou, com a tela como estava. Um workspace é
+um projeto; um workspace tem abas; abas podem ser divididas em painéis.
 
-## Why
+> Projeto de [ttwwnn](https://github.com/ttwwnn), derivado de
+> [luhw-dev/keep](https://github.com/luhw-dev/keep) (licença MIT). Este repositório
+> segue o próprio caminho: as mudanças entram aqui, não como PR no projeto original.
 
-Terminal emulators lose your work. Close the window and every process dies with
-it. `tmux` solves that, but it also brings a hierarchy — workspaces, then windows,
-then panes — that you have to navigate even when you never split a pane.
+## Como funciona
 
-`keep` takes the other half of the trade: real persistence with a shape you
-can hold in your head. A workspace is a project; a workspace has tabs. Both live
-in the daemon, so closing the window loses neither.
-
-## How
-
-A terminal that owns your processes cannot be the same thing as the window you
-close. So `keep` splits them:
-
-    ┌─ daemon ──────────────────────────────────┐
-    │  owns the PTYs, outlives every client     │
-    │  libghostty-vt keeps each workspace's grid  │
-    └───────────────────────────────────────────┘
-                        ▲  unix socket
-            ┌───────────┴───────────┐
-            │ client (attach/detach)│
-            └───────────────────────┘
-
-Because the daemon holds the screen state, a client that reconnects can be
-repainted exactly as the workspace left it — `libghostty-vt` can emit the whole
-screen back as VT sequences, colors and hyperlinks included.
-
-The core is portable and knows nothing about UI. Each platform gets a real
-native client instead of a lowest-common-denominator one.
-
-## Status
-
-**Phase 1 — daemon + terminal client.** Working. The client runs inside an
-existing terminal and paints by writing VT sequences, so there is no renderer
-and no font handling to build.
-
-- [x] `keep-vt` — safe bindings for libghostty-vt
-- [x] `keep-proto` — framed wire protocol
-- [x] `keepd` — PTY ownership, screen state, workspace registry, unix socket
-- [x] `keep` — attach, detach, repaint, input forwarding, flat picker
-- [x] workspaces hold tabs; tabs persist with the workspace
-
-**Phase 2 — native macOS app.** Working. One line of chrome: traffic lights,
-a sidebar toggle and the tab row all share the titlebar (an approach adapted
-from Ghostty's titlebar tabs). The workspace sidebar runs the full height of
-the window Finder-style and the tab row starts at its edge — collapse it and
-the tabs slide over to the toggle. Each tab is a real libghostty surface
-(Metal rendering, your own Ghostty fonts and theme) running the `keep` client.
-
-The tab row is drawn by the app rather than by AppKit. Native tabs are windows
-sharing a `tabbingIdentifier`, which made every workspace switch a matter of
-creating and closing windows — the source of every flicker, focus loss and
-fight with a tiling window manager the app ever had. Switching is now a
-visibility flip between mounted views, and ⌘1–⌘9, drag-to-reorder and the
-close buttons are ours.
-
-**Windows are yours to ask for.** ⌘⇧N opens another, ⌥⌘W closes one, a tab
-dragged clear of the row opens in one of its own, and nothing else in the app
-makes or unmakes a window. Each carries its own list
-of workspaces — a new one starts empty, and ⌘P reaches every workspace there
-is and brings it into that window. Two windows can show the same tab; it is
-the same shell with two viewers, the way two clients attach to one tmux
-session, and the daemon fits the tab to the smaller of them. Closing a window
-kills nothing; closing the last one quits, and everything keeps running in the
-daemon.
-
-Splits are a tree (⌘D right, ⌘⇧D down) and the daemon hands a closed pane's
-children to its parent, so closing one pane never takes the arrangement apart.
-There is a picker (⌘P) over every workspace and tab, search (⌘F, ⌘⇧F), and
-keyboard motion between panes, workspaces and picker rows.
-
-A picker row is also something you can act on. ⌘K, the chip in the corner and
-the right button all open one panel — go there, open a tab in that workspace,
-reveal it in Finder, copy its path, close it — because a right-click does not
-deserve a different menu from the one the keyboard gets.
-
-⌘⇧P is the same overlay asking what you want *done*: the commands worth
-typing three letters to reach, grouped by what they are for, and two lists
-they open into. One is every Ghostty theme installed on the machine, each row
-wearing a scrap of itself and previewed as a screen in it; the other is the
-monospaced faces, each name set in its own face. What is chosen goes into a
-config file Keep writes and loads after yours — yours is read, never edited —
-and `ghostty_app_update_config` applies it live, so the terminal and the
-chrome around it change colour together without a relaunch.
-
-Tabs are labelled with the title the program inside sets (OSC 0/2), which
-shells and editors do on their own, so a tab says what it is without anyone
-naming it. A workspace also reports whether it is *running* something, taken
-from the terminal's foreground process group rather than from shell
-integration, so a build in a workspace nobody is watching still says so.
-
-The same process group answers two more questions the picker needs, because a
-title is not always a name: run the same tool in six tabs and six rows say the
-same sentence. So the daemon also reports each tab's working directory — asked
-of the kernel, so it needs no shell setup and follows a `cd` rather than
-waiting for the next prompt — and when a byte last went either way through it.
-The picker shows the directory relative to the workspace's own, which is short
-enough to sit in a column: `777leads/api` rather than `~/www/777leads/api`.
-
-One wrinkle worth knowing about: the libghostty build we link against accepts
-the per-surface `command`, `env_vars` and `initial_input` fields and then
-ignores them. Only `working_directory` survives, so the app fixes the client
-app-wide and hands each surface its target through a file in a private
-working directory, which the client reads and deletes.
-
-A second, about the platform rather than about libghostty: Liquid Glass
-refracts what the window server has behind the *window*. A terminal that asks
-for `background-opacity` less than one makes the window see-through, and glass
-laid over it comes back with the desktop in it — wallpaper and all — whatever
-the app paints inside the window, and whether or not the window is held opaque.
-So the overlays that float over the terminal are built out of a material, a
-tint and a drawn rim instead of being handed to the system.
-
-Another, this one by design: a tab shown in two windows answers a program's
-questions twice. When something asks the terminal where the cursor is or what
-it is, the daemon passes the question to every client and each replies on the
-one PTY. Mirroring a tab costs you that.
-
-Not done yet: scrollback (the repaint covers the visible screen only), and
-workspaces do not survive a reboot.
-
-## Building
-
-Requires a Rust toolchain. On macOS, **Zig is not needed** — upstream ships a
-prebuilt universal xcframework:
-
-```sh
-./vendor/fetch.sh   # downloads libghostty-vt (and builds the Linux slices if zig is present)
-cargo build --release
+```
+┌─ daemon (keepd) ───────────────────────────────┐
+│  dono dos terminais; sobrevive a todo cliente  │
+│  libghostty-vt guarda a tela de cada aba       │
+└────────────────────────────────────────────────┘
+          ▲  socket unix (macOS/Linux) · pipe nomeado (Windows)
+   ┌──────┴──────────────┬──────────────────────┐
+   │ app do macOS        │ app do Windows       │  keep (cliente de
+   │ Swift + libghostty  │ Tauri + xterm.js     │  terminal, qualquer SO)
+   └─────────────────────┴──────────────────────┘
 ```
 
-### Linux
+O núcleo é o mesmo nas duas plataformas (Rust, em `crates/`):
 
-The daemon and the client run on Linux — that half of Keep is the product
-there, the way tmux is. Upstream ships no prebuilt Linux library, so the
-build needs Zig (which also serves as the cross-linker, meaning the whole
-thing builds *from a Mac* with no container):
+| Crate | O que faz |
+|---|---|
+| `keepd` | o daemon: abre os terminais (PTY no Unix, ConPTY no Windows), guarda a tela de cada aba, atende os clientes |
+| `keep-proto` | o protocolo entre daemon e clientes, e o transporte (socket unix ou pipe nomeado) |
+| `keep-vt` | ligação segura com o [libghostty-vt](https://libghostty.tip.ghostty.org/) |
+| `keep` | cliente de linha de comando: anexa a um workspace de dentro de qualquer terminal |
+
+Cada plataforma tem o seu app nativo por cima (`apps/macos`, `apps/windows`).
+
+## Windows
+
+**Instalar:** baixe `Keep_<versão>_x64-setup.exe` em
+[Releases](https://github.com/ttwwnn/keep/releases) e rode. Instala só para o seu usuário
+(sem administrador), com o daemon, o cliente `keep` e o console do Windows Terminal
+(ConPTY da Microsoft) junto.
+
+- O shell padrão é o PowerShell 7 se estiver instalado, senão o Windows PowerShell; dá
+  para trocar nas configurações (PowerShell, Prompt de Comando, Git Bash, WSL).
+- Depois de reiniciar o computador, o Keep reabre os workspaces e as abas nas mesmas
+  pastas.
+- Arrastar arquivos do Explorer para o terminal cola os caminhos.
+- Estado do Claude Code e do Codex na aba: trabalhando, esperando você (laranja), em
+  segundo plano (azul) ou concluído (cinza).
+
+| Atalho | Ação |
+|---|---|
+| Ctrl+Shift+T | nova aba |
+| Ctrl+Shift+N | novo workspace |
+| Ctrl+Tab / Ctrl+Shift+Tab | próxima / anterior aba |
+| Ctrl+1 … Ctrl+9 | ir para a aba |
+| Ctrl+Shift+P | ir para qualquer workspace ou aba |
+| Ctrl+Shift+F | buscar em todas as abas |
+| Ctrl+F | buscar na aba |
+| Ctrl+Shift+D / Ctrl+Shift+E | dividir à direita / abaixo |
+| Ctrl+= / Ctrl+− / Ctrl+0 | zoom |
+| F2 | renomear |
+| Ctrl+C / Ctrl+V | copiar a seleção / colar |
+| Shift+Enter | nova linha no Claude Code |
+
+Fechar aba ou workspace sempre pede confirmação (não há atalho para fechar).
+
+## macOS
+
+O app nativo (`apps/macos`, Swift/AppKit com o libghostty completo: Metal, as fontes e
+temas do Ghostty) tem barra lateral de workspaces, abas na barra de título, divisões,
+seletor (⌘P), comandos (⌘⇧P), zoom, cores de estado do Claude Code e do Codex, contas de
+IA por aba e consumo de IA no rodapé.
+
+Compilar:
 
 ```sh
-brew install zig cargo-zigbuild   # or your distro's zig ≥ 0.16
-tools/build-linux.sh              # → dist/linux-{x86_64,aarch64}/keep, keepd
+./vendor/fetch.sh                    # libghostty-vt
+cargo build --release -p keep -p keepd
+cd apps/macos && xcodebuild -project Keep.xcodeproj -scheme Keep -configuration Release \
+  -derivedDataPath build build
 ```
 
-On a Linux machine, `./vendor/fetch.sh && cargo build --release` does the
-same natively. The macOS app does not port; on Linux you attach from any
-terminal, which is what the client is for.
+O Xcode não copia `keep` e `keepd` para dentro do app: copie `target/release/keep` e
+`target/release/keepd` para `Keep.app/Contents/Resources/` e assine. No Mac do autor isso
+é feito pelo instalador do kit (`instalar-keep-app.sh`), que compila do ramo `main`.
 
-Then put `target/release/keep` and `target/release/keepd` on your `PATH`.
-The client starts the daemon on demand; you never run `keepd` yourself.
+## Linux
+
+O daemon e o cliente rodam no Linux (`tools/build-linux.sh` compila a partir de um Mac).
+Lá o cliente `keep` é o produto, como o tmux:
 
 ```sh
-keep              # pick a workspace, or type a name to start one
-keep myproject    # attach to myproject, creating it if needed
-keep ls           # list workspaces
-keep kill name    # end one
+keep              # escolher um workspace, ou digitar um nome para criar
+keep projeto      # anexar a "projeto", criando se precisar
+keep ls           # listar
+keep kill nome    # encerrar um workspace
 ```
 
-Inside a workspace, `ctrl-\` detaches and leaves everything running.
+Dentro de um workspace, `Ctrl+\` desanexa e deixa tudo rodando.
 
-libghostty-vt has no stable ABI yet and its only release tag is `tip`. The
-vendored copy is pinned on purpose, and `keep-vt` asserts the C struct sizes it
-was built against — if those tests fail after re-vendoring, read the headers
-before changing the numbers.
+## Compilar o app do Windows
 
-## License
+Requisitos: Rust (MSVC), Node 22, Zig 0.16.0, Visual Studio Build Tools.
 
-MIT
+```sh
+./vendor/build-vt.sh x86_64-windows-msvc vendor/libghostty-vt-windows-x86_64   # no Git Bash
+cargo build --release -p keep -p keepd
+mkdir -p apps/windows/src-tauri/resources/bin
+cp target/release/keep.exe target/release/keepd.exe apps/windows/src-tauri/resources/bin/
+# conpty.dll e OpenConsole.exe: pacote NuGet Microsoft.Windows.Console.ConPTY (ver CI)
+cd apps/windows && npm ci && npx tauri build
+```
+
+O CI (`.github/workflows/windows-app.yml`) faz exatamente isso, instala o resultado num
+Windows de verdade, abre o app e confere o roteiro de ponta a ponta.
+
+## Testes
+
+```sh
+cargo test --workspace          # núcleo: macOS, Linux e Windows no CI
+cd apps/windows && npm test     # lógica da interface do Windows
+```
+
+O libghostty-vt não tem ABI estável: a versão é fixada pelo commit do Ghostty
+(`GHOSTTY_COMMIT` no CI) e o `keep-vt` confere os tamanhos das structs C nos testes.
+
+As notas de projeto originais (inglês) estão em [`docs/README-upstream.md`](docs/README-upstream.md),
+[`DESIGN.md`](DESIGN.md) e [`PRODUCT.md`](PRODUCT.md).
+
+## Licença
+
+MIT — ver [LICENSE](LICENSE).

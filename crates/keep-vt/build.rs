@@ -6,7 +6,7 @@ fn main() {
     // xcframework, the Linux ones are built from upstream's source tarball
     // with Zig (which is also what links the Rust for those targets), and
     // the Windows one is built with Zig on Windows, against the MSVC
-    // toolchain the Rust links with (vendor/fetch-windows.ps1).
+    // toolchain the Rust links with (vendor/build-vt.sh, under Git Bash).
     //
     // `KEEP_GHOSTTY_VT_DIR` names the directory outright, for a build that
     // keeps the library somewhere else.
