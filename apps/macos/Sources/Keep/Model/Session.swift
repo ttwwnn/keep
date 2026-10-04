@@ -57,12 +57,12 @@ final class Session {
     private var claudeActivities: [TabID: ClaudeActivity] = [:]
     /// When each tab's Claude Code started waiting on an answer.
     private var waitingSince: [TabID: Date] = [:]
-    /// The account each tab's AI runs on, as the kit wrote it down.
+    /// The account each tab's AI runs on, as the core last said.
     private let aiAccounts = AITabAccounts()
-    /// Whether the kit's `keep-ia` is installed: the chevrons that change a
-    /// tab's account are there only when it is.
+    /// Whether there is a `keep` to ask (the one inside the app): the
+    /// chevrons that change a tab's account are there only when there is.
     private var aiHelperPresent = AIHelper.path != nil
-    /// Tabs whose account the kit is changing now: a second choice made
+    /// Tabs whose account the core is changing now: a second choice made
     /// meanwhile — a double click — is dropped rather than sent after it.
     private var switching: Set<TabID> = []
     /// Windows a login is being opened from, for the same reason.
@@ -323,9 +323,9 @@ final class Session {
         }
         let newDaemon = checkDaemon()
         changed = changed || newDaemon
-        // What the kit last wrote down about the tabs' accounts, and whether
-        // it can be asked to change one: both can change between polls.
-        if aiAccounts.reload(daemonStart: Daemon.startedAt ?? daemonStart) { changed = true }
+        // What the core said about the tabs' accounts is about one daemon,
+        // and whether it can be asked to change one can change between polls.
+        if aiAccounts.daemon(Daemon.startedAt ?? daemonStart) { changed = true }
         let helper = AIHelper.path != nil
         if helper != aiHelperPresent {
             aiHelperPresent = helper
@@ -1057,23 +1057,41 @@ final class Session {
 
     // MARK: - a tab's AI and account
 
-    /// The account a tab's AI runs on: what the kit wrote down, what it has
-    /// just been told to do, or — for an AI it has not written down yet —
-    /// the one such an AI starts on.
+    /// The account a tab's AI was put on: what the core said, what it has
+    /// just been told to do, or — for an AI it has not described yet — the
+    /// one such an AI starts on.
     private func aiAccount(of tab: TabEntity) -> String? {
         aiAccounts.account(
             workspace: tab.id.workspace, tab: tab.id.root,
             program: AIProgramKind(command: Self.program(of: tab)))
     }
 
-    /// Ask the kit to put a tab's AI on another account, off the main
-    /// thread — the kit may be seconds at it: it waits for the program to
-    /// leave and comes back with the conversation on the new one.
+    /// The account a tab's AI runs on now, when the core could tell.
+    private func aiRunning(of tab: TabEntity) -> String? {
+        aiAccounts.running(
+            workspace: tab.id.workspace, tab: tab.id.root,
+            program: AIProgramKind(command: Self.program(of: tab)))
+    }
+
+    /// What `keep ia abas` answered, asked for at `askedAt` (unix ms): taken
+    /// when it is about the daemon the app is using, and shown when it
+    /// changes what a tab says.
+    func adoptTabAccounts(_ answer: Data, askedAt: Double) {
+        let daemon = Daemon.lastInfo
+        guard aiAccounts.adopt(
+            answer, askedAt: askedAt, daemonPid: daemon?.pid, daemonStartedMs: daemon?.startedMs)
+        else { return }
+        publish()
+    }
+
+    /// Ask the core to put a tab's AI on another account, off the main
+    /// thread — it may be seconds at it: it waits for the program to leave
+    /// and comes back with the conversation on the new one.
     ///
-    /// A tab at work is not interrupted without a yes: the kit says it is
+    /// A tab at work is not interrupted without a yes: the core says it is
     /// busy, the question goes up on this window, and a yes asks again,
     /// allowed to interrupt. Anything else it refuses is said, in its words.
-    /// A yes is remembered for the tab until the kit writes the tab down
+    /// A yes is remembered for the tab until the core describes the tab
     /// again, so the menu and the sidebar say it at once.
     private func switchAccount(
         _ id: TabID, to key: String, label: String, interrupting: Bool, from window: WindowID
@@ -1095,6 +1113,10 @@ final class Session {
                     Trace.log("ia", "\(id) on \(key): \(done)")
                     self.aiAccounts.note(workspace: id.workspace, tab: id.root, key: key)
                     self.publish()
+                    // What the tab runs on now — the account following the
+                    // order took it to — asked at once rather than in five
+                    // seconds.
+                    AITabWatcher.current?.refresh()
                 case .failure(let problem) where problem.reason == "ocupada" && !interrupting:
                     Trace.log("ia", "\(id) is busy: asking")
                     self.renderer(window)?.ask(Confirmation(
@@ -1106,7 +1128,7 @@ final class Session {
                         self?.switchAccount(id, to: key, label: label, interrupting: true, from: window)
                     }
                 case .failure(let problem) where problem.reason == "precisa-login":
-                    // Not a failure: the kit is waiting on a login of the
+                    // Not a failure: the core is waiting on a login of the
                     // account's own, in a tab it opened, and switches this
                     // one when that is through. That tab is where the person
                     // goes next, so it is the one shown.
@@ -1131,7 +1153,7 @@ final class Session {
         }
     }
 
-    /// Ask the kit for a login to another account, in a new tab of this
+    /// Ask the core for a login to another account, in a new tab of this
     /// window's workspace, and go to that tab when it is there.
     private func signIn(_ engine: AIEngine, from window: WindowID) {
         guard !signingIn.contains(window),
@@ -1927,7 +1949,8 @@ final class Session {
                         offersAccounts: aiHelperPresent,
                         usageAccount: aiAccounts.confirmedAccount(
                             workspace: tab.id.workspace, tab: tab.id.root,
-                            program: AIProgramKind(command: Self.program(of: tab)))
+                            program: AIProgramKind(command: Self.program(of: tab))),
+                        runningAccount: aiRunning(of: tab)
                     )
                 },
                 expanded: !sidebar.folded.contains(workspace.name)
@@ -1946,7 +1969,8 @@ final class Session {
                 wantsYouSince: waitingSince[tab.id],
                 command: Self.program(of: tab),
                 account: aiAccount(of: tab),
-                offersAccounts: aiHelperPresent
+                offersAccounts: aiHelperPresent,
+                runningAccount: aiRunning(of: tab)
             )
         }
         let active = shownTab(in: window).map { tab in

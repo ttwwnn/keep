@@ -248,11 +248,15 @@ enum AccountMenu {
     /// key and what the menu called it, a turn after the menu has gone,
     /// since what it sets off may put a sheet up.
     static func make(
-        tab: TabID, account: String?, command: String,
+        tab: TabID, account: String?, running: String? = nil, command: String,
         choose: @escaping (_ key: String, _ label: String) -> Void
     ) -> NSMenu {
         let program = AIProgramKind(command: command)
-        let rows = AIChoices.rows(lines: UsageMonitor.shared.lines, current: account, program: program)
+        let rows = AIChoices.rows(
+            lines: UsageMonitor.shared.lines, current: account, running: running, program: program)
+        // What the tabs run on is asked again now, for the next time a menu
+        // opens: this one is built from what is known, and does not wait.
+        AITabWatcher.current?.refresh()
         let menu = NSMenu(title: "IA da aba")
         // Said here, item by item: left to AppKit, an item with a target
         // would be enabled whatever the tab is running.

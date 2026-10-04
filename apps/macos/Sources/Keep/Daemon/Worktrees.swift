@@ -14,10 +14,11 @@ import Foundation
 /// in the tab sits in the directory it was started in while its work happens
 /// elsewhere; what connects a tab to its conversation, and a conversation to
 /// the worktrees it made, is the conversation's own record and the moment
-/// each worktree was born. A helper outside the app works that out —
-/// `keep-worktrees`, from the kit that already links tabs to conversations
-/// for restoring them after a reboot — and answers in JSON. Without the
-/// helper nothing here happens: the question before closing stays as it was.
+/// each worktree was born. The core works that out — `keep worktrees`, the
+/// `keep` inside the app, the same code the Windows app runs — and answers
+/// in JSON; it writes the births down as they happen (`indexar`, every two
+/// minutes, `AIChores`). Without a `keep` to ask nothing here happens: the
+/// question before closing stays as it was.
 ///
 /// The app keeps the two steps that must happen inside a long-lived process
 /// or with the person watching: saying it in the question before anything
@@ -38,7 +39,7 @@ enum Worktrees {
         }
     }
 
-    /// The helper's answer to `listar`.
+    /// The core's answer to `listar`.
     struct Listing: Decodable {
         struct Tab: Decodable {
             let alvo: String
@@ -80,23 +81,20 @@ enum Worktrees {
     }
 
     enum Answer {
-        /// No helper on this machine: nothing to say, nothing to move.
+        /// No `keep` to ask: nothing to say, nothing to move.
         case off
         case listing(Listing)
-        /// The helper is there and did not answer. Said in the question, and
+        /// The core is there and did not answer. Said in the question, and
         /// nothing moves: a guess is not consent.
         case failed(String)
     }
 
-    /// `KEEP_WORKTREES_BIN` for a test, else the kit's install. A GUI app
-    /// inherits none of the shell's PATH, so the place is named.
+    /// The `keep` inside the app, or `KEEP_WORKTREES_BIN` when it is set —
+    /// then the only place looked at, so a test that points it at nothing
+    /// gets nothing. Whatever answers is called as the app's `keep` is:
+    /// `worktrees` first.
     static var helper: String? {
-        let environment = ProcessInfo.processInfo.environment
-        let candidates = [
-            environment["KEEP_WORKTREES_BIN"],
-            (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin/keep-worktrees"),
-        ].compactMap { $0 }
-        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+        KeepCLI.path(named: ProcessInfo.processInfo.environment["KEEP_WORKTREES_BIN"])
     }
 
     // MARK: - asking
@@ -112,12 +110,37 @@ enum Worktrees {
         guard !targets.isEmpty else { return .listing(Listing(versao: 1, abas: [], lixeira: [], mantidas: [], avisos: [])) }
         let arguments = ["listar", "--prazo", String(format: "%.1f", deadline)] + targets.map(\.argument)
         switch run(helper, arguments, within: deadline + 1.5) {
+        case .failure(let why) where why.status == 2:
+            // A `keep` that does not know the question — one from before
+            // `keep worktrees` — is no core to ask: the question stays as it
+            // was, as with none at all.
+            Trace.log("worktree", "listar: \(why.description)")
+            return .off
         case .failure(let why):
             return .failed(why.description)
         case .success(let data):
+            // A refusal in the contract's words is a failure to list, said
+            // as the core says it — not a list with nothing in it.
+            let answer = object(data)
+            if answer["ok"] as? Bool == false {
+                return .failed(answer["motivo"] as? String ?? "o keep worktrees recusou")
+            }
             guard let listing = try? JSONDecoder().decode(Listing.self, from: data), listing.versao == 1
-            else { return .failed("resposta ilegível do keep-worktrees") }
+            else { return .failed("resposta ilegível do keep worktrees") }
             return .listing(listing)
+        }
+    }
+
+    /// Write down the births of the worktrees the running conversations are
+    /// making (`indexar`) — what `listar` goes by when their tab closes,
+    /// since by then the conversation that made one may be long past it.
+    /// Why it did not, or nil when it did.
+    static func index(within seconds: TimeInterval = 120) -> String? {
+        guard let helper else { return nil }
+        switch run(helper, ["indexar", "--json"], within: seconds) {
+        case .failure(let why) where why.status == 2: return nil
+        case .failure(let why): return why.description
+        case .success: return nil
         }
     }
 
@@ -218,7 +241,7 @@ enum Worktrees {
         for item in going {
             let place = tilde(item.caminho)
             var ready = false
-            var reason = "sem resposta do keep-worktrees"
+            var reason = "sem resposta do keep worktrees"
             let giveUp = Date().addingTimeInterval(60)
             let identity = item.nasceu_ns.map { ["--nasceu", String($0)] } ?? []
             while true {
@@ -230,7 +253,7 @@ enum Worktrees {
                     if answer["ok"] as? Bool == true {
                         ready = true
                     } else {
-                        reason = answer["motivo"] as? String ?? "recusada pelo keep-worktrees"
+                        reason = answer["motivo"] as? String ?? "recusada pelo keep worktrees"
                         // Only something still running is worth waiting out.
                         let running = (answer["processos"] as? [Any]) ?? []
                         if !running.isEmpty, Date() < giveUp {
@@ -298,16 +321,23 @@ enum Worktrees {
         (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
 
-    /// Run the helper and hand back what it printed, or why there is nothing
-    /// (`KitHelper`): anything but a clean exit is a failure here.
+    /// Run `keep worktrees` and hand back what it printed, or why there is
+    /// nothing (`KeepCLI`). A clean exit is an answer, and so is a refusal
+    /// that says so in the contract's words (exit 1 with a `versao` 1
+    /// object): `preparar` says no that way, with the reason and what still
+    /// runs in the folder. Anything else is a failure.
     static func run(_ helper: String, _ arguments: [String], within seconds: TimeInterval)
         -> Result<Data, RunFailure>
     {
-        KitHelper.run(helper, arguments, within: seconds, name: "keep-worktrees").flatMap {
-            $0.status == 0 ? .success($0.data) : .failure(RunFailure("o keep-worktrees saiu com \($0.status)"))
+        KeepCLI.run(helper, ["worktrees"] + arguments, within: seconds, name: "keep worktrees").flatMap {
+            if $0.status == 0 { return .success($0.data) }
+            if $0.status == 1, (object($0.data)["versao"] as? NSNumber)?.intValue == 1 {
+                return .success($0.data)
+            }
+            return .failure(RunFailure("o keep worktrees saiu com \($0.status)", status: $0.status))
         }
     }
 
-    typealias RunFailure = KitHelper.Failure
+    typealias RunFailure = KeepCLI.Failure
 }
 

@@ -609,7 +609,9 @@ final class TabStripView: NSView {
         guard let item = cell.shownItem else { return nil }
         callOffRename()
         for open in cells { open.finishRenaming(keep: true) }
-        return AccountMenu.make(tab: item.id, account: item.account, command: item.command) {
+        return AccountMenu.make(
+            tab: item.id, account: item.account, running: item.runningAccount, command: item.command
+        ) {
             [weak self] key, label in
             self?.onChooseAccount?(item.id, key, label)
         }

@@ -39,7 +39,7 @@
 		D4F0FFEE0000000000000003 /* ZoomControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F0FFEE0000000000000004 /* ZoomControl.swift */; };
 		A1C0FFEE0000000000000001 /* AIUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0FFEE0000000000000002 /* AIUsage.swift */; };
 		C3E0FFEE0000000000000001 /* AIChoice.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3E0FFEE0000000000000002 /* AIChoice.swift */; };
-		C3E0FFEE0000000000000003 /* KitHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3E0FFEE0000000000000004 /* KitHelper.swift */; };
+		C3E0FFEE0000000000000003 /* KeepCLI.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3E0FFEE0000000000000004 /* KeepCLI.swift */; };
 		C3E0FFEE0000000000000005 /* AccountMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3E0FFEE0000000000000006 /* AccountMenu.swift */; };
 		FCEBE0A215CA639F0322FF20 /* PickerActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = D71D0DA44EC6DD5C261D1F8A /* PickerActions.swift */; };
 /* End PBXBuildFile section */
@@ -66,7 +66,7 @@
 		D4F0FFEE0000000000000004 /* ZoomControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomControl.swift; sourceTree = "<group>"; };
 		A1C0FFEE0000000000000002 /* AIUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIUsage.swift; sourceTree = "<group>"; };
 		C3E0FFEE0000000000000002 /* AIChoice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChoice.swift; sourceTree = "<group>"; };
-		C3E0FFEE0000000000000004 /* KitHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KitHelper.swift; sourceTree = "<group>"; };
+		C3E0FFEE0000000000000004 /* KeepCLI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepCLI.swift; sourceTree = "<group>"; };
 		C3E0FFEE0000000000000006 /* AccountMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountMenu.swift; sourceTree = "<group>"; };
 		455B3F87550E85E26FFD249F /* WorkspaceEntity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceEntity.swift; sourceTree = "<group>"; };
 		5461D3D1159F36613F895FA2 /* TabEntity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabEntity.swift; sourceTree = "<group>"; };
@@ -164,7 +164,7 @@
 				2C6200092D4D21F2BB040D2A /* DaemonPoller.swift */,
 				02DE3503066299BDBBF6E5E8 /* Zoxide.swift */,
 				B2D0FFEE0000000000000002 /* Worktrees.swift */,
-				C3E0FFEE0000000000000004 /* KitHelper.swift */,
+				C3E0FFEE0000000000000004 /* KeepCLI.swift */,
 			);
 			path = Daemon;
 			sourceTree = "<group>";
@@ -281,7 +281,7 @@
 				F320A7F6CECB057B2CB6333F /* Snapshots.swift in Sources */,
 				A1C0FFEE0000000000000001 /* AIUsage.swift in Sources */,
 				C3E0FFEE0000000000000001 /* AIChoice.swift in Sources */,
-				C3E0FFEE0000000000000003 /* KitHelper.swift in Sources */,
+				C3E0FFEE0000000000000003 /* KeepCLI.swift in Sources */,
 				C3E0FFEE0000000000000005 /* AccountMenu.swift in Sources */,
 				E8B4A1D30F5C6B7A89D2E3F4 /* DroppedFiles.swift in Sources */,
 				B04424C572755CE4309A1FE1 /* SurfacePool.swift in Sources */,
