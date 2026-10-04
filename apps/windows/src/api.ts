@@ -56,6 +56,8 @@ export interface Startup {
   version: string;
   /** Set when a test started the app: run the scripted check and report. */
   e2eReport: string | null;
+  /** Set when that check covers the AI layer: "falso" (a stand-in core) or "real". */
+  e2eIa: string | null;
 }
 
 export interface Shell {
@@ -99,6 +101,36 @@ export const saveState = (state: unknown) => invoke<void>("save_state", { state 
 export const shells = () => invoke<{ chosen: string; available: Shell[] }>("shells");
 export const chooseShell = (command: string) => invoke<void>("choose_shell", { command });
 export const e2eReport = (report: string) => invoke<void>("e2e_report", { report });
+
+/** Whether the core is here for the AI layer, and the home it reads the logins from. */
+export interface IaInfo {
+  available: boolean;
+  /** A test pointed the core at a made-up home: nothing is kept between runs. */
+  testHome: boolean;
+  home: string;
+}
+
+/** What the core printed for one question, with its exit code in `_saida`. */
+export interface CoreAnswer {
+  versao: number;
+  ok?: boolean;
+  motivo?: string;
+  detalhe?: string;
+  _saida: number;
+  [field: string]: unknown;
+}
+
+export const iaInfo = () => invoke<IaInfo>("ia_info");
+/** One question to the core: `["ia", "uso", "--json"]`, `["worktrees", "listar", …]`. */
+export const iaAsk = (args: string[]) => invoke<CoreAnswer>("ia", { args });
+/** The login files as they stand: a change is a login made or an order rewritten. */
+export const iaSignature = () => invoke<string>("ia_signature");
+/** Send listed worktrees to the Recycle Bin, once these processes are gone; what did not go. */
+export const iaTrash = (items: { caminho: string; nasceu_ns: string | null }[], pids: number[]) =>
+  invoke<string[]>("ia_trash", { items, pids });
+export const pathExists = (path: string) => invoke<boolean>("path_exists", { path });
+export const e2eShot = (name: string) => invoke<void>("e2e_shot", { name });
+export const e2eFake = (state: unknown) => invoke<void>("e2e_fake", { state });
 
 /** What arrives on an attached tab's channel. */
 export type TabEvent =

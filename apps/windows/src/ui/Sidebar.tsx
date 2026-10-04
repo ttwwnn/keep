@@ -38,12 +38,16 @@ import {
   zoom,
   zoomReset,
 } from "../store";
+import { programLabel } from "../ia";
+import { tabAccount } from "../iaStore";
 import { homeRelative } from "../text";
 import { info } from "../store";
 import { zoomPercent } from "../zoom";
+import { AccountChevron } from "./AccountMenu";
 import { InlineEditor, openMenu } from "./common";
 import * as icon from "./icons";
 import { tabLook, useBreath } from "./tabLook";
+import { UsageFooter } from "./UsageFooter";
 
 function TabRow(props: { workspace: string; tab: RootTab; index: number; selected: boolean }) {
   const { workspace, tab, index, selected } = props;
@@ -54,6 +58,10 @@ function TabRow(props: { workspace: string; tab: RootTab; index: number; selecte
   const startRename = () => (editing.value = { kind: "tab", workspace, tab: tab.root.id });
   const close = () => void closeTab(workspace, tab, look.label);
   const where = homeRelative(tab.root.cwd, info.value?.home ?? "");
+  // An AI kept on an account of its own says which: "— claude · reserva".
+  const command = tab.root.command;
+  const program = programLabel(command, tabAccount(workspace, tab.root).key);
+  const suffix = program !== command && program ? <span class="tab-program">— {program}</span> : null;
   return (
     <div
       class={`tab-row ${selected ? "selected" : ""}`}
@@ -90,12 +98,17 @@ function TabRow(props: { workspace: string; tab: RootTab; index: number; selecte
           <span class="tab-title" style={look.color ? { color: look.color } : undefined}>
             {look.label}
           </span>
+          {suffix}
         </span>
       ) : (
-        <span class="tab-title" style={look.color ? { color: look.color } : undefined}>
-          {look.label}
+        <span class="tab-label">
+          <span class="tab-title" style={look.color ? { color: look.color } : undefined}>
+            {look.label}
+          </span>
+          {suffix}
         </span>
       )}
+      {!renaming && <AccountChevron workspace={workspace} tab={tab} label={look.label} />}
       {tab.panes.length > 1 && <span class="pane-count">{tab.panes.length}</span>}
     </div>
   );
@@ -286,6 +299,7 @@ export function Sidebar() {
           <icon.Plus /> Novo workspace
         </button>
       </div>
+      <UsageFooter />
       <div class="sidebar-foot">
         {notice.value && <div class="notice">{notice.value}</div>}
         <div class="foot-row">

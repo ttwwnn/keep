@@ -43,14 +43,23 @@ export interface MenuItem {
   danger?: boolean;
   disabled?: boolean;
   hint?: string;
+  /** A check ("on") or a dash ("mixed") in front, in a menu of choices. */
+  mark?: "on" | "mixed" | null;
+  /** Said under the pointer. */
+  help?: string;
 }
 
-export const menu = signal<{ x: number; y: number; items: (MenuItem | "separator")[] } | null>(null);
+export const menu = signal<{ x: number; y: number; items: (MenuItem | "separator")[]; checkable?: boolean } | null>(null);
 
 export function openMenu(event: MouseEvent, items: (MenuItem | "separator")[]): void {
   event.preventDefault();
   event.stopPropagation();
   menu.value = { x: event.clientX, y: event.clientY, items };
+}
+
+/** A menu hanging from a point — under a glyph, as a pull-down. `checkable` keeps a column for the marks. */
+export function openMenuAt(x: number, y: number, items: (MenuItem | "separator")[], checkable = false): void {
+  menu.value = { x, y, items, checkable };
 }
 
 /** The one context menu, wherever it was asked for; any click elsewhere closes it. */
@@ -84,22 +93,30 @@ export function ContextMenu() {
   }, [current]);
   if (!current) return null;
   return (
-    <div ref={ref} class="context-menu" role="menu" onMouseDown={(e) => e.stopPropagation()}>
+    <div
+      ref={ref}
+      class={`context-menu ${current.checkable ? "checkable" : ""}`}
+      role="menu"
+      onMouseDown={(e) => e.stopPropagation()}
+    >
       {current.items.map((item, i) =>
         item === "separator" ? (
           <div key={i} class="menu-separator" />
         ) : (
           <button
             key={i}
-            role="menuitem"
+            role={current.checkable ? "menuitemcheckbox" : "menuitem"}
+            aria-checked={current.checkable ? (item.mark === "on" ? "true" : item.mark === "mixed" ? "mixed" : "false") : undefined}
             class={`menu-item ${item.danger ? "danger" : ""}`}
             disabled={item.disabled}
+            title={item.help}
             onClick={() => {
               menu.value = null;
               item.action();
             }}
           >
-            <span>{item.label}</span>
+            {current.checkable && <span class="menu-mark">{item.mark === "on" ? "✓" : item.mark === "mixed" ? "–" : ""}</span>}
+            <span class="menu-label">{item.label}</span>
             {item.hint && <span class="menu-hint">{item.hint}</span>}
           </button>
         ),
