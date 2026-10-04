@@ -109,8 +109,10 @@ pub const WAITING_COMMAND: &str = if cfg!(windows) { "ping" } else { "sleep" };
 pub fn flood() -> Vec<u8> {
     #[cfg(unix)]
     let command = "seq 1 200000";
+    // PowerShell prints a line at a time, a hundred times slower than `seq`:
+    // a fifth as many is still far past the backlog, and done in seconds.
     #[cfg(windows)]
-    let command = "1..200000";
+    let command = "1..40000";
     line(command)
 }
 

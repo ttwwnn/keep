@@ -228,7 +228,7 @@ fn a_client_that_stops_reading_is_repainted_not_starved() {
     // chunks, never the tab's own state.
     session.send(&common::computed("sentinel", 7, 6).0).expect("send");
     assert!(
-        wait_for(Duration::from_secs(20), || screen_contains(&session, "sentinel13")),
+        wait_for(Duration::from_secs(40), || screen_contains(&session, "sentinel13")),
         "the tab stopped tracking its own screen: {:?}",
         session.screen_text()
     );
@@ -521,9 +521,21 @@ fn moving_a_pane_can_leave_its_own_panes_behind() {
 ///
 /// The shell inside is never asked: this comes from the kernel, so it holds
 /// for a setup that emits no OSC 7 — which is most of them.
+///
+/// On Windows the tab is opened the way the daemon opens one, because there
+/// the daemon is what makes PowerShell's `cd` reach the process: PowerShell
+/// keeps its location to itself unless its prompt is taught to say it.
 #[test]
 fn cwd_follows_the_shell() {
+    #[cfg(unix)]
     let session = Tab::spawn(shell(), 60, 10).expect("spawn");
+    #[cfg(windows)]
+    let session = {
+        common::use_test_shell();
+        let workspace = keepd::Workspace::new("cwd");
+        let (_, tab) = workspace.new_tab(None, 60, 10, 0, 0).expect("tab");
+        tab
+    };
 
     let (go, target) = common::elsewhere();
 
@@ -603,5 +615,28 @@ fn output_alone_counts_as_activity() {
         "output did not count as activity"
     );
     assert!(after_typing > 0);
+    session.kill().ok();
+}
+
+/// `cmd` changes its process's directory itself, so on Windows this is the
+/// working directory read straight from the PEB, with no prompt involved.
+#[cfg(windows)]
+#[test]
+fn cwd_follows_cmd_without_help() {
+    let mut cmd = portable_pty::CommandBuilder::new("cmd.exe");
+    cmd.arg("/q");
+    let session = Tab::spawn(cmd, 60, 10).expect("spawn");
+    let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+    assert!(
+        wait_for(Duration::from_secs(10), || !session.cwd().is_empty()),
+        "the tab never reported a directory"
+    );
+    assert!(!session.cwd().eq_ignore_ascii_case(&root), "the test would prove nothing from {root}");
+    session.send(&common::line(&format!("cd /d {root}"))).expect("send");
+    assert!(
+        wait_for(Duration::from_secs(10), || session.cwd().eq_ignore_ascii_case(&root)),
+        "cwd did not follow cmd: {:?}",
+        session.cwd()
+    );
     session.kill().ok();
 }

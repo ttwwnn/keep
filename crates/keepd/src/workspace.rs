@@ -134,32 +134,132 @@ fn shell_command() -> CommandBuilder {
         .or_else(|| std::fs::read_to_string(shell_setting_path()?).ok())
         .map(|line| line.trim().to_string())
         .filter(|line| !line.is_empty());
-    if let Some(line) = chosen {
-        let args = crate::winproc::split_command_line(&line);
-        if let Some((program, rest)) = args.split_first() {
-            let mut cmd = CommandBuilder::new(program);
-            cmd.args(rest);
-            return cmd;
-        }
+    let (program, args) = chosen
+        .map(|line| crate::winproc::split_command_line(&line))
+        .and_then(|args| {
+            let (program, rest) = args.split_first()?;
+            Some((program.clone(), rest.to_vec()))
+        })
+        .unwrap_or_else(default_shell);
+    let mut cmd = CommandBuilder::new(&program);
+    cmd.args(&args);
+    if is_powershell(&program) && !args.iter().any(|a| runs_something(a)) {
+        cmd.args(["-NoExit", "-EncodedCommand", &powershell_hook()]);
     }
+    cmd
+}
+
+#[cfg(windows)]
+fn default_shell() -> (String, Vec<String>) {
+    let no_logo = vec!["-NoLogo".to_string()];
     if let Some(pwsh) = find_on_path("pwsh.exe").or_else(|| {
         let program_files = std::env::var("ProgramFiles").ok()?;
         let path = std::path::Path::new(&program_files).join(r"PowerShell\7\pwsh.exe");
         path.is_file().then_some(path)
     }) {
-        let mut cmd = CommandBuilder::new(pwsh);
-        cmd.arg("-NoLogo");
-        return cmd;
+        return (pwsh.display().to_string(), no_logo);
     }
     let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
     let powershell =
         std::path::Path::new(&root).join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
     if powershell.is_file() {
-        let mut cmd = CommandBuilder::new(powershell);
-        cmd.arg("-NoLogo");
-        return cmd;
+        return (powershell.display().to_string(), no_logo);
     }
-    CommandBuilder::new(std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into()))
+    (std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into()), Vec::new())
+}
+
+#[cfg(windows)]
+fn is_powershell(program: &str) -> bool {
+    let file = program.rsplit(['\\', '/']).next().unwrap_or(program).to_ascii_lowercase();
+    matches!(file.as_str(), "pwsh" | "pwsh.exe" | "powershell" | "powershell.exe")
+}
+
+/// Whether a PowerShell argument already gives it something to run — a
+/// command, a script or an encoded command — in any of the abbreviations
+/// PowerShell accepts. Such a shell is left as it was asked for.
+#[cfg(windows)]
+fn runs_something(arg: &str) -> bool {
+    let Some(name) = arg.strip_prefix('-').or_else(|| arg.strip_prefix('/')) else { return false };
+    let name = name.to_ascii_lowercase();
+    name == "c"
+        || name == "f"
+        || name == "e"
+        || name == "ec"
+        || name.starts_with("com")
+        || name.starts_with("fil")
+        || name.starts_with("enc")
+}
+
+/// What PowerShell runs before its first prompt: the prompt it already has,
+/// wrapped so that every prompt also says where the shell is.
+///
+/// PowerShell keeps its location to itself — `Set-Location` changes it
+/// without changing the process's working directory, which is the one thing
+/// the daemon can read from outside. So each prompt sets the process's
+/// directory to the shell's, and announces it the way Windows Terminal
+/// listens for it (OSC 9;9), which the grid keeps as well. The person's own
+/// prompt, from their profile or a prompt theme, is called as before.
+#[cfg(windows)]
+fn powershell_hook() -> String {
+    const SCRIPT: &str = r#"$global:__KeepPrompt = $function:prompt
+function global:prompt {
+  $l = $executionContext.SessionState.Path.CurrentLocation
+  $s = ''
+  if ($l.Provider.Name -eq 'FileSystem') {
+    try { [Environment]::CurrentDirectory = $l.ProviderPath } catch {}
+    $s = [char]27 + ']9;9;"' + $l.ProviderPath + '"' + [char]27 + '\'
+  }
+  if ($global:__KeepPrompt) { $s + (& $global:__KeepPrompt) } else { $s + "PS $l$('>' * ($nestedPromptLevel + 1)) " }
+}
+"#;
+    let utf16: Vec<u8> = SCRIPT.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+    base64(&utf16)
+}
+
+#[cfg(windows)]
+fn base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        out.push(TABLE[(n >> 18) as usize & 63] as char);
+        out.push(TABLE[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 { TABLE[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 2 { TABLE[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
+#[cfg(all(test, windows))]
+mod shell_tests {
+    use super::*;
+
+    #[test]
+    fn base64_matches_the_standard() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+    }
+
+    #[test]
+    fn a_powershell_already_running_something_is_left_alone() {
+        assert!(runs_something("-Command"));
+        assert!(runs_something("-c"));
+        assert!(runs_something("-File"));
+        assert!(runs_something("-EncodedCommand"));
+        assert!(runs_something("-enc"));
+        assert!(runs_something("/Command"));
+        assert!(!runs_something("-NoLogo"));
+        assert!(!runs_something("-NoProfile"));
+        assert!(!runs_something("-ExecutionPolicy"));
+        assert!(!runs_something("-ep"));
+        assert!(is_powershell(r"C:\Program Files\PowerShell\7\pwsh.exe"));
+        assert!(is_powershell("powershell.exe"));
+        assert!(!is_powershell("cmd.exe"));
+    }
 }
 
 /// Where the app keeps the shell chosen in it: `%APPDATA%\Keep\shell.txt`.
