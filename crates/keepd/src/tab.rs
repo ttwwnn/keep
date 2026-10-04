@@ -169,6 +169,67 @@ fn process_name(pid: i32) -> Option<String> {
     crate::winproc::process_name(u32::try_from(pid).ok()?)
 }
 
+/// The bytes with every cursor position query (`CSI 6 n`) taken out.
+#[cfg(windows)]
+fn without_cursor_queries(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    const QUERY: &[u8] = b"\x1b[6n";
+    if !bytes.windows(QUERY.len()).any(|w| w == QUERY) {
+        return std::borrow::Cow::Borrowed(bytes);
+    }
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at..].starts_with(QUERY) {
+            at += QUERY.len();
+        } else {
+            out.push(bytes[at]);
+            at += 1;
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
+/// The cursor position reports (`CSI row ; col R`) among a run of replies.
+#[cfg(windows)]
+fn cursor_reports(replies: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    while at < replies.len() {
+        if replies[at] == 0x1b && replies.get(at + 1) == Some(&b'[') {
+            let mut end = at + 2;
+            while end < replies.len() && (replies[end].is_ascii_digit() || replies[end] == b';') {
+                end += 1;
+            }
+            if end < replies.len() {
+                if replies[end] == b'R' {
+                    out.extend_from_slice(&replies[at..=end]);
+                }
+                at = end + 1;
+                continue;
+            }
+        }
+        at += 1;
+    }
+    out
+}
+
+#[cfg(all(test, windows))]
+mod cursor_tests {
+    use super::*;
+
+    #[test]
+    fn cursor_queries_are_taken_out_and_the_rest_kept() {
+        assert_eq!(&*without_cursor_queries(b"a\x1b[6nb\x1b[6n"), b"ab");
+        assert_eq!(&*without_cursor_queries(b"\x1b[5n\x1b[c"), b"\x1b[5n\x1b[c");
+    }
+
+    #[test]
+    fn only_cursor_reports_are_kept() {
+        assert_eq!(cursor_reports(b"\x1b[0n\x1b[3;7R\x1b[?1;2c"), b"\x1b[3;7R");
+        assert!(cursor_reports(b"\x1b[?62;22c").is_empty());
+    }
+}
+
 /// A live feed of everything the tab writes from the moment of attach.
 ///
 /// Dropping this unsubscribes. Relying on a failed send to notice a departed
@@ -305,18 +366,34 @@ impl Tab {
                     touched.store(now_ms(), Ordering::Relaxed);
                     let Ok(mut guard) = sink.lock() else { break };
                     guard.terminal.write(&buf[..n]);
-                    // Answered by the grid only while nobody is attached:
-                    // a client is handed the question in the output below
-                    // and answers it itself, and two answers are one too many.
+                    // What the grid answered, and what goes on to the clients.
+                    //
+                    // Where the cursor is, the grid answers always, and the
+                    // question goes no further: on Windows it is ConPTY asking
+                    // as it opens, and ConPTY holds the shell's output back
+                    // until it hears — from whoever is watching, which may be
+                    // a client that does not answer, or nobody yet. The grid is
+                    // drawn from the same stream as every client's screen, so
+                    // its answer is theirs. Everything else it answers only
+                    // while nobody is attached: a client is handed those
+                    // questions below and answers them itself, and two answers
+                    // are one too many.
                     #[cfg(windows)]
-                    let unanswered = {
+                    let (unanswered, forward) = {
                         let replies = guard.terminal.take_replies();
-                        (!replies.is_empty() && guard.subscribers.is_empty()).then_some(replies)
+                        let replies = if guard.subscribers.is_empty() {
+                            replies
+                        } else {
+                            cursor_reports(&replies)
+                        };
+                        ((!replies.is_empty()).then_some(replies), without_cursor_queries(&buf[..n]))
                     };
+                    #[cfg(not(windows))]
+                    let forward = &buf[..n];
                     // One allocation for the whole fan-out: every client gets a
                     // handle to the same bytes rather than its own copy of a
                     // chunk that can be 64 KiB.
-                    let chunk: Arc<[u8]> = Arc::from(&buf[..n]);
+                    let chunk: Arc<[u8]> = Arc::from(&forward[..]);
                     guard.subscribers.retain(|s| match s.tx.try_send(Arc::clone(&chunk)) {
                         Ok(()) => true,
                         // A client that cannot keep up keeps its slot. Blocking
