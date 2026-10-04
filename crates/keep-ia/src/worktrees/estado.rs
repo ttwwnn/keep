@@ -234,12 +234,28 @@ pub fn grava_json(caminho: &Path, dados: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
-/// A trava do `indexar`: `None` se outra execução está com ela.
+/// A trava do `indexar`: `None` se outra execução segue com ela depois de
+/// esperar até 2 s. A espera cobre também o instante em que um processo
+/// filho, recém-criado por outra thread e ainda antes do `exec`, segura uma
+/// cópia da trava que este processo já soltou.
 pub fn trava(amb: &Ambiente) -> Option<std::fs::File> {
     cria_pasta(&amb.estado).ok()?;
-    let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(amb.estado.join("worktrees.lock")).ok()?;
-    f.try_lock().ok()?;
-    Some(f)
+    let f = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(amb.estado.join("worktrees.lock"))
+        .ok()?;
+    let fim = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match f.try_lock() {
+            Ok(()) => return Some(f),
+            Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < fim => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(_) => return None,
+        }
+    }
 }
 
 /// Uma linha no `worktrees.log`.

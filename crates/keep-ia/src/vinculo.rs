@@ -58,8 +58,15 @@ fn provavel(r: &Retrato) -> HashMap<(String, u32), Vinculo> {
             _ => return HashMap::new(),
         }
     };
-    let conchas: Vec<Concha> =
-        lista.iter().filter(|p| p.ppid == keepd && p.pid != keepd).map(|p| Concha::de(p, &lista)).collect();
+    // Um filho sem pasta legível acabou de morrer (ou nem é do usuário): não
+    // é shell de aba, e contado como "pode ser qualquer uma" tiraria o par de
+    // quem é.
+    let conchas: Vec<Concha> = lista
+        .iter()
+        .filter(|p| p.ppid == keepd && p.pid != keepd)
+        .map(|p| Concha::de(p, &lista))
+        .filter(|c| c.pasta.is_some())
+        .collect();
     if conchas.is_empty() {
         return HashMap::new();
     }

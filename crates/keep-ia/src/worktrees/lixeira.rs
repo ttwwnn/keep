@@ -405,7 +405,9 @@ mod sistema {
 mod sistema {
     use std::os::windows::ffi::OsStrExt;
     use std::path::{Path, PathBuf};
+    use std::time::{Duration, SystemTime};
 
+    use windows_sys::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
     use windows_sys::Win32::UI::Shell::{
         FO_DELETE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FOF_WANTNUKEWARNING, SHFILEOPSTRUCTW,
         SHFileOperationW,
@@ -413,62 +415,90 @@ mod sistema {
 
     pub fn para_lixeira(caminho: &Path) -> anyhow::Result<PathBuf> {
         let caminho = std::path::absolute(caminho)?;
+        // O nome que a Lixeira grava é o longo: um caminho em 8.3
+        // (`C:\Users\RUNNER~1\…`, como o TEMP costuma vir) é procurado pelos dois.
+        let longo = std::fs::canonicalize(&caminho).ok().map(|p| {
+            let t = p.to_string_lossy().into_owned();
+            PathBuf::from(t.strip_prefix(r"\\?\").unwrap_or(&t))
+        });
         let mut de: Vec<u16> = caminho.as_os_str().encode_wide().collect();
         de.extend([0, 0]);
+        let desde = SystemTime::now();
         let mut op: SHFILEOPSTRUCTW = unsafe { std::mem::zeroed() };
         op.wFunc = FO_DELETE as _;
         op.pFrom = de.as_ptr();
         // Sem perguntas, menos uma: se não couber na Lixeira, o Windows avisa
         // em vez de apagar de vez.
         op.fFlags = (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI | FOF_WANTNUKEWARNING) as _;
-        let r = unsafe { SHFileOperationW(&mut op) };
-        if r != 0 || op.fAnyOperationsAborted != 0 {
-            anyhow::bail!("o Windows não moveu {} para a Lixeira (código {r})", caminho.display());
+        let (r, abortou) = unsafe {
+            let com = CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32);
+            let r = SHFileOperationW(&mut op);
+            if com >= 0 {
+                CoUninitialize();
+            }
+            (r, op.fAnyOperationsAborted != 0)
+        };
+        if r != 0 {
+            anyhow::bail!("o Windows não moveu {} para a Lixeira (código {r:#x})", caminho.display());
         }
-        if caminho.exists() {
+        if abortou || caminho.exists() {
             anyhow::bail!("{} continua no lugar", caminho.display());
         }
-        Ok(onde_ficou(&caminho).unwrap_or_default())
+        let nomes: Vec<&Path> = std::iter::once(caminho.as_path()).chain(longo.as_deref()).collect();
+        Ok(onde_ficou(&nomes, desde).unwrap_or_default())
     }
 
-    /// `<unidade>\$Recycle.Bin\<SID>\$I<x>` guarda o caminho de antes e a
-    /// hora; o item é o `$R<x>` ao lado. O mais recente com o caminho dado.
-    fn onde_ficou(original: &Path) -> Option<PathBuf> {
-        let texto = original.to_string_lossy().to_lowercase();
-        let unidade = original.components().next()?.as_os_str().to_string_lossy().into_owned();
-        let bin = PathBuf::from(format!("{unidade}\\")).join("$Recycle.Bin");
-        let mut melhor: Option<(i64, PathBuf)> = None;
-        for dono in std::fs::read_dir(bin).ok()?.flatten() {
+    /// `<unidade>\$Recycle.Bin\<SID>\$I<x>` guarda o caminho de antes; o item
+    /// é o `$R<x>` ao lado. O mais recente com um dos nomes dados.
+    fn onde_ficou(nomes: &[&Path], desde: SystemTime) -> Option<PathBuf> {
+        let dobra = |p: &str| p.replace('/', "\\").trim_end_matches('\\').to_lowercase();
+        let procurados: Vec<String> = nomes.iter().map(|p| dobra(&p.to_string_lossy())).collect();
+        let raiz: PathBuf =
+            nomes.first()?.components().take_while(|c| !matches!(c, std::path::Component::Normal(_))).collect();
+        let cedo = desde.checked_sub(Duration::from_secs(5)).unwrap_or(desde);
+        let mut melhor: Option<(SystemTime, PathBuf)> = None;
+        for dono in std::fs::read_dir(raiz.join("$Recycle.Bin")).ok()?.flatten() {
             let Ok(itens) = std::fs::read_dir(dono.path()) else { continue };
             for e in itens.flatten() {
                 let nome = e.file_name().to_string_lossy().into_owned();
                 let Some(resto) = nome.strip_prefix("$I") else { continue };
-                let Ok(b) = std::fs::read(e.path()) else { continue };
-                let Some((hora, de)) = le_info(&b) else { continue };
-                if de.to_lowercase() == texto && melhor.as_ref().is_none_or(|(h, _)| hora > *h) {
-                    melhor = Some((hora, dono.path().join(format!("$R{resto}"))));
+                let Some(quando) = e.metadata().ok().and_then(|m| m.modified().ok()) else { continue };
+                if quando < cedo {
+                    continue;
+                }
+                let Some(de) = std::fs::read(e.path()).ok().and_then(|b| caminho_gravado(&b)) else { continue };
+                if !procurados.contains(&dobra(&de)) {
+                    continue;
+                }
+                let item = e.path().with_file_name(format!("$R{resto}"));
+                if item.exists() && melhor.as_ref().is_none_or(|(t, _)| quando > *t) {
+                    melhor = Some((quando, item));
                 }
             }
         }
         melhor.map(|(_, p)| p)
     }
 
-    /// O `$I`: versão (8), tamanho (8), hora da exclusão (8, FILETIME) e o
-    /// caminho (v1: 260 letras fixas; v2: o tamanho em 4 bytes e as letras).
-    fn le_info(b: &[u8]) -> Option<(i64, String)> {
-        let n8 = |i: usize| b.get(i..i + 8).map(|x| i64::from_le_bytes(x.try_into().unwrap()));
-        let versao = n8(0)?;
-        let hora = n8(16)?;
-        let letras: &[u8] = match versao {
-            1 => b.get(24..24 + 520)?,
-            2 => {
-                let n = u32::from_le_bytes(b.get(24..28)?.try_into().ok()?) as usize;
-                b.get(28..28 + n * 2)?
-            }
+    /// O caminho que um `$I` grava: a versão 2 (Windows 10 em diante) tem o
+    /// tamanho antes; a 1, 260 letras fixas.
+    fn caminho_gravado(b: &[u8]) -> Option<String> {
+        if b.len() < 28 {
+            return None;
+        }
+        let versao = i64::from_le_bytes(b[0..8].try_into().ok()?);
+        let (ini, n) = match versao {
+            2 => (28, u32::from_le_bytes(b[24..28].try_into().ok()?) as usize),
+            1 => (24, 260),
             _ => return None,
         };
-        let w: Vec<u16> = letras.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).take_while(|&c| c != 0).collect();
-        Some((hora, String::from_utf16_lossy(&w)))
+        let w: Vec<u16> = b
+            .get(ini..)?
+            .chunks_exact(2)
+            .take(n)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .take_while(|&c| c != 0)
+            .collect();
+        (!w.is_empty()).then(|| String::from_utf16_lossy(&w))
     }
 }
 
