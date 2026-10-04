@@ -36,4 +36,5 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [dev-dependencies]
+keepd = { path = "../keepd" }
 tempfile = "3"

@@ -56,7 +56,7 @@ pub fn recusa(motivo: &str, detalhe: &str) -> Value {
     json!({ "ok": false, "motivo": motivo, "detalhe": detalhe })
 }
 
-fn uso_errado(texto: &str) -> i32 {
+pub fn uso_errado(texto: &str) -> i32 {
     println!("{}", json!({ "versao": VERSAO, "ok": false, "motivo": "uso", "detalhe": texto }));
     2
 }
@@ -97,6 +97,19 @@ pub fn ia(args: &[String]) -> i32 {
             Some(_) => uso_errado("keep ia ordem [mover <chave> cima|baixo]"),
         },
         "uso" => crate::uso::cli(&a),
+        "abas" => match crate::abas::ler() {
+            Ok((r, ia)) => responde(json!({
+                "ok": true,
+                "keepd": { "pid": r.daemon.pid, "inicioMs": r.daemon.started_ms },
+                "exato": r.exato,
+                "ia": ia,
+            })),
+            Err(e) => responde(recusa("sem-keepd", &e)),
+        },
+        "trocar" => crate::trocar::cli(&a),
+        "entrar" => crate::login::cli_entrar(&a),
+        "login" => crate::login::cli_login(&a),
+        "sincronizar" => crate::sincronizar::cli(),
         _ => uso_errado("keep ia contas | uso | ordem [mover] | abas | trocar | entrar | login | sincronizar"),
     }
 }

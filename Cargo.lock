@@ -596,6 +596,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "keep-proto",
+ "keepd",
  "libc",
  "memchr",
  "regex",
