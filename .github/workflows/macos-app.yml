@@ -60,6 +60,9 @@ jobs:
           xcodebuild -project Keep.xcodeproj -scheme Keep -configuration Release \
             -derivedDataPath build build | tail -20
           app=build/Build/Products/Release/Keep.app
+          # The app has no resources of its own; the daemon and the client
+          # are what goes there (the app runs Resources/keep in every tab).
+          mkdir -p "$app/Contents/Resources"
           cp ../../target/release/keep ../../target/release/keepd "$app/Contents/Resources/"
           codesign --force --sign - "$app/Contents/Resources/keep"
           codesign --force --sign - "$app/Contents/Resources/keepd"

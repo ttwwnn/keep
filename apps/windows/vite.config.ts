@@ -16,6 +16,8 @@ export default defineConfig({
   build: {
     target: "es2022",
     sourcemap: false,
+    // A desktop app loads its page from disk: xterm.js in one chunk is fine.
+    chunkSizeWarningLimit: 1500,
   },
   test: {
     environment: "node",

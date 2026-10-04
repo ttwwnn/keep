@@ -1,32 +1,30 @@
-// Placeholder while the interface is built: one terminal on one tab, enough
-// to prove the path from the daemon to the page and back.
+// Keep for Windows: the window over the daemon. See store.ts for what it
+// knows, ui/ for what it shows, input.ts for the keyboard.
+
 import "@xterm/xterm/css/xterm.css";
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import * as api from "./api";
+import "./styles.css";
+import { render } from "preact";
+import { installInput, terminalKey } from "./input";
+import { connect, info, start } from "./store";
+import { App } from "./ui/App";
 
 async function boot() {
-  const root = document.getElementById("app")!;
-  root.style.cssText = "position:fixed;inset:0;background:#282c34;padding:8px";
-  const term = new Terminal({ fontSize: 14, theme: { background: "#282c34", foreground: "#ffffff" } });
-  const fit = new FitAddon();
-  term.loadAddon(fit);
-  term.open(root);
-  fit.fit();
-  await api.ensureDaemon();
-  const tab = await api.newTab("teste", null, term.cols, term.rows);
-  const att = await api.attach("teste", tab, term.cols, term.rows, (ev) => {
-    if (ev.kind === "repaint") {
-      term.reset();
-      term.write(ev.data);
-    } else if (ev.kind === "output") {
-      term.write(ev.data);
-    }
-  });
-  term.onData((d) => void att.input(d));
-  term.onResize(({ cols, rows }) => void att.resize(cols, rows));
-  window.addEventListener("resize", () => fit.fit());
-  (window as unknown as { keepSmoke: unknown }).keepSmoke = { term, att, tab };
+  installInput();
+  await start({ onKey: terminalKey });
+  render(<App />, document.getElementById("app")!);
+  await connect();
+  if (info.value?.e2eReport) {
+    const { runE2E } = await import("./e2e");
+    // After the first layout, so every terminal has a size to attach with.
+    setTimeout(() => void runE2E(), 300);
+  }
 }
 
-void boot();
+boot().catch((error) => {
+  // Nothing drawn yet: say why where the window would have been.
+  const root = document.getElementById("app");
+  if (root) {
+    root.className = "fatal";
+    root.textContent = `O Keep não conseguiu abrir: ${String(error)}`;
+  }
+});
