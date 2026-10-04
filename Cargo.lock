@@ -133,6 +133,8 @@ dependencies = [
  "anyhow",
  "crossterm",
  "keep-proto",
+ "keep-vt",
+ "portable-pty",
  "windows-sys",
 ]
 
