@@ -708,7 +708,9 @@ struct WorkspaceSidebar: View {
             resting: onBadge ? Attention.ink.withAlphaComponent(0.62) : Palette.faintColor,
             lit: onBadge ? Attention.ink : Palette.restingColor,
             menu: {
-                AccountMenu.make(tab: tab.id, account: tab.account, command: tab.command) { key, label in
+                AccountMenu.make(
+                    tab: tab.id, account: tab.account, running: tab.runningAccount, command: tab.command
+                ) { key, label in
                     dispatch(.chooseAccount(tab.id, key: key, label: label))
                 }
             },
