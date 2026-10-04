@@ -1,0 +1,104 @@
+# The macOS app, built from scratch on a Mac runner: libghostty from the
+# pinned ghostty commit (vendor/build-macos-vendor.sh), the daemon and client,
+# and the Swift app around them. Signed ad hoc — the author's Mac installs
+# its own build through kit-mac, signed with a local identity — and kept as a
+# zip with the run.
+name: App do macOS
+
+on:
+  push:
+    branches: [main, windows]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-app-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GHOSTTY_COMMIT: a53771af0165c34a7bd753ddbcbc5dd7126ee87f
+  CARGO_TERM_COLOR: always
+
+jobs:
+  app:
+    name: App (macOS)
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cache do libghostty
+        id: vendor
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            vendor/GhosttyKit.xcframework
+            vendor/libghostty-vt
+          key: macos-vendor-${{ env.GHOSTTY_COMMIT }}-${{ hashFiles('vendor/build-macos-vendor.sh') }}
+
+      - name: Zig
+        if: steps.vendor.outputs.cache-hit != 'true'
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+
+      - name: Compilar o libghostty
+        if: steps.vendor.outputs.cache-hit != 'true'
+        run: ./vendor/build-macos-vendor.sh vendor
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: keepd e keep
+        run: cargo build --release -p keep -p keepd
+
+      - name: Compilar o app
+        working-directory: apps/macos
+        run: |
+          xcodebuild -project Keep.xcodeproj -scheme Keep -configuration Release \
+            -derivedDataPath build build | tail -20
+          app=build/Build/Products/Release/Keep.app
+          cp ../../target/release/keep ../../target/release/keepd "$app/Contents/Resources/"
+          codesign --force --sign - "$app/Contents/Resources/keep"
+          codesign --force --sign - "$app/Contents/Resources/keepd"
+          codesign --force --sign - --options runtime "$app"
+          codesign --verify --deep --strict "$app"
+          mkdir -p ../../dist
+          ditto -c -k --keepParent "$app" ../../dist/Keep-macOS-arm64.zip
+          ls -la ../../dist
+
+      - name: Guardar o app
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Keep-macOS
+          path: dist/Keep-macOS-arm64.zip
+          if-no-files-found: error
+
+  release:
+    name: Publicar
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: app
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: Keep-macOS
+          path: dist
+      - name: Anexar à release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          gh release view "$tag" >/dev/null 2>&1 \
+            || gh release create "$tag" --title "Keep $tag" --notes-file .github/release/notas.md \
+            || true
+          for i in 1 2 3 4 5 6; do
+            gh release upload "$tag" dist/* --clobber && exit 0
+            sleep 10
+          done
+          exit 1
