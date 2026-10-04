@@ -4,34 +4,35 @@
 #
 # A chevron beside a tab's title — in the strip and on the tab's row in the
 # sidebar — opens one menu: follow the order of priority, or one account of
-# it. The kit does the switching (`keep-ia trocar`); the app offers, asks and
-# shows. What this checks:
+# it. The core does the switching (`keep ia trocar`, the `keep` inside the
+# app); the app offers, asks and shows. What this checks:
 #   - the strip's menu and the sidebar's are the same menu, in the order's
-#     order, ✓ on the account the kit says the tab is on, "no limite" on the
-#     one that is, and the sidebar saying "— claude · <slot>" for a tab fixed
-#     on one;
-#   - following the order asks the kit for the first account that can take
-#     work; an account asks for that account, as `trocar --ws=… --aba=…
-#     --para=…`;
-#   - a tab the kit says is busy puts a question up, and "Interromper e trocar
-#     agora" asks again with --interromper; "Cancelar" asks nothing;
-#   - an account the kit has to open a login of its own for first: the tab
+#     order, ✓ on the account the core says the tab is on (`keep ia abas`),
+#     "no limite" on the one that is, and the sidebar saying
+#     "— claude · <name>" for a tab fixed on one;
+#   - following the order is asked as such (`--para=claude:ordem`) — the core
+#     resolves it; an account asks for that account, as `trocar --ws=…
+#     --aba=… --para=…`;
+#   - a tab the core says is busy puts a question up, and "Interromper e
+#     trocar agora" asks again with --interromper; "Cancelar" asks nothing;
+#   - an account the core has to open a login of its own for first: the tab
 #     that login is in is the one shown, under a note saying so;
 #   - a tab running some other program says so and offers nothing;
 #   - a cell of the strip reused for another tab — one before it closed —
 #     acts on the tab it shows now;
 #   - a real click on the chevron of the tab you are in opens the menu, and
 #     does not start naming the tab;
-#   - without the kit's helper there is no chevron at all.
+#   - without a `keep` to ask there is no chevron at all.
 #
 #   tools/account-menu-test.sh          (SKIP_BUILD=1 to use the KeepDev built last)
 #
 # A daemon of its own on a scratch socket, whose tabs run a plain shell, a
 # stand-in for Claude Code (tools/ia-test/fake-claude.c) and `sleep`
-# (tools/ia-test/tab-shell.sh is its $SHELL). The kit's helper is the
-# stand-in tools/ia-test/fake-keep-ia.py, its retrato.json one this writes,
-# the logins made up, and the usage services a stand-in on 127.0.0.1. Driven
-# through the accessibility tree (tools/axpress.swift), and one real click
+# (tools/ia-test/tab-shell.sh is its $SHELL). The core is the stand-in
+# tools/ia-test/fake-keep-ia.py — what the tabs run on is a file this writes —
+# except for the usage, which the real core in the bundle measures: the logins
+# made up, and the usage services a stand-in on 127.0.0.1. Driven through the
+# accessibility tree (tools/axpress.swift), and one real click
 # (tools/mousedrag.swift) — which moves the pointer. About two minutes.
 #
 # Your app, your daemon, your logins and your kit are never touched.
@@ -134,8 +135,8 @@ cp tools/ia-test/tab-shell.sh tools/ia-test/fake-keep-ia.py "$WORK/"
 chmod +x "$WORK/tab-shell.sh" "$WORK/fake-keep-ia.py"
 
 # ------------------------------------------------------------ made-up logins
-# Three Claude logins and Codex's, in an order of the kit's where the first
-# is at its limit — so following the order means the GPT one.
+# Three Claude logins and Codex's, in an order where the first is at its
+# limit — so following the order means the GPT one, which the core works out.
 FAKE=$WORK/home
 mkdir -p "$FAKE/.claude/contas" "$FAKE/.codex"
 python3 - "$FAKE" <<'PY'
@@ -213,9 +214,9 @@ export KEEP_AI_USAGE_HOME=$FAKE
 export KEEP_AI_USAGE_CLAUDE_URL=http://127.0.0.1:$PORT/claude
 export KEEP_AI_USAGE_CODEX_URL=http://127.0.0.1:$PORT/codex
 export KEEP_IA_BIN=$WORK/fake-keep-ia.py
-export KIT_KEEP_ESTADO=$WORK/estado
 export FAKE_IA_DIR=$WORK/ia
 export FAKE_IA_KEEP=$KEEP
+export FAKE_IA_CORE=$KEEP
 require_scratch_socket
 rm -f "$SOCKET"
 
@@ -234,8 +235,8 @@ for program in zsh claude sleep zsh; do
 done
 sleep 1
 
-# The names the tabs are shown under, and what the kit wrote down about their
-# accounts: both for this daemon, which is known by the birth of its socket.
+# The names the tabs are shown under, for this daemon, which is known by the
+# birth of its socket; and what the stand-in core says the tabs run on.
 BIRTH=$(python3 -c 'import os, sys; print(repr(os.stat(sys.argv[1]).st_birthtime))' "$SOCKET")
 python3 - "$WORK" "$WS" "$BIRTH" <<'PY'
 import json, sys, time
@@ -244,11 +245,9 @@ names = {"1": "concha", "2": "claude-falso", "3": "dorminhoco", "4": "concha-2"}
 json.dump({"daemonStart": birth, "workspaces": {},
            "tabs": {ws + "\u001f" + tab: name for tab, name in names.items()}},
           open(work + "/state/names.json", "w"))
-json.dump({"versao": 1, "gravado_em_ms": int(time.time() * 1000),
-           "keepd": {"pid": 0, "inicio": birth, "socket": ""}, "abas": [],
-           "ia": [{"workspace": ws, "aba": 2, "agente": "claude", "conta": "claude:reserva",
-                   "vinculo": "exato"}]},
-          open(work + "/estado/retrato.json", "w"))
+json.dump({"ia": [{"workspace": ws, "aba": 2, "agente": "claude", "conta": "claude:reserva",
+                   "atual": "claude:reserva", "vinculo": "exato"}]},
+          open(work + "/ia/abas.json", "w"))
 PY
 
 launch() {  # launch [log]: the app, its trace into $WORK/<log> (app.log)
@@ -265,12 +264,17 @@ launch() {  # launch [log]: the app, its trace into $WORK/<log> (app.log)
     place_on_screen
     sleep 2
 }
-say "starting $APP_NAME on its own daemon, with the stand-in kit"
+say "starting $APP_NAME on its own daemon, with the stand-in core"
 launch
 # Every account measured, so that the one at its limit says so.
 waited=0
-while [ "$(grep -ac 'usage .* status=200' "$WORK/app.log")" -lt 4 ] && [ "$waited" -lt 60 ]; do
+while ! grep -aqE "usage +uso devidas: .* 4/4 lidas" "$WORK/app.log" && [ "$waited" -lt 240 ]; do
     sleep 0.25; waited=$((waited + 1))
+done
+# And what the tabs run on asked of the core at least once since.
+waited=0
+while ! grep -aqF "— claude · reserva" "$WORK/ax.txt" 2>/dev/null && [ "$waited" -lt 40 ]; do
+    ax; sleep 0.25; waited=$((waited + 1))
 done
 
 say ""
@@ -287,14 +291,14 @@ STRIP=$(menu_of "strip-ia-$WS/2")
 check "the strip's menu: the order, ✓ on the tab's account, 'no limite' on the full one" "$WANTED" "$STRIP"
 SIDEBAR=$(menu_of "sidebar-ia-$WS/2")
 check "the sidebar's menu is the same menu" "$STRIP" "$SIDEBAR"
-check "opening them asked the kit nothing" 0 "$(ncalls)"
+check "opening them asked the core to change nothing" 0 "$(ncalls)"
 
 say ""
 say "choosing"
 before=$(ncalls)
 choose "strip-ia-$WS/2" "Seguir a ordem de prioridade"
-check "following the order asks for the first account that can take work" \
-    "trocar --ws=$WS --aba=2 --para=gpt:principal --json" "$(next_call "$before")"
+check "following the order is asked as such; the core finds the account" \
+    "trocar --ws=$WS --aba=2 --para=claude:ordem --json" "$(next_call "$before")"
 before=$(ncalls)
 choose "sidebar-ia-$WS/2" "Claude · principal"
 check "an account asks for that account, from the sidebar too" \
@@ -311,7 +315,7 @@ touch "$WORK/ia/ocupada"
 before=$(ncalls)
 choose "strip-ia-$WS/2" "Claude · reserva"
 next_call "$before" >/dev/null
-check "the kit says it is busy: a question goes up" yes "$(until_text "Interromper e trocar agora")"
+check "the core says it is busy: a question goes up" yes "$(until_text "Interromper e trocar agora")"
 before=$(ncalls)
 "$AXPRESS" "$APP_NAME" button "Interromper e trocar agora"
 check "and a yes asks again, allowed to interrupt" \
@@ -384,11 +388,11 @@ say "an account with no login of its own for tabs yet"
 touch "$WORK/ia/precisa-login"
 before=$(ncalls)
 choose "strip-ia-$WS/4" "Claude · principal"
-check "the kit is asked for it all the same" \
+check "the core is asked for it all the same" \
     "trocar --ws=$WS --aba=4 --para=claude:principal --json" "$(next_call "$before")"
 check "a note says the login waits in the browser" yes "$(until_text "Falta aprovar Claude · principal no navegador")"
 login_tab=$(trace "waits for a login to claude:principal in $WS/" | grep -aoE "in $WS/[0-9]+" | tail -1 | sed 's#.*/##')
-check "the tab the kit opened the login in is the one shown" yes \
+check "the tab the core opened the login in is the one shown" yes \
     "$([ -n "$login_tab" ] && grep -aqE "switch +→ $WS/$login_tab " "$WORK/app.log" && echo yes || echo no)"
 check "and not the failure's words" no "$(has "Não deu para trocar a IA da aba")"
 "$AXPRESS" "$APP_NAME" button OK >/dev/null 2>&1
@@ -396,7 +400,7 @@ check "the note goes when read" no "$(until_text "Falta aprovar Claude · princi
 rm -f "$WORK/ia/precisa-login"
 
 say ""
-say "without the kit's helper"
+say "without a keep to ask"
 export KEEP_IA_BIN=/var/empty
 launch app-without-helper.log
 ax
@@ -415,7 +419,7 @@ for n in 1 2; do
     "$KEEP" new "$WS" >/dev/null || exit 1
     sleep 1
 done
-python3 - "$WORK/daemon.log" "$WORK/estado/retrato.json" "$WORK/codex-tabs" "$WS" "$SOCKET" <<'PYFIX'
+python3 - "$WORK/daemon.log" "$WORK/ia/abas.json" "$WORK/codex-tabs" "$WS" "$SOCKET" <<'PYFIX'
 import json,os,sys,time
 # Tab ids are allocated monotonically; the existing test has exactly two new Codex tabs.
 # Read them from the daemon's own List2 protocol (0x0d).
@@ -444,16 +448,21 @@ for _ in range(integer(4)):
         string();integer(8);command=string()
         if ws==sys.argv[4] and command=='codex':ids.append(tab)
 assert len(ids)==2,ids
-p=sys.argv[2];d=json.load(open(p));d['gravado_em_ms']=int(time.time()*1000)
+p=sys.argv[2];d=json.load(open(p))
 d['ia'] = [e for e in d['ia'] if not (e['workspace']==sys.argv[4] and e['aba']==2)]
-d['ia'].append({'workspace':sys.argv[4],'aba':2,'agente':'claude','conta':'claude:reserva','vinculo':'exato'})
-d['ia'] += [{'workspace':sys.argv[4],'aba':tab,'agente':'codex','conta':'gpt:principal','vinculo':'exato'} for tab in ids]
+d['ia'].append({'workspace':sys.argv[4],'aba':2,'agente':'claude','conta':'claude:reserva','atual':'claude:reserva','vinculo':'exato'})
+d['ia'] += [{'workspace':sys.argv[4],'aba':tab,'agente':'codex','conta':'gpt:principal','atual':'gpt:principal','vinculo':'exato'} for tab in ids]
 with open(p+'.tmp','w') as f:json.dump(d,f)
 os.replace(p+'.tmp',p)
 with open(sys.argv[3],'w') as f:f.write(' '.join(map(str,ids)))
 PYFIX
 read -r codex_one codex_two <"$WORK/codex-tabs"
-sleep 3
+# What the tabs run on is asked again within five seconds with the app in
+# front, and within thirty behind other apps: brought to the front, and given
+# the five.
+osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" \
+    >/dev/null 2>&1
+sleep 6
 "$AXPRESS" "$APP_NAME" press "strip-tab-$WS/$codex_one"
 sleep 2
 check "Codex question is announced as waiting" yes "$(until_text 'o Codex está esperando você')"

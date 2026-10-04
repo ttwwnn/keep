@@ -2,13 +2,15 @@
 #
 # The AI usage footer, from outside the app.
 #
-# The footer reads the accounts this Mac is signed in to — the kit's Claude
-# vault in ~/.claude/contas and Codex's ~/.codex/auth.json — asks each
-# service how much of the account's allowance is spent, and draws a bar per
-# window at the bottom of the sidebar. What this checks:
-#   - every account is there, one line per login (two vault slots holding the
-#     same login are one account), under the name the tabs know it by and
-#     with its address written out; Codex's single login is its "principal";
+# The footer shows what the core (`keep ia uso`, the `keep` inside the app)
+# finds and measures: the logins this Mac has — Claude Code's own, the kit's
+# vault in ~/.claude/contas, Codex's ~/.codex/auth.json — and how much of each
+# account's allowance is spent, a bar per window at the bottom of the
+# sidebar. What this checks:
+#   - every account is there, one line per login (the global login and two
+#     vault slots holding the same one are one account), under the name the
+#     tabs know it by and with its address written out; Codex's single login
+#     is its "principal";
 #   - the bars carry the figures the service answered, for Claude and Codex;
 #   - an account whose access has lapsed is not asked at all (nothing here
 #     renews a token) and says so, and a "too many requests" answer is said;
@@ -16,23 +18,26 @@
 #     nowhere but the stand-in;
 #   - the footer sits under the last workspace and stays on the floor when
 #     the list outgrows the window;
-#   - with the kit's helper there (a stand-in, tools/ia-test/fake-keep-ia.py),
-#     each account carries its place in the kit's order and arrows to move
-#     it: the order changes on screen at once, even with the kit slow to
-#     answer, is what the kit then writes, and is taken back, and said, when
-#     the kit refuses; the arrows are there folded too; and "+" asks the kit
-#     for a login in this window's workspace, whose account shows up within
-#     seconds;
-#   - without it, the footer is as it was: no places, no arrows, no "+".
+#   - each account carries its place in the order and arrows to move it: the
+#     order changes on screen at once, even with the core slow to answer, is
+#     what the core then writes, and is taken back, and said, when the core
+#     refuses; the arrows are there folded too; and "+" asks the core for a
+#     login in this window's workspace, whose account shows up within
+#     seconds — and stays, though a round of readings that set out before it
+#     lands after;
+#   - without a `keep` to ask, there is no footer.
 #
 #   tools/usage-footer-test.sh
 #
 # Nothing real is read or asked: a home of the test's own holds made-up
-# logins, and a stand-in on 127.0.0.1 answers in the services' own format —
-# the only kind of address the app accepts in place of the real ones. A
-# daemon of its own on a scratch socket, KeepDev, read through the
-# accessibility tree (tools/axtext.swift, tools/axpress.swift). About two
-# minutes.
+# logins, a stand-in Keychain holds its global one, and a stand-in on
+# 127.0.0.1 answers in the services' own format — the only kind of address
+# the core accepts in place of the real ones. The core is the real one
+# (the bundle's `keep`), reached through the stand-in
+# tools/ia-test/fake-keep-ia.py, which plays it only where a test needs to
+# make it slow, refuse or open a login. A daemon of its own on a scratch
+# socket, KeepDev, read through the accessibility tree (tools/axtext.swift,
+# tools/axpress.swift). About two minutes.
 #
 # Your app, your daemon and your logins are never touched.
 
@@ -148,6 +153,13 @@ slot("reserva", "U2", "tok-vencido", -3600, "dois@exemplo.com")             # ac
 slot("limitada", "U3", "tok-429", 5 * 3600, "tres@exemplo.com")            # the service says wait
 open(os.path.join(vault, ".ativa"), "w").write("principal\n")
 open(os.path.join(vault, ".preferida"), "w").write("principal\n")
+# Claude Code's own login, which the tabs run on: the principal's, in the
+# stand-in Keychain below.
+os.makedirs(os.path.join(home, "chaveiro"), exist_ok=True)
+json.dump({"claudeAiOauth": {"accessToken": "tok-principal", "refreshToken": "never-used",
+                             "expiresAt": int((now + 5 * 3600) * 1000),
+                             "subscriptionType": "max", "rateLimitTier": "default_claude_max_20x"}},
+          open(os.path.join(home, "chaveiro", "Claude Code-credentials"), "w"))
 def b64(o):
     return base64.urlsafe_b64encode(json.dumps(o).encode()).decode().rstrip("=")
 claims = {"exp": int(now + 86400),
@@ -191,7 +203,9 @@ class H(BaseHTTPRequestHandler):
         who = "codex" if token == codex_token else token
         log.write(json.dumps({"path": self.path, "token": who, "ua": self.headers.get("User-Agent", ""),
                               "account": self.headers.get("ChatGPT-Account-Id")}) + "\n")
-        if self.path == "/claude" and token == "tok-principal":
+        if self.path == "/profile" and token == "tok-principal":
+            status, body = 200, {"account": {"uuid": "U1", "email_address": "um@exemplo.com"}}
+        elif self.path == "/claude" and token == "tok-principal":
             status, body = 200, CLAUDE
         elif self.path == "/claude" and token == "tok-429":
             status, body = 429, {"error": "rate_limited"}
@@ -221,14 +235,29 @@ export KEEP_STATE_DIR=$WORK/state
 export KEEP_AI_USAGE_HOME=$FAKE
 export KEEP_AI_USAGE_CLAUDE_URL=http://127.0.0.1:$PORT/claude
 export KEEP_AI_USAGE_CODEX_URL=http://127.0.0.1:$PORT/codex
-# The kit's helper, played by a stand-in that logs what it is asked and
-# answers out of the made-up home; its logins' tabs open in this daemon.
+export KEEP_IA_PERFIL_URL=http://127.0.0.1:$PORT/profile
+# The Keychain the core reads Claude Code's own login from: `security` as the
+# core calls it, answering out of the made-up home.
+cat >"$WORK/security" <<'SH'
+#!/bin/sh
+S=
+while [ $# -gt 0 ]; do [ "$1" = -s ] && { shift; S="$1"; }; shift; done
+F="$KEEP_AI_USAGE_HOME/chaveiro/$S"
+[ -f "$F" ] || exit 44
+cat "$F"
+SH
+chmod +x "$WORK/security"
+export KEEP_IA_SECURITY=$WORK/security
+# The core, the real one in the bundle, reached through a stand-in that logs
+# what it is asked and plays it where the test needs it slow, refusing or
+# opening a login; its logins' tabs open in this daemon.
 mkdir -p "$WORK/ia"
 cp tools/ia-test/fake-keep-ia.py "$WORK/fake-keep-ia.py"
 chmod +x "$WORK/fake-keep-ia.py"
 export KEEP_IA_BIN=$WORK/fake-keep-ia.py
 export FAKE_IA_DIR=$WORK/ia
 export FAKE_IA_KEEP=$KEEP
+export FAKE_IA_CORE=$KEEP
 mkdir -p "$KEEP_STATE_DIR"
 # Unfolded, as the checks below read it: a run cut short while it was folded
 # would otherwise leave the next one reading the other form.
@@ -246,7 +275,7 @@ stop_app
 KEEP_TRACE=1 "$BIN" >"$WORK/app.log" 2>&1 &
 APP_PID=$!
 waited=0
-while [ "$(grep -ac '^.*usage ' "$WORK/app.log")" -lt 3 ] && [ "$waited" -lt 120 ]; do
+while ! grep -aqE "usage +uso devidas: " "$WORK/app.log" && [ "$waited" -lt 120 ]; do
     sleep 0.25; waited=$((waited + 1))
 done
 place_on_screen
@@ -257,7 +286,7 @@ say ""
 say "every account, one line per login"
 check "the footer is there" yes "$(has "Consumo de IA")"
 check "the active account, by the name the tabs know it by" yes "$(has "Claude · principal")"
-check "its duplicate slot is not a second account" no "$(has "Claude · assinaturas")"
+check "its duplicate slot and its global login are not more accounts" no "$(has "Claude · assinaturas")"
 check "the account whose access lapsed" yes "$(has "Claude · reserva")"
 check "the account the service is holding back" yes "$(has "Claude · limitada")"
 check "the Codex login, its only one: principal" yes "$(has "GPT · principal")"
@@ -322,7 +351,7 @@ except FileNotFoundError: pass' "$WORK/ia/calls.jsonl"; }
 ordem() { tr '\n' ' ' <"$FAKE/.claude/contas/.ordem" 2>/dev/null | sed 's/ $//'; }
 ax
 check "each account carries its place in the order" yes "$(has "1 · Claude · principal")"
-check "the rest where they always were: by name, Claude before GPT" "yes yes yes" \
+check "the rest where they always were: the one the tabs run on, then by name, Claude before GPT" "yes yes yes" \
     "$(has "2 · Claude · limitada") $(has "3 · Claude · reserva") $(has "4 · GPT · principal")"
 check "the first can go down" yes "$(has "Descer Claude · principal")"
 check "but not up" no "$(has "Subir Claude · principal")"
@@ -338,9 +367,13 @@ ax
 check "down: the order changes on screen at once, the kit still at it" \
     "1 · Claude · limitada" "$(first_of "1 · Claude · limitada" "1 · Claude · principal")"
 check "and the one moved says its new place" yes "$(has "2 · Claude · principal")"
-check "the kit is asked to move it, by its key" "ordem mover claude:principal baixo --json" "$(calls | tail -1)"
+check "the core is asked to move it, by its key" "ordem mover claude:principal baixo --json" "$(calls | tail -1)"
+check "as the app's keep: ia first" yes \
+    "$(grep -qF '"grupo": "ia"' "$WORK/ia/calls.jsonl" && echo yes || echo no)"
 check "and told which daemon the app is on" yes \
     "$(grep -qF "\"socket\": \"$SOCKET\"" "$WORK/ia/calls.jsonl" && echo yes || echo no)"
+check "and which home it reads" yes \
+    "$(grep -qF "\"casa\": \"$FAKE\"" "$WORK/ia/calls.jsonl" && echo yes || echo no)"
 # Meanwhile a file the footer watches changes — the account in use written
 # again — and the accounts are read afresh, the old order with them.
 echo principal >"$VAULT/.ativa"
@@ -370,8 +403,8 @@ check "up, and the kit will refuse: shown at once all the same" \
 # Taken back when the refusal lands, two seconds after the press — not when
 # the hold on the order shown runs out, ten seconds after it.
 check "refused: taken back" yes "$(until_text_by "1 · Claude · limitada" $((pressed + 7)))"
-check "and said, in the kit's words" yes \
-    "$(until_text "Não deu para mudar a ordem: falha simulada do keep-ia" 20)"
+check "and said, in the core's words" yes \
+    "$(until_text "Não deu para mudar a ordem: falha simulada do keep ia" 20)"
 check "the order the kit has is untouched" \
     "claude:limitada claude:principal claude:reserva gpt:principal" "$(ordem)"
 rm -f "$WORK/ia/falha" "$WORK/ia/lento"
@@ -389,14 +422,14 @@ check "+ offers a login to either service" \
     "$("$AXPRESS" "$APP_NAME" items)"
 "$AXPRESS" "$APP_NAME" pick "Entrar em outra conta do GPT…"
 sleep 1
-check "the kit is asked for a GPT login in this window's workspace" \
+check "the core is asked for a GPT login in this window's workspace" \
     "entrar gpt --ws=$HOME_WS --json" "$(calls | tail -1)"
 check "the login's account shows up within five seconds" yes "$(until_text "GPT · nova" 50)"
 check "at the end of the order" yes "$(has "5 · GPT · nova")"
-# The round lands when its slowest answer does: the principal's, six seconds
-# on (the limited account is not asked again before its Retry-After).
+# The round lands when its slowest answer does: six seconds on (the limited
+# account is not asked again before its Retry-After).
 waited=0
-while ! grep -aqE "usage +claude:U1 status=200 in [0-9]{4,}ms" "$WORK/app.log" && [ "$waited" -lt 60 ]; do
+while ! grep -aqE "usage +uso agora: [0-9]{4,}ms" "$WORK/app.log" && [ "$waited" -lt 60 ]; do
     sleep 0.25; waited=$((waited + 1))
 done
 rm -f "$WORK/slow"
@@ -446,22 +479,24 @@ check "thirty more workspaces do not move it" "$before" "$after"
 check "and it is still in the window" yes "$([ "$after" -gt 0 ] && [ "$after" -lt "$bottom_after" ] && echo yes || echo no)"
 
 say ""
-say "without the kit's helper, the footer as it was"
+say "without a keep to ask, no footer"
 stop_app
 : >"$WORK/app-without-helper.log"
 KEEP_IA_BIN=/var/empty KEEP_TRACE=1 "$BIN" >"$WORK/app-without-helper.log" 2>&1 &
 APP_PID=$!
 waited=0
-while [ "$(grep -ac '^.*usage ' "$WORK/app-without-helper.log")" -lt 3 ] && [ "$waited" -lt 120 ]; do
+while ! grep -aqE "sidebar +order" "$WORK/app-without-helper.log" && [ "$waited" -lt 120 ]; do
     sleep 0.25; waited=$((waited + 1))
 done
 place_on_screen
-sleep 2
+sleep 4
 ax
-check "the accounts are there" yes "$(has "Claude · principal")"
-check "with no place in an order" no "$(has "1 · Claude")"
+check "no accounts: the app reads no login itself" no "$(has "Claude · principal")"
 check "no arrows" no "$(has "Subir Claude")"
-check "and no way to sign in" no "$(has "Entrar em outra conta")"
+check "no way to sign in" no "$(has "Entrar em outra conta")"
+check "and no footer at all" no "$(has "Consumo de IA")"
+check "the core was never asked" no \
+    "$(grep -aqE "usage +uso " "$WORK/app-without-helper.log" && echo yes || echo no)"
 
 say ""
 say "$PASSED passed, $FAILED failed"
