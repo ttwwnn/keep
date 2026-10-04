@@ -69,6 +69,8 @@ export const SPLIT_DOWN = 2;
 
 export const startup = () => invoke<Startup>("startup");
 export const ensureDaemon = () => invoke<void>("ensure_daemon");
+/** Which daemon answers (its process and start time), or null where unknown. */
+export const daemonIdentity = () => invoke<string | null>("daemon_identity");
 export const list = () => invoke<WorkspaceInfo[]>("list");
 
 export const newTab = (

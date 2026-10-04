@@ -758,11 +758,16 @@ export async function connect(): Promise<void> {
   }
   // Taken before the daemon is first heard: its list replaces the picture.
   const lastSession = gui.value.restore;
+  // A daemon other than the one the picture was taken from is a fresh one
+  // too, whoever started it — `keep ls` in a terminal after a reboot, say.
+  const identity = await api.daemonIdentity().catch(() => null);
+  const anotherDaemon = identity !== null && gui.value.daemon !== "" && identity !== gui.value.daemon;
   await refresh();
-  if (!wasRunning && loaded.value && workspaces.value.length === 0 && lastSession.length > 0) {
+  if ((!wasRunning || anotherDaemon) && loaded.value && workspaces.value.length === 0 && lastSession.length > 0) {
     const restored = await restoreFrom(lastSession);
     if (restored) say("Restaurado após reinício");
   }
+  if (identity !== null && identity !== gui.value.daemon) gui.value = { ...gui.value, daemon: identity };
   settled = true;
   await refresh();
   const active = activeWorkspace.value;

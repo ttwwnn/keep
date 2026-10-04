@@ -41,6 +41,38 @@ pub fn binary(resources: Option<&Path>) -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.is_file())
 }
 
+/// Which daemon answers: its process and when that process started. A daemon
+/// that is not the one the window last saw — after a reboot, or after it was
+/// restarted — has none of the workspaces the window remembers, whoever
+/// started it. `None` where the platform cannot say (unix: the app there is
+/// for development).
+pub fn identity() -> Option<String> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
+        use windows_sys::Win32::System::Threading::{
+            GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        let sock = Stream::connect(address()).ok()?;
+        let pid = sock.server_process_id().ok()?;
+        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if process.is_null() {
+            return None;
+        }
+        let zero = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
+        let ok = unsafe { GetProcessTimes(process, &mut created, &mut exited, &mut kernel, &mut user) };
+        unsafe { CloseHandle(process) };
+        if ok == 0 {
+            return None;
+        }
+        let started = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
+        Some(format!("{pid}-{started}"))
+    }
+    #[cfg(not(windows))]
+    None
+}
+
 /// Start the daemon unless it already answers, and wait until it does.
 pub fn ensure(resources: Option<&Path>) -> Result<()> {
     if is_running() {

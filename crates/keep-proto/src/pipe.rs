@@ -240,6 +240,15 @@ impl Stream {
         }
     }
 
+    /// The process serving this connection, as the pipe reports it.
+    pub fn server_process_id(&self) -> io::Result<u32> {
+        let mut pid = 0u32;
+        if unsafe { GetNamedPipeServerProcessId(self.shared.handle.0, &mut pid) } == 0 {
+            return Err(last_error());
+        }
+        Ok(pid)
+    }
+
     /// Another handle on the same connection, for another thread.
     pub fn try_clone(&self) -> io::Result<Stream> {
         Ok(Stream { shared: Arc::clone(&self.shared) })

@@ -66,6 +66,12 @@ async fn ensure_daemon(app: AppHandle) -> Answer<()> {
         .map_err(text)
 }
 
+/// Which daemon is answering; see `daemon::identity`.
+#[tauri::command]
+async fn daemon_identity() -> Answer<Option<String>> {
+    tauri::async_runtime::spawn_blocking(daemon::identity).await.map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn list() -> Answer<Vec<daemon::Workspace>> {
     tauri::async_runtime::spawn_blocking(daemon::list).await.map_err(|e| e.to_string())?.map_err(text)
@@ -251,6 +257,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             startup,
             ensure_daemon,
+            daemon_identity,
             list,
             new_tab,
             close_tab,

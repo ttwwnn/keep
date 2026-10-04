@@ -41,6 +41,8 @@ export interface GuiState {
   /** Empty family means the platform's default. */
   font: { family: string; size: number };
   restore: RestoreWorkspace[];
+  /** The daemon the picture above was taken from; see `api.daemonIdentity`. */
+  daemon: string;
 }
 
 export const SIDEBAR_MIN = 170;
@@ -60,6 +62,7 @@ export function defaultState(): GuiState {
     sidebar: { visible: true, width: 240 },
     font: { family: "", size: 0 },
     restore: [],
+    daemon: "",
   };
 }
 
@@ -135,6 +138,7 @@ export function normalizeState(raw: unknown): GuiState {
       size: typeof font.size === "number" && font.size >= 6 && font.size <= 48 ? font.size : 0,
     },
     restore,
+    daemon: typeof raw.daemon === "string" ? raw.daemon : "",
   };
 }
 
