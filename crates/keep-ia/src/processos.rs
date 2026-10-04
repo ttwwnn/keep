@@ -588,3 +588,356 @@ mod testes {
         assert_eq!(divide_linha(r#"x "" y"#), ["x", "", "y"]);
     }
 }
+
+// ------------------------------------------------- o que a lixeira de worktrees também pergunta
+
+/// `descendentes` sobre uma lista já tirada, para quem pergunta por várias
+/// abas de uma vez (a mesma regra: um filho nasceu depois do pai).
+pub fn descendentes_em(lista: &[Processo], pid: u32) -> Vec<u32> {
+    let mut saida: Vec<&Processo> = Vec::new();
+    let mut fila = vec![pid];
+    while let Some(pai) = fila.pop() {
+        let nasceu = lista.iter().find(|p| p.pid == pai).map(|p| p.inicio_ms).unwrap_or(0);
+        for p in lista.iter().filter(|p| p.ppid == pai && p.pid != pai && p.pid != pid) {
+            if p.inicio_ms != 0 && nasceu != 0 && p.inicio_ms + 1000 < nasceu {
+                continue;
+            }
+            if !saida.iter().any(|q| q.pid == p.pid) {
+                saida.push(p);
+                fila.push(p.pid);
+            }
+        }
+    }
+    saida.sort_by_key(|p| (p.inicio_ms, p.pid));
+    saida.into_iter().map(|p| p.pid).collect()
+}
+
+/// O pai de um processo, perguntado só a ele. No macOS, `todos` não traz os
+/// processos de outro usuário (um `sudo` no meio de uma cadeia), e o pai
+/// deles se lê assim mesmo.
+pub fn pai(pid: u32) -> Option<u32> {
+    extra::pai(pid)
+}
+
+/// Os arquivos que o processo tem abertos. No Windows, nenhum: lá não há
+/// como saber sem ser administrador.
+pub fn arquivos_abertos(pid: u32) -> Vec<PathBuf> {
+    extra::arquivos_abertos(pid)
+}
+
+/// O terminal de um processo, onde há terminal (macOS e Linux).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Terminal {
+    /// O grupo de processos que está com o terminal: o comando rodando, ou o
+    /// shell no prompt.
+    pub frente: Option<u32>,
+    pub colunas: u16,
+    pub linhas: u16,
+}
+
+pub fn terminal(pid: u32) -> Option<Terminal> {
+    extra::terminal(pid)
+}
+
+/// Que programa o processo é, como uma pessoa o chamaria: `claude`, `codex`,
+/// `zsh`. Pela linha de comando, não pelo executável: o Claude Code nativo
+/// roda de um arquivo com o nome da versão (`…/versions/2.1.289`), e quem
+/// diz que ele é o `claude` é o `argv[0]`. Um lançador (`node`, `bun`,
+/// `deno`, `cmd /c`) dá lugar ao que lançou.
+pub fn programa(pid: u32) -> Option<String> {
+    programa_de_argv(&argv(pid)?)
+}
+
+/// `programa` a partir de uma linha de comando já lida.
+pub fn programa_de_argv(argv: &[String]) -> Option<String> {
+    let primeiro = argv.first()?;
+    let base = nome_de_arquivo(primeiro).trim_start_matches('-');
+    let base = sem_exe(base);
+    if base.is_empty() {
+        return None;
+    }
+    let minusculo = base.to_ascii_lowercase();
+    if matches!(minusculo.as_str(), "node" | "bun" | "deno") {
+        if let Some(lancado) = script_lancado(&argv[1..]) {
+            return Some(lancado);
+        }
+    }
+    if minusculo == "cmd" {
+        let pos = argv.iter().position(|a| a.eq_ignore_ascii_case("/c") || a.eq_ignore_ascii_case("/k"));
+        if let Some(script) = pos.and_then(|i| argv.get(i + 1)) {
+            let arquivo = nome_de_arquivo(script);
+            let tronco = arquivo.rsplit_once('.').map(|(t, _)| t).unwrap_or(arquivo);
+            if !tronco.is_empty() {
+                return Some(tronco.to_ascii_lowercase());
+            }
+        }
+    }
+    Some(if cfg!(windows) { minusculo } else { base.to_string() })
+}
+
+/// O pacote ou o arquivo que um runtime de JavaScript recebeu.
+fn script_lancado(args: &[String]) -> Option<String> {
+    let script = args.iter().find(|a| {
+        let a = a.to_ascii_lowercase();
+        a.ends_with(".js") || a.ends_with(".mjs") || a.ends_with(".cjs")
+    })?;
+    let partes: Vec<&str> = script.split(['\\', '/']).filter(|p| !p.is_empty()).collect();
+    if let Some(i) = partes.iter().rposition(|p| p.eq_ignore_ascii_case("node_modules")) {
+        let pacote = match partes.get(i + 1) {
+            Some(escopo) if escopo.starts_with('@') => partes.get(i + 2).copied(),
+            outro => outro.copied(),
+        }?;
+        let pacote = pacote.to_ascii_lowercase();
+        // `@anthropic-ai/claude-code` se instala como `claude`.
+        return Some(if pacote == "claude-code" { "claude".into() } else { pacote });
+    }
+    let arquivo = partes.last()?;
+    arquivo.rsplit_once('.').map(|(t, _)| t.to_ascii_lowercase())
+}
+
+fn nome_de_arquivo(caminho: &str) -> &str {
+    caminho.rsplit(['/', '\\']).next().unwrap_or(caminho)
+}
+
+fn sem_exe(nome: &str) -> &str {
+    match nome.len().checked_sub(4) {
+        Some(i) if i > 0 && nome.is_char_boundary(i) && nome[i..].eq_ignore_ascii_case(".exe") => &nome[..i],
+        _ => nome,
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod extra {
+    use super::Terminal;
+    use std::ffi::{CStr, c_void};
+    use std::path::PathBuf;
+
+    // Posições em `struct kinfo_proc` (sys/sysctl.h, 64 bits), conferidas com
+    // offsetof: a libc do Rust não traz a estrutura.
+    const KINFO_TAMANHO: usize = 648;
+    const KINFO_PID: usize = 40;
+    const KINFO_PPID: usize = 560;
+    const KINFO_TDEV: usize = 572;
+    const KINFO_TPGID: usize = 576;
+
+    fn i32_em(b: &[u8], i: usize) -> i32 {
+        i32::from_ne_bytes(b[i..i + 4].try_into().unwrap())
+    }
+
+    /// A linha do processo na tabela do núcleo: responde também pelos de
+    /// outro usuário, que a libproc recusa.
+    fn kinfo(pid: u32) -> Option<Vec<u8>> {
+        let mut mib = [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_PID, pid as libc::c_int];
+        let mut buf = vec![0u8; KINFO_TAMANHO];
+        let mut tam: libc::size_t = buf.len();
+        let r = unsafe {
+            libc::sysctl(mib.as_mut_ptr(), 4, buf.as_mut_ptr().cast(), &mut tam, std::ptr::null_mut(), 0)
+        };
+        (r == 0 && tam == KINFO_TAMANHO && i32_em(&buf, KINFO_PID) == pid as i32).then_some(buf)
+    }
+
+    pub fn pai(pid: u32) -> Option<u32> {
+        let p = i32_em(&kinfo(pid)?, KINFO_PPID);
+        (p >= 0).then_some(p as u32)
+    }
+
+    pub fn arquivos_abertos(pid: u32) -> Vec<PathBuf> {
+        use std::os::unix::ffi::OsStrExt;
+        const PROC_PIDFDVNODEPATHINFO: libc::c_int = 2;
+        // struct vnode_fdinfowithpath: proc_fileinfo (24) + vnode_info (152) + o caminho.
+        const COM_CAMINHO: usize = 1200;
+        const POSICAO_DO_CAMINHO: usize = 176;
+        let pid = pid as libc::c_int;
+        let n = unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDLISTFDS, 0, std::ptr::null_mut(), 0) };
+        if n <= 0 {
+            return Vec::new();
+        }
+        let tamanho = std::mem::size_of::<libc::proc_fdinfo>();
+        let mut fds = vec![libc::proc_fdinfo { proc_fd: 0, proc_fdtype: 0 }; n as usize / tamanho + 16];
+        let bytes = (fds.len() * tamanho) as libc::c_int;
+        let n = unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDLISTFDS, 0, fds.as_mut_ptr().cast(), bytes) };
+        if n <= 0 {
+            return Vec::new();
+        }
+        fds.truncate(n as usize / tamanho);
+        let mut saida = Vec::new();
+        let mut buf = vec![0u8; COM_CAMINHO];
+        for fd in fds {
+            if fd.proc_fdtype != libc::PROX_FDTYPE_VNODE as u32 {
+                continue;
+            }
+            let lido = unsafe {
+                libc::proc_pidfdinfo(
+                    pid,
+                    fd.proc_fd,
+                    PROC_PIDFDVNODEPATHINFO,
+                    buf.as_mut_ptr() as *mut c_void,
+                    COM_CAMINHO as libc::c_int,
+                )
+            };
+            if lido < COM_CAMINHO as libc::c_int {
+                continue;
+            }
+            let c = &buf[POSICAO_DO_CAMINHO..];
+            let fim = c.iter().position(|&b| b == 0).unwrap_or(c.len());
+            if fim > 0 {
+                saida.push(PathBuf::from(std::ffi::OsStr::from_bytes(&c[..fim])));
+            }
+        }
+        saida
+    }
+
+    pub fn terminal(pid: u32) -> Option<Terminal> {
+        let k = kinfo(pid)?;
+        let dev = i32_em(&k, KINFO_TDEV);
+        if dev == -1 || dev == 0 {
+            return None;
+        }
+        let tpgid = i32_em(&k, KINFO_TPGID);
+        let nome = unsafe { libc::devname(dev as libc::dev_t, libc::S_IFCHR) };
+        let (colunas, linhas) = if nome.is_null() {
+            (0, 0)
+        } else {
+            let nome = unsafe { CStr::from_ptr(nome) }.to_string_lossy().into_owned();
+            super::tamanho_do_tty(&format!("/dev/{nome}")).unwrap_or((0, 0))
+        };
+        Some(Terminal { frente: (tpgid > 0).then_some(tpgid as u32), colunas, linhas })
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+mod extra {
+    use super::Terminal;
+    use std::path::PathBuf;
+
+    /// Os campos do `/proc/<pid>/stat` depois do nome entre parênteses.
+    fn campos(pid: u32) -> Option<Vec<String>> {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        let fecha = stat.rfind(')')?;
+        Some(stat[fecha + 1..].split_whitespace().map(str::to_string).collect())
+    }
+
+    pub fn pai(pid: u32) -> Option<u32> {
+        campos(pid)?.get(1)?.parse().ok()
+    }
+
+    pub fn arquivos_abertos(pid: u32) -> Vec<PathBuf> {
+        let Ok(dir) = std::fs::read_dir(format!("/proc/{pid}/fd")) else { return Vec::new() };
+        dir.filter_map(|e| std::fs::read_link(e.ok()?.path()).ok()).filter(|p| p.is_absolute()).collect()
+    }
+
+    pub fn terminal(pid: u32) -> Option<Terminal> {
+        let c = campos(pid)?;
+        let tty: i64 = c.get(4)?.parse().ok()?;
+        if tty <= 0 {
+            return None;
+        }
+        let tpgid: i64 = c.get(5).and_then(|v| v.parse().ok()).unwrap_or(-1);
+        let maior = (tty >> 8) & 0xfff;
+        let menor = (tty & 0xff) | ((tty >> 12) & 0xfff00);
+        // Os pseudoterminais: maiores 136 a 143, numerados em sequência.
+        let (colunas, linhas) = if (136..=143).contains(&maior) {
+            super::tamanho_do_tty(&format!("/dev/pts/{}", menor + (maior - 136) * 256)).unwrap_or((0, 0))
+        } else {
+            (0, 0)
+        };
+        Some(Terminal { frente: (tpgid > 0).then_some(tpgid as u32), colunas, linhas })
+    }
+}
+
+#[cfg(unix)]
+fn tamanho_do_tty(tty: &str) -> Option<(u16, u16)> {
+    let c = std::ffi::CString::new(tty).ok()?;
+    let fd = unsafe { libc::open(c.as_ptr(), libc::O_RDONLY | libc::O_NOCTTY | libc::O_NONBLOCK) };
+    if fd < 0 {
+        return None;
+    }
+    let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
+    let r = unsafe { libc::ioctl(fd, libc::TIOCGWINSZ as _, &mut ws) };
+    unsafe { libc::close(fd) };
+    (r == 0).then_some((ws.ws_col, ws.ws_row))
+}
+
+#[cfg(windows)]
+mod extra {
+    use super::Terminal;
+    use std::path::PathBuf;
+
+    pub fn pai(pid: u32) -> Option<u32> {
+        super::um(pid).map(|p| p.ppid)
+    }
+
+    pub fn arquivos_abertos(_pid: u32) -> Vec<PathBuf> {
+        Vec::new()
+    }
+
+    pub fn terminal(_pid: u32) -> Option<Terminal> {
+        None
+    }
+}
+
+#[cfg(test)]
+mod testes_extra {
+    use super::*;
+
+    fn v(s: &[&str]) -> Vec<String> {
+        s.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn o_programa_sai_da_linha_de_comando() {
+        assert_eq!(programa_de_argv(&v(&["/Users/x/.local/bin/claude", "--resume", "a"])).as_deref(), Some("claude"));
+        assert_eq!(programa_de_argv(&v(&["-zsh"])).as_deref(), Some("zsh"));
+        assert_eq!(
+            programa_de_argv(&v(&["node", "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"])).as_deref(),
+            Some("claude")
+        );
+        assert_eq!(
+            programa_de_argv(&v(&["node", r"C:\x\node_modules\@openai\codex\bin\codex.js", "resume"])).as_deref(),
+            Some("codex")
+        );
+        assert_eq!(programa_de_argv(&v(&["node", "server.js"])).as_deref(), Some("server"));
+        assert_eq!(programa_de_argv(&v(&["node"])).as_deref(), Some("node"));
+        assert_eq!(
+            programa_de_argv(&v(&[r"C:\Windows\system32\cmd.exe", "/d", "/s", "/c", r"C:\npm\claude.cmd"])).as_deref(),
+            Some("claude")
+        );
+        assert_eq!(programa_de_argv(&v(&[r"C:\Program Files\Claude\claude.exe"])).as_deref(), Some("claude"));
+        assert_eq!(programa_de_argv(&v(&[""])), None);
+        assert_eq!(programa_de_argv(&[]), None);
+    }
+
+    #[test]
+    fn descendentes_de_uma_lista_exigem_pai_mais_velho() {
+        let p = |pid, ppid, inicio_ms| Processo { pid, ppid, nome: String::new(), inicio_ms };
+        // 30 é neto de 10; 40 diz que o pai é 10 mas nasceu bem antes dele
+        // (pid reaproveitado); 50 não diz quando nasceu.
+        let lista = vec![p(10, 1, 10_000), p(20, 10, 20_000), p(30, 20, 30_000), p(40, 10, 500), p(50, 10, 0)];
+        assert_eq!(descendentes_em(&lista, 10), vec![50, 20, 30]);
+        assert!(descendentes_em(&lista, 30).is_empty());
+    }
+
+    #[test]
+    fn o_pai_e_os_arquivos_do_proprio_processo() {
+        let eu = std::process::id();
+        #[cfg(unix)]
+        assert_eq!(pai(eu), Some(std::os::unix::process::parent_id()));
+        #[cfg(windows)]
+        assert_eq!(pai(eu), um(eu).map(|p| p.ppid));
+        let pasta = tempfile::tempdir().unwrap();
+        let arq = pasta.path().join("aberto.lock");
+        let _f = std::fs::File::create(&arq).unwrap();
+        let abertos = arquivos_abertos(eu);
+        if cfg!(unix) {
+            let alvo = std::fs::canonicalize(&arq).unwrap();
+            assert!(
+                abertos.iter().any(|p| std::fs::canonicalize(p).ok().as_deref() == Some(alvo.as_path())),
+                "{abertos:?}"
+            );
+        } else {
+            assert!(abertos.is_empty());
+        }
+        assert_eq!(programa(eu), argv(eu).and_then(|a| programa_de_argv(&a)));
+        assert!(descendentes_em(&todos(), eu).iter().all(|&p| p != eu));
+    }
+}
