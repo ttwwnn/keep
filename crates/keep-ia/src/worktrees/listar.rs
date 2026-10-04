@@ -228,7 +228,7 @@ fn em_uso<'a>(
     // worktree continua em uso lá.
     let mut sessao_fora: HashMap<String, String> = HashMap::new();
     for s in vivas {
-        let c = concha_por_mapa(s.pid, keepd, &mut mapa);
+        let c = concha_por_mapa(s.pid, keepd, &mut mapa, &varredura.inicios);
         if sess_aba.contains(&s.id) && !c.is_some_and(|c| fechando.contains(&c)) {
             let m = c.map(|c| rotulo_de_concha(ctx, c)).unwrap_or_else(|| fora_do_keep(&s.id));
             sessao_fora.insert(s.id.clone(), m);
@@ -241,7 +241,7 @@ fn em_uso<'a>(
         if sess_aba.contains(&s.id) {
             continue;
         }
-        let c = concha_por_mapa(s.pid, keepd, &mut mapa);
+        let c = concha_por_mapa(s.pid, keepd, &mut mapa, &varredura.inicios);
         if c.is_some_and(|c| fechando.contains(&c)) {
             continue;
         }
@@ -262,7 +262,7 @@ fn em_uso<'a>(
             if !dentro(&p.cwd, cam) {
                 continue;
             }
-            match concha_por_mapa(p.pid, keepd, &mut mapa) {
+            match concha_por_mapa(p.pid, keepd, &mut mapa, &varredura.inicios) {
                 None => orfaos.push(ProcessoDentro { pid: p.pid, nome: p.nome.clone() }),
                 Some(c) if !fechando.contains(&c) => {
                     motivo = Some(rotulo_de_concha(ctx, c));

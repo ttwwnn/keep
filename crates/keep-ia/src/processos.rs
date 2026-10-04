@@ -42,6 +42,17 @@ pub fn vivo(pid: u32) -> bool {
     pid != 0 && um(pid).is_some()
 }
 
+/// Quando o processo nasceu, em ms unix, perguntado só a ele (no Windows,
+/// sem tirar a lista inteira). Com o pid, é o que identifica um processo: o
+/// Windows dá logo a um processo novo o pid de um que acabou.
+pub fn inicio_ms(pid: u32) -> Option<u64> {
+    #[cfg(windows)]
+    let t = sistema::inicio_ms(pid);
+    #[cfg(not(windows))]
+    let t = um(pid).map(|p| p.inicio_ms).unwrap_or(0);
+    (t > 0).then_some(t)
+}
+
 /// Onde o processo está trabalhando.
 pub fn cwd(pid: u32) -> Option<PathBuf> {
     sistema::cwd(pid)
@@ -338,7 +349,7 @@ mod sistema {
     }
 
     /// FILETIME (100 ns desde 1601) em ms unix.
-    fn inicio_ms(pid: u32) -> u64 {
+    pub(super) fn inicio_ms(pid: u32) -> u64 {
         let Some(p) = abre(pid, PROCESS_QUERY_LIMITED_INFORMATION) else { return 0 };
         let zero = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
         let (mut criado, mut saiu, mut k, mut u) = (zero, zero, zero, zero);

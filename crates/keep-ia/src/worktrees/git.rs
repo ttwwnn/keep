@@ -2,7 +2,6 @@
 //! e anotado — o `git -C <worktree>` põe a pasta atual dele lá dentro, e a
 //! varredura de processos não pode tomá-lo por alguém usando a worktree.
 
-use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -12,22 +11,49 @@ use std::time::{Duration, Instant};
 
 use super::prazo::Estourou;
 
-/// Os git que este processo subiu: pid → quando acabou (`None`: rodando).
-/// Quem acabou fica um minuto: a varredura pode tê-lo visto vivo, com a
-/// pasta atual na worktree, e só consultar esta lista depois.
-static MEUS: Mutex<Option<HashMap<u32, Option<Instant>>>> = Mutex::new(None);
-const GUARDA: Duration = Duration::from_secs(60);
-
-fn com_meus<T>(f: impl FnOnce(&mut HashMap<u32, Option<Instant>>) -> T) -> T {
-    let mut g = MEUS.lock().unwrap_or_else(|e| e.into_inner());
-    let mapa = g.get_or_insert_with(HashMap::new);
-    mapa.retain(|_, fim| fim.is_none_or(|t| t.elapsed() < GUARDA));
-    f(mapa)
+/// Um git que este processo subiu: o pid, quando nasceu e quando acabou
+/// (ms unix; `None`: rodando). O pid sozinho não basta: o Windows dá logo a
+/// um processo novo o pid de um que acabou, e um shell de outra aba que
+/// pegasse o pid de um destes sumiria da varredura.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Meu {
+    pub pid: u32,
+    /// 0 quando não se soube.
+    pub inicio_ms: u64,
+    pub fim_ms: Option<u64>,
 }
 
-/// Os pids dos git deste processo (vivos e os que acabaram há pouco).
-pub fn meus() -> HashSet<u32> {
-    com_meus(|m| m.keys().copied().collect())
+/// Os git deste processo. Quem acabou fica um minuto: a varredura pode tê-lo
+/// visto vivo, com a pasta atual na worktree, e só consultar esta lista
+/// depois.
+static MEUS: Mutex<Vec<Meu>> = Mutex::new(Vec::new());
+const GUARDA_MS: u64 = 60_000;
+
+fn agora_ms() -> u64 {
+    (super::texto::agora() * 1000.0) as u64
+}
+
+fn com_meus<T>(f: impl FnOnce(&mut Vec<Meu>) -> T) -> T {
+    let mut g = MEUS.lock().unwrap_or_else(|e| e.into_inner());
+    let agora = agora_ms();
+    g.retain(|m| m.fim_ms.is_none_or(|fim| agora.saturating_sub(fim) < GUARDA_MS));
+    f(&mut g)
+}
+
+/// Os git deste processo (os vivos e os que acabaram há pouco).
+pub fn meus() -> Vec<Meu> {
+    com_meus(|m| m.clone())
+}
+
+/// Para os testes: um git deste processo com esse pid e essas horas.
+#[doc(hidden)]
+pub fn anota_para_teste(pid: u32, inicio_ms: u64, fim_ms: Option<u64>) {
+    com_meus(|m| m.push(Meu { pid, inicio_ms, fim_ms }));
+}
+
+#[doc(hidden)]
+pub fn esquece_para_teste(pid: u32) {
+    com_meus(|m| m.retain(|x| x.pid != pid));
 }
 
 /// O que o git respondeu.
@@ -66,7 +92,10 @@ pub fn git(bin: &Path, args: &[&str], prazo: f64) -> Result<Saida, Estourou> {
     let filho = com_meus(|m| {
         let f = cmd.spawn();
         if let Ok(f) = &f {
-            m.insert(f.id(), None);
+            // Enquanto este processo segura o filho, o pid é dele: a hora em
+            // que nasceu é a do git.
+            let inicio_ms = crate::processos::inicio_ms(f.id()).unwrap_or(0);
+            m.push(Meu { pid: f.id(), inicio_ms, fim_ms: None });
         }
         f
     });
@@ -75,7 +104,13 @@ pub fn git(bin: &Path, args: &[&str], prazo: f64) -> Result<Saida, Estourou> {
         Err(e) => return Ok(Saida { codigo: 127, saida: String::new(), erro: e.to_string() }),
     };
     let pid = filho.id();
-    let acabou = || com_meus(|m| m.insert(pid, Some(Instant::now())));
+    let acabou = || {
+        com_meus(|m| {
+            if let Some(x) = m.iter_mut().rev().find(|x| x.pid == pid && x.fim_ms.is_none()) {
+                x.fim_ms = Some(agora_ms());
+            }
+        })
+    };
     let le = |r: Option<Box<dyn Read + Send>>| {
         let (tx, rx) = mpsc::channel();
         if let Some(mut r) = r {

@@ -1354,7 +1354,7 @@ fn t38_processos_e_a_cadeia_ate_o_shell() {
     // pai dele é perguntado a ele.
     let mut sem = v.mapa.clone();
     sem.remove(&concha);
-    let r = varredura::concha_por_mapa(filho, &HashSet::from([eu]), &mut sem);
+    let r = varredura::concha_por_mapa(filho, &HashSet::from([eu]), &mut sem, &v.inicios);
     c.fim();
     assert_eq!(aqui, HashSet::from([(concha, eu), (filho, concha)]), "{:?}", v.procs);
     assert_eq!(r, Some(eu), "a cadeia com buraco não chegou no shell");
@@ -1983,6 +1983,33 @@ fn historico_do_kit_vale_para_o_daemon_que_roda() {
     c.fim();
     assert!(h.ids.contains(&antiga.sid) && !h.ids.contains(&"de-outro-daemon".to_string()), "{:?}", est.historico);
     assert!(est.historico_do_kit.is_none() && est.historico.len() == 1, "{:?}", est.historico);
+}
+
+#[test]
+fn pid_de_um_git_que_acabou_nao_esconde_quem_esta_dentro() {
+    // O Windows dá logo a um processo novo o pid de um que acabou, e um git
+    // deste processo fica na lista dos dele por um minuto: o shell de outra
+    // aba que pegou esse pid sumia da varredura, e a worktree em que ele
+    // trabalha ia para a lista da Lixeira (o t34 no Windows, uma vez em três).
+    let m = Mundo::novo();
+    let (w, t) = m.wt("wt-pid-reaproveitado");
+    let mut c1 = Conversa::nova(&m);
+    c1.chamada(t - 0.3, Some(t + 0.3), &format!("git worktree add {w} HEAD"));
+    m.indexar(t + 60.0);
+    let outro = dorme(Some(Path::new(&w))); // o shell de outra aba, dentro da worktree
+    let pid = outro.id();
+    assert!(espera(10.0, || processos::cwd(pid).is_some()));
+    let nasceu = processos::inicio_ms(pid).unwrap();
+    // Um git deste processo que teve o mesmo pid e acabou antes de ele nascer.
+    worktrees::git::anota_para_teste(pid, nasceu - 60_000, Some(nasceu - 30_000));
+    let (r, _) = m.listar_com(&[&c1.sid], Op { outras: vec![pid], rotulos: vec![(pid, "Outra", "W")], ..Op::default() });
+    // O mesmo processo (o pid e a hora) anotado como git deste: esse sai.
+    worktrees::git::anota_para_teste(pid, nasceu, None);
+    let saiu = varredura::processos().procs.iter().all(|p| p.pid != pid);
+    worktrees::git::esquece_para_teste(pid);
+    mata(outro);
+    assert!(r.lixeira.is_empty() && r.mantidas == vec![mantida(&w, "em uso pela aba “Outra” (W)")], "{r:?}");
+    assert!(saiu, "um git deste processo (o mesmo pid e a mesma hora) ficou na varredura");
 }
 
 #[test]
