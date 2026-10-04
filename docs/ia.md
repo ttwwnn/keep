@@ -124,6 +124,47 @@ keep worktrees concluir <caminho> <destino>
 keep worktrees indexar [--json]
 ```
 
+### Respostas
+
+Toda resposta é um objeto JSON numa linha, com `"versao": 1` e `"ok"`. Recusa: `"ok": false`,
+`"motivo"` e `"detalhe"` (português, para mostrar a quem usa). Datas em segundos unix (número).
+
+- `contas` → `{"contas": [Conta], "ordem": [chave], "gerenteExterno": bool}`. Conta (nomes do
+  `AIAccountSummary` do app do macOS): `engine` (`claude`|`codex`), `key` (identidade), `alias`,
+  `aliases`, `email`, `plan`, `isActive`, `isPreferred`, `warning`, `orderKey`, `hasToken`, `roda`
+  (há um armazém em que uma aba pode rodar nela), `armazens`.
+- `uso` → `{"linhas": [Linha], "ordem": [chave], "gerenteExterno": bool, "medidoEm": s}`. Linha
+  (`AccountUsage`): `account` (Conta), `reading` (`{"windows": [{"label", "title", "percent",
+  "resetsAt"}], "limitReached"}` ou `null`), `measuredAt`, `problem`. `--cache` responde sem rede;
+  `--agora` é o "Medir agora"; `--conta=<chave>` mede só essa.
+- `ordem [mover …]` → `{"ordem": [chave]}`.
+- `abas` → `{"keepd": {"pid", "inicioMs"}, "ia": [{"workspace", "aba", "agente"
+  (`claude`|`codex`), "conta" (a escolha: `claude:ordem` ou a chave da conta), "atual" (a chave da
+  conta em que ela roda agora, ou `null`), "vinculo" (`exato`), "pid", "conversa" (id ou `null`)}]}`.
+  `keepd.inicioMs` é o `started_ms` do `List3`: o app ignora a resposta de outro daemon.
+- `trocar` → `{"feito": texto}`. Recusas: `ocupada` (o app pergunta "Interromper e trocar agora" e
+  repete com `--interromper`), `precisa-login` (com `ws_login` e `aba_login`: a aba do login, aberta
+  pelo Keep; a troca acontece sozinha quando ele termina), `em-uso`, `segundo-plano`,
+  `outro-programa`, `tela-inesperada`, `sem-conta`, `contexto-indisponivel`, `inicio-falhou`, `erro`.
+- `entrar` → `{"ws", "aba"}`: a aba nova, rodando `keep ia login …`.
+- `sincronizar` → `{"estado": "feito"|"gerente-externo"|"em-andamento"|"sem-keepd", "alvo": chave|null,
+  "alteradas": [{"ws", "aba", "feito"}], "pendentes": [{"ws", "aba", "motivo", "detalhe"?}]}`.
+
+### Quem chama o quê
+
+| Quando | Comando |
+|---|---|
+| a cada 60 s, com o rodapé aberto (o período de 5 min é do núcleo) | `keep ia uso --json` |
+| "Medir agora" | `keep ia uso --agora --json` |
+| um arquivo de login mudou (vigia barato, sem rede) | `keep ia uso --cache --json` |
+| a cada 5 s com a janela à frente, e ao abrir o menu de uma aba | `keep ia abas --json` |
+| a cada 30 s | `keep ia sincronizar --json` |
+| a cada 2 min | `keep worktrees indexar --json` |
+| setas, "+", menu da aba, fechar aba | `ordem mover`, `entrar`, `trocar`, `worktrees listar/preparar/concluir` |
+
+O app passa `KEEP_SOCKET` (o daemon dele). Um app de teste que lê uma casa falsa passa
+`KEEP_IA_HOME` e `KEEP_IA_ESTADO` apontando para ela: o núcleo nunca toca na casa real nesse caso.
+
 Variáveis para teste: `KEEP_IA_HOME` (casa falsa), `KEEP_IA_ESTADO` (estado), `KEEP_IA_SECURITY`
 (o `security` do macOS), `KEEP_IA_CLAUDE_URL`/`KEEP_IA_CODEX_URL`/`KEEP_IA_PERFIL_URL` (só
 `http://127.0.0.1`), `KEEP_IA_CLAUDE_BIN`, `KEEP_IA_CODEX_BIN`, `KEEP_SOCKET`.
