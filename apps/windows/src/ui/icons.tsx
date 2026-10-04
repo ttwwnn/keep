@@ -105,3 +105,18 @@ export const Down = () => (
     <path d="M3 4.5l3 3 3-3" {...stroke} />
   </svg>
 );
+
+/** The small chevron that opens a tab's menu of AI and account. */
+export const ChevronDown = () => (
+  <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true">
+    <path d="M2.5 3.8l2.5 2.5 2.5-2.5" {...stroke} stroke-width={1.4} />
+  </svg>
+);
+
+/** Measure again: an arrow going round. */
+export const Refresh = () => (
+  <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true">
+    <path d="M9.6 4.2A4 4 0 1 0 10 7" {...stroke} stroke-width={1.3} />
+    <path d="M9.9 1.8v2.6H7.3" {...stroke} stroke-width={1.3} />
+  </svg>
+);
