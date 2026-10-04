@@ -16,13 +16,18 @@
 //
 // A button is looked for in every window of the app, sheets included, which
 // is where a question before closing lives. Exits 0 when it did what it was
-// asked, 1 when there was nothing by that name.
+// asked, 1 when there was nothing by that name — and 4 when the app left a
+// question unanswered on the way, which is not an answer: "nothing by that
+// name" from an app that did not reply says nothing about the name, and the
+// caller asks again (tools/zoom-app-test.sh, `ask`).
 //
-// Every question has a second to be answered. An app that puts a menu up in
-// answer to a press is inside the menu until somebody chooses: asked from
-// in there, a press that waited for its reply would wait for good. (Keep's
-// menus open a turn after the press is answered, so they do not; a second is
-// what keeps a regression from hanging the suite.)
+// A press has a second to be answered. An app that puts a menu up in answer
+// to a press is inside the menu until somebody chooses: asked from in there,
+// a press that waited for its reply would wait for good. (Keep's menus open a
+// turn after the press is answered, so they do not; a second is what keeps a
+// regression from hanging the suite.) A read opens nothing, and has four:
+// on a machine under load an app can take longer than a second to answer,
+// and every read that timed out was a failed check that nothing had failed.
 import AppKit
 import ApplicationServices
 
@@ -43,12 +48,22 @@ guard AXIsProcessTrusted() else {
     FileHandle.standardError.write("axpress: not trusted for accessibility\n".data(using: .utf8)!)
     exit(3)
 }
-AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 1.0)
+let reads: Set<String> = ["frame", "value", "title", "enabled", "menuenabled"]
+let timeout: Float = reads.contains(arguments[2]) ? 4.0 : 1.0
+AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), timeout)
+
+/// Whether the app left a question unanswered: see the exit codes above.
+var silent = false
 
 func attribute(_ element: AXUIElement, _ key: String) -> AnyObject? {
     var value: AnyObject?
-    return AXUIElementCopyAttributeValue(element, key as CFString, &value) == .success ? value : nil
+    let result = AXUIElementCopyAttributeValue(element, key as CFString, &value)
+    if result == .cannotComplete { silent = true }
+    return result == .success ? value : nil
 }
+
+/// Nothing by that name — unless the app did not answer: then nothing is known.
+func notFound() -> Never { exit(silent ? 4 : 1) }
 func children(_ element: AXUIElement) -> [AXUIElement] {
     attribute(element, "AXChildren") as? [AXUIElement] ?? []
 }
@@ -64,7 +79,7 @@ func actions(_ element: AXUIElement) -> [String] {
 }
 
 let root = AXUIElementCreateApplication(app.processIdentifier)
-AXUIElementSetMessagingTimeout(root, 1.0)
+AXUIElementSetMessagingTimeout(root, timeout)
 
 /// The first element, in any window, whose title, description or identifier
 /// is `label`.
@@ -144,7 +159,7 @@ func items(of menu: AXUIElement) -> [AXUIElement] {
 
 switch arguments[2] {
 case "menu" where arguments.count >= 5:
-    guard let bar = attribute(root, "AXMenuBar") else { exit(1) }
+    guard let bar = attribute(root, "AXMenuBar") else { notFound() }
     let barElement = bar as! AXUIElement
     for top in children(barElement) where title(top) == arguments[3] {
         for menu in children(top) {
@@ -153,7 +168,7 @@ case "menu" where arguments.count >= 5:
             }
         }
     }
-    exit(1)
+    notFound()
 
 case "button" where arguments.count >= 4:
     var visited = 0
@@ -171,14 +186,14 @@ case "button" where arguments.count >= 4:
     for window in attribute(root, "AXWindows") as? [AXUIElement] ?? [] {
         if let button = find(window, 0) { exit(press(button) ? 0 : 1) }
     }
-    exit(1)
+    notFound()
 
 case "press" where arguments.count >= 4:
-    guard let target = element(labelled: arguments[3]) else { exit(1) }
+    guard let target = element(labelled: arguments[3]) else { notFound() }
     exit(press(target) ? 0 : 1)
 
 case "open" where arguments.count >= 4:
-    guard let target = element(labelled: arguments[3]) else { exit(1) }
+    guard let target = element(labelled: arguments[3]) else { notFound() }
     // A menu button opens its menu by being pressed. Its "show menu" can be
     // somebody else's: SwiftUI hangs a row's context menu on everything in
     // the row, and asked for that, a chevron in a sidebar row shows the row's.
@@ -217,7 +232,7 @@ case "cancel":
     exit(0)
 
 case "frame" where arguments.count >= 4:
-    guard let target = element(labelled: arguments[3]) else { exit(1) }
+    guard let target = element(labelled: arguments[3]) else { notFound() }
     var origin = CGPoint.zero
     var size = CGSize.zero
     if let value = attribute(target, "AXPosition") { AXValueGetValue(value as! AXValue, .cgPoint, &origin) }
@@ -226,32 +241,32 @@ case "frame" where arguments.count >= 4:
 
 case "value" where arguments.count >= 4:
     guard let target = element(labelled: arguments[3]),
-          let value = attribute(target, "AXValue") as? String else { exit(1) }
+          let value = attribute(target, "AXValue") as? String else { notFound() }
     print(value)
 
 case "title" where arguments.count >= 4:
-    guard let target = element(labelled: arguments[3]), let text = title(target) else { exit(1) }
+    guard let target = element(labelled: arguments[3]), let text = title(target) else { notFound() }
     print(text)
 
 case "menuenabled" where arguments.count >= 5:
-    guard let bar = attribute(root, "AXMenuBar") else { exit(1) }
+    guard let bar = attribute(root, "AXMenuBar") else { notFound() }
     let barElement = bar as! AXUIElement
     for top in children(barElement) where title(top) == arguments[3] {
         for menu in children(top) {
             for item in children(menu) where title(item) == arguments[4] {
                 // No answer is not a no: a question that ran out of time
                 // says nothing about the item.
-                guard let enabled = attribute(item, "AXEnabled") as? Bool else { exit(1) }
+                guard let enabled = attribute(item, "AXEnabled") as? Bool else { notFound() }
                 print(enabled ? 1 : 0)
                 exit(0)
             }
         }
     }
-    exit(1)
+    notFound()
 
 case "enabled" where arguments.count >= 4:
     guard let target = element(labelled: arguments[3]),
-          let enabled = attribute(target, "AXEnabled") as? Bool else { exit(1) }
+          let enabled = attribute(target, "AXEnabled") as? Bool else { notFound() }
     print(enabled ? 1 : 0)
 
 default:

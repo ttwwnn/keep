@@ -13,7 +13,9 @@
 # rows the daemon was given for the tab — a larger text is a smaller grid —
 # and a tab off screen keeps the grid its program draws for until it is
 # shown. The visible title frames in both tab lists must grow and shrink
-# too, and the row of tabs with them.
+# too, and the row of tabs with them. A read the app was too busy to answer is
+# asked again (`ask`), and a window another app's full screen hides is said,
+# not tested.
 #
 #   tools/zoom-app-test.sh            (SKIP_BUILD=1 to use the KeepDev built last;
 #                                      KEEP_TEST_APP=<path to an .app> to drive another build)
@@ -56,6 +58,13 @@ check() {  # check <what> <wanted> <got>
         say "  ok    $1"
         PASSED=$((PASSED + 1))
     else
+        # Gone out of sight since it was opened — another app taken to full
+        # screen mid-run (see `launch`) — and every check after would fail
+        # for the same reason: said, and stopped, rather than counted.
+        if [ -n "${APP_PID:-}" ] && [ "$(present "Toggle Sidebar")" != yes ]; then
+            say "the test's window went out of sight mid-run: is another app in full screen? not run"
+            exit 3
+        fi
         say "  FAIL  $1"
         say "        wanted: $2"
         say "        got:    $3"
@@ -81,49 +90,32 @@ DAEMON_PID=$!
 waited=0
 while [ ! -S "$SOCKET" ] && [ "$waited" -lt 40 ]; do sleep 0.25; waited=$((waited + 1)); done
 
-# Started, waited for, and put behind whatever was in front before it.
-FRONT=
-launch() {
-    FRONT=$(osascript -e 'tell application "System Events" to get bundle identifier of first application process whose frontmost is true' 2>/dev/null)
-    : >"$WORK/app.log"
-    KEEP_TRACE=1 "$BIN" >"$WORK/app.log" 2>&1 &
-    APP_PID=$!
-    local waited=0
-    while ! grep -aqE "sidebar +order" "$WORK/app.log" && [ "$waited" -lt 120 ]; do
-        sleep 0.25; waited=$((waited + 1))
-    done
-    sleep 1.5
-    give_back
-}
-give_back() {
-    if [ -n "$FRONT" ] && [ "$FRONT" != "missing value" ]; then
-        osascript -e "tell application id \"$FRONT\" to activate" >/dev/null 2>&1
-    fi
-}
-quit_app() {
-    kill "$APP_PID" 2>/dev/null
-    local waited=0
-    while kill -0 "$APP_PID" 2>/dev/null && [ "$waited" -lt 40 ]; do sleep 0.25; waited=$((waited + 1)); done
-    APP_PID=
-}
-
-stop_app
-launch
-
-# Asked of the accessibility tree, which gives the app a second to answer
-# (tools/axpress.swift): under load an answer can be late, so a read that
-# came back with nothing is asked again before it is believed.
-ask() {  # ask <axpress arguments...>: its answer, or "(none)" after eight tries
-    local tries=0 got
-    while [ "$tries" -lt 8 ]; do
-        got=$("$AXPRESS" "$APP_NAME" "$@" 2>/dev/null) && { printf '%s\n' "$got"; return; }
-        tries=$((tries + 1)); sleep 0.5
+# Asked of the accessibility tree, which gives the app four seconds to answer
+# a read (tools/axpress.swift). Two silences are not the same: an app that
+# answered without the element is asked again a few times, in case it was on
+# its way (eight, half a second apart, as before); an app that did not answer
+# at all — axpress exits 4, a machine under load starving it — is asked again
+# for as long as half a minute, since its silence says nothing about the
+# element. Before, both were eight tries, and a busy app's silence was a
+# failed check that nothing had failed (two or three a run, 03/10/2026).
+SILENCE_S=30
+ask() {  # ask <axpress arguments...>: its answer, or "(none)"
+    local tries=0 got code start=$SECONDS
+    while :; do
+        got=$("$AXPRESS" "$APP_NAME" "$@" 2>/dev/null); code=$?
+        [ "$code" -eq 0 ] && { printf '%s\n' "$got"; return; }
+        if [ "$code" -eq 4 ]; then
+            [ $((SECONDS - start)) -ge "$SILENCE_S" ] && break
+        else
+            tries=$((tries + 1)); [ "$tries" -ge 8 ] && break
+        fi
+        sleep 0.5
     done
     echo "(none)"
 }
 level() { ask title keep.zoom.reset; }
 enabled() { ask enabled "$1"; }
-item() { "$AXPRESS" "$APP_NAME" menuenabled View "$1" 2>/dev/null || echo "(none)"; }
+item() { ask menuenabled View "$1"; }
 # Whether an item of the View menu can be chosen, once AppKit has caught up:
 # it works the menu out again a moment after a change (within a second,
 # measured), not at the change. Opened by hand, a menu is worked out as it
@@ -140,10 +132,53 @@ choose() { item_is "$1" 1 >/dev/null; menu_until View "$1" "$2" level; }  # choo
 # Whether something is on screen: yes, no — or "(silent)" when the tree did
 # not answer at all, which is not a no.
 present() {
-    "$AXPRESS" "$APP_NAME" frame "$1" >/dev/null 2>&1 && { echo yes; return; }
-    [ "$(ask frame "Toggle Sidebar")" = "(none)" ] && { echo "(silent)"; return; }
-    "$AXPRESS" "$APP_NAME" frame "$1" >/dev/null 2>&1 && echo yes || echo no
+    local code start=$SECONDS
+    while :; do
+        "$AXPRESS" "$APP_NAME" frame "$1" >/dev/null 2>&1; code=$?
+        [ "$code" -eq 0 ] && { echo yes; return; }
+        [ "$code" -ne 4 ] && { echo no; return; }
+        [ $((SECONDS - start)) -ge "$SILENCE_S" ] && { echo "(silent)"; return; }
+        sleep 0.5
+    done
 }
+# Started, waited for, and put behind whatever was in front before it.
+FRONT=
+launch() {
+    FRONT=$(osascript -e 'tell application "System Events" to get bundle identifier of first application process whose frontmost is true' 2>/dev/null)
+    : >"$WORK/app.log"
+    KEEP_TRACE=1 "$BIN" >"$WORK/app.log" 2>&1 &
+    APP_PID=$!
+    local waited=0
+    while ! grep -aqE "sidebar +order" "$WORK/app.log" && [ "$waited" -lt 120 ]; do
+        sleep 0.25; waited=$((waited + 1))
+    done
+    sleep 1.5
+    give_back
+    # The window has to be where the accessibility tree can see it. An app in
+    # full screen is a Space of its own, and this window opens on the desktop
+    # behind it, where no question reaches: every check after would fail and
+    # none of them would be a test of anything (03/10/2026, three such runs).
+    # Said, and stopped, rather than counted.
+    if [ "$(present "Toggle Sidebar")" != yes ]; then
+        say "the test's window cannot be seen: is another app in full screen? not run"
+        exit 3
+    fi
+}
+give_back() {
+    if [ -n "$FRONT" ] && [ "$FRONT" != "missing value" ]; then
+        osascript -e "tell application id \"$FRONT\" to activate" >/dev/null 2>&1
+    fi
+}
+quit_app() {
+    kill "$APP_PID" 2>/dev/null
+    local waited=0
+    while kill -0 "$APP_PID" 2>/dev/null && [ "$waited" -lt 40 ]; do sleep 0.25; waited=$((waited + 1)); done
+    APP_PID=
+}
+
+stop_app
+launch
+
 # Where an element begins and ends across, from "x y w h"; nothing when the
 # tree did not say, so that no comparison is made with an empty number.
 left_of() { local x y w h; read -r x y w h <<<"$(ask frame "$1")"; [ -n "$h" ] && echo "$x"; }
@@ -454,6 +489,23 @@ check "and still clear of the toggle" yes "$(before keep.zoom.in "Toggle Sidebar
 # No percentage to watch here: what the press writes down is watched instead.
 press_until keep.zoom.out none written
 check "and they still zoom: smaller from 110% is 100%" none "$(written)"
+
+say ""
+say "a question the app is too busy to answer is asked again, not taken for a no"
+# Last but one, since an app that was stopped is asked nothing more: the
+# section after quits it and opens a fresh one. An app stopped for longer
+# than eight tries take is a machine under load at its worst: no question
+# reaches it, and once it is back the answer is the one it would have given.
+# An item that is not there is still a no, and still at once: the patience
+# is for silence, not for absence.
+kill -STOP "$APP_PID"
+( sleep 15; kill -CONT "$APP_PID" 2>/dev/null ) &
+check "a read made while the app answers nothing for 15 s gets its answer" 1 "$(item "Zoom In")"
+kill -CONT "$APP_PID" 2>/dev/null
+asked=$SECONDS
+gone=$(ask menuenabled View "No Such Item")
+check "an item that is not there is a no, in under ten seconds" "(none) yes" \
+    "$gone $([ $((SECONDS - asked)) -lt 10 ] && echo yes || echo no)"
 
 say ""
 say "100% is the size the person's config gives, in whichever file libghostty finds it"
