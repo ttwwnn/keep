@@ -443,6 +443,12 @@ pub fn to_recycle_bin(path: &Path) -> Result<PathBuf, String> {
     if !full.is_dir() {
         return Err("a pasta não existe mais".into());
     }
+    // The name the Bin will record is the long one: a path given in 8.3
+    // (`C:\Users\RUNNER~1\…`, which TEMP often is) is looked for by both.
+    let long = std::fs::canonicalize(&full).ok().map(|p| {
+        let text = p.to_string_lossy().into_owned();
+        PathBuf::from(text.strip_prefix(r"\\?\").unwrap_or(&text))
+    });
     // A list of paths, each ended by a NUL, the list by another.
     let mut from: Vec<u16> = full.as_os_str().encode_wide().collect();
     from.extend([0, 0]);
@@ -469,7 +475,8 @@ pub fn to_recycle_bin(path: &Path) -> Result<PathBuf, String> {
     if aborted || full.exists() {
         return Err("a pasta continua no lugar".into());
     }
-    Ok(find_in_recycle_bin(&full, started).unwrap_or_else(|| recycle_bin_of(&full)))
+    let names: Vec<&Path> = std::iter::once(full.as_path()).chain(long.as_deref()).collect();
+    Ok(find_in_recycle_bin(&names, started).unwrap_or_else(|| recycle_bin_of(&full)))
 }
 
 #[cfg(not(windows))]
@@ -488,11 +495,12 @@ fn recycle_bin_of(path: &Path) -> PathBuf {
 /// `$I…` twin records its original path, the newest of them. The Bin keeps
 /// one folder per user (their SID) on each drive; only one's own can be read.
 #[cfg_attr(not(windows), allow(dead_code))]
-fn find_in_recycle_bin(original: &Path, since: std::time::SystemTime) -> Option<PathBuf> {
-    let wanted = original.to_string_lossy().replace('/', "\\").to_lowercase();
+fn find_in_recycle_bin(names: &[&Path], since: std::time::SystemTime) -> Option<PathBuf> {
+    let fold = |p: &str| p.replace('/', "\\").trim_end_matches('\\').to_lowercase();
+    let wanted: Vec<String> = names.iter().map(|p| fold(&p.to_string_lossy())).collect();
     let earliest = since.checked_sub(Duration::from_secs(5)).unwrap_or(since);
     let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
-    for user in std::fs::read_dir(recycle_bin_of(original)).ok()?.flatten() {
+    for user in std::fs::read_dir(recycle_bin_of(names.first()?)).ok()?.flatten() {
         let Ok(entries) = std::fs::read_dir(user.path()) else { continue };
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -503,7 +511,7 @@ fn find_in_recycle_bin(original: &Path, since: std::time::SystemTime) -> Option<
             }
             let Ok(data) = std::fs::read(entry.path()) else { continue };
             let Some(recorded) = recorded_path(&data) else { continue };
-            if recorded.replace('/', "\\").to_lowercase() != wanted {
+            if !wanted.contains(&fold(&recorded)) {
                 continue;
             }
             let item = entry.path().with_file_name(format!("$R{rest}"));
