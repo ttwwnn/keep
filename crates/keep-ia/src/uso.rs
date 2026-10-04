@@ -86,14 +86,24 @@ impl Linha {
     /// não está no limite (só 100% da janela de 5 h ou da semanal tira a
     /// conta da fila). Sem medição, ganha o benefício da dúvida.
     pub fn disponivel(&self) -> bool {
+        self.disponivel_em(agora())
+    }
+
+    /// O mesmo, num instante: uma janela cheia cujo recomeço já passou não
+    /// conta mais (a medição é de antes dele), e o "no limite" de uma leitura
+    /// com mais de 20 min também não.
+    pub fn disponivel_em(&self, agora: f64) -> bool {
         if self.account.warning.is_some() {
             return false;
         }
         let Some(l) = &self.reading else { return true };
-        if l.limit_reached {
+        let cheias: Vec<&Janela> =
+            l.windows.iter().filter(|j| (j.label == "5h" || j.label == "7d") && j.percent >= 100.0).collect();
+        if cheias.iter().any(|j| j.resets_at.is_none_or(|r| r > agora)) {
             return false;
         }
-        !l.windows.iter().any(|j| (j.label == "5h" || j.label == "7d") && j.percent >= 100.0)
+        let recente = self.measured_at.is_some_and(|m| agora - m <= 20.0 * 60.0);
+        !(l.limit_reached && recente && cheias.is_empty())
     }
 }
 
@@ -493,7 +503,7 @@ pub fn cli(a: &Args) -> i32 {
 }
 
 #[cfg(test)]
-mod testes {
+pub(crate) mod testes {
     use super::*;
     use crate::contas::testes::{casa, perfis};
     use std::collections::HashMap;
@@ -503,17 +513,17 @@ mod testes {
 
     /// Um pedido que o servidor falso recebeu.
     #[derive(Clone, Debug)]
-    struct Pedido {
-        caminho: String,
-        token: String,
-        conta: Option<String>,
+    pub(crate) struct Pedido {
+        pub(crate) caminho: String,
+        pub(crate) token: String,
+        pub(crate) conta: Option<String>,
     }
 
-    type Resposta = (u16, Vec<(&'static str, String)>, String);
+    pub(crate) type Resposta = (u16, Vec<(&'static str, String)>, String);
 
     /// Os endpoints de consumo nesta máquina: `responde` decide por pedido, e
     /// a lista guarda todos.
-    fn servidor(responde: impl Fn(&Pedido) -> Resposta + Send + 'static) -> Arc<Mutex<Vec<Pedido>>> {
+    pub(crate) fn servidor(responde: impl Fn(&Pedido) -> Resposta + Send + 'static) -> Arc<Mutex<Vec<Pedido>>> {
         let pedidos = Arc::new(Mutex::new(Vec::new()));
         let guarda = pedidos.clone();
         let ouvinte = TcpListener::bind("127.0.0.1:0").unwrap();

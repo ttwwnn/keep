@@ -696,11 +696,14 @@ fn login_roda(lido: Lido) -> bool {
 /// O ambiente de uma aba que roda nesta conta: nada para o login global ou o
 /// GPT principal; a pasta fixa ou o `CODEX_HOME` para as outras. Lido na
 /// hora, porque é para subir uma conversa agora.
+///
+/// Com um gerente externo (o kit), o login global troca de dono quando ele
+/// quer: uma aba presa numa conta roda sempre na pasta própria dela.
 pub fn ambiente(conta: &Conta) -> Result<Vec<(String, String)>, Falta> {
     match conta.engine {
         Motor::Claude => {
             // O global, quando roda, é a casa da conta.
-            if conta.global() && login_roda(credencial::global()) {
+            if conta.global() && !gerente_externo() && login_roda(credencial::global()) {
                 return Ok(Vec::new());
             }
             for a in &conta.armazens {
