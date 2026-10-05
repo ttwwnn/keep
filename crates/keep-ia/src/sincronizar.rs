@@ -1,6 +1,7 @@
 //! Seguir a ordem: a aba que segue a fila de prioridade e está numa conta
 //! que não pode mais trabalhar (no limite, com o login recusado, parada na
-//! tela de limite) vai para a primeira conta disponível da fila — quando está
+//! tela de limite) vai para a primeira conta do Claude disponível da fila (o
+//! GPT nunca entra sozinho: só escolhido no menu da aba) — quando está
 //! livre. E a que está numa conta mais abaixo na fila que a primeira
 //! disponível sobe para ela, depois de dois minutos sem uso.
 //!
@@ -119,7 +120,9 @@ pub fn rodada() -> Value {
         c.roda && !bloqueada && medida.is_none_or(|l| l.disponivel_em(t)) && contas::ambiente(c).is_ok()
     };
     let posicao = |chave: &str| contas.iter().position(|c| c.e(chave));
-    let alvo: Option<&Conta> = contas.iter().find(|c| livre(c));
+    // Só contas do Claude: a aba que segue a ordem nunca vai sozinha para o
+    // GPT; sem nenhuma do Claude livre, ela espera ("todas-no-limite").
+    let alvo: Option<&Conta> = contas.iter().find(|c| c.engine == contas::Motor::Claude && livre(c));
 
     let mut alteradas = Vec::new();
     let mut pendentes = Vec::new();

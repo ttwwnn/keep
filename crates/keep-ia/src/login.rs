@@ -26,7 +26,9 @@ use crate::{caminhos, daemon, programas, tela};
 
 // ------------------------------------------------------------ abrir abas
 
-/// Uma aba nova em `ws`, do tamanho de uma vizinha, rodando `args` do `keep`.
+/// Uma aba nova em `ws`, do tamanho de uma vizinha, rodando `args` do `keep`
+/// e o número dela (`--fechar-aba=<ws>:<n>`): o login que dá certo fecha a
+/// própria aba, que só existia para ele.
 pub fn abre_aba_com(ws: &str, args: &[String]) -> Result<u32, String> {
     let r = daemon::listar()?;
     if !r.abas.iter().any(|a| a.ws == ws) {
@@ -55,7 +57,9 @@ pub fn abre_aba_com(ws: &str, args: &[String]) -> Result<u32, String> {
         Some(p) => PathBuf::from(p),
         None => std::env::current_exe().map_err(|e| e.to_string())?,
     };
-    let s = Subida { programa: eu.to_string_lossy().into_owned(), args: args.to_vec(), ..Default::default() };
+    let mut args = args.to_vec();
+    args.push(format!("--fechar-aba={ws}:{tab}"));
+    let s = Subida { programa: eu.to_string_lossy().into_owned(), args, ..Default::default() };
     match trocar::digita(ws, tab, &linha::linha(sintaxe, &s), true) {
         Ok(true) => Ok(tab),
         Ok(false) => Err("o comando não apareceu na aba nova".into()),
@@ -490,6 +494,23 @@ fn login_gpt(apelido_dado: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
+/// Fecha a aba que o Keep abriu só para este login (`<ws>:<n>`), depois de
+/// alguns segundos para ler o resultado. Só a aba dita, e só se ela ainda
+/// existe; qualquer falha deixa a aba aberta, como antes.
+pub(crate) fn fecha_a_propria_aba(alvo: Option<&str>) {
+    let Some((ws, n)) = alvo.and_then(|a| a.rsplit_once(':')) else { return };
+    let Ok(n) = n.parse::<u32>() else { return };
+    if !daemon::listar().ok().is_some_and(|r| r.aba(ws, n).is_some_and(|a| !a.info.finished)) {
+        return;
+    }
+    let espera = std::env::var("KEEP_IA_FECHAR_EM_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(4000);
+    println!("\nEsta aba fecha sozinha em {} s.", espera / 1000);
+    let _ = std::io::stdout().flush();
+    std::thread::sleep(Duration::from_millis(espera));
+    // Fechar a aba encerra este processo também: é a última coisa que ele faz.
+    let _ = daemon::fecha_aba(ws, n);
+}
+
 /// `keep ia login claude|gpt …` (interativo, numa aba).
 pub fn cli_login(a: &crate::cli::Args) -> i32 {
     let motor = a.posicoes.get(1).map(String::as_str).unwrap_or("");
@@ -528,6 +549,7 @@ pub fn cli_login(a: &crate::cli::Args) -> i32 {
     };
     match resultado {
         Ok(()) => {
+            fecha_a_propria_aba(a.opcao("fechar-aba"));
             println!("\nPode fechar esta aba.");
             0
         }

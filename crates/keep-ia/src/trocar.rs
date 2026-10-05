@@ -112,14 +112,16 @@ fn destino(p: &Pedido, contas: &[Conta]) -> Result<Destino, Recusa> {
             })?;
             return Ok(Destino { escolha: p.para.clone(), conta: c.clone(), ambiente });
         }
+        // Seguir a ordem fica no Claude: o GPT só quando a pessoa o escolhe
+        // no menu da aba, nunca por conta própria.
         let livres = disponiveis();
         let mut primeira_que_roda: Option<(&Conta, Vec<(String, String)>)> = None;
-        for c in contas.iter().filter(|c| c.roda) {
+        for c in contas.iter().filter(|c| c.roda && c.engine == Motor::Claude) {
             let Ok(ambiente) = contas::ambiente(c) else { continue };
             if livres.contains(&c.key) {
                 return Ok(Destino { escolha: p.para.clone(), conta: c.clone(), ambiente });
             }
-            if primeira_que_roda.is_none() && c.engine == Motor::Claude {
+            if primeira_que_roda.is_none() {
                 primeira_que_roda = Some((c, ambiente));
             }
         }
@@ -465,7 +467,36 @@ fn subida(d: &Destino, ident: Option<&str>, parametros: &[String], contexto: Opt
             .iter()
             .map(|s| s.to_string())
             .collect(),
+        pasta: None,
     }
+}
+
+/// Onde subir a IA quando a pasta da aba sumiu (uma worktree apagada): a
+/// pasta em que a conversa do Claude começou, se ainda existe, ou a casa.
+/// Com a pasta da aba de pé, nenhuma — sobe onde a aba está.
+fn pasta_de_partida(a: &daemon::Aba, conversa_claude: Option<&str>) -> Option<String> {
+    let cwd = a.info.cwd.trim();
+    if cwd.is_empty() || Path::new(cwd).is_dir() {
+        return None;
+    }
+    conversa_claude
+        .and_then(pasta_onde_comecou)
+        .filter(|p| Path::new(p).is_dir())
+        .or_else(|| Some(caminhos::casa().to_string_lossy().into_owned()))
+}
+
+/// A pasta da primeira fala da conversa `id` do Claude: é por ela que o
+/// `--resume` acha o transcrito.
+fn pasta_onde_comecou(id: &str) -> Option<String> {
+    use std::io::{BufRead, BufReader, Read};
+    let t = sessoes::transcritos_claude(id).into_iter().next()?;
+    let f = std::fs::File::open(t).ok()?;
+    BufReader::new(f.take(4 * 1024 * 1024)).lines().map_while(Result::ok).find_map(|l| {
+        if !l.contains("\"cwd\"") {
+            return None;
+        }
+        serde_json::from_str::<serde_json::Value>(&l).ok()?.get("cwd")?.as_str().map(str::to_string)
+    })
 }
 
 fn sintaxe_da_aba(a: &daemon::Aba, vinculo_shell: Option<u32>) -> linha::Sintaxe {
@@ -829,7 +860,8 @@ pub fn trocar(p: &Pedido) -> Result<String, Recusa> {
         .cloned()
         .or_else(|| (prog.agente() == Some(agente_alvo)).then(|| parametros_agora.clone().unwrap_or_default()))
         .unwrap_or_default();
-    let s = subida(&destino, ident.as_deref(), &parametros, contexto_arq.as_deref());
+    let mut s = subida(&destino, ident.as_deref(), &parametros, contexto_arq.as_deref());
+    s.pasta = pasta_de_partida(&a, anterior_claude.as_deref());
     let texto = linha::linha(sintaxe, &s);
     if !digita(&p.ws, p.aba, &texto, true)? {
         return Err(Recusa::nova("tela-inesperada", "O comando não apareceu inteiro na aba; nada foi executado."));
@@ -974,7 +1006,9 @@ mod ponta_a_ponta {
         let codex = ia_da_aba(tab);
         assert_eq!((codex.agente.as_str(), codex.conta.as_str(), codex.atual.as_deref()), ("codex", "gpt:principal", Some("gpt:principal")));
 
-        // Codex → seguir a ordem: volta ao Claude da frente da fila.
+        // Codex → seguir a ordem: volta ao Claude da frente da fila, mesmo
+        // com o GPT no topo dela (o GPT nunca entra sozinho).
+        std::fs::write(c.raiz.join(".claude/contas/.ordem"), "gpt:principal\nclaude:ana\nclaude:bia\n").unwrap();
         let feito = trocar(&p("claude:ordem", false)).unwrap();
         assert_eq!(feito, "abriu conversa nova em Claude · ana (seguindo a ordem) com o contexto da tarefa anterior");
         assert!(tela_tem("T", tab, "escolha=claude:ordem fixa= home="));
@@ -1004,5 +1038,83 @@ mod ponta_a_ponta {
             }
             std::env::remove_var("PS1");
         }
+    }
+
+    #[test]
+    fn a_aba_aberta_para_o_login_fecha_quando_ele_da_certo() {
+        let c = casa("fecha-login");
+        let sock = daemon(&c.raiz);
+        let shell_antes = std::env::var_os("SHELL");
+        // SAFETY: a casa (e a trava) está de pé.
+        unsafe {
+            std::env::set_var("KEEP_SOCKET", &sock);
+            std::env::set_var("SHELL", "/bin/sh");
+            std::env::set_var("PS1", "$ ");
+            // No lugar do `keep`: mostra a linha que o login receberia.
+            std::env::set_var("KEEP_IA_KEEP_BIN", "/bin/echo");
+            std::env::set_var("KEEP_IA_FECHAR_EM_MS", "0");
+        }
+        let vizinha = daemon::nova_aba("T", Some(&c.raiz.to_string_lossy()), 120, 30).unwrap();
+        assert!(tela_tem("T", vizinha, "$"), "o prompt do shell");
+        let tab = crate::login::abre_aba_com("T", &["ia".into(), "login".into(), "claude".into()]).unwrap();
+        let marca = format!("ia login claude --fechar-aba=T:{tab}");
+        assert!(tela_tem("T", tab, &marca), "{}", daemon::tela("T", tab).unwrap_or_default());
+        // Outra aba nunca: só a dita, e só se existe.
+        crate::login::fecha_a_propria_aba(Some("T:999"));
+        crate::login::fecha_a_propria_aba(Some(&format!("T:{tab}")));
+        let fechou = daemon::espera(Duration::from_secs(5), Duration::from_millis(100), || {
+            let r = daemon::listar().ok()?;
+            r.aba("T", tab).is_none_or(|a| a.info.finished).then_some(())
+        });
+        assert!(fechou.is_some(), "a aba do login continua aberta");
+        assert!(daemon::listar().unwrap().aba("T", vizinha).is_some_and(|a| !a.info.finished), "a vizinha fechou junto");
+        // SAFETY: a casa (e a trava) está de pé.
+        unsafe {
+            match shell_antes {
+                Some(s) => std::env::set_var("SHELL", s),
+                None => std::env::remove_var("SHELL"),
+            }
+            std::env::remove_var("PS1");
+            std::env::remove_var("KEEP_IA_KEEP_BIN");
+            std::env::remove_var("KEEP_IA_FECHAR_EM_MS");
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod pasta_de_partida {
+    use super::*;
+    use keep_proto::TabInfo;
+
+    fn aba(cwd: &Path) -> daemon::Aba {
+        daemon::Aba { ws: "W".into(), info: TabInfo { id: 1, cwd: cwd.to_string_lossy().into_owned(), ..TabInfo::default() } }
+    }
+
+    #[test]
+    fn a_pasta_que_sumiu_vira_a_da_conversa_ou_a_casa() {
+        let c = crate::contas::testes::casa("pasta-de-partida");
+        let viva = c.raiz.join("projeto");
+        let worktree = c.raiz.join("wt-apagada");
+        std::fs::create_dir_all(&viva).unwrap();
+        let projetos = c.raiz.join(".claude/projects/-x");
+        std::fs::create_dir_all(&projetos).unwrap();
+        std::fs::write(
+            projetos.join("c-1.jsonl"),
+            format!(
+                "{{\"type\":\"summary\"}}\n{{\"type\":\"user\",\"cwd\":\"{}\"}}\n{{\"type\":\"user\",\"cwd\":\"{}\"}}\n",
+                viva.display(),
+                worktree.display()
+            ),
+        )
+        .unwrap();
+        // A pasta da aba existe: sobe onde está.
+        assert_eq!(pasta_de_partida(&aba(&viva), Some("c-1")), None);
+        // Sumiu: a pasta em que a conversa começou.
+        assert_eq!(pasta_de_partida(&aba(&worktree), Some("c-1")), Some(viva.to_string_lossy().into_owned()));
+        // Sem conversa, ou com a pasta dela também apagada: a casa.
+        let casa = caminhos::casa().to_string_lossy().into_owned();
+        assert_eq!(pasta_de_partida(&aba(&worktree), None), Some(casa.clone()));
+        std::fs::remove_dir_all(&viva).unwrap();
+        assert_eq!(pasta_de_partida(&aba(&worktree), Some("c-1")), Some(casa));
     }
 }

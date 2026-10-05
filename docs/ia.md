@@ -89,7 +89,12 @@ decisão. O rodapé "Consumo de IA" mostra quanto resta, ao lado das contas: `ke
 
 - O daemon diz o processo da frente de cada aba (`List3`): vínculo `exato`. Daemon antigo, sem
   `List3`: os shells filhos do keepd casados com as abas pelo título da conversa do Claude, pelo
-  tamanho do terminal, pelo programa e pela pasta, só onde o par é único: vínculo `provavel`. Digitar
+  tamanho do terminal, pelo programa e pela pasta, só onde o par é único: vínculo `provavel`. O
+  `KEEP_WORKSPACE` do ambiente do shell desempata (primeiro com ele, depois sem: uma aba movida de
+  workspace leva no shell o nome do antigo). O título igual ao de uma conversa do shell vale mais que o
+  programa que o daemon antigo diz: ele diz `zsh` de uma aba em que o Claude roda com um filho na
+  frente (um servidor MCP, um php), e nesse caso a IA da aba é o Claude ou Codex que segura o
+  terminal dentro do shell. Digitar
   numa aba vai sempre pelo daemon (a aba certa); o vínculo só diz de que processo ler a conta e a
   conversa, e o id da conversa vem, de preferência, da própria tela ao sair do programa.
 - Conta da aba = ambiente do processo (`KEEP_IA_ESCOLHA`, ou o `CLAUDE_KIT_CONTA` do kit;
@@ -108,7 +113,9 @@ decisão. O rodapé "Consumo de IA" mostra quanto resta, ao lado das contas: `ke
 `trocar` (aba, para): confere a tela (trabalhando, diálogo, trabalho em segundo plano = `ocupada`, a
 não ser com `--interromper`), sai do programa (`/exit` ou `/quit`), espera o shell, e digita a linha
 do shell da aba (zsh/bash/fish, PowerShell, cmd) com o ambiente da conta e a retomada
-(`claude --resume <id>` / `codex resume <id>`). Mudar de motor abre conversa nova no outro, com o
+(`claude --resume <id>` / `codex resume <id>`). Se a pasta da aba sumiu (uma worktree apagada), a
+linha entra antes na pasta em que a conversa do Claude começou (ou na casa): a IA não sobe numa pasta
+que não existe. Mudar de motor abre conversa nova no outro, com o
 contexto visível da anterior num arquivo privado. Conta fixa sem login = `precisa-login`: a conversa
 não sai, abre-se a aba do login, e a troca acontece sozinha quando ele termina.
 
@@ -116,15 +123,18 @@ não sai, abre-se a aba do login, e a troca acontece sozinha quando ele termina.
 
 Aba nova rodando `keep ia login claude|gpt`: cria o armazém (pasta fixa nova, ou `CODEX_HOME` novo),
 roda o login do Claude Code/Codex nele e, quando o login aparece, grava o `keep.json`, põe a conta no
-fim da ordem e diz que terminou.
+fim da ordem e diz que terminou. A aba existe só para o login: quando ele dá certo, ela se fecha
+sozinha 4 s depois (`--fechar-aba=<ws>:<n>`, que o Keep acrescenta ao abri-la); se falha, fica aberta
+com o motivo.
 
 ### Seguir a ordem
 
 "Seguir a ordem de prioridade" no menu manda sempre `claude:ordem`; o núcleo escolhe a primeira conta
-disponível da fila (Claude ou GPT) em que uma aba pode rodar, e a aba leva a marca de que segue a
-ordem. `sincronizar` (o app chama a cada 30 s): a aba que segue a ordem e está numa conta que não pode
-trabalhar (no limite, login recusado, parada na tela de limite) vai para a primeira disponível da fila,
-quando está livre; a que está numa conta abaixo da primeira disponível sobe para ela depois de 2 min
+do Claude disponível da fila em que uma aba pode rodar, e a aba leva a marca de que segue a ordem. O
+GPT nunca entra sozinho: só quando a pessoa o escolhe no menu da aba. Sem nenhuma conta do Claude
+disponível, a aba fica onde está e aparece como pendente (`todas-no-limite`). `sincronizar` (o app chama a cada 30 s): a aba que segue a ordem e está numa conta que não pode
+trabalhar (no limite, login recusado, parada na tela de limite) vai para a primeira do Claude disponível da
+fila, quando está livre; a que está numa conta abaixo dela sobe para ela depois de 2 min
 sem uso. No máximo 3 abas por rodada; uma aba que recusou espera 30 s (5 min se for trabalho em
 segundo plano). Uma janela cheia cujo recomeço já passou não conta.
 

@@ -108,15 +108,28 @@ pub fn conversa_do_processo(pid: u32, agente: &str) -> Option<String> {
 /// Toda aba com Claude ou Codex vivo, a partir de uma lista do daemon.
 pub fn das_abas(r: &Retrato, contas: &[Conta]) -> Vec<IaAba> {
     let vinculos = vinculo::vincular(r);
+    let mut lista: Option<Vec<processos::Processo>> = None;
     let mut saida = Vec::new();
     for a in &r.abas {
         if a.info.finished {
             continue;
         }
         let prog = tela::programa(&a.info.command);
-        let Some(agente) = prog.agente() else { continue };
         let Some(v) = vinculos.get(&(a.ws.clone(), a.info.id)) else { continue };
-        let (conta, atual) = conta_do_processo(v.frente, agente, contas);
+        let (agente, pid) = match prog.agente() {
+            Some(agente) => (agente, v.frente),
+            // O keepd antigo diz "zsh" de uma aba em que a IA roda com um filho
+            // dela na frente (um servidor MCP, um php): vale a IA do shell.
+            None if !v.exato && matches!(prog, tela::Programa::Shell(_)) => {
+                let lista = lista.get_or_insert_with(processos::todos);
+                match ia_na_frente(lista, v.shell, v.frente) {
+                    Some(achada) => achada,
+                    None => continue,
+                }
+            }
+            None => continue,
+        };
+        let (conta, atual) = conta_do_processo(pid, agente, contas);
         saida.push(IaAba {
             workspace: a.ws.clone(),
             aba: a.info.id,
@@ -124,11 +137,40 @@ pub fn das_abas(r: &Retrato, contas: &[Conta]) -> Vec<IaAba> {
             conta,
             atual,
             vinculo: if v.exato { "exato" } else { "provavel" }.into(),
-            pid: v.frente,
-            conversa: conversa_do_processo(v.frente, agente),
+            pid,
+            conversa: conversa_do_processo(pid, agente),
         });
     }
     saida
+}
+
+/// O Claude ou o Codex debaixo de `shell` que segura o terminal: ele mesmo
+/// na frente, ou um ancestral do processo da frente. Com o shell no prompt,
+/// nenhum.
+fn ia_na_frente(lista: &[processos::Processo], shell: u32, frente: u32) -> Option<(&'static str, u32)> {
+    if frente == shell {
+        return None;
+    }
+    let debaixo = processos::descendentes_em(lista, shell);
+    if !debaixo.contains(&frente) {
+        return None;
+    }
+    // Sobe da frente até o shell: o primeiro Claude ou Codex do caminho.
+    let mut atual = frente;
+    for _ in 0..64 {
+        if atual == shell || atual == 0 {
+            return None;
+        }
+        let p = lista.iter().find(|p| p.pid == atual)?;
+        let nomes = [Some(p.nome.clone()), processos::programa(atual)];
+        for n in nomes.into_iter().flatten() {
+            if let Some(agente) = tela::programa(&n).agente() {
+                return Some((agente, atual));
+            }
+        }
+        atual = p.ppid;
+    }
+    None
 }
 
 /// `keep ia abas`: a lista do daemon e a IA de cada aba.
@@ -142,6 +184,20 @@ pub fn ler() -> Result<(Retrato, Vec<IaAba>), String> {
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    #[test]
+    fn a_ia_do_shell_e_a_que_segura_o_terminal() {
+        // Números altos: nenhum processo de verdade.
+        let p = |pid: u32, ppid: u32, nome: &str| processos::Processo { pid, ppid, nome: nome.into(), inicio_ms: 0 };
+        let lista = vec![p(4_000_010, 1, "zsh"), p(4_000_011, 4_000_010, "claude"), p(4_000_012, 4_000_011, "php")];
+        assert_eq!(ia_na_frente(&lista, 4_000_010, 4_000_012), Some(("claude", 4_000_011)));
+        assert_eq!(ia_na_frente(&lista, 4_000_010, 4_000_011), Some(("claude", 4_000_011)));
+        // O shell no prompt, ou uma frente de fora da árvore dele: nenhuma.
+        assert_eq!(ia_na_frente(&lista, 4_000_010, 4_000_010), None);
+        assert_eq!(ia_na_frente(&lista, 4_000_010, 4_000_099), None);
+        let sem_ia = vec![p(4_000_010, 1, "zsh"), p(4_000_013, 4_000_010, "vim")];
+        assert_eq!(ia_na_frente(&sem_ia, 4_000_010, 4_000_013), None);
+    }
 
     #[test]
     fn chaves() {

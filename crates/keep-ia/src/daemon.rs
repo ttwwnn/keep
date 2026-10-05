@@ -177,6 +177,14 @@ pub fn nova_aba(ws: &str, cwd: Option<&str>, cols: u16, rows: u16) -> Result<u32
     }
 }
 
+/// Fecha uma aba (o shell dela e o que roda nele recebem o fim do terminal).
+pub fn fecha_aba(ws: &str, tab: u32) -> Result<(), String> {
+    match pergunta(ClientMsg::CloseTab { workspace: ws.into(), tab })? {
+        ServerMsg::Ok => Ok(()),
+        _ => Err("resposta inesperada do Keep".into()),
+    }
+}
+
 /// Um teclado ligado a uma aba: o que se manda chega ao programa dela como
 /// se tivesse sido digitado. Entra com o tamanho que a aba já tem, para não
 /// mexer nele; sai ao ser solto.

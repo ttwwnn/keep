@@ -34,6 +34,9 @@ pub struct Subida {
     pub args: Vec<String>,
     pub definir: Vec<(String, String)>,
     pub tirar: Vec<String>,
+    /// Entrar nesta pasta antes: a da aba sumiu (uma worktree apagada) e o
+    /// programa não sobe numa pasta que não existe.
+    pub pasta: Option<String>,
 }
 
 fn simples(s: &str) -> bool {
@@ -78,7 +81,11 @@ pub fn linha(sx: Sintaxe, s: &Subida) -> String {
             }
             partes.push(q(&s.programa));
             partes.extend(s.args.iter().map(|a| q(a)));
-            partes.join(" ")
+            let comando = partes.join(" ");
+            match &s.pasta {
+                Some(p) => format!("cd {} && {comando}", q(p)),
+                None => comando,
+            }
         }
         Sintaxe::PowerShell => {
             let mut antes: Vec<String> = s.definir.iter().map(|(n, v)| format!("$env:{n}={}", powershell(v))).collect();
@@ -89,13 +96,15 @@ pub fn linha(sx: Sintaxe, s: &Subida) -> String {
                 comando.push_str(&powershell(a));
             }
             let depois: Vec<String> = s.definir.iter().map(|(n, _)| format!("$env:{n}=$null")).collect();
-            let mut partes = antes;
+            let mut partes: Vec<String> = s.pasta.iter().map(|p| format!("Set-Location -LiteralPath {}", powershell(p))).collect();
+            partes.extend(antes);
             partes.push(comando);
             partes.extend(depois);
             partes.join("; ")
         }
         Sintaxe::Cmd => {
-            let mut partes: Vec<String> = s.definir.iter().map(|(n, v)| format!("set \"{n}={v}\"")).collect();
+            let mut partes: Vec<String> = s.pasta.iter().map(|p| format!("cd /d \"{p}\"")).collect();
+            partes.extend(s.definir.iter().map(|(n, v)| format!("set \"{n}={v}\"")));
             partes.extend(tirar.iter().map(|t| format!("set \"{t}=\"")));
             let mut comando = cmd(&s.programa);
             for a in &s.args {
@@ -290,7 +299,18 @@ mod testes {
                 ("CLAUDE_SECURESTORAGE_CONFIG_DIR".into(), "/x/fixas/k-1".into()),
             ],
             tirar: v(&["CODEX_HOME", "CLAUDE_SECURESTORAGE_CONFIG_DIR"]),
+            pasta: None,
         }
+    }
+
+    #[test]
+    fn a_pasta_que_sumiu_vira_um_cd_antes() {
+        let mut s = subida();
+        s.pasta = Some("/Users/a b".into());
+        assert!(linha(Sintaxe::Posix, &s).starts_with("cd '/Users/a b' && env -u CODEX_HOME "), "{}", linha(Sintaxe::Posix, &s));
+        assert!(linha(Sintaxe::Fish, &s).starts_with("cd '/Users/a b' && env "));
+        assert!(linha(Sintaxe::PowerShell, &s).starts_with("Set-Location -LiteralPath '/Users/a b'; $env:KEEP_IA_ESCOLHA="));
+        assert!(linha(Sintaxe::Cmd, &s).starts_with("cd /d \"/Users/a b\" & set "));
     }
 
     #[test]

@@ -61,7 +61,7 @@ fn provavel(r: &Retrato) -> HashMap<(String, u32), Vinculo> {
     // Um filho sem pasta legível acabou de morrer (ou nem é do usuário): não
     // é shell de aba, e contado como "pode ser qualquer uma" tiraria o par de
     // quem é.
-    let conchas: Vec<Concha> = lista
+    let mut conchas: Vec<Concha> = lista
         .iter()
         .filter(|p| p.ppid == keepd && p.pid != keepd)
         .map(|p| Concha::de(p, &lista))
@@ -70,19 +70,25 @@ fn provavel(r: &Retrato) -> HashMap<(String, u32), Vinculo> {
     if conchas.is_empty() {
         return HashMap::new();
     }
-    if conchas.iter().any(|c| c.pede_titulos) {
-        let vivas = crate::worktrees::sessoes::vivas_em(&crate::worktrees::sessoes::pasta_padrao());
-        let projetos = crate::caminhos::claude().join("projects");
-        let mut conchas = conchas;
-        for c in &mut conchas {
-            let debaixo = processos::descendentes_em(&lista, c.pid);
-            for s in vivas.iter().filter(|s| debaixo.contains(&s.pid)) {
-                if let Some(tr) = crate::worktrees::sessoes::transcrito_de(&s.id, &projetos) {
-                    c.titulos.extend(crate::worktrees::sessoes::titulos_do_transcrito(&tr));
-                }
+    // O workspace que o keepd pôs no ambiente do shell só vale se ainda
+    // existe com esse nome: um renomeado deixaria o shell sem aba nenhuma.
+    let vivos: HashSet<&str> = r.abas.iter().map(|a| a.ws.as_str()).collect();
+    for c in &mut conchas {
+        if c.workspace.as_deref().is_some_and(|w| !vivos.contains(w)) {
+            c.workspace = None;
+        }
+    }
+    // Os títulos de todo shell com uma conversa do Claude debaixo, esteja
+    // ele na frente ou não: um filho dele (MCP, php) pode segurar o terminal.
+    let vivas = crate::worktrees::sessoes::vivas_em(&crate::worktrees::sessoes::pasta_padrao());
+    let projetos = crate::caminhos::claude().join("projects");
+    for c in &mut conchas {
+        let debaixo = processos::descendentes_em(&lista, c.pid);
+        for s in vivas.iter().filter(|s| debaixo.contains(&s.pid)) {
+            if let Some(tr) = crate::worktrees::sessoes::transcrito_de(&s.id, &projetos) {
+                c.titulos.extend(crate::worktrees::sessoes::titulos_do_transcrito(&tr));
             }
         }
-        return casa(r, &conchas);
     }
     casa(r, &conchas)
 }
@@ -90,8 +96,10 @@ fn provavel(r: &Retrato) -> HashMap<(String, u32), Vinculo> {
 fn casa(r: &Retrato, conchas: &[Concha]) -> HashMap<(String, u32), Vinculo> {
     let abas: Vec<&crate::daemon::Aba> = r.abas.iter().filter(|a| !a.info.finished).collect();
     let mut pares: HashMap<usize, usize> = HashMap::new();
-    for modo in [Modo::Titulo, Modo::Base] {
-        casamento_unico(conchas, &abas, modo, &mut pares);
+    // O workspace do ambiente primeiro e depois sem ele: uma aba movida
+    // para outro workspace leva no shell o nome do antigo.
+    for (modo, pelo_workspace) in [(Modo::Titulo, true), (Modo::Titulo, false), (Modo::Base, true), (Modo::Base, false)] {
+        casamento_unico(conchas, &abas, modo, pelo_workspace, &mut pares);
     }
     pares
         .into_iter()
@@ -111,9 +119,11 @@ struct Concha {
     /// O processo da frente, pelo nome do sistema e pela linha de comando.
     programas: Vec<Programa>,
     pasta: Option<String>,
+    /// O `KEEP_WORKSPACE` do ambiente do shell: o workspace em que o keepd o
+    /// abriu.
+    workspace: Option<String>,
     /// Os títulos das conversas do Claude que rodam neste shell.
     titulos: BTreeSet<String>,
-    pede_titulos: bool,
 }
 
 impl Concha {
@@ -145,9 +155,14 @@ impl Concha {
             frente,
             colunas: terminal.map(|t| t.colunas).unwrap_or(0),
             linhas: terminal.map(|t| t.linhas).unwrap_or(0),
-            pede_titulos: programas.contains(&Programa::Claude),
             programas,
             pasta,
+            // O macOS esconde o ambiente dos binários do sistema (o /bin/zsh):
+            // vale o do shell, ou o do processo da frente, ou o de um filho.
+            workspace: [p.pid, frente]
+                .into_iter()
+                .chain(debaixo.iter().copied())
+                .find_map(|pid| processos::variavel(pid, "KEEP_WORKSPACE").filter(|w| !w.is_empty())),
             titulos: BTreeSet::new(),
         }
     }
@@ -182,23 +197,36 @@ fn mesma_pasta(a: &str, b: &str) -> bool {
     limpa(a) == limpa(b)
 }
 
-fn compativel(c: &Concha, a: &crate::daemon::Aba, modo: Modo) -> bool {
+fn compativel(c: &Concha, a: &crate::daemon::Aba, modo: Modo, pelo_workspace: bool) -> bool {
     let t = &a.info;
     if t.finished {
+        return false;
+    }
+    if pelo_workspace && c.workspace.as_deref() != Some(a.ws.as_str()) {
         return false;
     }
     if c.colunas != 0 && t.cols != 0 && (c.colunas, c.linhas) != (t.cols, t.rows) {
         return false;
     }
     let comando = programa(&t.command);
-    if comando != Programa::Desconhecido && !c.programas.is_empty() && !c.programas.contains(&comando) {
+    // O título de uma conversa deste shell é a identidade: o keepd antigo às
+    // vezes diz "zsh" de uma aba em que o Claude roda (o grupo da frente é
+    // um subshell da função `claude`), e isso não desmente o título.
+    let titulo = !c.titulos.is_empty() && c.titulos.contains(&titulo_limpo(&t.title));
+    // E o processo da frente pode ser um filho dele (um servidor MCP, um
+    // php que ele rodou), não o próprio Claude.
+    if comando != Programa::Desconhecido
+        && !c.programas.is_empty()
+        && !c.programas.contains(&comando)
+        && !(modo == Modo::Titulo && titulo)
+    {
         return false;
     }
     if !t.cwd.is_empty() && c.pasta.as_deref().is_some_and(|p| !mesma_pasta(&t.cwd, p)) {
         return false;
     }
     match modo {
-        Modo::Titulo => !c.titulos.is_empty() && c.titulos.contains(&titulo_limpo(&t.title)),
+        Modo::Titulo => titulo,
         Modo::Base => true,
     }
 }
@@ -209,6 +237,7 @@ fn casamento_unico(
     conchas: &[Concha],
     abas: &[&crate::daemon::Aba],
     modo: Modo,
+    pelo_workspace: bool,
     pares: &mut HashMap<usize, usize>,
 ) {
     let mut livres_c: Vec<usize> = (0..conchas.len()).filter(|c| !pares.contains_key(c)).collect();
@@ -217,7 +246,7 @@ fn casamento_unico(
     loop {
         let compat: HashMap<usize, Vec<usize>> = livres_c
             .iter()
-            .map(|&c| (c, livres_a.iter().copied().filter(|&a| compativel(&conchas[c], abas[a], modo)).collect()))
+            .map(|&c| (c, livres_a.iter().copied().filter(|&a| compativel(&conchas[c], abas[a], modo, pelo_workspace)).collect()))
             .collect();
         let achado = livres_c.iter().copied().find_map(|c| {
             let [a] = compat[&c][..] else { return None };
@@ -326,6 +355,59 @@ mod testes {
         assert_eq!(v.get(&("W".into(), 1)), Some(&Vinculo { shell: sa, frente: sa, exato: false }), "{v:?}");
         assert_eq!(v.get(&("W".into(), 2)), Some(&Vinculo { shell: sb, frente: sb, exato: false }), "{v:?}");
         assert_eq!(v.len(), 2, "a aba sem shell fica sem vínculo: {v:?}");
+    }
+
+    fn concha(pid: u32, ws: Option<&str>, programas: Vec<Programa>, titulos: &[&str]) -> Concha {
+        Concha {
+            pid,
+            frente: pid + 1,
+            colunas: 0,
+            linhas: 0,
+            programas,
+            pasta: Some("/p".into()),
+            workspace: ws.map(str::to_string),
+            titulos: titulos.iter().map(|t| t.to_string()).collect(),
+        }
+    }
+
+    fn aba_com(ws: &str, id: u32, command: &str, title: &str) -> Aba {
+        let info = TabInfo { id, cwd: "/p".into(), command: command.into(), title: title.into(), ..TabInfo::default() };
+        Aba { ws: ws.into(), info }
+    }
+
+    fn pares(conchas: &[Concha], abas: &[Aba]) -> Vec<(u32, String, u32)> {
+        let r = Retrato { daemon: DaemonInfo { pid: 1, started_ms: 0 }, abas: abas.to_vec(), exato: false };
+        let mut v: Vec<_> = casa(&r, conchas).into_iter().map(|((ws, id), v)| (v.shell, ws, id)).collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn o_titulo_da_conversa_vence_o_zsh_que_o_keepd_antigo_diz() {
+        // O Claude roda com um php na frente; o keepd antigo diz "zsh" da aba.
+        let c = vec![
+            concha(10, None, vec![Programa::Outro("php".into())], &["Fechamento de setembro"]),
+            concha(20, None, vec![Programa::Claude], &["Outra conversa"]),
+        ];
+        let abas = vec![aba_com("W", 1, "zsh", "✳ Fechamento de setembro"), aba_com("W", 2, "claude", "✳ Outra conversa")];
+        assert_eq!(pares(&c, &abas), vec![(10, "W".into(), 1), (20, "W".into(), 2)]);
+        // Sem o título, o programa diferente segue desmentindo.
+        let c = vec![concha(10, None, vec![Programa::Outro("php".into())], &[])];
+        assert_eq!(pares(&c, &[aba_com("W", 1, "zsh", "✳ Fechamento de setembro")]), vec![]);
+    }
+
+    #[test]
+    fn o_workspace_do_ambiente_desempata_e_a_aba_movida_ainda_casa() {
+        // Iguais em tudo, menos no workspace em que o keepd abriu o shell.
+        let c = vec![
+            concha(10, Some("A"), vec![Programa::Claude], &[]),
+            concha(20, Some("B"), vec![Programa::Claude], &[]),
+        ];
+        let abas = vec![aba_com("A", 1, "claude", ""), aba_com("B", 1, "claude", "")];
+        assert_eq!(pares(&c, &abas), vec![(10, "A".into(), 1), (20, "B".into(), 1)]);
+        // A aba foi movida para C: o shell ainda diz A, e casa assim mesmo.
+        let c = vec![concha(10, Some("A"), vec![Programa::Claude], &["Movida"])];
+        assert_eq!(pares(&c, &[aba_com("C", 4, "claude", "✳ Movida")]), vec![(10, "C".into(), 4)]);
     }
 
     #[test]
