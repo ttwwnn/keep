@@ -16,9 +16,18 @@
 //!
 //! Duas perguntas ao OpenRouter: `/api/v1/credits` (o que a conta comprou e
 //! gastou) e `/api/v1/key` (o teto e o gasto da chave do Jev). O que vale é o
-//! menor dos dois saldos. Mesma cadência do consumo das contas: cinco minutos
-//! entre leituras, "Medir agora" no máximo a cada 15 s, 429 espera o
-//! `Retry-After`, sem rede tenta de novo em um minuto.
+//! menor dos dois saldos. Uma leitura por minuto (são duas consultas de
+//! metadados, que o OpenRouter não cobra), "Medir agora" no máximo a cada
+//! 15 s, 429 espera o `Retry-After`, sem rede tenta de novo em um minuto.
+//!
+//! O OpenRouter leva uns dois minutos para contar uma decisão (medido em
+//! 05/10/2026: 2 min 20 s). Para o rodapé andar a cada decisão, a skill anota
+//! o custo de cada chamada que faz nesta máquina em
+//! `~/.claude/jev/chamadas.jsonl` (`livro`), e o saldo mostrado é a última
+//! leitura mais o que o livro tem que ela ainda não contou. Cada leitura nova
+//! casa o que a chave gastou desde a anterior com as chamadas mais antigas do
+//! livro (`concilia`); uma chamada que o OpenRouter não contou em dez minutos
+//! sai da conta.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
@@ -34,8 +43,13 @@ use serde_json::{Value, json};
 use crate::cli::{Args, responde};
 use crate::{caminhos, rede};
 
-const PERIODO: f64 = 300.0;
+const PERIODO: f64 = 60.0;
 const ENTRE_CLIQUES: f64 = 15.0;
+/// Uma chamada do livro que o OpenRouter não contou nesse tempo já não
+/// entra no saldo: foi contada sem casar, ou não será.
+const ESPERA_DO_OPENROUTER: f64 = 600.0;
+/// O livro é lido do fim: o que passa disto é antigo demais para importar.
+const LIVRO_MAXIMO: u64 = 1 << 20;
 /// O item do Chaveiro (e a credencial do Windows) em que a skill `jev` guarda a chave.
 const SERVICO: &str = "openrouter-api-key";
 /// O nome da chave que o login cria no OpenRouter.
@@ -71,6 +85,18 @@ impl Credito {
     pub fn disponivel(&self) -> f64 {
         self.saldo_da_chave().map_or(self.saldo_da_conta(), |c| c.min(self.saldo_da_conta()))
     }
+
+    /// A leitura com o que as chamadas desta máquina gastaram e o
+    /// OpenRouter ainda não contou: gasto pela chave do Jev, logo pela conta.
+    fn com_pendente(mut self, pendente: f64) -> Credito {
+        if pendente > 0.0 {
+            self.used += pendente;
+            self.key_used = self.key_used.map(|u| u + pendente);
+            self.used_today = self.used_today.map(|u| u + pendente);
+            self.used_this_month = self.used_this_month.map(|u| u + pendente);
+        }
+        self
+    }
 }
 
 /// O que se guarda entre uma medição e outra.
@@ -85,6 +111,17 @@ struct Registro {
     pausa_firme: bool,
     #[serde(default)]
     ultimo_clique: f64,
+    /// A chave que mediu (`id_da_chave`): o livro só conta as chamadas dela.
+    #[serde(default)]
+    chave_id: Option<String>,
+    /// As chamadas do livro até este momento já estão no que o OpenRouter
+    /// disse.
+    #[serde(default)]
+    livro_ate: Option<f64>,
+    /// Gasto que o OpenRouter já contou e ainda não casou com uma chamada
+    /// inteira do livro: parte da próxima.
+    #[serde(default)]
+    livro_sobra: f64,
 }
 
 fn agora() -> f64 {
@@ -342,20 +379,120 @@ fn pergunta(chave: &str, agora_s: f64) -> Resultado {
     }
 }
 
-/// O que o rodapé mostra: o Jev, ou nada quando não há chave.
+// ------------------------------------------------------------ o livro
+
+/// O livro das chamadas: a skill `jev` anota cada decisão que pede nesta
+/// máquina, uma linha JSON por chamada — `{"quando": <segundos desde 1970>,
+/// "custo_usd": <dólares>, "chave": <id_da_chave>}`.
+fn livro() -> PathBuf {
+    caminhos::claude().join("jev").join("chamadas.jsonl")
+}
+
+/// A chave sem ser a chave: os 12 primeiros dígitos hexadecimais do SHA-256
+/// dela. O livro e o cache guardam isto, que não leva de volta à chave.
+fn id_da_chave(chave: &str) -> String {
+    Sha256::digest(chave.trim().as_bytes()).iter().take(6).map(|b| format!("{b:02x}")).collect()
+}
+
+/// Uma chamada do livro.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Chamada {
+    quando: f64,
+    custo: f64,
+}
+
+/// As chamadas da chave `id` depois de `desde`, da mais antiga à mais nova.
+/// Linha que não se lê, de outra chave ou sem custo fica de fora.
+fn chamadas(id: &str, desde: f64) -> Vec<Chamada> {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut arquivo) = std::fs::File::open(livro()) else { return Vec::new() };
+    let tamanho = arquivo.metadata().map(|m| m.len()).unwrap_or(0);
+    let pulo = tamanho.saturating_sub(LIVRO_MAXIMO);
+    if pulo > 0 && arquivo.seek(SeekFrom::Start(pulo)).is_err() {
+        return Vec::new();
+    }
+    let mut bruto = Vec::new();
+    if arquivo.read_to_end(&mut bruto).is_err() {
+        return Vec::new();
+    }
+    let texto = String::from_utf8_lossy(&bruto);
+    // Lido do meio, a primeira linha vem cortada.
+    let linhas = texto.lines().skip(usize::from(pulo > 0));
+    let mut lista: Vec<Chamada> = linhas
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(|v| v.get("chave").and_then(Value::as_str) == Some(id))
+        .filter_map(|v| {
+            let quando = numero(v.get("quando"))?;
+            let custo = numero(v.get("custo_usd"))?;
+            (quando > desde && custo.is_finite() && custo > 0.0).then_some(Chamada { quando, custo })
+        })
+        .collect();
+    lista.sort_by(|a, b| a.quando.total_cmp(&b.quando));
+    lista
+}
+
+/// Casa o que a chave gastou desde a leitura anterior (`gasto`) com as
+/// chamadas do livro que ainda não tinham sido contadas, das mais antigas
+/// para as mais novas: as que couberem passam a estar na leitura. O que
+/// sobra sem cobrir a próxima fica guardado para a leitura seguinte; o que
+/// sobra sem chamada à espera é gasto de fora do livro, e se esquece. Uma
+/// chamada vencida (`ESPERA_DO_OPENROUTER`) sai sem gastar nada.
+fn concilia(r: &mut Registro, gasto: f64, agora_s: f64) {
+    let Some(id) = r.chave_id.clone() else { return };
+    let mut ate = r.livro_ate.unwrap_or(agora_s);
+    let mut resta = gasto.max(0.0) + r.livro_sobra;
+    let mut esperando = false;
+    for c in chamadas(&id, ate) {
+        if c.quando < agora_s - ESPERA_DO_OPENROUTER {
+            ate = c.quando;
+        } else if resta + 1e-12 >= c.custo * 0.99 {
+            // 1% de folga: o OpenRouter pode arredondar o que contou.
+            resta = (resta - c.custo).max(0.0);
+            ate = c.quando;
+        } else {
+            esperando = true;
+            break;
+        }
+    }
+    r.livro_ate = Some(ate);
+    r.livro_sobra = if esperando { resta } else { 0.0 };
+}
+
+/// O que as chamadas desta máquina gastaram e o OpenRouter ainda não contou.
+fn pendente(r: &Registro, agora_s: f64) -> f64 {
+    let (Some(id), Some(desde)) = (r.chave_id.as_deref(), r.livro_ate) else { return 0.0 };
+    let soma: f64 = chamadas(id, desde)
+        .iter()
+        .filter(|c| c.quando >= agora_s - ESPERA_DO_OPENROUTER)
+        .map(|c| c.custo)
+        .sum();
+    (soma - r.livro_sobra).max(0.0)
+}
+
+/// O que o rodapé mostra: o Jev, ou nada quando não há chave. `credit` já
+/// tem `pending` somado: o que as chamadas desta máquina gastaram depois da
+/// leitura.
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Saldo {
     pub credit: Option<Credito>,
     pub measured_at: Option<f64>,
     pub problem: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending: Option<f64>,
 }
 
 fn saldo(r: Registro) -> Saldo {
-    Saldo { credit: r.credit, measured_at: r.measured_at, problem: r.problem }
+    let p = pendente(&r, agora());
+    Saldo {
+        credit: r.credit.map(|c| c.com_pendente(p)),
+        measured_at: r.measured_at,
+        problem: r.problem,
+        pending: (p > 0.0).then_some(p),
+    }
 }
 
-/// O que há guardado, sem ir à rede nem ao Chaveiro.
+/// O que há guardado, mais o livro, sem ir à rede nem ao Chaveiro.
 pub fn em_cache() -> Option<Saldo> {
     let r = le_cache();
     (r.credit.is_some() || r.problem.is_some()).then(|| saldo(r))
@@ -370,6 +507,15 @@ pub fn medir(forcar: bool) -> Option<Saldo> {
     };
     let mut r = le_cache();
     let agora_s = agora();
+    // Chave nova (ou a primeira): o livro conta a partir de agora, só as
+    // chamadas dela.
+    let id = id_da_chave(&chave);
+    let outra_chave = r.chave_id.as_deref() != Some(id.as_str());
+    if outra_chave {
+        r.chave_id = Some(id);
+        r.livro_ate = Some(agora_s);
+        r.livro_sobra = 0.0;
+    }
     let mut forcar = forcar;
     if forcar {
         if agora_s - r.ultimo_clique < ENTRE_CLIQUES {
@@ -378,19 +524,29 @@ pub fn medir(forcar: bool) -> Option<Saldo> {
             r.ultimo_clique = agora_s;
         }
     }
-    if let Some(ate) = r.pausa_ate {
-        if ate > agora_s && (!forcar || r.pausa_firme) {
-            return Some(saldo(r));
-        }
-    }
+    let espera = r.pausa_ate.is_some_and(|ate| ate > agora_s && (!forcar || r.pausa_firme));
     let devida = forcar || r.problem.is_some() || r.measured_at.is_none_or(|m| agora_s - m >= PERIODO - 5.0);
-    if !devida {
+    if espera || !devida {
+        if outra_chave {
+            grava_cache(&r);
+        }
         return Some(saldo(r));
     }
     r.pausa_ate = None;
     r.pausa_firme = false;
     match pergunta(&chave, agora_s) {
         Resultado::Leitura(c) => {
+            // O que a chave gastou desde a leitura anterior casa com o livro;
+            // sem o gasto da chave nas duas, vale o da conta.
+            if !outra_chave {
+                if let Some(antes) = &r.credit {
+                    let gasto = match (antes.key_used, c.key_used) {
+                        (Some(a), Some(n)) => n - a,
+                        _ => c.used - antes.used,
+                    };
+                    concilia(&mut r, gasto, agora_s);
+                }
+            }
             r.credit = Some(c);
             r.measured_at = Some(agora());
             r.problem = None;
@@ -719,6 +875,16 @@ mod testes {
         assert_eq!(pedidos.lock().unwrap().len(), 4, "o clique mede de novo");
         medir(true);
         assert_eq!(pedidos.lock().unwrap().len(), 4, "dois cliques em 15 s valem um");
+        let mut r = le_cache();
+        r.measured_at = Some(agora() - 50.0);
+        grava_cache(&r);
+        medir(false);
+        assert_eq!(pedidos.lock().unwrap().len(), 4, "medido há 50 s: ainda não");
+        let mut r = le_cache();
+        r.measured_at = Some(agora() - 61.0);
+        grava_cache(&r);
+        medir(false);
+        assert_eq!(pedidos.lock().unwrap().len(), 6, "medido há mais de um minuto: mede de novo");
 
         let guardado = std::fs::read_to_string(arquivo()).unwrap();
         assert!(!guardado.contains("segredo"), "o cache não guarda a chave");
@@ -757,6 +923,151 @@ mod testes {
         boa.store(2, std::sync::atomic::Ordering::SeqCst);
         let s = medir(true).unwrap();
         assert_eq!(s.problem.as_deref(), Some("o OpenRouter recusou a chave do Jev (HTTP 401)"));
+    }
+
+    // ---------------------------------------------------------------- o livro
+
+    /// Uma linha do livro, como a skill escreve.
+    fn anota(chave: &str, quando: f64, custo: f64) {
+        let linha = json!({ "quando": quando, "custo_usd": custo, "chave": id_da_chave(chave) });
+        let caminho = livro();
+        std::fs::create_dir_all(caminho.parent().unwrap()).unwrap();
+        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(caminho).unwrap();
+        writeln!(f, "{linha}").unwrap();
+    }
+
+    /// O OpenRouter de mentira com o gasto que o teste manda: o da conta e o da chave.
+    fn openrouter(gasto: std::sync::Arc<std::sync::Mutex<(f64, f64)>>) {
+        servidor(move |p| {
+            let (conta, chave) = *gasto.lock().unwrap();
+            match p.caminho.as_str() {
+                "/credits" => (200, vec![], format!(r#"{{"data":{{"total_credits":10,"total_usage":{conta}}}}}"#)),
+                "/key" => (200, vec![], format!(r#"{{"data":{{"limit":null,"usage":{chave},"usage_daily":{chave}}}}}"#)),
+                _ => (404, vec![], String::new()),
+            }
+        });
+        let porta = std::env::var("KEEP_IA_CLAUDE_URL").unwrap().trim_end_matches("/claude").to_string();
+        aponta(&porta);
+    }
+
+    /// Mede de novo já, como o minuto seguinte.
+    fn mede_de_novo() -> Saldo {
+        let mut r = le_cache();
+        r.measured_at = Some(agora() - PERIODO);
+        grava_cache(&r);
+        medir(false).unwrap()
+    }
+
+    fn perto(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-9
+    }
+
+    #[test]
+    fn o_livro_soma_na_hora_o_que_o_openrouter_ainda_nao_contou() {
+        let c = casa("jev-livro");
+        com_chave(&c);
+        let gasto = std::sync::Arc::new(std::sync::Mutex::new((0.03, 0.01)));
+        openrouter(gasto.clone());
+        let chave = "sk-or-v1-segredo";
+
+        let s = medir(false).unwrap();
+        assert!(s.pending.is_none());
+        assert!(perto(s.credit.unwrap().key_used.unwrap(), 0.01));
+
+        // Duas decisões desta máquina; uma de outra chave, uma de antes da
+        // leitura e uma linha que não se lê ficam de fora.
+        let antes_da_leitura = le_cache().livro_ate.unwrap() - 1.0;
+        anota(chave, antes_da_leitura, 0.5);
+        anota("sk-or-v1-outra", agora(), 0.5);
+        std::fs::OpenOptions::new().append(true).open(livro()).unwrap().write_all(b"{cortada\n").unwrap();
+        anota(chave, agora(), 0.0001);
+        anota(chave, agora() + 0.001, 0.0002);
+        let s = em_cache().unwrap();
+        assert!(perto(s.pending.unwrap(), 0.0003), "{:?}", s.pending);
+        let l = s.credit.unwrap();
+        assert!(perto(l.used, 0.0303) && perto(l.key_used.unwrap(), 0.0103), "{l:?}");
+        assert!(perto(l.used_today.unwrap(), 0.0103));
+        assert!(!std::fs::read_to_string(livro()).unwrap().contains("segredo"), "o livro não leva a chave");
+        assert!(!std::fs::read_to_string(arquivo()).unwrap().contains("segredo"), "nem o cache");
+
+        // O OpenRouter ainda não contou nada: o minuto seguinte mostra o mesmo.
+        let s = mede_de_novo();
+        assert!(perto(s.pending.unwrap(), 0.0003));
+        assert!(perto(s.credit.unwrap().key_used.unwrap(), 0.0103));
+
+        // Contou a primeira: ela sai do livro, a segunda fica.
+        *gasto.lock().unwrap() = (0.0301, 0.0101);
+        let s = mede_de_novo();
+        assert!(perto(s.pending.unwrap(), 0.0002), "{:?}", s.pending);
+        assert!(perto(s.credit.unwrap().key_used.unwrap(), 0.0103));
+
+        // Contou a segunda e mais uma que não passou pelo livro: nada pendente,
+        // e a de fora não come a próxima.
+        *gasto.lock().unwrap() = (0.0309, 0.0109);
+        let s = mede_de_novo();
+        assert!(s.pending.is_none(), "{:?}", s.pending);
+        assert!(perto(s.credit.unwrap().key_used.unwrap(), 0.0109));
+        assert_eq!(le_cache().livro_sobra, 0.0);
+        anota(chave, agora() + 0.002, 0.0004);
+        assert!(perto(em_cache().unwrap().pending.unwrap(), 0.0004));
+
+        // Contou parte dela: a parte fica guardada, e o resto segue pendente.
+        *gasto.lock().unwrap() = (0.0311, 0.0111);
+        let s = mede_de_novo();
+        assert!(perto(s.pending.unwrap(), 0.0002), "{:?}", s.pending);
+        assert!(perto(s.credit.unwrap().key_used.unwrap(), 0.0113));
+        *gasto.lock().unwrap() = (0.0313, 0.0113);
+        assert!(mede_de_novo().pending.is_none());
+
+        // Arredondada pelo OpenRouter (1% a menos): casa do mesmo jeito.
+        anota(chave, agora() + 0.003, 0.0010);
+        *gasto.lock().unwrap() = (0.0323 - 0.00001, 0.0123 - 0.00001);
+        assert!(mede_de_novo().pending.is_none());
+        assert_eq!(le_cache().livro_sobra, 0.0);
+    }
+
+    #[test]
+    fn chamada_que_o_openrouter_nao_conta_sai_em_dez_minutos() {
+        let c = casa("jev-livro-vence");
+        com_chave(&c);
+        let gasto = std::sync::Arc::new(std::sync::Mutex::new((0.03, 0.01)));
+        openrouter(gasto.clone());
+        let chave = "sk-or-v1-segredo";
+        medir(false).unwrap();
+        let mut r = le_cache();
+        r.livro_ate = Some(agora() - 2.0 * ESPERA_DO_OPENROUTER);
+        grava_cache(&r);
+        anota(chave, agora() - ESPERA_DO_OPENROUTER - 60.0, 0.0005);
+        anota(chave, agora() - 30.0, 0.0001);
+        assert!(perto(em_cache().unwrap().pending.unwrap(), 0.0001), "a vencida não entra");
+
+        // A leitura seguinte passa por cima da vencida e casa a outra.
+        *gasto.lock().unwrap() = (0.0301, 0.0101);
+        let s = mede_de_novo();
+        assert!(s.pending.is_none(), "{:?}", s.pending);
+        assert!(le_cache().livro_ate.unwrap() > agora() - 60.0);
+    }
+
+    #[test]
+    fn chave_nova_comeca_o_livro_do_zero() {
+        let c = casa("jev-livro-chave-nova");
+        com_chave(&c);
+        let gasto = std::sync::Arc::new(std::sync::Mutex::new((0.03, 0.01)));
+        openrouter(gasto.clone());
+        medir(false).unwrap();
+        anota("sk-or-v1-segredo", agora(), 0.0001);
+        assert!(em_cache().unwrap().pending.is_some());
+
+        std::fs::write(c.raiz.join("chaveiro").join(SERVICO), "sk-or-v1-trocada\n").unwrap();
+        // Mesmo sem medir (a leitura é recente), a troca já vale.
+        let s = medir(false).unwrap();
+        assert!(s.pending.is_none(), "as chamadas da chave antiga não contam para a nova");
+        assert_eq!(le_cache().chave_id.as_deref(), Some(id_da_chave("sk-or-v1-trocada").as_str()));
+        anota("sk-or-v1-trocada", agora() + 0.001, 0.0002);
+        assert!(perto(em_cache().unwrap().pending.unwrap(), 0.0002));
+        assert_eq!(id_da_chave("sk-or-v1-trocada\n"), id_da_chave("sk-or-v1-trocada"), "o fim de linha não muda a chave");
+        assert_eq!(id_da_chave("x").len(), 12);
+        assert_eq!(id_da_chave("sk-or-v1-segredo"), "4ea63ba423d9", "o mesmo id que a skill escreve no livro");
     }
 
     // ---------------------------------------------------------------- conectar

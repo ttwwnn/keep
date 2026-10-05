@@ -127,10 +127,22 @@ perguntas de decisão, no Claude Code e no Codex) gasta crédito do OpenRouter a
   `POST /api/v1/auth/keys` troca o código pela chave). A chave "Jev (Keep)" é conferida (`/api/v1/key`),
   guardada no lugar acima e lida de volta; o saldo é medido na hora (o rodapé vê o `jev.json` mudar) e a
   aba se fecha. Sem limite de crédito na autorização, a chave usa todo o crédito da conta.
-- Mesma cadência do consumo das contas (5 min; "Medir agora" a cada 15 s; 429 respeita `Retry-After`).
-  Leitura guardada em `<estado>/jev.json`.
+- Uma leitura por minuto (duas consultas de metadados, que o OpenRouter não cobra); "Medir agora" a cada
+  15 s; 429 respeita `Retry-After`. Leitura guardada em `<estado>/jev.json`.
+- Tempo real: o OpenRouter leva uns dois minutos para contar uma decisão (2 min 20 s medidos em
+  05/10/2026). A skill `jev` anota cada chamada paga em `~/.claude/jev/chamadas.jsonl`, uma linha JSON
+  por chamada: `{"quando": <segundos desde 1970>, "custo_usd": <dólares, o "usage.cost" da resposta>,
+  "chave": <12 primeiros dígitos hexadecimais do SHA-256 da chave, sem o fim de linha>}`. O núcleo soma
+  ao saldo as chamadas da chave dele que a leitura ainda não contou (`pending`) e, a cada leitura nova,
+  casa o que a chave gastou desde a anterior com as chamadas mais antigas do livro (1% de folga para o
+  arredondamento; a sobra que não cobre uma chamada inteira fica para a leitura seguinte). Chamada não
+  contada em 10 min sai da soma; chave nova começa o livro do zero. Os dois apps vigiam o livro no
+  olhar de 2 s e pedem `--cache`: uma decisão aparece no rodapé em uns 2 s, sem ir à rede.
+- Os valores do Jev têm quatro casas abaixo de US$ 10 (três abaixo de US$ 100, duas acima), para uma
+  decisão (um centésimo de centavo, mais ou menos) mexer no número.
 - Resposta: `{"jev": {"credit": {"total", "used", "keyLimit", "keyUsed", "usedToday", "usedThisMonth"},
-  "measuredAt", "problem"}}`, em dólares.
+  "measuredAt", "problem", "pending"}}`, em dólares; `credit` já inclui `pending`, que só aparece quando há
+  chamada à espera do OpenRouter.
 - Teste: `KEEP_IA_OPENROUTER_URL` e `KEEP_IA_OPENROUTER_AUTH_URL` (só `http://127.0.0.1`),
   `KEEP_IA_SECURITY` e `KEEP_IA_TESTE_CHAVEIRO` (uma pasta no lugar do cofre, em todo sistema),
   `KEEP_IA_NAVEGADOR` (o programa que recebe o endereço do login) e `KEEP_IA_LOGIN_PRAZO` (segundos). O

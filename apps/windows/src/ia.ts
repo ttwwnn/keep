@@ -462,11 +462,17 @@ export interface JevCredit {
   usedThisMonth: number | null;
 }
 
-/** The Jev's line of the footer: the last credit that came back, and why the latest attempt did not, when it did not. */
+/**
+ * The Jev's line of the footer: the last credit that came back, and why the
+ * latest attempt did not, when it did not. `credit` already counts `pending`:
+ * what this machine's decisions spent that OpenRouter had not counted when it
+ * was measured, from the book the Jev's skill keeps.
+ */
 export interface JevLine {
   credit: JevCredit | null;
   measuredAt: number | null;
   problem: string | null;
+  pending: number | null;
 }
 
 export const accountLeft = (c: JevCredit) => Math.max(0, c.total - c.used);
@@ -478,11 +484,16 @@ export const available = (c: JevCredit) => {
 };
 const share = (part: number, whole: number) => (whole > 0 ? Math.min(100, (part / whole) * 100) : 100);
 
-/** "US$ 9,98": two places, a comma, and "< US$ 0,01" for what rounds to nothing. */
+/**
+ * "US$ 9,9687": a comma, and places enough for one of the Jev's decisions (a
+ * hundredth of a cent or so) to move it — four below ten dollars, three below
+ * a hundred, two above — and "< US$ 0,0001" for what rounds to nothing.
+ */
 export function dollars(value: number): string {
   const v = Math.max(0, value);
-  if (v > 0 && v < 0.01) return "< US$ 0,01";
-  return `US$ ${v.toFixed(2).replace(".", ",")}`;
+  if (v > 0 && v < 0.0001) return "< US$ 0,0001";
+  const places = v < 10 ? 4 : v < 100 ? 3 : 2;
+  return `US$ ${v.toFixed(places).replace(".", ",")}`;
 }
 
 /** One of the Jev's two counters: the bar is what is spent, the figure the dollars beside it. */
@@ -557,6 +568,9 @@ export function jevHelp(line: JevLine, nowMs: number): string {
     if (c.usedToday !== null) lines.push(`Gasto hoje: ${dollars(c.usedToday)}`);
     if (c.usedThisMonth !== null) lines.push(`Gasto no mês: ${dollars(c.usedThisMonth)}`);
   }
+  if (line.pending !== null && line.pending > 0) {
+    lines.push(`Inclui ${dollars(line.pending)} de decisões desta máquina que o OpenRouter ainda não contou`);
+  }
   if (line.measuredAt !== null) lines.push(`Medido ${agoText(line.measuredAt * 1000, nowMs)}`);
   return lines.join("\n");
 }
@@ -580,5 +594,5 @@ export function readJev(value: unknown): JevLine | null {
       : null;
   const problem = typeof v.problem === "string" ? v.problem : null;
   if (!credit && !problem) return null;
-  return { credit, measuredAt: num(v.measuredAt), problem };
+  return { credit, measuredAt: num(v.measuredAt), problem, pending: num(v.pending) };
 }

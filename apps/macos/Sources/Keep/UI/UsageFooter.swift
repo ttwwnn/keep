@@ -148,12 +148,17 @@ final class UsageMonitor: ObservableObject {
             let helper = AIHelper.path != nil
             // Asked once per change of the files, answered or not: a core
             // that fails is asked again at the next change or the next tick,
-            // never every two seconds.
+            // never every two seconds. A change of the Jev's files alone — a
+            // decision it just made — asks only about the Jev.
             let asks = helper && now != known
+            let isJev = { (part: String) in part.hasPrefix("jev ") }
+            let accountsChanged = known.map { $0.filter { !isJev($0) } } != now.filter { !isJev($0) }
+            let jevChanged = known.map { $0.filter(isJev) } != now.filter(isJev)
             let askedAt = Date()
-            let answer = asks ? try? AIHelper.usage(.cached).get() : nil
-            // The Jev as the core has it: a connection just made, or a key gone.
-            let credit = asks ? try? AIHelper.jev(.cached).get() : nil
+            let answer = asks && accountsChanged ? try? AIHelper.usage(.cached).get() : nil
+            // The Jev as the core has it: a connection just made, a key gone,
+            // or what a decision just spent, from the book.
+            let credit = asks && jevChanged ? try? AIHelper.jev(.cached).get() : nil
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.looking = false
@@ -814,7 +819,7 @@ struct UsageFooter: View {
                 .monospacedDigit()
                 .foregroundStyle(level == .normal ? UsageInk.inkResting : UsageInk.fill(level))
                 .lineLimit(1)
-                .frame(width: 74, alignment: .trailing)
+                .frame(width: 84, alignment: .trailing)
         }
         .frame(height: 13)
         .help(help)
@@ -873,6 +878,9 @@ struct UsageFooter: View {
             }
             if let today = credit.usedToday { lines.append("Gasto hoje: \(UsageText.dollars(today))") }
             if let month = credit.usedThisMonth { lines.append("Gasto no mês: \(UsageText.dollars(month))") }
+        }
+        if let pending = jev.pending, pending > 0 {
+            lines.append("Inclui \(UsageText.dollars(pending)) de decisões desta máquina que o OpenRouter ainda não contou")
         }
         if let at = jev.measuredAt { lines.append("Medido \(UsageText.ago(at, now: now))") }
         return lines.joined(separator: "\n")

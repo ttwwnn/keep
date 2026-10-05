@@ -109,10 +109,22 @@ confere(chaveSemTeto.keyPercent == nil && chaveSemTeto.keySharePercent == 25 && 
 let semTeto = JevCredit(total: 10, used: 12, keyLimit: nil, keyUsed: nil, usedToday: nil, usedThisMonth: nil)
 confere(semTeto.available == 0 && semTeto.keyPercent == nil && semTeto.accountPercent == 100,
         "jev: gasto além do comprado não dá saldo negativo nem barra além do fim")
-confere(UsageText.dollars(9.9754) == "US$ 9,98" && UsageText.dollars(0) == "US$ 0,00"
-        && UsageText.dollars(0.004) == "< US$ 0,01" && UsageText.dollars(-1) == "US$ 0,00",
-        "jev: dólar com vírgula, duas casas, e o que arredonda a nada dito como tal",
-        "\(UsageText.dollars(9.9754)) \(UsageText.dollars(0.004))")
+confere(UsageText.dollars(9.9754) == "US$ 9,9754" && UsageText.dollars(0) == "US$ 0,0000"
+        && UsageText.dollars(0.00004) == "< US$ 0,0001" && UsageText.dollars(-1) == "US$ 0,0000",
+        "jev: dólar com vírgula, quatro casas, e o que arredonda a nada dito como tal",
+        "\(UsageText.dollars(9.9754)) \(UsageText.dollars(0.00004))")
+confere(UsageText.dollars(9.96871) != UsageText.dollars(9.96871 - 0.00016),
+        "jev: uma decisão do Jev (US$ 0,00016) muda o número", UsageText.dollars(9.96871))
+confere(UsageText.dollars(12.34567) == "US$ 12,346" && UsageText.dollars(150.5) == "US$ 150,50",
+        "jev: três casas acima de dez dólares, duas acima de cem",
+        "\(UsageText.dollars(12.34567)) \(UsageText.dollars(150.5))")
+let comPendente = JevAnswer.decode("""
+{"versao":1,"ok":true,"jev":{"credit":{"total":10,"used":0.0313,"keyLimit":null,"keyUsed":0.0109,"usedToday":null,
+"usedThisMonth":null},"measuredAt":1791084861.45,"problem":null,"pending":0.0002}}
+""".data(using: .utf8)!)?.jev
+confere(comPendente?.pending == 0.0002, "jev: o que o OpenRouter ainda não contou chega ao app",
+        "\(String(describing: comPendente))")
+confere(jev?.pending == nil, "jev: sem pendente, nada")
 confere(JevAnswer.decode("{\"ok\":true,\"jev\":null}".data(using: .utf8)!)?.jev == nil
         && JevAnswer.decode("{\"ok\":true,\"jev\":null}".data(using: .utf8)!) != nil,
         "jev: sem chave é uma resposta, com jev nulo")
@@ -147,6 +159,22 @@ muda("o login do Codex") {
 muda("a leitura do Jev, gravada pelo núcleo") {
     try! fm.createDirectory(at: casa.appendingPathComponent(".keep-ia-estado"), withIntermediateDirectories: true)
     try! "{}".write(to: casa.appendingPathComponent(".keep-ia-estado/jev.json"), atomically: true, encoding: .utf8)
+}
+muda("uma decisão do Jev, no livro de chamadas da skill") {
+    try! fm.createDirectory(at: casa.appendingPathComponent(".claude/jev"), withIntermediateDirectories: true)
+    try! "{}\n".write(to: casa.appendingPathComponent(".claude/jev/chamadas.jsonl"), atomically: false, encoding: .utf8)
+}
+do {
+    let antes = AIAccounts.signature(home: casa)
+    Thread.sleep(forTimeInterval: 0.01)
+    let livro = try! FileHandle(forWritingTo: casa.appendingPathComponent(".claude/jev/chamadas.jsonl"))
+    livro.seekToEndOfFile()
+    livro.write("{\"quando\":1}\n".data(using: .utf8)!)
+    try! livro.close()
+    let depois = AIAccounts.signature(home: casa)
+    let soJev = { (partes: [String]) in partes.filter { !$0.hasPrefix("jev ") } }
+    confere(depois != antes && soJev(depois) == soJev(antes),
+            "assinatura: uma linha a mais no livro muda só a parte do Jev", "\(antes) \(depois)")
 }
 muda("uma conta GPT nova") {
     try! fm.createDirectory(at: casa.appendingPathComponent(".codex-contas/nova"), withIntermediateDirectories: true)

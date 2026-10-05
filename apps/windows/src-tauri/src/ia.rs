@@ -247,6 +247,10 @@ pub fn signature() -> String {
     // The Jev's reading, which the core writes when it measures and when a
     // connection to OpenRouter is made: a connection made in a tab shows at once.
     files.push(state().join("jev.json"));
+    // The book the Jev's skill writes a line in at each decision it pays for:
+    // the core adds what OpenRouter has not counted yet, so a decision shows
+    // in two seconds rather than when OpenRouter catches up.
+    files.push(claude.join("jev").join("chamadas.jsonl"));
     let mut out = String::new();
     for file in files {
         if let Ok(meta) = std::fs::metadata(&file) {

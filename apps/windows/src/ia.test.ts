@@ -286,11 +286,14 @@ describe("the Jev's credit", () => {
     usedThisMonth: 0.0042 as number | null,
     ...over,
   });
-  it("dollars with a comma and two places, and what rounds to nothing said as such", () => {
-    expect(dollars(9.9754)).toBe("US$ 9,98");
-    expect(dollars(0)).toBe("US$ 0,00");
-    expect(dollars(0.004)).toBe("< US$ 0,01");
-    expect(dollars(-1)).toBe("US$ 0,00");
+  it("dollars with a comma and places enough for one decision to show, and what rounds to nothing said as such", () => {
+    expect(dollars(9.9754)).toBe("US$ 9,9754");
+    expect(dollars(0)).toBe("US$ 0,0000");
+    expect(dollars(0.00004)).toBe("< US$ 0,0001");
+    expect(dollars(-1)).toBe("US$ 0,0000");
+    expect(dollars(9.96871)).not.toBe(dollars(9.96871 - 0.00016));
+    expect(dollars(12.34567)).toBe("US$ 12,346");
+    expect(dollars(150.5)).toBe("US$ 150,50");
   });
   it("what the Jev can still spend is the smaller of the account's credit and its key's ceiling", () => {
     expect(available(credit())).toBeCloseTo(4.9958, 9);
@@ -316,13 +319,20 @@ describe("the Jev's credit", () => {
       credit: null,
       measuredAt: null,
       problem: "sem rede",
+      pending: null,
     });
+    expect(line?.pending).toBeNull();
+    expect(readJev({ credit: credit(), measuredAt: 1, problem: null, pending: 0.0002 })?.pending).toBe(0.0002);
   });
   it("the note and the tooltip say it as the macOS footer does", () => {
     const now = Date.UTC(2026, 9, 5, 12);
-    const line = { credit: credit({ keyLimit: null }), measuredAt: now / 1000 - 3600, problem: null };
+    const line = { credit: credit({ keyLimit: null }), measuredAt: now / 1000 - 3600, problem: null, pending: null };
     expect(jevNote(line, now)).toBe("medido há 1h");
-    expect(jevNote({ credit: null, measuredAt: null, problem: null }, now)).toBe("medindo…");
-    expect(jevHelp(line, now)).toContain("Chave: sem teto, gastou < US$ 0,01");
+    expect(jevNote({ credit: null, measuredAt: null, problem: null, pending: null }, now)).toBe("medindo…");
+    expect(jevHelp(line, now)).toContain("Chave: sem teto, gastou US$ 0,0042");
+    expect(jevHelp(line, now)).not.toContain("ainda não contou");
+    expect(jevHelp({ ...line, pending: 0.0002 }, now)).toContain(
+      "Inclui US$ 0,0002 de decisões desta máquina que o OpenRouter ainda não contou",
+    );
   });
 });

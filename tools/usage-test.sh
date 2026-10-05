@@ -179,7 +179,13 @@ sabotage "$USAGE" "a key with no ceiling measured against nothing" \
 sabotage "$USAGE" "the watcher blind to the Jev's reading" \
     'parts.append("jev " + stamp(home.appendingPathComponent(state + "/jev.json")))|||_ = state' || ok=1
 sabotage "$USAGE" "a credit that rounds to nothing said as zero" \
-    'if value > 0, value < 0.01 { return "< US$ 0,01" }|||' || ok=1
+    'if value > 0, value < 0.0001 { return "< US$ 0,0001" }|||' || ok=1
+sabotage "$USAGE" "a decision of the Jev too small for the footer to move" \
+    'let places = value < 10 ? 4 : value < 100 ? 3 : 2|||let places = 2' || ok=1
+sabotage "$USAGE" "the watcher blind to the Jev's book of calls" \
+    'parts.append("jev livro " + stamp(home.appendingPathComponent(".claude/jev/chamadas.jsonl")))|||' || ok=1
+sabotage "$USAGE" "the book of calls not counted as the Jev's own" \
+    'parts.append("jev livro "|||parts.append("livro "' || ok=1
 sabotage "$USAGE" "the Jev's dates read as Foundation's own" \
     '        let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .secondsSince1970

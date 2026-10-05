@@ -89,10 +89,11 @@ enum AIAccounts {
     /// the kit's vault (each slot, and `.ativa`, `.preferida`, `.ordem`
     /// beside them), each folder of a login of Keep's own
     /// (`fixas/<id>`, its `keep.json` or the kit's `conta.json`), Codex's
-    /// login and each extra one, and the Jev's last reading. Different from
-    /// the last time means worth
+    /// login and each extra one, and the Jev's last reading and its book of
+    /// calls. Different from the last time means worth
     /// asking the core again — a login added or renewed, an account switched,
-    /// the order changed.
+    /// the order changed, a decision the Jev just made. The Jev's parts start
+    /// with "jev ", so a call of the Jev's asks only about the Jev.
     ///
     /// Stat calls and directory listings; no file is opened. A login made
     /// with the footer's "+" is noticed by this within a couple of seconds,
@@ -122,6 +123,9 @@ enum AIAccounts {
         for state in ["Library/Application Support/Keep/ia", ".keep-ia-estado"] {
             parts.append("jev " + stamp(home.appendingPathComponent(state + "/jev.json")))
         }
+        // The book the Jev's skill writes a line in at each decision it pays
+        // for: the core adds what OpenRouter has not counted yet.
+        parts.append("jev livro " + stamp(home.appendingPathComponent(".claude/jev/chamadas.jsonl")))
         let extras = home.appendingPathComponent(".codex-contas")
         for name in ((try? files.contentsOfDirectory(atPath: extras.path)) ?? []).sorted()
         where !name.hasPrefix(".") {
@@ -265,10 +269,14 @@ struct JevCredit: Equatable, Codable {
 
 /// The Jev's line of the footer: the last credit that came back, kept through
 /// later failures, and why the latest attempt brought nothing when it did not.
+/// `credit` already counts `pending`: what this Mac's decisions spent that
+/// OpenRouter had not counted when it was measured (it takes a couple of
+/// minutes), from the book the Jev's skill keeps.
 struct JevLine: Equatable, Codable {
     var credit: JevCredit?
     var measuredAt: Date?
     var problem: String?
+    var pending: Double?
 }
 
 /// What `keep ia jev` answers. `jev` is null when this Mac has no key of the
@@ -292,12 +300,16 @@ enum UsageText {
         "\(Int(max(0, min(999, value)).rounded()))%"
     }
 
-    /// "US$ 9,98": a dollar figure the way the footer says it — two places,
-    /// a comma, and "menos de" for what rounds to nothing.
+    /// "US$ 9,9687": a dollar figure the way the footer says it — with a
+    /// comma, and places enough for one of the Jev's decisions (a hundredth
+    /// of a cent or so) to move it: four below ten dollars, three below a
+    /// hundred, two above, so it keeps to ten characters or so. "Menos de"
+    /// for what rounds to nothing.
     static func dollars(_ value: Double) -> String {
         let value = max(0, value)
-        if value > 0, value < 0.01 { return "< US$ 0,01" }
-        return "US$ " + String(format: "%.2f", value).replacingOccurrences(of: ".", with: ",")
+        if value > 0, value < 0.0001 { return "< US$ 0,0001" }
+        let places = value < 10 ? 4 : value < 100 ? 3 : 2
+        return "US$ " + String(format: "%.\(places)f", value).replacingOccurrences(of: ".", with: ",")
     }
 
     /// How long until a window starts over, in the fewest characters that
