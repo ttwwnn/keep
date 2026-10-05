@@ -268,15 +268,19 @@ enum Daemon {
     private static func askForList(tag question: UInt8) throws -> (listing: [Workspace], peer: UInt32?) {
         let sock = try connect()
         defer { close(sock) }
+        // Asked before the question: the daemon hangs up once it has
+        // answered, and a connection it has left no longer names it — the
+        // answers of `keep ia abas` were then never believed.
+        let daemon = peer(sock)
         try send(sock, tag: question, payload: Data())
 
         let (tag, payload) = try recv(sock)
         var r = Reader(payload)
         switch tag {
         case tagSessions:
-            return (try decodeWorkspaces(&r, level: 1), peer(sock))
+            return (try decodeWorkspaces(&r, level: 1), daemon)
         case tagSessions2:
-            return (try decodeWorkspaces(&r, level: 2), peer(sock))
+            return (try decodeWorkspaces(&r, level: 2), daemon)
         case tagError:
             throw Failure.protocolError(try r.string())
         default:

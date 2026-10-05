@@ -288,6 +288,12 @@ MainActor.assumeIsolated {
     confere(loja.account(workspace: "w", tab: 2, program: .shell) == nil && loja.running(workspace: "w", tab: 2, program: .shell) == nil,
             "abas: aba de volta à concha não tem conta")
     confere(loja.account(workspace: "w", tab: 2, program: .other("vim")) == nil, "abas: outro programa não tem conta")
+    confere(loja.confirmedAccount(workspace: "w", tab: 2, program: .shell) == "claude:reserva"
+            && loja.confirmedAccount(workspace: "w", tab: 3, program: .unknown) == "gpt:trabalho",
+            "rodapé: o daemon antigo diz zsh de uma aba com IA: vale o que o núcleo achou nela")
+    confere(loja.confirmedAccount(workspace: "w", tab: 9, program: .shell) == nil
+            && loja.confirmedAccount(workspace: "w", tab: 2, program: .other("vim")) == nil,
+            "rodapé: concha sem IA que o núcleo ache, ou outro programa, não marca conta")
     confere(!loja.adopt(abas(ia: entradas), askedAt: ms(), daemonPid: 4242, daemonStartedMs: inicio), "abas: a mesma resposta não muda nada")
     // anotação otimista: vale até uma resposta pedida depois dela
     let antesDaTroca = ms()

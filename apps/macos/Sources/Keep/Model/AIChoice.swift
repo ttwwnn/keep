@@ -179,9 +179,20 @@ final class AITabAccounts {
     /// else the one it was put on. A stale Claude record must not label a
     /// new Codex.
     func confirmedAccount(workspace: String, tab: UInt32, program: AIProgramKind) -> String? {
-        guard program == .claude || program == .codex else { return nil }
         let id = Self.id(workspace, tab)
-        let prefix = program == .codex ? "gpt:" : "claude:"
+        let codex: Bool
+        switch program {
+        case .claude: codex = false
+        case .codex: codex = true
+        // An older daemon names the shell of a tab whose AI has a child of
+        // its own in front (an MCP server, a php it ran); the core looked
+        // inside the shell, and its word is the one to go by.
+        case .shell, .unknown:
+            guard let agent = entries[id]?.agent, agent == "claude" || agent == "codex" else { return nil }
+            codex = agent == "codex"
+        case .other: return nil
+        }
+        let prefix = codex ? "gpt:" : "claude:"
         if let note = notes[id]?.key { return note.hasPrefix(prefix) ? note : nil }
         guard let entry = entries[id] else { return nil }
         if let running = entry.running, running.hasPrefix(prefix) { return running }
