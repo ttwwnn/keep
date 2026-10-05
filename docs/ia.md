@@ -138,8 +138,8 @@ perguntas de decisão, no Claude Code e no Codex) gasta crédito do OpenRouter a
   arredondamento; a sobra que não cobre uma chamada inteira fica para a leitura seguinte). Chamada não
   contada em 10 min sai da soma; chave nova começa o livro do zero. Os dois apps vigiam o livro no
   olhar de 2 s e pedem `--cache`: uma decisão aparece no rodapé em uns 2 s, sem ir à rede.
-- Os valores do Jev têm cinco casas abaixo de US$ 10 (uma a menos a cada dígito a mais, nunca menos de
-  duas), para a decisão mais barata (uns US$ 0,00002) mexer no número.
+- Os valores do Jev têm duas casas decimais: o número na tela muda quando o gasto acumulado das decisões
+  completa um centavo (uma decisão custa de US$ 0,00002 a US$ 0,0002).
 - Resposta: `{"jev": {"credit": {"total", "used", "keyLimit", "keyUsed", "usedToday", "usedThisMonth"},
   "measuredAt", "problem", "pending"}}`, em dólares; `credit` já inclui `pending`, que só aparece quando há
   chamada à espera do OpenRouter.

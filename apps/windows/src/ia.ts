@@ -484,17 +484,11 @@ export const available = (c: JevCredit) => {
 };
 const share = (part: number, whole: number) => (whole > 0 ? Math.min(100, (part / whole) * 100) : 100);
 
-/**
- * "US$ 9,96846": a comma, and places enough for the cheapest of the Jev's
- * decisions (two thousandths of a cent or so) to move it — five below ten
- * dollars, one fewer for each digit more, never under two — and
- * "< US$ 0,00001" for what rounds to nothing.
- */
+/** "US$ 9,98": two places, a comma, and "< US$ 0,01" for what rounds to nothing. */
 export function dollars(value: number): string {
   const v = Math.max(0, value);
-  if (v > 0 && v < 0.00001) return "< US$ 0,00001";
-  const places = v < 10 ? 5 : v < 100 ? 4 : v < 1000 ? 3 : 2;
-  return `US$ ${v.toFixed(places).replace(".", ",")}`;
+  if (v > 0 && v < 0.01) return "< US$ 0,01";
+  return `US$ ${v.toFixed(2).replace(".", ",")}`;
 }
 
 /** One of the Jev's two counters: the bar is what is spent, the figure the dollars beside it. */

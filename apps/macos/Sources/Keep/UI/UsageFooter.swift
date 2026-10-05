@@ -819,8 +819,7 @@ struct UsageFooter: View {
                 .monospacedDigit()
                 .foregroundStyle(level == .normal ? UsageInk.inkResting : UsageInk.fill(level))
                 .lineLimit(1)
-                // "< US$ 0,00001", the longest a figure gets, in the 11-point face.
-                .frame(width: 90, alignment: .trailing)
+                .frame(width: 74, alignment: .trailing)
         }
         .frame(height: 13)
         .help(help)

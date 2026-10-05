@@ -179,11 +179,9 @@ sabotage "$USAGE" "a key with no ceiling measured against nothing" \
 sabotage "$USAGE" "the watcher blind to the Jev's reading" \
     'parts.append("jev " + stamp(home.appendingPathComponent(state + "/jev.json")))|||_ = state' || ok=1
 sabotage "$USAGE" "a credit that rounds to nothing said as zero" \
-    'if value > 0, value < 0.00001 { return "< US$ 0,00001" }|||' || ok=1
-sabotage "$USAGE" "a decision of the Jev too small for the footer to move" \
-    'let places = value < 10 ? 5 : value < 100 ? 4 : value < 1000 ? 3 : 2|||let places = 2' || ok=1
-sabotage "$USAGE" "four places, which the cheapest decisions do not move" \
-    'let places = value < 10 ? 5 :|||let places = value < 10 ? 4 :' || ok=1
+    'if value > 0, value < 0.01 { return "< US$ 0,01" }|||' || ok=1
+sabotage "$USAGE" "more than two places in the Jev's figures" \
+    'String(format: "%.2f", value)|||String(format: "%.4f", value)' || ok=1
 sabotage "$USAGE" "the watcher blind to the Jev's book of calls" \
     'parts.append("jev livro " + stamp(home.appendingPathComponent(".claude/jev/chamadas.jsonl")))|||' || ok=1
 sabotage "$USAGE" "the book of calls not counted as the Jev's own" \
