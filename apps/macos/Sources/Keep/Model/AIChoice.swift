@@ -164,6 +164,14 @@ final class AITabAccounts {
         }
     }
 
+    /// The agent the core found in the tab (`claude` or `codex`), for a tab
+    /// whose process the daemon names a shell or a version number.
+    func agent(workspace: String, tab: UInt32) -> String? {
+        guard let agent = entries[Self.id(workspace, tab)]?.agent,
+              agent == "claude" || agent == "codex" else { return nil }
+        return agent
+    }
+
     /// The account the tab's AI runs on now, when the core said so and the
     /// app has asked for no change since. Nil for a tab whose account the
     /// core could not tell: the menu then marks what it marked before.

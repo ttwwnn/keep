@@ -1063,14 +1063,14 @@ final class Session {
     private func aiAccount(of tab: TabEntity) -> String? {
         aiAccounts.account(
             workspace: tab.id.workspace, tab: tab.id.root,
-            program: AIProgramKind(command: Self.program(of: tab)))
+            program: AIProgramKind(command: aiProgram(of: tab)))
     }
 
     /// The account a tab's AI runs on now, when the core could tell.
     private func aiRunning(of tab: TabEntity) -> String? {
         aiAccounts.running(
             workspace: tab.id.workspace, tab: tab.id.root,
-            program: AIProgramKind(command: Self.program(of: tab)))
+            program: AIProgramKind(command: aiProgram(of: tab)))
     }
 
     /// What `keep ia abas` answered, asked for at `askedAt` (unix ms): taken
@@ -1505,7 +1505,7 @@ final class Session {
                 context: context(for: entry.tab, in: entry.workspace, alone: alone),
                 title: Self.plainTitle(displayTitle(of: entry.tab), fallback: "tab \(entry.tab.id.root)"),
                 detail: entry.tab.panes.isEmpty ? "" : "\(entry.tab.panes.count + 1) panes",
-                command: Self.program(of: entry.tab),
+                command: aiProgram(of: entry.tab),
                 path: entry.tab.cwd,
                 busy: entry.tab.busy,
                 lastActive: entry.tab.lastActive
@@ -1667,12 +1667,12 @@ final class Session {
     /// The tabs worth reading Claude Code's mode off — the ones that look like
     /// they are running it. Everything else would only ever answer "none".
     func claudeTabs() -> [TabID] {
-        workspaces.flatMap(\.tabs).filter { Self.program(of: $0) == "claude" }.map(\.id)
+        workspaces.flatMap(\.tabs).filter { aiProgram(of: $0) == "claude" }.map(\.id)
     }
 
     func aiTabs() -> [(TabID, String)] {
         workspaces.flatMap(\.tabs).compactMap { tab in
-            let program = Self.program(of: tab)
+            let program = aiProgram(of: tab)
             return program == "claude" || program == "codex" ? (tab.id, program) : nil
         }
     }
@@ -1751,9 +1751,20 @@ final class Session {
     /// singles out `✳` as its doing — and a title wearing one is worth
     /// naming. A guess, and only ever used in place of silence: the moment
     /// the daemon answers, its answer wins.
-    private static func program(of tab: TabEntity) -> String {
+    private static func program(of tab: TabEntity, core: String? = nil) -> String {
         let wearsClaudeMarks = tab.title.first.map(spinnerMarks.contains) == true
         if !tab.command.isEmpty {
+            // An older daemon names the shell of a tab whose AI has a child of
+            // its own in front (an MCP server, a php it ran), and a title
+            // that has not been set yet names nothing: Claude Code's marks
+            // and what the core found inside the tab say what it is.
+            let name = tab.command.hasPrefix("-") ? String(tab.command.dropFirst()) : tab.command
+            if AIProgramKind.shells.contains(name) {
+                if wearsClaudeMarks { return "claude" }
+                if let core { return core }
+            } else if core == "claude", isVersionNumber(name) {
+                return "claude"
+            }
             // Claude Code's own installer keeps each release as a file named
             // after its version, and the process is called what the file is:
             // `2.1.281`, which names nothing. Behind a title wearing its
@@ -1761,7 +1772,12 @@ final class Session {
             if wearsClaudeMarks, isVersionNumber(tab.command) { return "claude" }
             return tab.command
         }
-        return wearsClaudeMarks ? "claude" : ""
+        return wearsClaudeMarks ? "claude" : (core ?? "")
+    }
+
+    /// `program(of:)` with what the core found in the tab to settle it.
+    private func aiProgram(of tab: TabEntity) -> String {
+        Self.program(of: tab, core: aiAccounts.agent(workspace: tab.id.workspace, tab: tab.id.root))
     }
 
     private static func isVersionNumber(_ name: String) -> Bool {
@@ -1930,12 +1946,14 @@ final class Session {
                 needsYou: workspace.tabs.filter { claudeActivities[$0.id] == .waitingForYou }.count,
                 needsYouSince: workspace.tabs.compactMap { waitingSince[$0.id] }.max(),
                 working: workspace.tabs.contains { isAtWork($0) },
+                workingPrograms: Set(workspace.tabs.filter { isAtWork($0) }.map { aiProgram(of: $0) })
+                    .intersection(["claude", "codex"]).sorted(),
                 isActive: workspace.name == view.workspace,
                 tabRows: workspace.tabs.map { tab in
                     SessionSnapshot.SidebarTab(
                         id: tab.id,
                         title: Self.plainTitle(displayTitle(of: tab), fallback: "tab \(tab.id.root)"),
-                        command: Self.program(of: tab),
+                        command: aiProgram(of: tab),
                         busy: isAtWork(tab),
                         isActive: tab.id == view.tab,
                         isElsewhere: views.contains {
@@ -1948,7 +1966,7 @@ final class Session {
                         offersAccounts: aiHelperPresent,
                         usageAccount: aiAccounts.confirmedAccount(
                             workspace: tab.id.workspace, tab: tab.id.root,
-                            program: AIProgramKind(command: Self.program(of: tab))),
+                            program: AIProgramKind(command: aiProgram(of: tab))),
                         runningAccount: aiRunning(of: tab)
                     )
                 },
@@ -1966,7 +1984,7 @@ final class Session {
                 claudeMode: claudeModes[tab.id],
                 claudeActivity: claudeActivities[tab.id],
                 wantsYouSince: waitingSince[tab.id],
-                command: Self.program(of: tab),
+                command: aiProgram(of: tab),
                 account: aiAccount(of: tab),
                 offersAccounts: aiHelperPresent,
                 runningAccount: aiRunning(of: tab)

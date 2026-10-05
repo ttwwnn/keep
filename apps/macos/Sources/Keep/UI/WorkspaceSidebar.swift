@@ -290,9 +290,9 @@ struct WorkspaceSidebar: View {
                 if row.working {
                     // The one fact worth carrying up from the tabs: something
                     // is at work in here, visible with the group folded shut.
-                    Text("✳")
-                        .font(counter)
-                        .foregroundStyle(Palette.busy)
+                    ForEach(row.workingPrograms.isEmpty ? [""] : row.workingPrograms, id: \.self) { program in
+                        BusyMark(program: program, font: counter)
+                    }
                 }
                 if row.needsYou > 0 && !row.expanded {
                     // And the one fact that must not stay folded away: a tab
@@ -473,9 +473,7 @@ struct WorkspaceSidebar: View {
                         .font(.system(size: 10 * titleZoom, weight: .semibold))
                         .foregroundStyle(Palette.attentionInk)
                 } else if tab.busy {
-                    Text("✳")
-                        .font(.system(size: 10 * titleZoom))
-                        .foregroundStyle(Palette.busy)
+                    BusyMark(program: tab.command, font: .system(size: 10 * titleZoom))
                 }
                 Text(tab.title)
                     .font(.system(size: 12 * titleZoom, weight: wantsYou ? .semibold : chosen ? .medium : .regular))
@@ -601,9 +599,7 @@ struct WorkspaceSidebar: View {
         let chosen = tab.isActive && row.isActive
         return HStack(spacing: 6) {
             if tab.busy {
-                Text("✳")
-                    .font(.system(size: 10 * titleZoom))
-                    .foregroundStyle(Palette.busy)
+                BusyMark(program: tab.command, font: .system(size: 10 * titleZoom))
             }
             nameField(for: .tab(tab.id), prompt: "The program's title")
                 .font(.system(size: 12 * titleZoom, weight: chosen ? .medium : .regular))
@@ -1233,6 +1229,21 @@ private struct CleanupDropDelegate: DropDelegate {
     }
 }
 
+/// The mark of a tab at work, by what works in it: Claude Code's orange `✳`,
+/// Codex's own `◆`, and the amber `✳` of any other command.
+private struct BusyMark: View {
+    let program: String
+    let font: Font
+
+    var body: some View {
+        Text(program == "codex" ? "◆" : "✳")
+            .font(font)
+            .foregroundStyle(
+                program == "codex" ? Palette.codexMark
+                    : program == "claude" ? Palette.claudeMark : Palette.busy)
+    }
+}
+
 private struct StateDot: View {
     let state: SessionSnapshot.SidebarRow.Dot
 
@@ -1314,6 +1325,10 @@ private enum Palette {
 
     static let attached = state(0.76, 0.14, 150)
     static let busy = state(0.82, 0.15, 85)
+    /// Claude Code's orange, for the mark of a tab it is working in.
+    static let claudeMark = state(0.72, 0.15, 48)
+    /// Codex's, apart from it: a cool blue-green.
+    static let codexMark = state(0.78, 0.11, 200)
     static let idle = state(0.70, 0.05, 250)
 
     /// What is printed on the badge of a tab waiting on you.
