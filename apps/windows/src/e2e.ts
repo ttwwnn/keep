@@ -5,7 +5,7 @@
 
 import * as api from "./api";
 import { SPLIT_RIGHT } from "./api";
-import { readActivity } from "./claude";
+import { busyMark, programOf, readActivity } from "./claude";
 import { lineId } from "./ia";
 import { chooseAccount, e2eHooks, iaAvailable, measureNow, moveOrder, signIn, usageLines } from "./iaStore";
 import {
@@ -22,6 +22,7 @@ import {
   renameTab,
   select,
   split,
+  tabBusy,
   tabLabel,
   tabsByWorkspace,
   terminals,
@@ -171,6 +172,31 @@ export async function runE2E(): Promise<void> {
   });
 
   if (info.value?.e2eIa) await aiSteps(step, info.value.e2eIa === "real");
+
+  if (windows) {
+    await step("a marca da aba em trabalho: Claude Code laranja, Codex com a sua", async () => {
+      const seen: string[] = [];
+      for (const program of ["claude", "codex"]) {
+        const id = await newTab(WORKSPACE);
+        if (id === null) throw new Error("não abriu a aba");
+        const find = () => (tabsByWorkspace.value.get(WORKSPACE) ?? []).find((t) => t.root.id === id);
+        await waitFor(() => {
+          const s = screenOf(id);
+          return find() && s.includes("PS ") && s.includes(">");
+        }, 30000);
+        terminals.existing(WORKSPACE, id)?.term.input(`cmd /c ${program}.cmd\r`, true);
+        const tab = await waitFor(() => {
+          const t = find();
+          return t && programOf(t.root.command, t.root.title) === program && tabBusy(WORKSPACE, t) ? t : null;
+        }, 30000);
+        select(WORKSPACE, tab.root.id);
+        const mark = busyMark(program);
+        seen.push(`${program}: ${mark.glyph} ${mark.color}`);
+      }
+      await api.e2eShot("marcas");
+      return seen.join("; ");
+    });
+  }
 
   const tab = firstTab();
   const report = {

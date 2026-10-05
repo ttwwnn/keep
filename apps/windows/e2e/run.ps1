@@ -100,6 +100,16 @@ if ($NucleoReal) {
     @{ caminhoWorktree = $worktree } | ConvertTo-Json | Set-Content -Path $env:KEEP_E2E_FAKE_STATE
 }
 
+# Stand-ins for the programs whose busy mark the roteiro photographs: a
+# claude.cmd and a codex.cmd that print a line and stay in front of the
+# shell, as the real ones do. On this run's PATH, ahead of anything else.
+$falsos = Join-Path $Out 'falsos'
+New-Item -ItemType Directory -Force $falsos | Out-Null
+foreach ($nome in @('claude', 'codex')) {
+    Set-Content -Path (Join-Path $falsos "$nome.cmd") -Value "@echo off`r`necho $nome (e2e)`r`nping -n 300 127.0.0.1 >nul"
+}
+$env:PATH = "$falsos;$env:PATH"
+
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 function Save-Screen([string]$path) {
     $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
