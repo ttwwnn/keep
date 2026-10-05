@@ -517,6 +517,8 @@ pub(crate) mod testes {
         pub(crate) caminho: String,
         pub(crate) token: String,
         pub(crate) conta: Option<String>,
+        /// O corpo de um POST, como veio.
+        pub(crate) corpo: String,
     }
 
     pub(crate) type Resposta = (u16, Vec<(&'static str, String)>, String);
@@ -533,7 +535,24 @@ pub(crate) mod testes {
                 let Ok(mut c) = conexao else { continue };
                 let mut buf = [0u8; 8192];
                 let n = c.read(&mut buf).unwrap_or(0);
-                let texto = String::from_utf8_lossy(&buf[..n]).to_string();
+                let mut lido = buf[..n].to_vec();
+                // O corpo de um POST pode chegar depois do cabeçalho.
+                let fim_do_cabecalho = |b: &[u8]| b.windows(4).position(|w| w == b"\r\n\r\n").map(|i| i + 4);
+                if let Some(inicio) = fim_do_cabecalho(&lido) {
+                    let cab = String::from_utf8_lossy(&lido[..inicio]).to_ascii_lowercase();
+                    let tamanho = cab
+                        .lines()
+                        .find_map(|l| l.strip_prefix("content-length:").and_then(|v| v.trim().parse::<usize>().ok()))
+                        .unwrap_or(0);
+                    while lido.len() < inicio + tamanho {
+                        let n = c.read(&mut buf).unwrap_or(0);
+                        if n == 0 {
+                            break;
+                        }
+                        lido.extend_from_slice(&buf[..n]);
+                    }
+                }
+                let texto = String::from_utf8_lossy(&lido).to_string();
                 let caminho = texto.split_whitespace().nth(1).unwrap_or("").to_string();
                 let cabecalhos: HashMap<String, String> = texto
                     .lines()
@@ -545,6 +564,7 @@ pub(crate) mod testes {
                     caminho,
                     token: cabecalhos.get("authorization").and_then(|a| a.strip_prefix("Bearer ")).unwrap_or("").into(),
                     conta: cabecalhos.get("chatgpt-account-id").cloned(),
+                    corpo: texto.split_once("\r\n\r\n").map(|(_, c)| c.to_string()).unwrap_or_default(),
                 };
                 let (status, extras, corpo) = responde(&p);
                 guarda.lock().unwrap().push(p);

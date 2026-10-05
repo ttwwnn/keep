@@ -106,6 +106,8 @@ enum KeepCLI {
             ("KEEP_IA_CLAUDE_URL", ["KEEP_IA_CLAUDE_URL", "KEEP_AI_USAGE_CLAUDE_URL"]),
             ("KEEP_IA_CODEX_URL", ["KEEP_IA_CODEX_URL", "KEEP_AI_USAGE_CODEX_URL"]),
             ("KEEP_IA_OPENROUTER_URL", ["KEEP_IA_OPENROUTER_URL"]),
+            // The page a connection to OpenRouter opens in the browser.
+            ("KEEP_IA_OPENROUTER_AUTH_URL", ["KEEP_IA_OPENROUTER_AUTH_URL"]),
             // The renewal of the logins (`keep ia renovar`): a refresh token
             // of the made-up home is never sent anywhere either.
             ("KEEP_IA_TOKEN_URL", ["KEEP_IA_TOKEN_URL"]),
@@ -217,10 +219,13 @@ enum AIHelper {
         key.range(of: #"^(claude|gpt):[^\s/:]+$"#, options: .regularExpression) != nil
     }
 
-    /// The two services a login can be opened for.
+    /// What a login can be opened for: an account of either AI, or the key
+    /// the Jev spends on OpenRouter (`keep ia login openrouter`), which is no
+    /// account of the order.
     enum Service: String {
         case claude
         case gpt
+        case openrouter
     }
 
     /// Why the core did not do it: its `motivo` (`ocupada`,

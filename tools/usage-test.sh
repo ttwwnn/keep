@@ -174,6 +174,10 @@ sabotage "$USAGE" "the core's dates read as Foundation's own" \
         return try? decoder.decode(UsageAnswer.self, from: data)|||        return try? decoder.decode(UsageAnswer.self, from: data)' || ok=1
 sabotage "$USAGE" "the smaller of the two credits not the one that counts" \
     'keyLeft.map { min($0, accountLeft) } ?? accountLeft|||keyLeft.map { max($0, accountLeft) } ?? accountLeft' || ok=1
+sabotage "$USAGE" "a key with no ceiling measured against nothing" \
+    'var keySharePercent: Double { total > 0 ? min(100, (keyUsed ?? 0) / total * 100) : 0 }|||var keySharePercent: Double { 0 }' || ok=1
+sabotage "$USAGE" "the watcher blind to the Jev's reading" \
+    'parts.append("jev " + stamp(home.appendingPathComponent(state + "/jev.json")))|||_ = state' || ok=1
 sabotage "$USAGE" "a credit that rounds to nothing said as zero" \
     'if value > 0, value < 0.01 { return "< US$ 0,01" }|||' || ok=1
 sabotage "$USAGE" "the Jev's dates read as Foundation's own" \

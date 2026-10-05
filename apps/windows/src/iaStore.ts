@@ -22,11 +22,13 @@ import {
   moved,
   orderKeyOf,
   programKind,
+  readJev,
   readStoredLines,
   readSwitch,
   refusalText as refusal,
   runsAI,
   type Engine,
+  type JevLine,
   type MenuRow,
   type ProgramKind,
   type TabAI,
@@ -53,11 +55,14 @@ import { viewKey } from "./terminals";
 // ------------------------------------------------------------------ state
 
 const LINES_KEY = "keep.ia.linhas";
+const JEV_KEY = "keep.ia.jev";
 const FOLDED_KEY = "keep.ia.rodapeRecolhido";
 
 export const iaAvailable = computed(() => iaInfo.value?.available === true);
 /** The footer's lines, in the order of priority. */
 export const usageLines = signal<UsageLine[]>([]);
+/** What the Jev can still spend on OpenRouter; null when this machine has no key of the Jev's. */
+export const jev = signal<JevLine | null>(readStoredJev());
 /** A round somebody asked for is running. */
 export const measuring = signal(false);
 /** What the footer has to say for a moment: a change the core refused. */
@@ -78,6 +83,39 @@ function readFlag(key: string): boolean {
     return localStorage.getItem(key) === "1";
   } catch {
     return false;
+  }
+}
+
+function readStoredJev(): JevLine | null {
+  try {
+    const raw = localStorage.getItem(JEV_KEY);
+    return raw ? readJev(JSON.parse(raw)) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Ask the core about the Jev; a failure leaves the footer as it was, and nothing else waits on it. */
+async function askJev(args: string[]): Promise<void> {
+  try {
+    applyJev(await api.iaAsk(["ia", "jev", ...args, "--json"]));
+  } catch {
+    /* asked again at the next round */
+  }
+}
+
+/** The Jev as the core had it: none when there is no key, which takes the line off the footer. */
+function applyJev(answer: CoreAnswer): void {
+  if (answer.ok !== true || !("jev" in answer)) return;
+  const next = readJev(answer.jev);
+  if (JSON.stringify(next) === JSON.stringify(jev.value)) return;
+  jev.value = next;
+  if (!persists()) return;
+  try {
+    if (next) localStorage.setItem(JEV_KEY, JSON.stringify(next));
+    else localStorage.removeItem(JEV_KEY);
+  } catch {
+    /* a convenience */
   }
 }
 
@@ -148,6 +186,9 @@ async function measure(clicked: boolean, only?: string): Promise<void> {
     if (only) args.push(`--conta=${only}`);
     args.push("--json");
     applyLines(await api.iaAsk(args));
+    // The Jev's credit in the rounds of everybody's usage, not in one for a
+    // login just made: the core keeps its own cadence, as for the accounts.
+    if (!only) await askJev(clicked ? ["--agora"] : []);
   } catch {
     // The footer keeps what it had; the next tick asks again.
   } finally {
@@ -194,6 +235,8 @@ async function look(force: boolean, measureFound = true): Promise<void> {
     signature = now;
     const found = applyLines(await api.iaAsk(["ia", "uso", "--cache", "--json"]));
     if (measureFound) for (const line of found) void measure(false, orderKeyOf(line.account));
+    // The Jev as the core has it: a connection just made, or a key gone.
+    await askJev(["--cache"]);
   } catch {
     /* asked again in two seconds */
   } finally {
@@ -261,14 +304,18 @@ function releaseLater(): void {
 
 let signingIn = false;
 
-/** A login to another account, in a new tab of the workspace in front; that tab comes forward. */
-export async function signIn(engine: Engine): Promise<void> {
+/**
+ * A login to another account — or the Jev's connection to OpenRouter — in a
+ * new tab of the workspace in front; that tab comes forward.
+ */
+export async function signIn(engine: Engine | "openrouter"): Promise<void> {
   if (signingIn) return;
   signingIn = true;
   const workspace =
     activeWorkspace.value ?? workspaces.value[0]?.name ?? (info.value?.home.split(/[\\/]/).pop() || "keep");
   try {
-    const answer = await api.iaAsk(["ia", "entrar", engine === "claude" ? "claude" : "gpt", `--ws=${workspace}`, "--json"]);
+    const service = engine === "codex" ? "gpt" : engine;
+    const answer = await api.iaAsk(["ia", "entrar", service, `--ws=${workspace}`, "--json"]);
     if (answer.ok === true && typeof answer.ws === "string" && typeof answer.aba === "number") {
       await refresh();
       select(answer.ws, answer.aba);

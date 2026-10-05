@@ -102,6 +102,10 @@ confere(abs((jev?.credit?.accountLeft ?? 0) - 9.9754) < 1e-9 && abs((jev?.credit
 confere(abs((jev?.credit?.available ?? 0) - 4.9958) < 1e-9, "jev: o que ainda pode gastar é o menor dos dois")
 confere(jev?.credit?.accountPercent ?? 0 < 1 && abs((jev?.credit?.keyPercent ?? 0) - 0.084) < 1e-9,
         "jev: o gasto em percentual, para a barra", "\(String(describing: jev?.credit?.keyPercent))")
+let chaveSemTeto = JevCredit(total: 10, used: 0.02, keyLimit: nil, keyUsed: 2.5, usedToday: nil, usedThisMonth: nil)
+confere(chaveSemTeto.keyPercent == nil && chaveSemTeto.keySharePercent == 25 && abs(chaveSemTeto.available - 9.98) < 1e-9,
+        "jev: chave sem teto gasta do crédito todo; a barra dela é a parte do crédito que ela gastou",
+        "\(chaveSemTeto.keySharePercent)")
 let semTeto = JevCredit(total: 10, used: 12, keyLimit: nil, keyUsed: nil, usedToday: nil, usedThisMonth: nil)
 confere(semTeto.available == 0 && semTeto.keyPercent == nil && semTeto.accountPercent == 100,
         "jev: gasto além do comprado não dá saldo negativo nem barra além do fim")
@@ -139,6 +143,10 @@ muda("o conta.json de uma pasta do kit") {
 muda("o login do Codex") {
     try! fm.createDirectory(at: casa.appendingPathComponent(".codex"), withIntermediateDirectories: true)
     try! "{}".write(to: casa.appendingPathComponent(".codex/auth.json"), atomically: true, encoding: .utf8)
+}
+muda("a leitura do Jev, gravada pelo núcleo") {
+    try! fm.createDirectory(at: casa.appendingPathComponent(".keep-ia-estado"), withIntermediateDirectories: true)
+    try! "{}".write(to: casa.appendingPathComponent(".keep-ia-estado/jev.json"), atomically: true, encoding: .utf8)
 }
 muda("uma conta GPT nova") {
     try! fm.createDirectory(at: casa.appendingPathComponent(".codex-contas/nova"), withIntermediateDirectories: true)
@@ -436,6 +444,10 @@ if case .success(let aberta) = AIHelper.signIn(.gpt, workspace: "casa") {
     confere(aberta.workspace == "casa" && aberta.tab == 7, "entrar: devolve workspace e aba", "\(aberta)")
 } else { confere(false, "entrar: ok") }
 confere(chamadas().last == ["entrar", "gpt", "--ws=casa", "--json"], "entrar: argumentos", "\(chamadas())")
+if case .success(let aberta) = AIHelper.signIn(.openrouter, workspace: "casa") {
+    confere(aberta.tab == 7 && chamadas().last == ["entrar", "openrouter", "--ws=casa", "--json"],
+            "conectar o Jev: o núcleo abre o login do OpenRouter numa aba", "\(chamadas())")
+} else { confere(false, "conectar o Jev: ok") }
 confere(fm.fileExists(atPath: casa.appendingPathComponent(".codex-contas/nova/auth.json").path), "entrar (falso): a conta nova aparece na casa falsa")
 // conta fixa sem o login próprio: o núcleo abre o login numa aba e diz qual
 try! "".write(toFile: falsoDir + "/precisa-login", atomically: true, encoding: .utf8)

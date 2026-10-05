@@ -3,9 +3,16 @@
 //! IA" ao lado das contas. Ver `docs/ia.md` ("Jev").
 //!
 //! A chave é a que a skill `jev` guarda: no macOS, o item `openrouter-api-key`
-//! do Chaveiro (lido com `security`, como as credenciais do Claude); nos
-//! outros sistemas, `OPENROUTER_API_KEY`. Sem chave, não há Jev e o rodapé não
-//! mostra nada. A chave nunca sai daqui nem vai para o cache.
+//! do Chaveiro (lido com `security`, como as credenciais do Claude); no
+//! Windows, a credencial genérica de mesmo nome do Gerenciador de Credenciais;
+//! nos outros, um arquivo só do dono na pasta de estado do Keep (ou
+//! `OPENROUTER_API_KEY`). Sem chave, não há Jev e o rodapé não mostra nada. A
+//! chave nunca sai daqui nem vai para o cache.
+//!
+//! Quem não tem chave conecta pelo "+" do rodapé: `keep ia entrar openrouter`
+//! abre uma aba com `keep ia login openrouter`, o login do OpenRouter no
+//! navegador (OAuth PKCE, como o `jev chave` da skill), que cria a chave
+//! "Jev (Keep)" e a guarda onde o Jev a lê (`login`).
 //!
 //! Duas perguntas ao OpenRouter: `/api/v1/credits` (o que a conta comprou e
 //! gastou) e `/api/v1/key` (o teto e o gasto da chave do Jev). O que vale é o
@@ -13,8 +20,13 @@
 //! entre leituras, "Medir agora" no máximo a cada 15 s, 429 espera o
 //! `Retry-After`, sem rede tenta de novo em um minuto.
 
+use std::io::{BufRead, BufReader, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+use base64::Engine as _;
+use sha2::{Digest, Sha256};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -24,8 +36,10 @@ use crate::{caminhos, rede};
 
 const PERIODO: f64 = 300.0;
 const ENTRE_CLIQUES: f64 = 15.0;
-/// O item do Chaveiro em que a skill `jev` guarda a chave.
+/// O item do Chaveiro (e a credencial do Windows) em que a skill `jev` guarda a chave.
 const SERVICO: &str = "openrouter-api-key";
+/// O nome da chave que o login cria no OpenRouter.
+const ROTULO: &str = "Jev (Keep)";
 
 /// O que o OpenRouter diz do crédito, em dólares.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -99,8 +113,144 @@ fn grava_cache(r: &Registro) {
 }
 
 /// A chave do Jev, se esta máquina tem uma.
-#[cfg(target_os = "macos")]
 fn chave() -> Option<String> {
+    #[cfg(not(target_os = "macos"))]
+    if let Some(c) = std::env::var("OPENROUTER_API_KEY").ok().map(|c| c.trim().to_string()).filter(|c| !c.is_empty()) {
+        return Some(c);
+    }
+    chave_guardada()
+}
+
+/// Nos testes, `KEEP_IA_TESTE_CHAVEIRO` (uma pasta, um arquivo por item) fica
+/// no lugar do Gerenciador de Credenciais e do arquivo; no macOS, o
+/// `security` de mentira dos testes já lê e grava nela.
+#[cfg(not(target_os = "macos"))]
+fn chaveiro_de_teste() -> Option<PathBuf> {
+    std::env::var_os("KEEP_IA_TESTE_CHAVEIRO").map(|d| PathBuf::from(d).join(SERVICO))
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn arquivo_da_chave() -> PathBuf {
+    chaveiro_de_teste().unwrap_or_else(|| caminhos::estado().join("openrouter.key"))
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn chave_guardada() -> Option<String> {
+    let texto = std::fs::read_to_string(arquivo_da_chave()).ok()?.trim().to_string();
+    (!texto.is_empty()).then_some(texto)
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn guarda_chave(chave: &str) -> Result<(), String> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let arq = arquivo_da_chave();
+    if let Some(pasta) = arq.parent() {
+        std::fs::create_dir_all(pasta).map_err(|e| e.to_string())?;
+    }
+    let tmp = arq.with_extension(format!("{}.tmp", std::process::id()));
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&tmp)
+        .map_err(|e| e.to_string())?;
+    f.write_all(chave.as_bytes()).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &arq).map_err(|e| e.to_string())
+}
+
+#[cfg(windows)]
+fn chave_guardada() -> Option<String> {
+    if let Some(arq) = chaveiro_de_teste() {
+        let texto = std::fs::read_to_string(arq).ok()?.trim().to_string();
+        return (!texto.is_empty()).then_some(texto);
+    }
+    credencial_windows::le(SERVICO)
+}
+
+#[cfg(windows)]
+fn guarda_chave(chave: &str) -> Result<(), String> {
+    if let Some(arq) = chaveiro_de_teste() {
+        if let Some(pasta) = arq.parent() {
+            std::fs::create_dir_all(pasta).map_err(|e| e.to_string())?;
+        }
+        return std::fs::write(arq, chave).map_err(|e| e.to_string());
+    }
+    credencial_windows::grava(SERVICO, chave)
+}
+
+/// Uma credencial genérica do Gerenciador de Credenciais do Windows, só do
+/// usuário (como o Git e o `gh` guardam as deles).
+#[cfg(windows)]
+mod credencial_windows {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::Security::Credentials::{
+        CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW, CredFree, CredReadW, CredWriteW,
+    };
+
+    fn largo(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    pub fn le(alvo: &str) -> Option<String> {
+        let nome = largo(alvo);
+        let mut cred: *mut CREDENTIALW = std::ptr::null_mut();
+        // SAFETY: `nome` termina em zero e vive até o fim da chamada; o
+        // ponteiro devolvido é liberado com `CredFree` logo abaixo.
+        let ok = unsafe { CredReadW(nome.as_ptr(), CRED_TYPE_GENERIC, 0, &mut cred) };
+        if ok == 0 || cred.is_null() {
+            return None;
+        }
+        // SAFETY: `cred` é a credencial que o Windows acabou de alocar; o blob
+        // tem `CredentialBlobSize` bytes.
+        let texto = unsafe {
+            let c = &*cred;
+            let bytes = if c.CredentialBlob.is_null() {
+                &[][..]
+            } else {
+                std::slice::from_raw_parts(c.CredentialBlob, c.CredentialBlobSize as usize)
+            };
+            String::from_utf8(bytes.to_vec()).ok()
+        };
+        // SAFETY: liberada uma vez, a que o CredReadW alocou.
+        unsafe { CredFree(cred as *const _) };
+        texto.map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
+    }
+
+    pub fn grava(alvo: &str, valor: &str) -> Result<(), String> {
+        let mut nome = largo(alvo);
+        let mut usuario = largo("Keep");
+        let mut blob = valor.as_bytes().to_vec();
+        let cred = CREDENTIALW {
+            Flags: 0,
+            Type: CRED_TYPE_GENERIC,
+            TargetName: nome.as_mut_ptr(),
+            Comment: std::ptr::null_mut(),
+            LastWritten: FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 },
+            CredentialBlobSize: blob.len() as u32,
+            CredentialBlob: blob.as_mut_ptr(),
+            Persist: CRED_PERSIST_LOCAL_MACHINE,
+            AttributeCount: 0,
+            Attributes: std::ptr::null_mut(),
+            TargetAlias: std::ptr::null_mut(),
+            UserName: usuario.as_mut_ptr(),
+        };
+        // SAFETY: todos os ponteiros da estrutura apontam para buffers vivos
+        // até o fim da chamada, que copia o que precisa.
+        if unsafe { CredWriteW(&cred, 0) } == 0 {
+            return Err(format!("o Windows não guardou a chave ({})", std::io::Error::last_os_error()));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn guarda_chave(chave: &str) -> Result<(), String> {
+    crate::contas::credencial::grava_chaveiro(SERVICO, chave)
+}
+
+#[cfg(target_os = "macos")]
+fn chave_guardada() -> Option<String> {
     let security = std::env::var("KEEP_IA_SECURITY").unwrap_or_else(|_| "/usr/bin/security".into());
     let mut filho = std::process::Command::new(security)
         .args(["find-generic-password", "-w", "-s", SERVICO])
@@ -128,12 +278,6 @@ fn chave() -> Option<String> {
     }
     let texto = String::from_utf8_lossy(&saida.stdout).trim().to_string();
     (!texto.is_empty()).then_some(texto)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn chave() -> Option<String> {
-    let _ = SERVICO;
-    std::env::var("OPENROUTER_API_KEY").ok().map(|c| c.trim().to_string()).filter(|c| !c.is_empty())
 }
 
 fn numero(v: Option<&Value>) -> Option<f64> {
@@ -263,6 +407,238 @@ pub fn medir(forcar: bool) -> Option<Saldo> {
     Some(saldo(r))
 }
 
+// ------------------------------------------------------------ conectar
+
+/// O endereço da página de autorização: a do OpenRouter, ou a de um teste
+/// nesta máquina (`KEEP_IA_OPENROUTER_AUTH_URL`, só `http://127.0.0.1`).
+fn url_de_autorizar() -> String {
+    rede::url_de_teste(&["KEEP_IA_OPENROUTER_AUTH_URL"], "https://openrouter.ai/auth")
+}
+
+fn url_da_api() -> String {
+    rede::url_de_teste(&["KEEP_IA_OPENROUTER_URL"], "https://openrouter.ai/api/v1")
+}
+
+fn base64url(bytes: &[u8]) -> String {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+}
+
+fn aleatorio(n: usize) -> Result<Vec<u8>, String> {
+    let mut b = vec![0u8; n];
+    getrandom::fill(&mut b).map_err(|e| format!("sem números aleatórios do sistema ({e})"))?;
+    Ok(b)
+}
+
+/// O texto de um parâmetro de URL: o que não for letra, número ou `-._~` vira `%XX`.
+fn codifica(texto: &str) -> String {
+    texto
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+fn decodifica(texto: &str) -> String {
+    let b = texto.as_bytes();
+    let mut saida = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'+' => saida.push(b' '),
+            b'%' if i + 2 < b.len() => {
+                match std::str::from_utf8(&b[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                    Some(v) => {
+                        saida.push(v);
+                        i += 2;
+                    }
+                    None => saida.push(b'%'),
+                }
+            }
+            c => saida.push(c),
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&saida).into_owned()
+}
+
+/// Os parâmetros de uma linha `GET /caminho?a=1&b=2 HTTP/1.1`, e o caminho.
+fn le_pedido(linha: &str) -> (String, Vec<(String, String)>) {
+    let alvo = linha.split_whitespace().nth(1).unwrap_or("");
+    let (caminho, consulta) = alvo.split_once('?').unwrap_or((alvo, ""));
+    let pares = consulta
+        .split('&')
+        .filter(|p| !p.is_empty())
+        .map(|p| {
+            let (k, v) = p.split_once('=').unwrap_or((p, ""));
+            (decodifica(k), decodifica(v))
+        })
+        .collect();
+    (caminho.to_string(), pares)
+}
+
+/// A página que o navegador mostra ao voltar do OpenRouter.
+fn pagina(conexao: &mut TcpStream, titulo: &str, texto: &str) {
+    let escapa = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    let corpo = format!(
+        "<!doctype html><meta charset=\"utf-8\"><title>Keep</title>\
+         <body style=\"font:17px/1.5 -apple-system,system-ui,sans-serif;max-width:40em;margin:4em auto;padding:0 1em\">\
+         <h1 style=\"font-size:1.4em\">{}</h1><p>{}</p></body>",
+        escapa(titulo),
+        escapa(texto)
+    );
+    let _ = write!(
+        conexao,
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        corpo.len(),
+        corpo
+    );
+    let _ = conexao.flush();
+}
+
+/// Abre o endereço no navegador padrão; um teste aponta outro programa
+/// (`KEEP_IA_NAVEGADOR`), que recebe o endereço como argumento.
+fn abre_no_navegador(url: &str) -> bool {
+    let mut cmd = match std::env::var_os("KEEP_IA_NAVEGADOR") {
+        Some(p) => std::process::Command::new(p),
+        #[cfg(target_os = "macos")]
+        None => std::process::Command::new("/usr/bin/open"),
+        #[cfg(windows)]
+        None => {
+            let mut c = std::process::Command::new("rundll32.exe");
+            c.arg("url.dll,FileProtocolHandler");
+            c
+        }
+        #[cfg(not(any(target_os = "macos", windows)))]
+        None => std::process::Command::new("xdg-open"),
+    };
+    cmd.arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// Troca o código da volta pela chave (`POST /api/v1/auth/keys`).
+fn troca_o_codigo(codigo: &str, verificador: &str) -> Result<String, String> {
+    let corpo = json!({ "code": codigo, "code_verifier": verificador, "code_challenge_method": "S256" });
+    let r = rede::post_json(&format!("{}/auth/keys", url_da_api()), &[], &corpo, Duration::from_secs(30))
+        .map_err(|_| "sem conexão com o OpenRouter".to_string())?;
+    if r.status != 200 {
+        return Err(format!("o OpenRouter não trocou o código pela chave (HTTP {})", r.status));
+    }
+    let v: Value = serde_json::from_slice(&r.corpo).map_err(|_| "o OpenRouter respondeu sem a chave".to_string())?;
+    let chave = v.get("key").and_then(Value::as_str).unwrap_or("").trim().to_string();
+    if !chave.starts_with("sk-or-") {
+        return Err("o OpenRouter respondeu sem a chave".into());
+    }
+    Ok(chave)
+}
+
+/// O que o OpenRouter diz da chave nova: o teto, ou nenhum.
+fn confere_a_chave(chave: &str) -> Result<Option<f64>, String> {
+    let r = rede::get(&format!("{}/key", url_da_api()), &[("Authorization", format!("Bearer {chave}"))], Duration::from_secs(20))
+        .map_err(|_| "sem conexão com o OpenRouter para conferir a chave".to_string())?;
+    if r.status != 200 {
+        return Err(format!("o OpenRouter recusou a chave nova (HTTP {})", r.status));
+    }
+    let v: Value = serde_json::from_slice(&r.corpo).unwrap_or(Value::Null);
+    Ok(v.get("data").and_then(|d| d.get("limit")).and_then(Value::as_f64))
+}
+
+/// `keep ia login openrouter`: o login do OpenRouter no navegador, que cria a
+/// chave "Jev (Keep)" e a guarda onde o Jev a lê. Roda numa aba (o "+" do
+/// rodapé a abre): diz o que faz, espera a volta do navegador em
+/// `http://localhost:<porta>/callback` e mede o saldo, para o rodapé mostrar
+/// o Jev em seguida. Devolve o resumo para a aba.
+pub fn login() -> Result<String, String> {
+    println!("Conectar o Jev ao OpenRouter\n");
+    println!("O Jev é um modelo que decide no lugar da IA (que modelo usar, qual opção escolher) e cobra");
+    println!("frações de centavo por decisão, do crédito da sua conta no OpenRouter. O navegador vai abrir");
+    println!("a página do OpenRouter para você autorizar a chave \"{ROTULO}\". Deixe o limite de crédito em");
+    println!("branco para o Jev poder usar todo o crédito da conta.\n");
+    let verificador = base64url(&aleatorio(64)?);
+    let desafio = base64url(&Sha256::digest(verificador.as_bytes()));
+    let estado = base64url(&aleatorio(16)?);
+    let ouvinte = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("não deu para esperar a volta do navegador ({e})"))?;
+    let porta = ouvinte.local_addr().map_err(|e| e.to_string())?.port();
+    // "localhost" pode resolver para ::1 antes de 127.0.0.1.
+    let ouvintes: Vec<TcpListener> =
+        std::iter::once(ouvinte).chain(TcpListener::bind(("::1", porta)).ok()).collect();
+    for o in &ouvintes {
+        o.set_nonblocking(true).map_err(|e| e.to_string())?;
+    }
+    let retorno = format!("http://localhost:{porta}/callback");
+    let url = format!(
+        "{}?callback_url={}&code_challenge={desafio}&code_challenge_method=S256&key_label={}&state={estado}",
+        url_de_autorizar(),
+        codifica(&retorno),
+        codifica(ROTULO)
+    );
+    if !abre_no_navegador(&url) {
+        println!("O navegador não abriu sozinho.");
+    }
+    println!("Se o navegador não abrir, copie este endereço para ele:\n{url}\n");
+    println!("Esperando a autorização (até 15 minutos)…");
+    let prazo = std::env::var("KEEP_IA_LOGIN_PRAZO").ok().and_then(|s| s.parse::<u64>().ok()).unwrap_or(900);
+    let fim = Instant::now() + Duration::from_secs(prazo);
+    loop {
+        if Instant::now() > fim {
+            return Err("Ninguém autorizou a tempo; nenhuma chave foi guardada.".into());
+        }
+        let Some(mut conexao) = ouvintes.iter().find_map(|o| o.accept().ok().map(|(c, _)| c)) else {
+            std::thread::sleep(Duration::from_millis(100));
+            continue;
+        };
+        let _ = conexao.set_nonblocking(false);
+        let _ = conexao.set_read_timeout(Some(Duration::from_secs(10)));
+        let mut primeira = String::new();
+        if BufReader::new(&conexao).read_line(&mut primeira).is_err() {
+            continue;
+        }
+        let (caminho, pares) = le_pedido(&primeira);
+        if caminho != "/callback" {
+            let _ = write!(conexao, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            continue;
+        }
+        let valor = |k: &str| pares.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        let resultado = if valor("state").as_deref() != Some(estado.as_str()) {
+            Err("A volta do navegador não é a deste pedido; nenhuma chave foi guardada.".to_string())
+        } else if let Some(codigo) = valor("code").filter(|c| !c.is_empty()) {
+            troca_o_codigo(&codigo, &verificador).and_then(|chave| {
+                let teto = confere_a_chave(&chave)?;
+                guarda_chave(&chave)?;
+                if chave_guardada().as_deref() != Some(chave.as_str()) {
+                    return Err("a chave não ficou guardada".into());
+                }
+                Ok(teto)
+            })
+        } else {
+            Err(format!(
+                "O OpenRouter não autorizou ({}); nenhuma chave foi guardada.",
+                valor("error").unwrap_or_else(|| "sem código".into())
+            ))
+        };
+        return match resultado {
+            Ok(teto) => {
+                let limite = match teto {
+                    Some(t) => format!("limite de US$ {t:.2} na chave"),
+                    None => "sem limite na chave: usa todo o crédito da conta".into(),
+                };
+                pagina(&mut conexao, "Pronto", "O Jev está conectado ao OpenRouter. Pode fechar esta aba e voltar ao Keep.");
+                let _ = medir(true);
+                Ok(format!("Pronto: o Jev está conectado ao OpenRouter (chave \"{ROTULO}\", {limite})."))
+            }
+            Err(e) => {
+                pagina(&mut conexao, "Não deu certo", &e);
+                Err(e)
+            }
+        };
+    }
+}
+
 /// `keep ia jev [--agora] [--cache]`. `jev: null` quando não há Jev nesta
 /// máquina.
 pub fn cli(a: &Args) -> i32 {
@@ -317,7 +693,6 @@ mod testes {
         assert!(em_cache().is_none());
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn mede_com_a_chave_do_chaveiro_e_respeita_a_cadencia() {
         let c = casa("jev-mede");
@@ -350,7 +725,6 @@ mod testes {
         assert!(em_cache().unwrap().credit.is_some());
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn recusa_e_429_viram_problema_e_guardam_a_ultima_leitura() {
         let c = casa("jev-recusa");
@@ -383,5 +757,128 @@ mod testes {
         boa.store(2, std::sync::atomic::Ordering::SeqCst);
         let s = medir(true).unwrap();
         assert_eq!(s.problem.as_deref(), Some("o OpenRouter recusou a chave do Jev (HTTP 401)"));
+    }
+
+    // ---------------------------------------------------------------- conectar
+
+    /// Um navegador de mentira: guarda o endereço que recebeu num arquivo.
+    #[cfg(unix)]
+    fn navegador(c: &crate::contas::testes::Casa) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let script = c.raiz.join("navegador");
+        let saida = c.raiz.join("url-aberta");
+        std::fs::write(&script, format!("#!/bin/sh\nprintf %s \"$1\" > '{}'\n", saida.display())).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // SAFETY: a casa (e a trava) de pé.
+        unsafe {
+            std::env::set_var("KEEP_IA_NAVEGADOR", &script);
+            std::env::set_var("KEEP_IA_LOGIN_PRAZO", "20");
+        }
+        saida
+    }
+
+    /// O endereço que o login abriu, quando abrir, e um parâmetro dele.
+    #[cfg(unix)]
+    fn endereco_aberto(arquivo: &std::path::Path) -> String {
+        for _ in 0..200 {
+            if let Ok(u) = std::fs::read_to_string(arquivo) {
+                if !u.is_empty() {
+                    return u;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        panic!("o login não abriu o navegador");
+    }
+
+    #[cfg(unix)]
+    fn parametro(url: &str, nome: &str) -> String {
+        let (_, pares) = le_pedido(&format!("GET /{} HTTP/1.1", url.split_once('?').map(|(_, q)| format!("x?{q}")).unwrap_or_default()));
+        pares.into_iter().find(|(k, _)| k == nome).map(|(_, v)| v).unwrap_or_default()
+    }
+
+    /// A volta do navegador: o pedido que o OpenRouter manda o navegador fazer.
+    #[cfg(unix)]
+    fn volta(retorno: &str, consulta: &str) -> String {
+        let porta = retorno.trim_start_matches("http://localhost:").trim_end_matches("/callback");
+        let mut c = TcpStream::connect(("127.0.0.1", porta.parse::<u16>().unwrap())).unwrap();
+        write!(c, "GET /callback?{consulta} HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+        let mut resposta = String::new();
+        let _ = std::io::Read::read_to_string(&mut c, &mut resposta);
+        resposta
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn o_login_cria_a_chave_guarda_onde_o_jev_le_e_mede() {
+        let c = casa("jev-login");
+        let aberto = navegador(&c);
+        let pedidos = servidor(|p| match (p.caminho.as_str(), p.token.as_str()) {
+            ("/auth/keys", _) => (200, vec![], r#"{"key":"sk-or-v1-chave-nova"}"#.into()),
+            ("/key", "sk-or-v1-chave-nova") => (200, vec![], r#"{"data":{"limit":null,"usage":0}}"#.into()),
+            ("/credits", "sk-or-v1-chave-nova") => (200, vec![], CREDITOS.into()),
+            _ => (401, vec![], String::new()),
+        });
+        let porta = std::env::var("KEEP_IA_CLAUDE_URL").unwrap().trim_end_matches("/claude").to_string();
+        aponta(&porta);
+
+        let fio = std::thread::spawn(login);
+        let url = endereco_aberto(&aberto);
+        assert!(url.starts_with("https://openrouter.ai/auth?"), "{url}");
+        assert_eq!(parametro(&url, "key_label"), "Jev (Keep)");
+        assert_eq!(parametro(&url, "code_challenge_method"), "S256");
+        let retorno = parametro(&url, "callback_url");
+        assert!(retorno.starts_with("http://localhost:") && retorno.ends_with("/callback"), "{retorno}");
+        let pagina = volta(&retorno, &format!("code=codigo-123&state={}", parametro(&url, "state")));
+        assert!(pagina.contains("Pronto"), "{pagina}");
+        let resumo = fio.join().unwrap().unwrap();
+        assert!(resumo.contains("sem limite na chave"), "{resumo}");
+
+        assert_eq!(chave_guardada().as_deref(), Some("sk-or-v1-chave-nova"), "a chave fica onde o Jev a lê");
+        let troca = pedidos.lock().unwrap().iter().find(|p| p.caminho == "/auth/keys").cloned().expect("trocou o código");
+        let corpo: Value = serde_json::from_str(&troca.corpo).unwrap();
+        assert_eq!(corpo["code"], "codigo-123");
+        let verificador = corpo["code_verifier"].as_str().unwrap();
+        assert_eq!(base64url(&Sha256::digest(verificador.as_bytes())), parametro(&url, "code_challenge"), "PKCE: o desafio é o do verificador");
+        assert!(em_cache().and_then(|s| s.credit).is_some(), "mediu o saldo para o rodapé mostrar em seguida");
+        let guardado = std::fs::read_to_string(arquivo()).unwrap();
+        assert!(!guardado.contains("chave-nova"), "o cache não guarda a chave");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn volta_de_outro_pedido_ou_recusada_nao_guarda_nada() {
+        let c = casa("jev-login-recusa");
+        let aberto = navegador(&c);
+        let pedidos = servidor(|_| (200, vec![], r#"{"key":"sk-or-v1-nao-devia"}"#.into()));
+        let porta = std::env::var("KEEP_IA_CLAUDE_URL").unwrap().trim_end_matches("/claude").to_string();
+        aponta(&porta);
+
+        let fio = std::thread::spawn(login);
+        let url = endereco_aberto(&aberto);
+        let pagina = volta(&parametro(&url, "callback_url"), "code=codigo&state=de-outro-pedido");
+        assert!(pagina.contains("Não deu certo"), "{pagina}");
+        assert!(fio.join().unwrap().unwrap_err().contains("não é a deste pedido"));
+        assert!(pedidos.lock().unwrap().is_empty(), "nem trocou o código");
+        assert!(chave_guardada().is_none());
+
+        let _ = std::fs::remove_file(&aberto);
+        let fio = std::thread::spawn(login);
+        let url = endereco_aberto(&aberto);
+        volta(&parametro(&url, "callback_url"), &format!("error=access_denied&state={}", parametro(&url, "state")));
+        assert!(fio.join().unwrap().unwrap_err().contains("access_denied"));
+        assert!(chave_guardada().is_none());
+    }
+
+    #[test]
+    fn a_url_vai_codificada_e_volta_igual() {
+        assert_eq!(codifica("http://localhost:9/callback"), "http%3A%2F%2Flocalhost%3A9%2Fcallback");
+        assert_eq!(codifica("Jev (Keep)"), "Jev%20%28Keep%29");
+        assert_eq!(decodifica("Jev%20%28Keep%29"), "Jev (Keep)");
+        assert_eq!(decodifica("a+b%2"), "a b%2", "% sem dois dígitos fica como veio");
+        assert_eq!(decodifica("%C3%A9"), "é");
+        let (caminho, pares) = le_pedido("GET /callback?code=x%2By&state=s HTTP/1.1");
+        assert_eq!(caminho, "/callback");
+        assert_eq!(pares, vec![("code".into(), "x+y".into()), ("state".into(), "s".into())]);
     }
 }

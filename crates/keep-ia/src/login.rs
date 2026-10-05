@@ -67,11 +67,12 @@ pub fn abre_aba_com(ws: &str, args: &[String]) -> Result<u32, String> {
     }
 }
 
-/// `keep ia entrar claude|gpt --ws=<W>`.
+/// `keep ia entrar claude|gpt|openrouter --ws=<W>`: `openrouter` é a chave
+/// do Jev (`jev::login`), não uma conta de IA.
 pub fn cli_entrar(a: &crate::cli::Args) -> i32 {
     let motor = a.posicoes.get(1).map(String::as_str).unwrap_or("");
-    let (true, Some(ws)) = (matches!(motor, "claude" | "gpt"), a.opcao("ws")) else {
-        return crate::cli::uso_errado("keep ia entrar claude|gpt --ws=<W>");
+    let (true, Some(ws)) = (matches!(motor, "claude" | "gpt" | "openrouter"), a.opcao("ws")) else {
+        return crate::cli::uso_errado("keep ia entrar claude|gpt|openrouter --ws=<W>");
     };
     match abre_aba_com(ws, &["ia".into(), "login".into(), motor.into()]) {
         Ok(aba) => crate::cli::responde(json!({ "ok": true, "ws": ws, "aba": aba })),
@@ -380,11 +381,11 @@ fn login_claude(conta: Option<&str>, email_dado: Option<&str>, apelido_dado: Opt
 }
 
 /// O que as contas do GPT dividem com o `~/.codex`: conversas, configuração,
-/// skills e afins. O `auth.json` nunca (cada conta tem o seu), nem os bancos
-/// SQLite (ligar banco com WAL estraga).
+/// ganchos (`hooks.json`, como os do Jev), skills e afins. O `auth.json` nunca
+/// (cada conta tem o seu), nem os bancos SQLite (ligar banco com WAL estraga).
 fn liga_ao_principal(home: &Path) -> Result<(), String> {
     let base = caminhos::codex();
-    for nome in ["sessions", "config.toml", "AGENTS.md", "skills", "plugins", "packages", "prompts", "rules"] {
+    for nome in ["sessions", "config.toml", "hooks.json", "AGENTS.md", "skills", "plugins", "packages", "prompts", "rules"] {
         let origem = base.join(nome);
         let destino = home.join(nome);
         if !origem.exists() || destino.symlink_metadata().is_ok() {
@@ -545,7 +546,10 @@ pub fn cli_login(a: &crate::cli::Args) -> i32 {
             r
         }
         "gpt" => login_gpt(a.opcao("apelido")),
-        _ => return crate::cli::uso_errado("keep ia login claude [--conta=<apelido>] [--email=<e>] [--apelido=<A>] | gpt [--apelido=<A>]"),
+        "openrouter" => crate::jev::login().map(|resumo| println!("\n{resumo}")),
+        _ => return crate::cli::uso_errado(
+            "keep ia login claude [--conta=<apelido>] [--email=<e>] [--apelido=<A>] | gpt [--apelido=<A>] | openrouter",
+        ),
     };
     match resultado {
         Ok(()) => {

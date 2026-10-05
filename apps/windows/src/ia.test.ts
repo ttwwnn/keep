@@ -21,10 +21,16 @@ import {
   percentText,
   programKind,
   programLabel,
+  readJev,
   readStoredLines,
   readSwitch,
   refusalText,
   untilText,
+  available,
+  creditRows,
+  dollars,
+  jevHelp,
+  jevNote,
   type Account,
   type UsageLine,
 } from "./ia";
@@ -267,5 +273,56 @@ describe("the answer to a switch", () => {
     });
     expect(readSwitch(null, "o keep passou de 40 s", false)).toEqual({ kind: "failed", detail: "o keep passou de 40 s" });
     expect(refusalText(answer({ ok: false }), "mudar a ordem")).toBe("O keep saiu com 1.");
+  });
+});
+
+describe("the Jev's credit", () => {
+  const credit = (over = {}) => ({
+    total: 10,
+    used: 0.0246,
+    keyLimit: 5 as number | null,
+    keyUsed: 0.0042 as number | null,
+    usedToday: 0.0018 as number | null,
+    usedThisMonth: 0.0042 as number | null,
+    ...over,
+  });
+  it("dollars with a comma and two places, and what rounds to nothing said as such", () => {
+    expect(dollars(9.9754)).toBe("US$ 9,98");
+    expect(dollars(0)).toBe("US$ 0,00");
+    expect(dollars(0.004)).toBe("< US$ 0,01");
+    expect(dollars(-1)).toBe("US$ 0,00");
+  });
+  it("what the Jev can still spend is the smaller of the account's credit and its key's ceiling", () => {
+    expect(available(credit())).toBeCloseTo(4.9958, 9);
+    expect(available(credit({ keyLimit: null }))).toBeCloseTo(9.9754, 9);
+    expect(available(credit({ used: 12, keyLimit: null }))).toBe(0);
+  });
+  it("two counters: the account, and the key's ceiling — or, without one, what the key spent", () => {
+    const comTeto = creditRows(credit());
+    expect(comTeto.map((r) => [r.label, r.says])).toEqual([["conta", "restam"], ["chave", "restam"]]);
+    expect(comTeto[1].figure).toBeCloseTo(4.9958, 9);
+    const semTeto = creditRows(credit({ keyLimit: null, keyUsed: 2.5 }));
+    expect(semTeto.map((r) => [r.label, r.says])).toEqual([["conta", "restam"], ["gasto", "gastou"]]);
+    expect(semTeto[1].figure).toBe(2.5);
+    expect(semTeto[1].spent).toBe(25);
+    expect(creditRows(credit({ keyLimit: null, keyUsed: null })).map((r) => r.label)).toEqual(["conta"]);
+  });
+  it("reads the core's answer: no key is no Jev; a reading kept through a problem", () => {
+    expect(readJev(null)).toBeNull();
+    expect(readJev({ credit: null, measuredAt: null, problem: null })).toBeNull();
+    const line = readJev({ credit: credit(), measuredAt: 1791084861.45, problem: null });
+    expect(line?.credit?.keyLimit).toBe(5);
+    expect(readJev({ credit: { total: "10", used: 1 }, problem: "sem rede" })).toEqual({
+      credit: null,
+      measuredAt: null,
+      problem: "sem rede",
+    });
+  });
+  it("the note and the tooltip say it as the macOS footer does", () => {
+    const now = Date.UTC(2026, 9, 5, 12);
+    const line = { credit: credit({ keyLimit: null }), measuredAt: now / 1000 - 3600, problem: null };
+    expect(jevNote(line, now)).toBe("medido há 1h");
+    expect(jevNote({ credit: null, measuredAt: null, problem: null }, now)).toBe("medindo…");
+    expect(jevHelp(line, now)).toContain("Chave: sem teto, gastou < US$ 0,01");
   });
 });

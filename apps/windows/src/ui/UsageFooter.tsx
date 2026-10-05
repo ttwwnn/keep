@@ -11,20 +11,28 @@ import {
   STALE_AFTER_S,
   accountHelp,
   accountName,
+  available,
   barHelp,
+  creditRows,
+  dollars,
   isUsedBy,
+  jevHelp,
+  jevNote,
   level,
   lineId,
   noteText,
   orderKeyOf,
   percentText,
   untilText,
+  type CreditRow,
+  type JevLine,
   type UsageLine,
   type UsageWindow,
 } from "../ia";
 import {
   footerFolded,
   iaAvailable,
+  jev,
   measureNow,
   measuring,
   moveOrder,
@@ -164,6 +172,75 @@ function Compact(props: { line: UsageLine; index: number; count: number }) {
   );
 }
 
+/** One of the Jev's counters: the bar is what is spent, the figure the dollars beside it. */
+function CreditBar(props: { row: CreditRow }) {
+  const { row } = props;
+  const lvl = level(row.spent);
+  return (
+    <div
+      class="usage-bar"
+      title={row.help}
+      role="meter"
+      aria-valuenow={Math.round(row.spent)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-label={`Jev ${row.label}: ${row.says} ${dollars(row.figure)}`}
+    >
+      <span class="usage-bar-label">{row.label}</span>
+      <span class="usage-track">
+        <span class={`usage-fill ${lvl}`} style={{ width: `max(2px, ${Math.min(100, Math.max(0, row.spent))}%)` }} />
+      </span>
+      <span class={`usage-dollars ${lvl}`}>{dollars(row.figure)}</span>
+    </div>
+  );
+}
+
+/**
+ * "Jev · OpenRouter": the credit the Jev spends, in two counters — the
+ * account's credit, and the Jev's key (what is left of its ceiling, or, with
+ * none, what it spent) — the macOS footer's `jevBlock`.
+ */
+function JevBlock(props: { line: JevLine; nowMs: number }) {
+  const { line, nowMs } = props;
+  const stale = line.problem !== null || line.measuredAt === null || nowMs / 1000 - line.measuredAt > STALE_AFTER_S;
+  const note = jevNote(line, nowMs);
+  return (
+    <div class="usage-block" data-account="jev">
+      <div class="usage-title-row">
+        <span class="usage-title" title={jevHelp(line, nowMs)}>
+          <span class="usage-name">Jev · OpenRouter</span>
+        </span>
+      </div>
+      {line.credit && (
+        <div class={`usage-bars ${stale ? "stale" : ""}`}>
+          {creditRows(line.credit).map((row) => (
+            <CreditBar key={row.label} row={row} />
+          ))}
+        </div>
+      )}
+      {note && <div class="usage-note">{note}</div>}
+    </div>
+  );
+}
+
+/** Folded: the Jev on one line, with what it can still spend. */
+function JevCompact(props: { line: JevLine; nowMs: number }) {
+  const { line, nowMs } = props;
+  const c = line.credit;
+  const figure = c ? dollars(available(c)) : "—";
+  const spent = c ? Math.max(...creditRows(c).map((r) => (r.says === "restam" ? r.spent : 0))) : 0;
+  return (
+    <div class="usage-compact" data-account="jev">
+      <span class="usage-compact-name" title={jevHelp(line, nowMs)}>
+        <span class="usage-name">Jev · OpenRouter</span>
+      </span>
+      <span class="usage-compact-figures" aria-label={`Jev OpenRouter restam ${figure}`}>
+        <span class={`usage-percent-inline ${level(spent)}`}>{figure}</span>
+      </span>
+    </div>
+  );
+}
+
 export function UsageFooter() {
   if (!iaAvailable.value) return null;
   const lines = usageLines.value;
@@ -203,7 +280,9 @@ export function UsageFooter() {
       </div>
       {usageNotice.value && <div class="usage-notice">{usageNotice.value}</div>}
       <div class={`usage-lines ${folded ? "folded" : ""}`}>
-        {lines.length === 0 && <div class="usage-empty">Nenhuma conta de IA ainda: entre numa pelo +.</div>}
+        {lines.length === 0 && !jev.value && (
+          <div class="usage-empty">Nenhuma conta de IA ainda: entre numa pelo +.</div>
+        )}
         {lines.map((line, i) =>
           folded ? (
             <Compact key={lineId(line)} line={line} index={i} count={lines.length} />
@@ -211,6 +290,8 @@ export function UsageFooter() {
             <Block key={lineId(line)} line={line} index={i} count={lines.length} nowMs={nowMs} />
           ),
         )}
+        {jev.value &&
+          (folded ? <JevCompact line={jev.value} nowMs={nowMs} /> : <JevBlock line={jev.value} nowMs={nowMs} />)}
       </div>
     </section>
   );

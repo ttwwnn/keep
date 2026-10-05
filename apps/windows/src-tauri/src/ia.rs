@@ -64,6 +64,20 @@ pub fn info(resources: Option<&Path>) -> Info {
     Info { available: cli(resources).is_some(), test_home: test.is_some(), home: home().to_string_lossy().into_owned() }
 }
 
+/// Where the core keeps what is its own (`caminhos::estado` in crates/keep-ia).
+fn state() -> PathBuf {
+    if let Some(dir) = std::env::var_os("KEEP_IA_ESTADO").filter(|v| !v.is_empty()) {
+        return PathBuf::from(dir);
+    }
+    if std::env::var_os("KEEP_IA_HOME").is_some_and(|v| !v.is_empty()) {
+        return home().join(".keep-ia-estado");
+    }
+    std::env::var_os("APPDATA")
+        .filter(|v| !v.is_empty())
+        .map(|a| PathBuf::from(a).join("Keep").join("ia"))
+        .unwrap_or_else(|| home().join(".keep-ia"))
+}
+
 fn home() -> PathBuf {
     for var in ["KEEP_IA_HOME", "USERPROFILE", "HOME"] {
         if let Some(value) = std::env::var_os(var).filter(|v| !v.is_empty()) {
@@ -82,6 +96,7 @@ pub fn deadline(args: &[String]) -> Option<Duration> {
     let seconds = match (word(0), word(1)) {
         ("ia", "contas") => 30.0,
         ("ia", "uso") => 30.0,
+        ("ia", "jev") => 30.0,
         ("ia", "ordem") if word(2) == "mover" => 10.0,
         ("ia", "ordem") => 5.0,
         ("ia", "abas") => 5.0,
@@ -229,6 +244,9 @@ pub fn signature() -> String {
     for dir in children(&home.join(".codex-contas")) {
         files.push(dir.join("auth.json"));
     }
+    // The Jev's reading, which the core writes when it measures and when a
+    // connection to OpenRouter is made: a connection made in a tab shows at once.
+    files.push(state().join("jev.json"));
     let mut out = String::new();
     for file in files {
         if let Ok(meta) = std::fs::metadata(&file) {
@@ -576,6 +594,9 @@ mod tests {
         let args = |s: &str| s.split(' ').map(String::from).collect::<Vec<_>>();
         assert_eq!(deadline(&args("ia trocar --ws=a --aba=1 --para=gpt:x --json")), Some(Duration::from_secs(40)));
         assert_eq!(deadline(&args("ia ordem mover gpt:x cima --json")), Some(Duration::from_secs(10)));
+        assert_eq!(deadline(&args("ia jev --agora --json")), Some(Duration::from_secs(30)));
+        assert_eq!(deadline(&args("ia entrar openrouter --ws=a --json")), Some(Duration::from_secs(20)));
+        assert_eq!(deadline(&args("ia login openrouter")), None);
         assert_eq!(deadline(&args("worktrees listar --prazo 3.0 a:1")), Some(Duration::from_secs_f64(4.5)));
         assert_eq!(deadline(&args("ia login claude")), None);
         assert_eq!(deadline(&args("worktrees preparar C:\\x")), None);

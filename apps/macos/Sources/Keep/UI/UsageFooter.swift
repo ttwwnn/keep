@@ -152,11 +152,14 @@ final class UsageMonitor: ObservableObject {
             let asks = helper && now != known
             let askedAt = Date()
             let answer = asks ? try? AIHelper.usage(.cached).get() : nil
+            // The Jev as the core has it: a connection just made, or a key gone.
+            let credit = asks ? try? AIHelper.jev(.cached).get() : nil
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.looking = false
                 if self.helperAvailable != helper { self.helperAvailable = helper }
                 if asks { self.signature = now }
+                if let credit { self.adoptJev(credit.jev) }
                 if let answer {
                     let fresh = self.adopt(answer.linhas, askedAt: askedAt)
                     if !thenMeasure, !fresh.isEmpty {
@@ -523,14 +526,19 @@ struct UsageFooter: View {
             .help(folded ? "Mostrar as janelas de cada conta" : "Uma linha por conta")
             Spacer(minLength: 4)
             if monitor.helperAvailable {
-                // Signing in is a menu of two, and the login itself is the
-                // core's: it opens in a tab of this window's workspace.
+                // Signing in is a menu — either AI, and the Jev's key on
+                // OpenRouter — and the login itself is the core's: it opens
+                // in a tab of this window's workspace.
                 MenuGlyph(
                     symbol: "plus", pointSize: 9, weight: .semibold,
                     label: "Entrar em outra conta", identifier: "usage-signin",
                     help: "Entrar em outra conta",
                     resting: UsageInk.faintColor, lit: UsageInk.restingColor,
-                    menu: { AccountMenu.signIn { engine in dispatch(.signIn(engine)) } })
+                    menu: {
+                        AccountMenu.signIn(jevConnected: monitor.jev != nil) { service in
+                            dispatch(.signIn(service))
+                        }
+                    })
                     .frame(width: 16, height: 14)
             }
             Button {
@@ -739,10 +747,12 @@ struct UsageFooter: View {
 
     // MARK: - the Jev's credit
 
-    /// "Jev · OpenRouter": the credit the Jev spends, as a bar for the
-    /// account and one for the Jev's own key when it has a ceiling. Each bar
-    /// is what is spent, as the others are; the figure beside it is what is
-    /// left, which is what anybody asks of a credit.
+    /// "Jev · OpenRouter": the credit the Jev spends, in two counters. The
+    /// account: its bar is what is spent of what was bought, and the figure
+    /// what is left. The Jev's key: with a ceiling of its own, the same of the
+    /// ceiling; without one — it spends from the whole credit — what it has
+    /// spent ("gasto"), its bar that share of the credit. Each bar is what is
+    /// spent, as the others are.
     private func jevBlock(_ jev: JevLine, now: Date) -> some View {
         let stale = jev.problem != nil
             || jev.measuredAt.map { now.timeIntervalSince($0) > 15 * 60 } ?? true
@@ -754,13 +764,18 @@ struct UsageFooter: View {
                 .help(jevHelp(jev, now: now))
             if let credit = jev.credit {
                 Group {
-                    creditBar("conta", spent: credit.accountPercent, left: credit.accountLeft,
+                    creditBar("conta", spent: credit.accountPercent, figure: credit.accountLeft, says: "restam",
                               help: "Crédito da conta no OpenRouter: \(UsageText.dollars(credit.used)) "
                                   + "gastos de \(UsageText.dollars(credit.total))")
                     if let keyPercent = credit.keyPercent, let keyLeft = credit.keyLeft, let limit = credit.keyLimit {
-                        creditBar("chave", spent: keyPercent, left: keyLeft,
+                        creditBar("chave", spent: keyPercent, figure: keyLeft, says: "restam",
                                   help: "Teto da chave do Jev: \(UsageText.dollars(credit.keyUsed ?? 0)) "
                                       + "gastos de \(UsageText.dollars(limit))")
+                    } else if let keyUsed = credit.keyUsed {
+                        creditBar("gasto", spent: credit.keySharePercent, figure: keyUsed, says: "gastou",
+                                  help: "Gasto da chave do Jev, que não tem teto e usa todo o crédito da conta: "
+                                      + UsageText.dollars(keyUsed)
+                                      + (credit.usedToday.map { " (hoje \(UsageText.dollars($0)))" } ?? ""))
                     }
                 }
                 .opacity(stale ? 0.55 : 1)
@@ -775,7 +790,9 @@ struct UsageFooter: View {
         }
     }
 
-    private func creditBar(_ label: String, spent: Double, left: Double, help: String) -> some View {
+    /// One counter: `spent` is the bar, `figure` the dollars beside it, and
+    /// `says` how the figure reads aloud ("restam", "gastou").
+    private func creditBar(_ label: String, spent: Double, figure: Double, says: String, help: String) -> some View {
         let level = UsageText.level(spent)
         return HStack(spacing: 6) {
             Text(label)
@@ -792,7 +809,7 @@ struct UsageFooter: View {
                 }
             }
             .frame(height: 4)
-            Text(UsageText.dollars(left))
+            Text(UsageText.dollars(figure))
                 .font(numbers)
                 .monospacedDigit()
                 .foregroundStyle(level == .normal ? UsageInk.inkResting : UsageInk.fill(level))
@@ -802,7 +819,7 @@ struct UsageFooter: View {
         .frame(height: 13)
         .help(help)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Jev \(label): restam \(UsageText.dollars(left))")
+        .accessibilityLabel("Jev \(label): \(says) \(UsageText.dollars(figure))")
     }
 
     /// Folded: the Jev on one line, with what it can still spend — the
@@ -851,6 +868,8 @@ struct UsageFooter: View {
             lines.append("Conta: \(UsageText.dollars(credit.accountLeft)) de \(UsageText.dollars(credit.total))")
             if let left = credit.keyLeft, let limit = credit.keyLimit {
                 lines.append("Chave: \(UsageText.dollars(left)) de \(UsageText.dollars(limit))")
+            } else if let used = credit.keyUsed {
+                lines.append("Chave: sem teto, gastou \(UsageText.dollars(used))")
             }
             if let today = credit.usedToday { lines.append("Gasto hoje: \(UsageText.dollars(today))") }
             if let month = credit.usedThisMonth { lines.append("Gasto no mês: \(UsageText.dollars(month))") }

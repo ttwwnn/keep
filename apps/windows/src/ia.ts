@@ -444,3 +444,141 @@ export function readStoredLines(raw: string | null): UsageLine[] {
     return [];
   }
 }
+
+// ------------------------------------------------------------------ the Jev's credit
+
+/**
+ * What OpenRouter says of the credit the Jev spends, in dollars (`keep ia
+ * jev`): what the account bought and spent, and the ceiling and spending of
+ * the Jev's own key — no ceiling means it spends from the whole credit. The
+ * macOS app's `JevCredit`, with its rules.
+ */
+export interface JevCredit {
+  total: number;
+  used: number;
+  keyLimit: number | null;
+  keyUsed: number | null;
+  usedToday: number | null;
+  usedThisMonth: number | null;
+}
+
+/** The Jev's line of the footer: the last credit that came back, and why the latest attempt did not, when it did not. */
+export interface JevLine {
+  credit: JevCredit | null;
+  measuredAt: number | null;
+  problem: string | null;
+}
+
+export const accountLeft = (c: JevCredit) => Math.max(0, c.total - c.used);
+export const keyLeft = (c: JevCredit) => (c.keyLimit === null ? null : Math.max(0, c.keyLimit - (c.keyUsed ?? 0)));
+/** What the Jev can still spend: the smaller of the account's credit and its key's ceiling. */
+export const available = (c: JevCredit) => {
+  const key = keyLeft(c);
+  return key === null ? accountLeft(c) : Math.min(key, accountLeft(c));
+};
+const share = (part: number, whole: number) => (whole > 0 ? Math.min(100, (part / whole) * 100) : 100);
+
+/** "US$ 9,98": two places, a comma, and "< US$ 0,01" for what rounds to nothing. */
+export function dollars(value: number): string {
+  const v = Math.max(0, value);
+  if (v > 0 && v < 0.01) return "< US$ 0,01";
+  return `US$ ${v.toFixed(2).replace(".", ",")}`;
+}
+
+/** One of the Jev's two counters: the bar is what is spent, the figure the dollars beside it. */
+export interface CreditRow {
+  label: string;
+  spent: number;
+  figure: number;
+  /** How the figure reads aloud: "restam", "gastou". */
+  says: string;
+  help: string;
+}
+
+/**
+ * The account — what is left of what it bought — and the Jev's key: with a
+ * ceiling, what is left of it; without one, what it spent ("gasto"), its bar
+ * that share of the whole credit.
+ */
+export function creditRows(c: JevCredit): CreditRow[] {
+  const rows: CreditRow[] = [
+    {
+      label: "conta",
+      spent: share(c.used, c.total),
+      figure: accountLeft(c),
+      says: "restam",
+      help: `Crédito da conta no OpenRouter: ${dollars(c.used)} gastos de ${dollars(c.total)}`,
+    },
+  ];
+  const left = keyLeft(c);
+  if (left !== null && c.keyLimit !== null) {
+    rows.push({
+      label: "chave",
+      spent: c.keyLimit > 0 ? Math.min(100, ((c.keyUsed ?? 0) / c.keyLimit) * 100) : 100,
+      figure: left,
+      says: "restam",
+      help: `Teto da chave do Jev: ${dollars(c.keyUsed ?? 0)} gastos de ${dollars(c.keyLimit)}`,
+    });
+  } else if (c.keyUsed !== null) {
+    rows.push({
+      label: "gasto",
+      spent: c.total > 0 ? Math.min(100, (c.keyUsed / c.total) * 100) : 0,
+      figure: c.keyUsed,
+      says: "gastou",
+      help:
+        `Gasto da chave do Jev, que não tem teto e usa todo o crédito da conta: ${dollars(c.keyUsed)}` +
+        (c.usedToday !== null ? ` (hoje ${dollars(c.usedToday)})` : ""),
+    });
+  }
+  return rows;
+}
+
+/** The line under the Jev: what went wrong, or that it is measuring, and how old. */
+export function jevNote(line: JevLine, nowMs: number): string | null {
+  const parts: string[] = [];
+  if (line.problem) parts.push(line.problem);
+  else if (!line.credit) parts.push("medindo…");
+  if (line.measuredAt !== null && nowMs / 1000 - line.measuredAt > STALE_AFTER_S) {
+    parts.push(`medido ${agoText(line.measuredAt * 1000, nowMs)}`);
+  }
+  return parts.length ? parts.join(" · ") : null;
+}
+
+/** The Jev's tooltip. */
+export function jevHelp(line: JevLine, nowMs: number): string {
+  const lines = ["Crédito que o Jev gasta no OpenRouter"];
+  const c = line.credit;
+  if (c) {
+    lines.push(`Pode gastar ainda: ${dollars(available(c))}`);
+    lines.push(`Conta: ${dollars(accountLeft(c))} de ${dollars(c.total)}`);
+    const left = keyLeft(c);
+    if (left !== null && c.keyLimit !== null) lines.push(`Chave: ${dollars(left)} de ${dollars(c.keyLimit)}`);
+    else if (c.keyUsed !== null) lines.push(`Chave: sem teto, gastou ${dollars(c.keyUsed)}`);
+    if (c.usedToday !== null) lines.push(`Gasto hoje: ${dollars(c.usedToday)}`);
+    if (c.usedThisMonth !== null) lines.push(`Gasto no mês: ${dollars(c.usedThisMonth)}`);
+  }
+  if (line.measuredAt !== null) lines.push(`Medido ${agoText(line.measuredAt * 1000, nowMs)}`);
+  return lines.join("\n");
+}
+
+/** The Jev as the core answered (`"jev": null` = no key here), or as stored: what does not read is no Jev. */
+export function readJev(value: unknown): JevLine | null {
+  if (typeof value !== "object" || value === null) return null;
+  const v = value as Record<string, unknown>;
+  const num = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? x : null);
+  const c = v.credit as Record<string, unknown> | null | undefined;
+  const credit =
+    c && typeof c === "object" && num(c.total) !== null && num(c.used) !== null
+      ? {
+          total: num(c.total) as number,
+          used: num(c.used) as number,
+          keyLimit: num(c.keyLimit),
+          keyUsed: num(c.keyUsed),
+          usedToday: num(c.usedToday),
+          usedThisMonth: num(c.usedThisMonth),
+        }
+      : null;
+  const problem = typeof v.problem === "string" ? v.problem : null;
+  if (!credit && !problem) return null;
+  return { credit, measuredAt: num(v.measuredAt), problem };
+}

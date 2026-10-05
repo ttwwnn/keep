@@ -503,9 +503,10 @@ enum Intent {
     /// `key` is what the kit is asked for (`claude:ordem`, `claude:<slot>`,
     /// `gpt:<name>`); `label` is what the menu called it.
     case chooseAccount(TabID, key: String, label: String)
-    /// Sign in to another account of a service, in a new tab of this
-    /// window's workspace — the usage footer's "+".
-    case signIn(AIEngine)
+    /// Sign in to another account of a service, or connect the Jev to
+    /// OpenRouter, in a new tab of this window's workspace — the usage
+    /// footer's "+".
+    case signIn(AIHelper.Service)
 }
 
 /// Everything the palette can run.

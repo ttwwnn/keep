@@ -89,7 +89,8 @@ enum AIAccounts {
     /// the kit's vault (each slot, and `.ativa`, `.preferida`, `.ordem`
     /// beside them), each folder of a login of Keep's own
     /// (`fixas/<id>`, its `keep.json` or the kit's `conta.json`), Codex's
-    /// login and each extra one. Different from the last time means worth
+    /// login and each extra one, and the Jev's last reading. Different from
+    /// the last time means worth
     /// asking the core again — a login added or renewed, an account switched,
     /// the order changed.
     ///
@@ -115,6 +116,12 @@ enum AIAccounts {
             }
         }
         parts.append("codex " + stamp(home.appendingPathComponent(".codex/auth.json")))
+        // The Jev's reading, which the core writes when it measures and when a
+        // connection to OpenRouter is made: where the person's app keeps its
+        // state, or a test app's made-up home.
+        for state in ["Library/Application Support/Keep/ia", ".keep-ia-estado"] {
+            parts.append("jev " + stamp(home.appendingPathComponent(state + "/jev.json")))
+        }
         let extras = home.appendingPathComponent(".codex-contas")
         for name in ((try? files.contentsOfDirectory(atPath: extras.path)) ?? []).sorted()
         where !name.hasPrefix(".") {
@@ -249,6 +256,11 @@ struct JevCredit: Equatable, Codable {
         guard let keyLimit else { return nil }
         return keyLimit > 0 ? min(100, (keyUsed ?? 0) / keyLimit * 100) : 100
     }
+
+    /// What the Jev's key has spent, as a share of all the credit the account
+    /// bought — the bar of a key with no ceiling of its own, which spends
+    /// from the whole credit.
+    var keySharePercent: Double { total > 0 ? min(100, (keyUsed ?? 0) / total * 100) : 0 }
 }
 
 /// The Jev's line of the footer: the last credit that came back, kept through

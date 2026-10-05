@@ -217,7 +217,9 @@ class H(BaseHTTPRequestHandler):
         elif self.path == "/or/credits" and token == "sk-or-do-teste":
             status, body = 200, {"data": {"total_credits": 10, "total_usage": 0.0246}}
         elif self.path == "/or/key" and token == "sk-or-do-teste":
-            status, body = 200, {"data": {"limit": 5, "usage": 0.52, "usage_daily": 0.0018, "usage_monthly": 0.52}}
+            # Without a ceiling once this file is there: the key spends from the whole credit.
+            limit = None if os.path.exists(os.path.join(os.path.dirname(sys.argv[2]), "jev-sem-teto")) else 5
+            status, body = 200, {"data": {"limit": limit, "usage": 0.52, "usage_daily": 0.0018, "usage_monthly": 0.52}}
         else:
             status, body = 401, {"error": "unknown token"}
         data = json.dumps(body).encode()
@@ -435,8 +437,8 @@ touch "$WORK/slow"
 "$AXPRESS" "$APP_NAME" press "Medir agora"
 sleep 0.5
 "$AXPRESS" "$APP_NAME" open "Entrar em outra conta"
-check "+ offers a login to either service" \
-    "$(printf '\t1\tEntrar em outra conta do Claude…\n\t1\tEntrar em outra conta do GPT…')" \
+check "+ offers a login to either service, and the Jev's connection apart" \
+    "$(printf '\t1\tEntrar em outra conta do Claude…\n\t1\tEntrar em outra conta do GPT…\n---\n\t1\tReconectar o Jev ao OpenRouter…')" \
     "$("$AXPRESS" "$APP_NAME" items)"
 "$AXPRESS" "$APP_NAME" pick "Entrar em outra conta do GPT…"
 sleep 1
@@ -497,6 +499,25 @@ for _ in 1 2 3 4 5; do
 done
 check "thirty more workspaces do not move it" "$before" "$after"
 check "and it is still in the window" yes "$([ "$after" -gt 0 ] && [ "$after" -lt "$bottom_after" ] && echo yes || echo no)"
+
+say ""
+say "the Jev's key without a ceiling"
+touch "$WORK/jev-sem-teto"
+sleep 15
+"$AXPRESS" "$APP_NAME" press "Medir agora"
+until_text "Jev gasto: gastou US\$ 0,52" 150 >/dev/null
+check "the second counter is what the key spent" yes "$(has "Jev gasto: gastou US\$ 0,52")"
+check "and the account's credit is still the first" yes "$(has "Jev conta: restam US\$ 9,98")"
+check "no ceiling counter any more" no "$(has "Jev chave:")"
+rm -f "$WORK/jev-sem-teto"
+
+say ""
+say "connecting the Jev from the +"
+"$AXPRESS" "$APP_NAME" open "Entrar em outra conta"
+"$AXPRESS" "$APP_NAME" pick "Reconectar o Jev ao OpenRouter…"
+sleep 1
+check "the core is asked for the OpenRouter login in this window's workspace" \
+    "entrar openrouter --ws=$HOME_WS --json" "$(calls | tail -1)"
 
 say ""
 say "the Jev's key taken away"

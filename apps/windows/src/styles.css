@@ -540,6 +540,25 @@ button {
   color: var(--critical);
 }
 
+/* The Jev's dollars: wider than a percentage ("< US$ 0,01"). */
+.usage-dollars {
+  width: 74px;
+  flex: none;
+  text-align: right;
+  white-space: nowrap;
+  font: 11px var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-resting);
+}
+
+.usage-dollars.attention {
+  color: var(--attention);
+}
+
+.usage-dollars.critical {
+  color: var(--critical);
+}
+
 .usage-until {
   width: 40px;
   flex: none;

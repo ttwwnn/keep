@@ -12,10 +12,11 @@ for not. Out of a home and a directory of the test's own, never the real ones:
       the order in <home>/.claude/contas/.ordem, with every account the home
       holds that it does not list yet put at its end, the key moved one
       place, written back whole (a new file, as the core writes it)
-  entrar claude|gpt --ws=<W> --json
+  entrar claude|gpt|openrouter --ws=<W> --json
       a new tab in W, opened with the client named in FAKE_IA_KEEP, and the
       login the core would have made there: a slot "nova" in the vault, or a
-      folder "nova" in .codex-contas, put at the end of the order
+      folder "nova" in .codex-contas, put at the end of the order; for
+      openrouter, the Jev's first reading in the home's .keep-ia-estado
   trocar --ws=<W> --aba=<N> --para=<key> [--interromper] --json
       the tab's account written into $FAKE_IA_DIR/abas.json
   abas --json
@@ -242,7 +243,7 @@ def option(argv, name):
 def entrar(argv):
     service = argv[1] if len(argv) > 1 else ""
     workspace = option(argv, "ws")
-    if service not in ("claude", "gpt") or not workspace:
+    if service not in ("claude", "gpt", "openrouter") or not workspace:
         sys.exit(2)
     keep = os.environ.get("FAKE_IA_KEEP")
     if not keep:
@@ -252,6 +253,15 @@ def entrar(argv):
     if not found:
         refuse("erro", "não abri a aba: " + (made.stderr or made.stdout).strip())
     now = time.time()
+    if service == "openrouter":
+        # The Jev's key: no account of the order; the core's login in the tab
+        # writes the key and its first reading. Here, the reading alone.
+        state = os.path.join(HOME, ".keep-ia-estado")
+        os.makedirs(state, exist_ok=True)
+        write_atomically(os.path.join(state, "jev.json"), json.dumps({
+            "credit": {"total": 10, "used": 0.02, "keyLimit": None, "keyUsed": 0.01},
+            "measuredAt": now, "problem": None}))
+        answer({"ws": workspace, "aba": int(found.group(1))})
     if service == "gpt":
         folder = os.path.join(HOME, ".codex-contas", "nova")
         os.makedirs(folder, exist_ok=True)

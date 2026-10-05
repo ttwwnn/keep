@@ -4,7 +4,7 @@
 // done in iaStore.ts.
 
 import type { Engine } from "../ia";
-import { accountMenu, iaAvailable, signIn } from "../iaStore";
+import { accountMenu, iaAvailable, jev, signIn } from "../iaStore";
 import type { RootTab } from "../layout";
 import { openMenuAt } from "./common";
 import * as icon from "./icons";
@@ -37,13 +37,19 @@ export function openAccountMenu(anchor: HTMLElement, workspace: string, tab: Roo
   );
 }
 
-/** The footer's "+": a login to another account of either service. */
+/**
+ * The footer's "+": a login to another account of either service and, apart
+ * from them, the Jev's connection to OpenRouter — "Reconectar" once it has a
+ * key, which a new connection replaces.
+ */
 export function openSignInMenu(anchor: HTMLElement): void {
   const at = under(anchor);
-  const entry = (engine: Engine, label: string) => ({ label, action: () => void signIn(engine) });
+  const entry = (engine: Engine | "openrouter", label: string) => ({ label, action: () => void signIn(engine) });
   openMenuAt(at.x, at.y, [
     entry("claude", "Entrar em outra conta do Claude…"),
     entry("codex", "Entrar em outra conta do GPT…"),
+    "separator",
+    entry("openrouter", jev.value ? "Reconectar o Jev ao OpenRouter…" : "Conectar o Jev ao OpenRouter…"),
   ]);
 }
 

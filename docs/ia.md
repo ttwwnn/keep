@@ -43,8 +43,9 @@ Uma conta do Claude é um **armazém de credenciais** do Claude Code:
 ### GPT (Codex)
 
 - `gpt:principal` = `~/.codex` (o `auth.json` do Codex).
-- `gpt:<apelido>` = `~/.codex-contas/<apelido>`, usada com `CODEX_HOME=<pasta>`. Histórico e
-  configuração do principal são ligados para dentro dela (link simbólico; junção no Windows).
+- `gpt:<apelido>` = `~/.codex-contas/<apelido>`, usada com `CODEX_HOME=<pasta>`. Histórico,
+  configuração e ganchos (`hooks.json`) do principal são ligados para dentro dela (link simbólico; junção
+  no Windows).
 - Dono: `chatgpt_account_id`/e-mail das declarações do `id_token`.
 
 ### Chaves e ordem
@@ -106,20 +107,34 @@ Nenhuma conta cai, nem a parada: o que a Clínica faz com as contas dela (`renov
 
 ## Jev (crédito do OpenRouter)
 
-O Jev (o modelo que decide no lugar do Claude, pela skill `jev`) gasta crédito do OpenRouter a cada
-decisão. O rodapé "Consumo de IA" mostra quanto resta, ao lado das contas: `keep ia jev [--agora] [--cache]`.
+O Jev (o modelo que decide no lugar da IA, pela skill `jev`: modelo e esforço de cada conversa e as
+perguntas de decisão, no Claude Code e no Codex) gasta crédito do OpenRouter a cada decisão. O rodapé
+"Consumo de IA" mostra quanto resta, ao lado das contas: `keep ia jev [--agora] [--cache]`.
 
 - Chave: no macOS, o item `openrouter-api-key` do Chaveiro (`security find-generic-password -w`, o mesmo
-  que a skill usa); nos demais sistemas, `OPENROUTER_API_KEY`. Sem chave, `jev: null` e o rodapé não
-  mostra nada (a leitura guardada some junto). A chave nunca vai para o cache.
+  que a skill usa); no Windows, a credencial genérica `openrouter-api-key` do Gerenciador de Credenciais;
+  nos outros, `<estado>/openrouter.key` (só do dono). Fora do macOS, `OPENROUTER_API_KEY` vale antes.
+  Sem chave, `jev: null` e o rodapé não mostra nada (a leitura guardada some junto). A chave nunca vai
+  para o cache.
 - Mede: `GET https://openrouter.ai/api/v1/credits` (o que a conta comprou e gastou) e `/api/v1/key` (teto e
-  gasto da chave do Jev, quando tem teto). O que o Jev ainda pode gastar é o menor dos dois saldos.
+  gasto da chave do Jev). O que o Jev ainda pode gastar é o menor dos dois saldos.
+- Dois contadores no rodapé: "conta" (o que resta do crédito; a barra é o gasto) e, para a chave, "chave"
+  (o que resta do teto dela) ou, sem teto, "gasto" (o que ela gastou; a barra é essa parte do crédito
+  todo). Dobrado, uma linha com o que o Jev ainda pode gastar.
+- Conectar: o "+" do rodapé oferece "Conectar o Jev ao OpenRouter…" ("Reconectar…" quando já há chave):
+  `keep ia entrar openrouter --ws=<W>` abre uma aba com `keep ia login openrouter`, o login do OpenRouter
+  no navegador (OAuth PKCE: `https://openrouter.ai/auth` com volta em `http://localhost:<porta>/callback`,
+  `POST /api/v1/auth/keys` troca o código pela chave). A chave "Jev (Keep)" é conferida (`/api/v1/key`),
+  guardada no lugar acima e lida de volta; o saldo é medido na hora (o rodapé vê o `jev.json` mudar) e a
+  aba se fecha. Sem limite de crédito na autorização, a chave usa todo o crédito da conta.
 - Mesma cadência do consumo das contas (5 min; "Medir agora" a cada 15 s; 429 respeita `Retry-After`).
   Leitura guardada em `<estado>/jev.json`.
 - Resposta: `{"jev": {"credit": {"total", "used", "keyLimit", "keyUsed", "usedToday", "usedThisMonth"},
   "measuredAt", "problem"}}`, em dólares.
-- Teste: `KEEP_IA_OPENROUTER_URL` (só `http://127.0.0.1`) e `KEEP_IA_SECURITY`. O app do macOS aponta o
-  endereço para uma porta sem ouvinte quando lê uma casa falsa.
+- Teste: `KEEP_IA_OPENROUTER_URL` e `KEEP_IA_OPENROUTER_AUTH_URL` (só `http://127.0.0.1`),
+  `KEEP_IA_SECURITY` e `KEEP_IA_TESTE_CHAVEIRO` (uma pasta no lugar do cofre, em todo sistema),
+  `KEEP_IA_NAVEGADOR` (o programa que recebe o endereço do login) e `KEEP_IA_LOGIN_PRAZO` (segundos). O
+  app do macOS aponta os endereços para uma porta sem ouvinte quando lê uma casa falsa.
 
 ## IA de cada aba
 

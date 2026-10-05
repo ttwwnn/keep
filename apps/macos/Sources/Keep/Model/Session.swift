@@ -1037,8 +1037,8 @@ final class Session {
             guard key != aiAccount(of: tab) else { return }
             switchAccount(id, to: key, label: label, interrupting: false, from: window)
 
-        case .signIn(let engine):
-            signIn(engine, from: window)
+        case .signIn(let service):
+            signIn(service, from: window)
 
         case .dismissPickerItem(let id):
             guard let item = views[window]?.picker?.items.first(where: { $0.id == id }),
@@ -1153,12 +1153,11 @@ final class Session {
         }
     }
 
-    /// Ask the core for a login to another account, in a new tab of this
-    /// window's workspace, and go to that tab when it is there.
-    private func signIn(_ engine: AIEngine, from window: WindowID) {
-        guard !signingIn.contains(window),
-              let service = AIHelper.Service(rawValue: engine.orderPrefix)
-        else { return }
+    /// Ask the core for a login to another account (or for the Jev's key on
+    /// OpenRouter), in a new tab of this window's workspace, and go to that
+    /// tab when it is there.
+    private func signIn(_ service: AIHelper.Service, from window: WindowID) {
+        guard !signingIn.contains(window) else { return }
         let workspace = views[window]?.workspace ?? views[window]?.workspaces.first ?? NSUserName()
         signingIn.insert(window)
         Trace.log("ia", "sign in to \(service.rawValue) in \(workspace)")

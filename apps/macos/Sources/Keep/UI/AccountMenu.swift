@@ -290,15 +290,24 @@ enum AccountMenu {
     }
 
     /// The footer's "+": a login to another account of either service.
-    static func signIn(_ open: @escaping (AIEngine) -> Void) -> NSMenu {
+    /// The footer's "+": a login to another account of either AI, and, apart
+    /// from them, the Jev's connection to OpenRouter — "Reconectar" once it
+    /// has a key, which a new connection replaces.
+    static func signIn(jevConnected: Bool, _ open: @escaping (AIHelper.Service) -> Void) -> NSMenu {
         let menu = NSMenu(title: "Entrar em outra conta")
         menu.autoenablesItems = false
-        let entries: [(AIEngine, String)] = [
+        let entries: [(AIHelper.Service, String)?] = [
             (.claude, "Entrar em outra conta do Claude…"),
-            (.codex, "Entrar em outra conta do GPT…"),
+            (.gpt, "Entrar em outra conta do GPT…"),
+            nil,
+            (.openrouter, jevConnected ? "Reconectar o Jev ao OpenRouter…" : "Conectar o Jev ao OpenRouter…"),
         ]
-        for (engine, title) in entries {
-            let action = SignIn(engine: engine, open: open)
+        for entry in entries {
+            guard let (service, title) = entry else {
+                menu.addItem(.separator())
+                continue
+            }
+            let action = SignIn(service: service, open: open)
             let item = NSMenuItem(title: title, action: #selector(SignIn.chosen(_:)), keyEquivalent: "")
             item.representedObject = action
             item.target = action
@@ -338,18 +347,18 @@ enum AccountMenu {
     }
 
     private final class SignIn: NSObject {
-        let engine: AIEngine
-        let open: (AIEngine) -> Void
+        let service: AIHelper.Service
+        let open: (AIHelper.Service) -> Void
 
-        init(engine: AIEngine, open: @escaping (AIEngine) -> Void) {
-            self.engine = engine
+        init(service: AIHelper.Service, open: @escaping (AIHelper.Service) -> Void) {
+            self.service = service
             self.open = open
         }
 
         @objc func chosen(_ sender: NSMenuItem) {
-            Trace.log("ia", "sign in to \(engine.orderPrefix)")
-            let (open, engine) = (self.open, self.engine)
-            DispatchQueue.main.async { open(engine) }
+            Trace.log("ia", "sign in to \(service.rawValue)")
+            let (open, service) = (self.open, self.service)
+            DispatchQueue.main.async { open(service) }
         }
     }
 }

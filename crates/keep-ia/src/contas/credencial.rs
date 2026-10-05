@@ -226,7 +226,7 @@ pub fn gravar(local: &Local, valor: &Value) -> Result<(), String> {
 /// `add-generic-password -U … -X <hex>` pela entrada padrão do `security -i`
 /// (o token não aparece no `ps`); linha longa demais para o modo interativo
 /// vai por argv, como no CLI.
-fn grava_chaveiro(servico: &str, texto: &str) -> Result<(), String> {
+pub(crate) fn grava_chaveiro(servico: &str, texto: &str) -> Result<(), String> {
     use std::io::Write as _;
     const LIMITE_LINHA_INTERATIVA: usize = 4032;
     let security = std::env::var("KEEP_IA_SECURITY").unwrap_or_else(|_| "/usr/bin/security".into());
