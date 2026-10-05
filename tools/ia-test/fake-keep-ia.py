@@ -26,6 +26,9 @@ for not. Out of a home and a directory of the test's own, never the real ones:
       the real core's answer when FAKE_IA_CORE names a `keep` (it reads the
       same made-up home, and the stand-in services the test points it at);
       else $FAKE_IA_DIR/uso.json, or no accounts at all
+  jev [--agora|--cache] --json
+      the real core's answer when FAKE_IA_CORE names a `keep`; else
+      $FAKE_IA_DIR/jev.json, or `"jev": null` (no key of the Jev's here)
   sincronizar --json
       a round that moved nothing
 
@@ -65,7 +68,7 @@ VAULT = os.path.join(HOME, ".claude", "contas")
 ORDER = os.path.join(VAULT, ".ordem")
 TABS = os.path.join(DIR, "abas.json")
 KEY = re.compile(r"^(claude|gpt):[^\s/:]+$")
-READS = ("uso", "abas", "sincronizar")
+READS = ("uso", "jev", "abas", "sincronizar")
 
 
 def flag(name):
@@ -325,6 +328,16 @@ def uso(argv):
     answer({"linhas": [], "ordem": [], "gerenteExterno": False, "medidoEm": time.time()})
 
 
+def jev(argv):
+    core = os.environ.get("FAKE_IA_CORE")
+    if core:
+        os.execv(core, [core, "ia"] + argv + ["--json"])
+    saved = read_json(flag("jev.json"))
+    if isinstance(saved, dict):
+        answer(saved)
+    answer({"jev": None, "medidoEm": time.time()})
+
+
 def sincronizar(argv):
     answer({"estado": "feito", "alvo": None, "alteradas": [], "pendentes": []})
 
@@ -345,7 +358,7 @@ def main():
         except (OSError, ValueError):
             pass
     commands = {"ordem": ordem, "entrar": entrar, "trocar": trocar,
-                "abas": abas, "uso": uso, "sincronizar": sincronizar}
+                "abas": abas, "uso": uso, "jev": jev, "sincronizar": sincronizar}
     if argv[0] not in commands:
         sys.exit(2)
     commands[argv[0]](argv)

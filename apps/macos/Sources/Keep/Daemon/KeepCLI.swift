@@ -105,6 +105,7 @@ enum KeepCLI {
             ("KEEP_IA_PERFIL_URL", ["KEEP_IA_PERFIL_URL", "CLAUDE_KIT_PERFIL_URL"]),
             ("KEEP_IA_CLAUDE_URL", ["KEEP_IA_CLAUDE_URL", "KEEP_AI_USAGE_CLAUDE_URL"]),
             ("KEEP_IA_CODEX_URL", ["KEEP_IA_CODEX_URL", "KEEP_AI_USAGE_CODEX_URL"]),
+            ("KEEP_IA_OPENROUTER_URL", ["KEEP_IA_OPENROUTER_URL"]),
         ]
         for (name, names) in services where !names.contains(where: { base[$0] != nil }) {
             environment[name] = nowhere
@@ -329,6 +330,25 @@ enum AIHelper {
             .flatMap { data in
                 guard let answer = UsageAnswer.decode(data) else {
                     return .failure(Problem(reason: "erro", detail: "O keep ia uso respondeu algo que não dá para ler."))
+                }
+                return .success(answer)
+            }
+    }
+
+    /// What the Jev can still spend of OpenRouter's credit (`keep ia jev`).
+    /// The core keeps the cadence, as it does for the accounts; `jev` in the
+    /// answer is nil when this Mac has no key of the Jev's.
+    static func jev(_ measure: Measure = .due) -> Result<JevAnswer, Problem> {
+        let arguments: [String]
+        switch measure {
+        case .now: arguments = ["--agora"]
+        case .cached: arguments = ["--cache"]
+        case .due, .only: arguments = []
+        }
+        return askRaw(["jev"] + arguments + ["--json"], within: 30 * timeScale)
+            .flatMap { data in
+                guard let answer = JevAnswer.decode(data) else {
+                    return .failure(Problem(reason: "erro", detail: "O keep ia jev respondeu algo que não dá para ler."))
                 }
                 return .success(answer)
             }

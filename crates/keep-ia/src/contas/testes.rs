@@ -28,6 +28,7 @@ impl Drop for Casa {
             "KEEP_IA_PERFIL_URL",
             "KEEP_IA_CLAUDE_URL",
             "KEEP_IA_CODEX_URL",
+            "KEEP_IA_OPENROUTER_URL",
             "KEEP_IA_GERENTE_EXTERNO",
             "KEEP_IA_CLAUDE_BIN",
             "KEEP_IA_CODEX_BIN",

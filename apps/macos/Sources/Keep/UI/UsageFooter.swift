@@ -33,6 +33,9 @@ final class UsageMonitor: ObservableObject {
     @Published private(set) var helperAvailable = false
     /// What the footer has to say for a moment: a change the core refused.
     @Published private(set) var notice: String?
+    /// What the Jev can still spend, when this Mac has a key of its own for
+    /// OpenRouter; nil when it has none, and the footer says nothing of it.
+    @Published private(set) var jev: JevLine?
 
     private var timer: Timer?
     private var glance: Timer?
@@ -309,6 +312,7 @@ final class UsageMonitor: ObservableObject {
             ?? [clicked ? .now : .due]
         DispatchQueue.global(qos: .utility).async { [weak self] in
             var last: Result<UsageAnswer, AIHelper.Problem>?
+            var credit: Result<JevAnswer, AIHelper.Problem>?
             var askedAt = Date()
             for question in questions {
                 let started = Date()
@@ -324,11 +328,27 @@ final class UsageMonitor: ObservableObject {
                 }
                 last = answer
             }
+            // The Jev's credit is asked in the rounds of everybody's usage
+            // and not in the ones for a login just made: the core keeps its
+            // own cadence, as it does for the accounts.
+            if only == nil {
+                let started = Date()
+                credit = AIHelper.jev(clicked ? .now : .due)
+                let took = Int(Date().timeIntervalSince(started) * 1000)
+                switch credit {
+                case .success(let answer)?:
+                    Trace.log("usage", "jev: \(took)ms, " + (answer.jev == nil ? "sem chave" : "lido"))
+                case .failure(let problem)?:
+                    Trace.log("usage", "jev falhou em \(took)ms: \(problem.detail)")
+                case nil: break
+                }
+            }
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.inFlight = false
                 self.measuring = false
                 if case .success(let answer)? = last { self.adopt(answer.linhas, askedAt: askedAt) }
+                if case .success(let answer)? = credit { self.adoptJev(answer.jev) }
                 if !self.owed.isEmpty {
                     let owed = self.owed
                     self.owed = []
@@ -344,6 +364,14 @@ final class UsageMonitor: ObservableObject {
         }
     }
 
+    /// The Jev's line as the core had it: none when there is no key, which
+    /// takes the line off the footer.
+    private func adoptJev(_ line: JevLine?) {
+        guard line != jev else { return }
+        jev = line
+        rememberJev()
+    }
+
     // MARK: - across relaunches
 
     /// The lines kept in the app's defaults — no token, only figures — so a
@@ -354,6 +382,7 @@ final class UsageMonitor: ObservableObject {
     /// script reads the footer from here (`usageFooterLines`).
     private var persists: Bool { KeepCLI.madeUpHome(environment) == nil }
     private static let linesKey = "usageFooterLines"
+    private static let jevKey = "usageFooterJev"
 
     private func restore() {
         guard persists else { return }
@@ -361,6 +390,19 @@ final class UsageMonitor: ObservableObject {
         if let data = defaults.data(forKey: Self.linesKey),
            let saved = try? JSONDecoder().decode([AccountUsage].self, from: data) {
             lines = saved
+        }
+        if let data = defaults.data(forKey: Self.jevKey),
+           let saved = try? JSONDecoder().decode(JevLine.self, from: data) {
+            jev = saved
+        }
+    }
+
+    private func rememberJev() {
+        guard persists else { return }
+        if let jev, let data = try? JSONEncoder().encode(jev) {
+            UserDefaults.standard.set(data, forKey: Self.jevKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.jevKey)
         }
     }
 
@@ -441,6 +483,13 @@ struct UsageFooter: View {
                         compact(line, at: index)
                     } else {
                         block(line, at: index, now: now)
+                    }
+                }
+                if let jev = monitor.jev {
+                    if folded {
+                        jevCompact(jev, now: now)
+                    } else {
+                        jevBlock(jev, now: now)
                     }
                 }
             }
@@ -686,6 +735,128 @@ struct UsageFooter: View {
                 .foregroundColor(level == .normal ? UsageInk.inkResting : UsageInk.fill(level))
         }
         return text
+    }
+
+    // MARK: - the Jev's credit
+
+    /// "Jev · OpenRouter": the credit the Jev spends, as a bar for the
+    /// account and one for the Jev's own key when it has a ceiling. Each bar
+    /// is what is spent, as the others are; the figure beside it is what is
+    /// left, which is what anybody asks of a credit.
+    private func jevBlock(_ jev: JevLine, now: Date) -> some View {
+        let stale = jev.problem != nil
+            || jev.measuredAt.map { now.timeIntervalSince($0) > 15 * 60 } ?? true
+        return VStack(alignment: .leading, spacing: 3) {
+            Text("Jev · OpenRouter")
+                .font(numbers)
+                .foregroundStyle(UsageInk.inkResting)
+                .lineLimit(1)
+                .help(jevHelp(jev, now: now))
+            if let credit = jev.credit {
+                Group {
+                    creditBar("conta", spent: credit.accountPercent, left: credit.accountLeft,
+                              help: "Crédito da conta no OpenRouter: \(UsageText.dollars(credit.used)) "
+                                  + "gastos de \(UsageText.dollars(credit.total))")
+                    if let keyPercent = credit.keyPercent, let keyLeft = credit.keyLeft, let limit = credit.keyLimit {
+                        creditBar("chave", spent: keyPercent, left: keyLeft,
+                                  help: "Teto da chave do Jev: \(UsageText.dollars(credit.keyUsed ?? 0)) "
+                                      + "gastos de \(UsageText.dollars(limit))")
+                    }
+                }
+                .opacity(stale ? 0.55 : 1)
+            }
+            if let note = jevNote(jev, now: now) {
+                Text(note)
+                    .font(.system(size: 10))
+                    .foregroundStyle(UsageInk.inkFaint)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func creditBar(_ label: String, spent: Double, left: Double, help: String) -> some View {
+        let level = UsageText.level(spent)
+        return HStack(spacing: 6) {
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundStyle(UsageInk.inkResting)
+                .lineLimit(1)
+                .frame(width: 34, alignment: .leading)
+            GeometryReader { space in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(UsageInk.wash(0.12))
+                    Capsule()
+                        .fill(UsageInk.fill(level))
+                        .frame(width: max(2, space.size.width * min(spent, 100) / 100))
+                }
+            }
+            .frame(height: 4)
+            Text(UsageText.dollars(left))
+                .font(numbers)
+                .monospacedDigit()
+                .foregroundStyle(level == .normal ? UsageInk.inkResting : UsageInk.fill(level))
+                .lineLimit(1)
+                .frame(width: 74, alignment: .trailing)
+        }
+        .frame(height: 13)
+        .help(help)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Jev \(label): restam \(UsageText.dollars(left))")
+    }
+
+    /// Folded: the Jev on one line, with what it can still spend — the
+    /// smaller of the account's credit and its key's ceiling.
+    private func jevCompact(_ jev: JevLine, now: Date) -> some View {
+        let figure = jev.credit.map { UsageText.dollars($0.available) } ?? "—"
+        let spent = jev.credit.map { max($0.accountPercent, $0.keyPercent ?? 0) } ?? 0
+        let level = UsageText.level(spent)
+        return HStack(spacing: 5) {
+            Text("Jev · OpenRouter")
+                .font(numbers)
+                .foregroundStyle(UsageInk.inkResting)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 4)
+            Text(figure)
+                .font(numbers)
+                .monospacedDigit()
+                .foregroundStyle(level == .normal ? UsageInk.inkResting : UsageInk.fill(level))
+                .lineLimit(1)
+                .layoutPriority(1)
+        }
+        .frame(height: 14)
+        .help(jevHelp(jev, now: now))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Jev OpenRouter restam \(figure)")
+    }
+
+    private func jevNote(_ jev: JevLine, now: Date) -> String? {
+        var parts: [String] = []
+        if let problem = jev.problem {
+            parts.append(problem)
+        } else if jev.credit == nil {
+            parts.append("medindo…")
+        }
+        if let at = jev.measuredAt, now.timeIntervalSince(at) > 15 * 60 {
+            parts.append("medido \(UsageText.ago(at, now: now))")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private func jevHelp(_ jev: JevLine, now: Date) -> String {
+        var lines = ["Crédito que o Jev gasta no OpenRouter"]
+        if let credit = jev.credit {
+            lines.append("Pode gastar ainda: \(UsageText.dollars(credit.available))")
+            lines.append("Conta: \(UsageText.dollars(credit.accountLeft)) de \(UsageText.dollars(credit.total))")
+            if let left = credit.keyLeft, let limit = credit.keyLimit {
+                lines.append("Chave: \(UsageText.dollars(left)) de \(UsageText.dollars(limit))")
+            }
+            if let today = credit.usedToday { lines.append("Gasto hoje: \(UsageText.dollars(today))") }
+            if let month = credit.usedThisMonth { lines.append("Gasto no mês: \(UsageText.dollars(month))") }
+        }
+        if let at = jev.measuredAt { lines.append("Medido \(UsageText.ago(at, now: now))") }
+        return lines.joined(separator: "\n")
     }
 
     private func note(_ line: AccountUsage, now: Date) -> String? {

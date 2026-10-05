@@ -222,6 +222,55 @@ struct UsageReading: Equatable, Codable {
     let limitReached: Bool
 }
 
+// MARK: - the Jev's credit
+
+/// What OpenRouter says of the credit the Jev spends, in dollars (`keep ia
+/// jev`): what the account bought and spent, and the ceiling and spending of
+/// the Jev's own key when the key has a ceiling.
+struct JevCredit: Equatable, Codable {
+    let total: Double
+    let used: Double
+    let keyLimit: Double?
+    let keyUsed: Double?
+    let usedToday: Double?
+    let usedThisMonth: Double?
+
+    var accountLeft: Double { max(0, total - used) }
+
+    var keyLeft: Double? { keyLimit.map { max(0, $0 - (keyUsed ?? 0)) } }
+
+    /// What the Jev can still spend: the smaller of the two.
+    var available: Double { keyLeft.map { min($0, accountLeft) } ?? accountLeft }
+
+    /// Spent, from 0 to 100 — the figure a bar draws.
+    var accountPercent: Double { total > 0 ? min(100, used / total * 100) : 100 }
+
+    var keyPercent: Double? {
+        guard let keyLimit else { return nil }
+        return keyLimit > 0 ? min(100, (keyUsed ?? 0) / keyLimit * 100) : 100
+    }
+}
+
+/// The Jev's line of the footer: the last credit that came back, kept through
+/// later failures, and why the latest attempt brought nothing when it did not.
+struct JevLine: Equatable, Codable {
+    var credit: JevCredit?
+    var measuredAt: Date?
+    var problem: String?
+}
+
+/// What `keep ia jev` answers. `jev` is null when this Mac has no key of the
+/// Jev's: there is then nothing to show.
+struct JevAnswer: Decodable {
+    let jev: JevLine?
+
+    static func decode(_ data: Data) -> JevAnswer? {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        return try? decoder.decode(JevAnswer.self, from: data)
+    }
+}
+
 // MARK: - saying it
 
 enum UsageText {
@@ -229,6 +278,14 @@ enum UsageText {
     /// not something anyone acts on.
     static func percent(_ value: Double) -> String {
         "\(Int(max(0, min(999, value)).rounded()))%"
+    }
+
+    /// "US$ 9,98": a dollar figure the way the footer says it — two places,
+    /// a comma, and "menos de" for what rounds to nothing.
+    static func dollars(_ value: Double) -> String {
+        let value = max(0, value)
+        if value > 0, value < 0.01 { return "< US$ 0,01" }
+        return "US$ " + String(format: "%.2f", value).replacingOccurrences(of: ".", with: ",")
     }
 
     /// How long until a window starts over, in the fewest characters that

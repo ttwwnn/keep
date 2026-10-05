@@ -13,6 +13,7 @@ pub mod contas;
 pub mod contexto;
 pub mod daemon;
 pub mod historico;
+pub mod jev;
 pub mod linha;
 pub mod login;
 pub mod processos;

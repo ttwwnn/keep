@@ -87,6 +87,36 @@ if let linhas = resposta?.linhas, let guardado = try? JSONEncoder().encode(linha
     confere((try? JSONDecoder().decode([AccountUsage].self, from: guardado)) == linhas, "guardado: volta igual")
 } else { confere(false, "guardado: codifica") }
 
+// --- o crédito do Jev, como o núcleo o escreve
+let respostaDoJev = """
+{"ok":true,"versao":1,"medidoEm":1791084861.5,
+ "jev":{"credit":{"total":10,"used":0.0246,"keyLimit":5,"keyUsed":0.0042,"usedToday":0.0018,"usedThisMonth":0.0042},
+        "measuredAt":1791084861.45,"problem":null}}
+""".data(using: .utf8)!
+let jev = JevAnswer.decode(respostaDoJev)?.jev
+confere(jev?.credit?.total == 10 && jev?.credit?.keyLimit == 5 && jev?.credit?.usedToday == 0.0018,
+        "jev: o crédito lido como o núcleo o escreve", "\(String(describing: jev))")
+confere(jev?.measuredAt == Date(timeIntervalSince1970: 1791084861.45), "jev: medido em, em segundos desde 1970")
+confere(abs((jev?.credit?.accountLeft ?? 0) - 9.9754) < 1e-9 && abs((jev?.credit?.keyLeft ?? 0) - 4.9958) < 1e-9,
+        "jev: o saldo da conta e o da chave")
+confere(abs((jev?.credit?.available ?? 0) - 4.9958) < 1e-9, "jev: o que ainda pode gastar é o menor dos dois")
+confere(jev?.credit?.accountPercent ?? 0 < 1 && abs((jev?.credit?.keyPercent ?? 0) - 0.084) < 1e-9,
+        "jev: o gasto em percentual, para a barra", "\(String(describing: jev?.credit?.keyPercent))")
+let semTeto = JevCredit(total: 10, used: 12, keyLimit: nil, keyUsed: nil, usedToday: nil, usedThisMonth: nil)
+confere(semTeto.available == 0 && semTeto.keyPercent == nil && semTeto.accountPercent == 100,
+        "jev: gasto além do comprado não dá saldo negativo nem barra além do fim")
+confere(UsageText.dollars(9.9754) == "US$ 9,98" && UsageText.dollars(0) == "US$ 0,00"
+        && UsageText.dollars(0.004) == "< US$ 0,01" && UsageText.dollars(-1) == "US$ 0,00",
+        "jev: dólar com vírgula, duas casas, e o que arredonda a nada dito como tal",
+        "\(UsageText.dollars(9.9754)) \(UsageText.dollars(0.004))")
+confere(JevAnswer.decode("{\"ok\":true,\"jev\":null}".data(using: .utf8)!)?.jev == nil
+        && JevAnswer.decode("{\"ok\":true,\"jev\":null}".data(using: .utf8)!) != nil,
+        "jev: sem chave é uma resposta, com jev nulo")
+confere(JevAnswer.decode("lixo".data(using: .utf8)!) == nil, "jev: lixo não é uma resposta")
+if let jev, let guardado = try? JSONEncoder().encode(jev) {
+    confere((try? JSONDecoder().decode(JevLine.self, from: guardado)) == jev, "jev: guardado volta igual")
+} else { confere(false, "jev: codifica") }
+
 // --- a assinatura dos arquivos (o vigia de 2 s)
 let cofre = casa.appendingPathComponent(".claude/contas")
 try! fm.createDirectory(at: cofre.appendingPathComponent("fixas"), withIntermediateDirectories: true)
@@ -320,7 +350,7 @@ confere(teste["KEEP_IA_HOME"] == "/casa/falsa" && teste["KEEP_IA_ESTADO"] == "/c
 confere(teste["KEEP_IA_SECURITY"] == "/casa/falsa/.keep-ia-estado/sem-chaveiro",
         "ambiente: app de teste: o Chaveiro é um que não tem nada")
 confere(teste["KEEP_IA_PERFIL_URL"] == KeepCLI.nowhere && teste["KEEP_IA_CLAUDE_URL"] == KeepCLI.nowhere
-        && teste["KEEP_IA_CODEX_URL"] == KeepCLI.nowhere,
+        && teste["KEEP_IA_CODEX_URL"] == KeepCLI.nowhere && teste["KEEP_IA_OPENROUTER_URL"] == KeepCLI.nowhere,
         "ambiente: app de teste: os serviços apontam para onde nada escuta")
 let comSubstitutos = KeepCLI.environment(["KEEP_AI_USAGE_HOME": "/c", "KEEP_IA_SECURITY": "/meu/security",
                                           "KEEP_AI_USAGE_CLAUDE_URL": "http://127.0.0.1:5/claude",
@@ -422,6 +452,21 @@ for (pedido, argumentos) in [(AIHelper.Measure.due, ["uso", "--json"]), (.now, [
         confere(r.linhas.count == 3 && leituras().last == argumentos, "uso \(pedido.label): argumentos e linhas", "\(leituras())")
     } else { confere(false, "uso \(pedido.label): ok") }
 }
+for (pedido, argumentos) in [(AIHelper.Measure.due, ["jev", "--json"]), (.now, ["jev", "--agora", "--json"]),
+                             (.cached, ["jev", "--cache", "--json"])] {
+    if case .success(let r) = AIHelper.jev(pedido) {
+        confere(r.jev == nil && leituras().last == argumentos, "jev \(pedido.label): argumentos, e sem chave não há jev", "\(leituras())")
+    } else { confere(false, "jev \(pedido.label): ok") }
+}
+try! JSONSerialization.data(withJSONObject: try! JSONSerialization.jsonObject(with: respostaDoJev))
+    .write(to: URL(fileURLWithPath: falsoDir + "/jev.json"))
+if case .success(let r) = AIHelper.jev(.due) {
+    confere(r.jev?.credit?.available != nil, "jev: o crédito atravessa o ajudante")
+} else { confere(false, "jev: crédito pelo ajudante") }
+confere(chamadas().isEmpty, "jev: leitura não conta como pedido de mudança")
+try! "{\"versao\":1,\"ok\":true,\"jev\":\"texto\"}".write(toFile: falsoDir + "/jev.json", atomically: true, encoding: .utf8)
+if case .failure(let p) = AIHelper.jev(.due) { confere(p.detail.contains("não dá para ler"), "jev: resposta estranha dita", p.detail) } else { confere(false, "jev: resposta estranha") }
+try? fm.removeItem(atPath: falsoDir + "/jev.json")
 if case .failure(let p) = AIHelper.usage(.only("claude:ordem")) { confere(p.reason == "uso", "uso: claude:ordem não é uma conta para medir") } else { confere(false, "uso: claude:ordem") }
 confere(chamadas().isEmpty, "uso: leitura não conta como pedido de mudança")
 try! "{\"versao\":1,\"ok\":true}".write(toFile: falsoDir + "/uso.json", atomically: true, encoding: .utf8)
@@ -484,6 +529,27 @@ if let nucleo = ambiente["NUCLEO"], fm.isExecutableFile(atPath: nucleo) {
         confere(claude?.account.email == "um@exemplo.com" && claude?.account.plan == "Max 20x",
                 "núcleo de verdade: e-mail e plano da conta")
     } else { confere(false, "núcleo de verdade: a rodada respondeu") }
+    // O Jev: sem chave no Chaveiro do app de teste não há Jev; com a chave
+    // numa "security" de teste, o crédito vem do substituto do OpenRouter.
+    if case .success(let r) = AIHelper.jev(.now) {
+        confere(r.jev == nil, "núcleo de verdade: sem chave do Jev no Chaveiro, não há jev", "\(String(describing: r.jev))")
+    } else { confere(false, "núcleo de verdade: jev sem chave respondeu") }
+    if let comChave = ambiente["SEGURANCA_COM_CHAVE"] {
+        setenv("KEEP_IA_SECURITY", comChave, 1)
+        if case .success(let r) = AIHelper.jev(.now) {
+            let credito = r.jev?.credit
+            confere(credito?.total == 10 && credito?.keyLimit == 5 && abs((credito?.available ?? 0) - 4.9958) < 1e-9,
+                    "núcleo de verdade: o crédito do Jev chega ao app", "\(String(describing: r.jev))")
+            confere(r.jev?.measuredAt.map { abs($0.timeIntervalSinceNow) < 60 } == true && r.jev?.problem == nil,
+                    "núcleo de verdade: o crédito do Jev medido agora")
+        } else { confere(false, "núcleo de verdade: jev com chave respondeu") }
+        let guardado = (try? String(contentsOf: outra.appendingPathComponent(".keep-ia-estado/jev.json"), encoding: .utf8)) ?? ""
+        confere(!guardado.isEmpty && !guardado.contains("sk-or-do-teste"), "núcleo de verdade: o cache do Jev não guarda a chave")
+        unsetenv("KEEP_IA_SECURITY")
+        if case .success(let r) = AIHelper.jev(.now) {
+            confere(r.jev == nil, "núcleo de verdade: tirada a chave, o Jev some", "\(String(describing: r.jev))")
+        } else { confere(false, "núcleo de verdade: jev sem chave de novo respondeu") }
+    }
     confere(fm.isExecutableFile(atPath: outra.appendingPathComponent(".keep-ia-estado/sem-chaveiro").path),
             "núcleo de verdade: perguntado com o Chaveiro vazio do app de teste")
     if case .success(let r) = AIHelper.usage(.only("claude:principal")) {

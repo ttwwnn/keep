@@ -38,6 +38,15 @@ build() {  # build <AIUsage.swift> <AIChoice.swift> <KeepCLI.swift>
 cp tools/ia-test/fake-keep-ia.py "$WORK/fake-keep-ia.py"
 chmod +x "$WORK/fake-keep-ia.py"
 mkdir -p "$WORK/home" "$WORK/ia"
+# A Keychain that holds the Jev's key and nothing else, for the real core.
+cat >"$WORK/security-com-chave" <<'SH'
+#!/bin/sh
+case "$*" in
+    *"-s openrouter-api-key"*) echo "sk-or-do-teste"; exit 0 ;;
+esac
+exit 44
+SH
+chmod +x "$WORK/security-com-chave"
 
 # The real core, in a home of its own: a slot of the kit's vault and Codex's
 # login, measured by a stand-in of both services on this machine.
@@ -82,6 +91,10 @@ class H(BaseHTTPRequestHandler):
         elif self.path == "/codex" and self.headers.get("ChatGPT-Account-Id") == "ACC":
             status, body = 200, {"rate_limit": {"limit_reached": True, "primary_window": {
                 "used_percent": 100, "limit_window_seconds": 604800, "reset_at": 1791200000}}}
+        elif self.path == "/or/credits" and token == "sk-or-do-teste":
+            status, body = 200, {"data": {"total_credits": 10, "total_usage": 0.0246}}
+        elif self.path == "/or/key" and token == "sk-or-do-teste":
+            status, body = 200, {"data": {"limit": 5, "usage": 0.0042, "usage_daily": 0.0018, "usage_monthly": 0.0042}}
         else:
             status, body = 401, {}
         data = json.dumps(body).encode()
@@ -111,6 +124,8 @@ run() {
     KEEP_AI_USAGE_HOME=$WORK/home KEEP_IA_BIN=/var/empty \
         KEEP_AI_USAGE_CLAUDE_URL=http://127.0.0.1:${PORT:-9}/claude \
         KEEP_AI_USAGE_CODEX_URL=http://127.0.0.1:${PORT:-9}/codex \
+        KEEP_IA_OPENROUTER_URL=http://127.0.0.1:${PORT:-9}/or \
+        SEGURANCA_COM_CHAVE=$WORK/security-com-chave \
         NUCLEO=$NUCLEO CASA_NUCLEO=${CORE_HOME:-} \
         FALSO_IA=$WORK/fake-keep-ia.py FAKE_IA_DIR=$WORK/ia "$WORK/test"
 }
@@ -155,7 +170,24 @@ sabotage "$USAGE" "the watcher blind to the order" \
 sabotage "$USAGE" "the watcher blind to Keep's own logins" \
     'for file in ["keep.json", "conta.json"] {|||for file in ["conta.json"] {' || ok=1
 sabotage "$USAGE" "the core's dates read as Foundation's own" \
-    'decoder.dateDecodingStrategy = .secondsSince1970|||' || ok=1
+    '        decoder.dateDecodingStrategy = .secondsSince1970
+        return try? decoder.decode(UsageAnswer.self, from: data)|||        return try? decoder.decode(UsageAnswer.self, from: data)' || ok=1
+sabotage "$USAGE" "the smaller of the two credits not the one that counts" \
+    'keyLeft.map { min($0, accountLeft) } ?? accountLeft|||keyLeft.map { max($0, accountLeft) } ?? accountLeft' || ok=1
+sabotage "$USAGE" "a credit that rounds to nothing said as zero" \
+    'if value > 0, value < 0.01 { return "< US$ 0,01" }|||' || ok=1
+sabotage "$USAGE" "the Jev's dates read as Foundation's own" \
+    '        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        return try? decoder.decode(JevAnswer.self, from: data)|||        return try? JSONDecoder().decode(JevAnswer.self, from: data)' || ok=1
+sabotage "$HELPER" "the Jev asked by the wrong command" \
+    'askRaw(["jev"] + arguments + ["--json"]|||askRaw(["uso"] + arguments + ["--json"]' || ok=1
+sabotage "$HELPER" "a click on Medir agora not passed on to the Jev" \
+    'case .now: arguments = ["--agora"]
+        case .cached: arguments = ["--cache"]|||case .now, .cached: arguments = ["--cache"]' || ok=1
+sabotage "$HELPER" "a test app letting the Jev's key reach the real OpenRouter" \
+    '            ("KEEP_IA_OPENROUTER_URL", ["KEEP_IA_OPENROUTER_URL"]),
+|||' || ok=1
 sabotage "$CHOICE" "following the order sent as the account first in it" \
     'kind: .follow, title: followTitle, key: AIHelper.followOrder,|||kind: .follow, title: followTitle, key: lines.first(where: \.isAvailable).map { $0.account.engine.key($0.account.alias) } ?? AIHelper.followOrder,' || ok=1
 sabotage "$CHOICE" "the dash on every Claude account, not the one in use" \

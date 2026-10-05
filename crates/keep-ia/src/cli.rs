@@ -97,6 +97,7 @@ pub fn ia(args: &[String]) -> i32 {
             Some(_) => uso_errado("keep ia ordem [mover <chave> cima|baixo]"),
         },
         "uso" => crate::uso::cli(&a),
+        "jev" => crate::jev::cli(&a),
         "abas" => match crate::abas::ler() {
             Ok((r, ia)) => responde(json!({
                 "ok": true,
@@ -110,7 +111,7 @@ pub fn ia(args: &[String]) -> i32 {
         "entrar" => crate::login::cli_entrar(&a),
         "login" => crate::login::cli_login(&a),
         "sincronizar" => crate::sincronizar::cli(),
-        _ => uso_errado("keep ia contas | uso | ordem [mover] | abas | trocar | entrar | login | sincronizar"),
+        _ => uso_errado("keep ia contas | uso | jev | ordem [mover] | abas | trocar | entrar | login | sincronizar"),
     }
 }
 

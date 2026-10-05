@@ -68,6 +68,23 @@ presa numa conta roda sempre na pasta própria dela (nunca no global, que muda d
 - Uma medição por conta a cada 5 min; "Medir agora" força (no mínimo 15 s entre forçadas); 429
   respeita `Retry-After`. As leituras (sem token) ficam em `<estado>/uso.json`.
 
+## Jev (crédito do OpenRouter)
+
+O Jev (o modelo que decide no lugar do Claude, pela skill `jev`) gasta crédito do OpenRouter a cada
+decisão. O rodapé "Consumo de IA" mostra quanto resta, ao lado das contas: `keep ia jev [--agora] [--cache]`.
+
+- Chave: no macOS, o item `openrouter-api-key` do Chaveiro (`security find-generic-password -w`, o mesmo
+  que a skill usa); nos demais sistemas, `OPENROUTER_API_KEY`. Sem chave, `jev: null` e o rodapé não
+  mostra nada (a leitura guardada some junto). A chave nunca vai para o cache.
+- Mede: `GET https://openrouter.ai/api/v1/credits` (o que a conta comprou e gastou) e `/api/v1/key` (teto e
+  gasto da chave do Jev, quando tem teto). O que o Jev ainda pode gastar é o menor dos dois saldos.
+- Mesma cadência do consumo das contas (5 min; "Medir agora" a cada 15 s; 429 respeita `Retry-After`).
+  Leitura guardada em `<estado>/jev.json`.
+- Resposta: `{"jev": {"credit": {"total", "used", "keyLimit", "keyUsed", "usedToday", "usedThisMonth"},
+  "measuredAt", "problem"}}`, em dólares.
+- Teste: `KEEP_IA_OPENROUTER_URL` (só `http://127.0.0.1`) e `KEEP_IA_SECURITY`. O app do macOS aponta o
+  endereço para uma porta sem ouvinte quando lê uma casa falsa.
+
 ## IA de cada aba
 
 - O daemon diz o processo da frente de cada aba (`List3`): vínculo `exato`. Daemon antigo, sem

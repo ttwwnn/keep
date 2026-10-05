@@ -170,6 +170,9 @@ json.dump({"auth_mode": "chatgpt", "OPENAI_API_KEY": None,
            "tokens": {"access_token": access, "account_id": "ACC", "refresh_token": "never-used"}},
           open(os.path.join(home, ".codex/auth.json"), "w"))
 open(os.path.join(home, "codex-token"), "w").write(access)
+# The Jev's key, in the stand-in Keychain: the one thing that makes the Jev's
+# credit show.
+open(os.path.join(home, "chaveiro", "openrouter-api-key"), "w").write("sk-or-do-teste\n")
 PY
 
 # ----------------------------------------------- the stand-in for both services
@@ -211,6 +214,10 @@ class H(BaseHTTPRequestHandler):
             status, body = 429, {"error": "rate_limited"}
         elif self.path == "/codex" and token == codex_token:
             status, body = 200, CODEX
+        elif self.path == "/or/credits" and token == "sk-or-do-teste":
+            status, body = 200, {"data": {"total_credits": 10, "total_usage": 0.0246}}
+        elif self.path == "/or/key" and token == "sk-or-do-teste":
+            status, body = 200, {"data": {"limit": 5, "usage": 0.52, "usage_daily": 0.0018, "usage_monthly": 0.52}}
         else:
             status, body = 401, {"error": "unknown token"}
         data = json.dumps(body).encode()
@@ -236,6 +243,7 @@ export KEEP_AI_USAGE_HOME=$FAKE
 export KEEP_AI_USAGE_CLAUDE_URL=http://127.0.0.1:$PORT/claude
 export KEEP_AI_USAGE_CODEX_URL=http://127.0.0.1:$PORT/codex
 export KEEP_IA_PERFIL_URL=http://127.0.0.1:$PORT/profile
+export KEEP_IA_OPENROUTER_URL=http://127.0.0.1:$PORT/or
 # The Keychain the core reads Claude Code's own login from: `security` as the
 # core calls it, answering out of the made-up home.
 cat >"$WORK/security" <<'SH'
@@ -306,12 +314,22 @@ check "and neither shows a made-up bar" no "$(has "Claude · reserva 5h")"
 
 say ""
 say "what was asked, and how"
-asked() { python3 -c 'import json,sys; print(" ".join(sorted({json.loads(l)["token"] for l in open(sys.argv[1])})))' "$WORK/requests.jsonl"; }
+asked() { python3 -c 'import json,sys; print(" ".join(sorted({r["token"] for r in map(json.loads, open(sys.argv[1])) if not r["path"].startswith("/or/")})))' "$WORK/requests.jsonl"; }
 check "each live login was asked once per round, the lapsed one never" "codex tok-429 tok-principal" "$(asked)"
 check "with the fresher token of the duplicate pair" no "$(grep -qF tok-principal-velho "$WORK/requests.jsonl" && echo yes || echo no)"
 check "Claude asked with a CLI's user agent" yes "$(grep -F '"token": "tok-principal"' "$WORK/requests.jsonl" | grep -qE '"ua": "claude-cli/[0-9.]+ \(external, cli\)"' && echo yes || echo no)"
 check "Codex asked for its workspace" yes "$(grep -F '"token": "codex"' "$WORK/requests.jsonl" | grep -qF '"account": "ACC"' && echo yes || echo no)"
-check "no token in the trace" no "$(grep -qE 'tok-|Bearer' "$WORK/app.log" && echo yes || echo no)"
+check "no token in the trace" no "$(grep -qE 'tok-|Bearer|sk-or' "$WORK/app.log" && echo yes || echo no)"
+
+say ""
+say "the Jev's credit"
+check "the Jev has a block of its own" yes "$(has "Jev · OpenRouter")"
+check "the account's credit left: ten bought, a little spent" yes "$(has "Jev conta: restam US\$ 9,98")"
+check "the key's ceiling left: five, half a dollar spent" yes "$(has "Jev chave: restam US\$ 4,48")"
+check "the credit was asked with the key from the Keychain, on both routes" "/or/credits /or/key" \
+    "$(python3 -c 'import json,sys; print(" ".join(sorted({r["path"] for r in map(json.loads, open(sys.argv[1])) if r["token"] == "sk-or-do-teste"})))' "$WORK/requests.jsonl")"
+check "and the key went to no other service" no \
+    "$(python3 -c 'import json,sys; print("yes" if any(r["token"] == "sk-or-do-teste" and not r["path"].startswith("/or/") for r in map(json.loads, open(sys.argv[1]))) else "no")' "$WORK/requests.jsonl")"
 
 say ""
 say "the order of priority, with the kit's helper"
@@ -448,6 +466,8 @@ ax
 check "one line an account, and the arrows still beside each" "yes yes yes" \
     "$(has "Subir GPT · nova") $(has "Descer Claude · limitada") $(has "Subir Claude · reserva")"
 check "folded for real: no bars" "no no" "$(has "Claude · reserva 5h") $(has "Claude · principal 5h")"
+check "the Jev on one line, with what it can still spend: the key's, the smaller" yes "$(has "Jev OpenRouter restam US\$ 4,48")"
+check "folded for real: no bar of the Jev's" no "$(has "Jev conta: restam")"
 "$AXPRESS" "$APP_NAME" press "Consumo de IA"
 sleep 1
 # The refusal's word is said for a few seconds and then goes, and the footer
@@ -477,6 +497,20 @@ for _ in 1 2 3 4 5; do
 done
 check "thirty more workspaces do not move it" "$before" "$after"
 check "and it is still in the window" yes "$([ "$after" -gt 0 ] && [ "$after" -lt "$bottom_after" ] && echo yes || echo no)"
+
+say ""
+say "the Jev's key taken away"
+rm -f "$FAKE/chaveiro/openrouter-api-key"
+sleep 15
+"$AXPRESS" "$APP_NAME" press "Medir agora"
+gone=no
+for _ in $(seq 1 150); do
+    ax
+    [ "$(has "Jev · OpenRouter")" = no ] && { gone=yes; break; }
+    sleep 0.1
+done
+check "without a key there is no Jev, and the line goes" yes "$gone"
+check "the accounts stay" yes "$(has "Claude · principal")"
 
 say ""
 say "without a keep to ask, no footer"
