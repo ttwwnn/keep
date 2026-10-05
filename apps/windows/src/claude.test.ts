@@ -17,6 +17,7 @@ import {
   modeColor,
   plainTitle,
   programOf,
+  busyMark,
   readActivity,
   readCodexActivity,
   selectionEdge,
@@ -238,6 +239,10 @@ describe("what runs in a tab", () => {
     expect(programOf("node", "✳ Claude Code")).toBe("claude");
     expect(programOf("node", "Claude Code")).toBe("claude");
     expect(programOf("node", "server")).toBe("node");
+    // A shell named for a tab whose Claude Code has a child in front.
+    expect(programOf("pwsh.exe", "✳ Revisar o PR")).toBe("claude");
+    expect(programOf("zsh", "◐ Revisar o PR")).toBe("claude");
+    expect(programOf("pwsh", "PS C:\\>")).toBe("pwsh");
   });
   it("no name but the marks: a guess", () => {
     expect(programOf("", "◐ Trabalhando")).toBe("claude");
@@ -365,5 +370,13 @@ describe("the colours a tab is titled in", () => {
   });
   it("a tab not waiting does not breathe", () => {
     expect(lastBreath(undefined)).toBeUndefined();
+  });
+});
+
+describe("busyMark", () => {
+  it("gives Claude Code, Codex and any other command each a mark of their own", () => {
+    expect(busyMark("claude")).toEqual({ glyph: "✳", color: "var(--mark-claude)" });
+    expect(busyMark("codex")).toEqual({ glyph: "◆", color: "var(--mark-codex)" });
+    expect(busyMark("npm")).toEqual({ glyph: "✳", color: "var(--dot-busy)" });
   });
 });

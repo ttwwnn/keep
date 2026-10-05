@@ -240,6 +240,8 @@ function isVersionNumber(name: string): boolean {
   return parts.length >= 2 && parts.every((p) => /^\d+$/.test(p));
 }
 
+const SHELLS = new Set(["pwsh", "powershell", "cmd", "bash", "zsh", "fish", "sh", "dash", "nu"]);
+
 /**
  * What runs in a tab, with a guess for when the daemon's name says nothing:
  * Claude Code's installer names each release after its version (`2.1.281`),
@@ -251,6 +253,9 @@ export function programOf(command: string, title: string): string {
   const name = command.toLowerCase();
   if (name) {
     if (wearsMarks && isVersionNumber(name)) return "claude";
+    // A daemon that names the shell of a tab whose AI has a child of its own
+    // in front: Claude Code's marks say what it is.
+    if (wearsMarks && SHELLS.has(name.replace(/\.exe$/, ""))) return "claude";
     if ((name === "node" || name === "bun") && (wearsMarks || /claude code/i.test(title))) return "claude";
     return name;
   }
@@ -258,6 +263,18 @@ export function programOf(command: string, title: string): string {
 }
 
 export const isAiProgram = (program: string) => program === "claude" || program === "codex";
+
+/**
+ * The mark a tab at work wears, by what works in it: Claude Code's `✳`,
+ * Codex's own `◆`, and the plain `✳` of any other command. The colour is a
+ * CSS variable (theme.ts): orange for Claude Code, blue-green for Codex,
+ * the busy amber for the rest.
+ */
+export function busyMark(program: string): { glyph: string; color: string } {
+  if (program === "codex") return { glyph: "◆", color: "var(--mark-codex)" };
+  if (program === "claude") return { glyph: "✳", color: "var(--mark-claude)" };
+  return { glyph: "✳", color: "var(--dot-busy)" };
+}
 
 /** A title with the busy marks its program put there taken off. */
 export function plainTitle(title: string, fallback: string): string {

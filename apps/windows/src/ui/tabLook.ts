@@ -4,12 +4,14 @@ import { useEffect, useRef } from "preact/hooks";
 import {
   BREATH_PERIOD,
   activityColor,
+  busyMark,
   attentionFill,
   attentionGlow,
   attentionTitleInk,
   css,
   lastBreath,
   modeColor,
+  programOf,
 } from "../claude";
 import type { RootTab } from "../layout";
 import { now, palette, tabActivity, tabBusy, tabLabel, tabMode, tabWaitingSince } from "../store";
@@ -20,8 +22,9 @@ export interface TabLook {
   color: string | undefined;
   /** Waiting on you: the orange badge with the raised hand. */
   wantsYou: boolean;
-  /** Running: the ✳ in front. */
+  /** Running: the mark in front, by what runs there. */
   atWork: boolean;
+  mark: { glyph: string; color: string } | undefined;
   /** The badge breathes for its first minute, while out of sight. */
   breathing: boolean;
   fill: string;
@@ -33,8 +36,8 @@ export function tabLook(workspace: string, tab: RootTab, index: number, selected
   const mode = tabMode(workspace, tab);
   const wantsYou = activity === "waitingForYou";
   const atWork = tabBusy(workspace, tab);
-  let label = tabLabel(workspace, tab, index);
-  if (!wantsYou && atWork && !label.startsWith("✳")) label = `✳ ${label}`;
+  const label = tabLabel(workspace, tab, index);
+  const mark = !wantsYou && atWork ? busyMark(programOf(tab.root.command, tab.root.title)) : undefined;
   let color: string | undefined;
   if (wantsYou) color = css(attentionTitleInk(selected));
   else if (activity && activity !== "working") color = css(activityColor(activity, dark)!);
@@ -42,7 +45,7 @@ export function tabLook(workspace: string, tab: RootTab, index: number, selected
   const since = tabWaitingSince(workspace, tab);
   const until = lastBreath(since);
   const breathing = wantsYou && !selected && until !== undefined && now.value / 1000 < until;
-  return { label, color, wantsYou, atWork, breathing, fill: css(attentionFill(dark)) };
+  return { label, color, wantsYou, atWork, mark, breathing, fill: css(attentionFill(dark)) };
 }
 
 /**

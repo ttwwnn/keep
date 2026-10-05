@@ -119,6 +119,9 @@ export function applyPalette(palette: Palette): void {
     "--dot-attached": "oklch(0.76 0.14 150)",
     "--dot-busy": "oklch(0.82 0.15 85)",
     "--dot-idle": "oklch(0.70 0.05 250)",
+    // The mark of a tab at work: Claude Code's orange, Codex's blue-green.
+    "--mark-claude": palette.dark ? "oklch(0.72 0.15 48)" : "oklch(0.50 0.15 48)",
+    "--mark-codex": palette.dark ? "oklch(0.78 0.11 200)" : "oklch(0.56 0.11 200)",
     "--danger": palette.dark ? "#ff6b6b" : "#c42b1c",
     // The usage footer's: amber from 75%, red from 90% (the Clínica panel's
     // thresholds), and the attached green for the account a tab is on — a

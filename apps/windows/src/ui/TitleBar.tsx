@@ -69,7 +69,7 @@ function TabCapsule(props: { workspace: string; tab: RootTab; index: number; sel
       )}
       {renaming ? (
         <InlineEditor
-          value={gui.value.tabNames[tabKey(workspace, tab.root.id)] ?? look.label.replace(/^✳ /, "")}
+          value={gui.value.tabNames[tabKey(workspace, tab.root.id)] ?? look.label}
           onDone={(value) => {
             editing.value = null;
             if (value !== null) renameTab(workspace, tab.root.id, value);
@@ -77,6 +77,11 @@ function TabCapsule(props: { workspace: string; tab: RootTab; index: number; sel
         />
       ) : (
         <span class="tab-title" style={look.color ? { color: look.color } : undefined}>
+          {look.mark && (
+            <span class="busy-mark" style={{ color: look.mark.color }}>
+              {look.mark.glyph}{" "}
+            </span>
+          )}
           {look.label}
         </span>
       )}
