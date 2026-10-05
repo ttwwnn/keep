@@ -15,6 +15,10 @@ Fechar a janela não fecha nada: os terminais continuam no daemon e voltam como 
 **IA no Keep, nos dois sistemas, sem nada além do próprio Keep:**
 - rodapé **Consumo de IA**: cada conta do Claude e do GPT na ordem de prioridade, com as janelas de
   5 h e da semana; setas para mudar a ordem, "+" para entrar em outra conta, ↻ para medir agora;
+- **Jev**: o rodapé mostra o crédito do OpenRouter que o Jev gasta (o que resta da conta e o que a
+  chave dele já gastou, ou o que resta do teto dela, se tiver um), e o "+" traz "Conectar o Jev ao
+  OpenRouter…", que abre o login do OpenRouter no navegador e guarda a chave (no Chaveiro do macOS,
+  no Gerenciador de Credenciais do Windows);
 - **IA de cada aba**: o menu ao lado do título troca a conta (a mesma conversa continua) ou o motor
   (Claude ↔ Codex, com o contexto da conversa), e "Seguir a ordem de prioridade" leva a aba para a
   primeira conta do Claude disponível quando a dela chega ao limite (o GPT só entra escolhido no menu);
