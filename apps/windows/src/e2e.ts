@@ -184,7 +184,7 @@ export async function runE2E(): Promise<void> {
           const s = screenOf(id);
           return find() && s.includes("PS ") && s.includes(">");
         }, 30000);
-        terminals.existing(WORKSPACE, id)?.term.input(`cmd /c ${program}.cmd\r`, true);
+        terminals.existing(WORKSPACE, id)?.term.input(`cmd /c "$env:KEEP_E2E_FALSOS\\${program}.cmd"\r`, true);
         const tab = await waitFor(() => {
           const t = find();
           return t && programOf(t.root.command, t.root.title) === program && tabBusy(WORKSPACE, t) ? t : null;

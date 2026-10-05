@@ -102,13 +102,13 @@ if ($NucleoReal) {
 
 # Stand-ins for the programs whose busy mark the roteiro photographs: a
 # claude.cmd and a codex.cmd that print a line and stay in front of the
-# shell, as the real ones do. On this run's PATH, ahead of anything else.
+# shell, as the real ones do. Reached by KEEP_E2E_FALSOS, not by PATH: the AI core looks for claude and codex on PATH.
 $falsos = Join-Path $Out 'falsos'
 New-Item -ItemType Directory -Force $falsos | Out-Null
 foreach ($nome in @('claude', 'codex')) {
     Set-Content -Path (Join-Path $falsos "$nome.cmd") -Value "@echo off`r`necho $nome (e2e)`r`nping -n 300 127.0.0.1 >nul"
 }
-$env:PATH = "$falsos;$env:PATH"
+$env:KEEP_E2E_FALSOS = $falsos
 
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 function Save-Screen([string]$path) {
