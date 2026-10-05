@@ -28,4 +28,10 @@ Fechar a janela não fecha nada: os terminais continuam no daemon e voltam como 
 - **lixeira de worktrees**: ao fechar uma aba, as worktrees git que a conversa dela criou vão para a
   Lixeira, depois de você confirmar.
 
+**Marcas e cores das abas (0.2.3):**
+- o `✳` de uma aba em trabalho é laranja para o Claude Code e um `◆` azul-esverdeado para o Codex (no Mac,
+  na barra lateral; no Windows, na faixa e na barra); qualquer outro comando mantém o `✳` amarelo;
+- uma aba cujo Claude Code tem um processo filho na frente (servidor MCP, `php`) e que um daemon antigo
+  nomeia como shell volta a ser reconhecida e a ter cor.
+
 Detalhes em `docs/ia.md`.
