@@ -17,7 +17,10 @@ Fechar a janela não fecha nada: os terminais continuam no daemon e voltam como 
   5 h e da semana; setas para mudar a ordem, "+" para entrar em outra conta, ↻ para medir agora;
 - **IA de cada aba**: o menu ao lado do título troca a conta (a mesma conversa continua) ou o motor
   (Claude ↔ Codex, com o contexto da conversa), e "Seguir a ordem de prioridade" leva a aba para a
-  primeira conta disponível quando a dela chega ao limite;
+  primeira conta do Claude disponível quando a dela chega ao limite (o GPT só entra escolhido no menu);
+- **login que não cai**: o Keep renova sozinho, antes de vencer, o login de cada conta do Claude,
+  inclusive o da conta parada, e trocar de conta nunca pede login de novo; a aba aberta para um
+  login novo fecha sozinha quando ele termina;
 - **lixeira de worktrees**: ao fechar uma aba, as worktrees git que a conversa dela criou vão para a
   Lixeira, depois de você confirmar.
 
