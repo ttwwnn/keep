@@ -34,4 +34,11 @@ Fechar a janela não fecha nada: os terminais continuam no daemon e voltam como 
 - uma aba cujo Claude Code tem um processo filho na frente (servidor MCP, `php`) e que um daemon antigo
   nomeia como shell volta a ser reconhecida e a ter cor.
 
+**Crédito do Jev em tempo real (0.2.4):**
+- o rodapé soma na hora o custo de cada decisão do Jev feita nesta máquina, sem esperar o OpenRouter,
+  que leva uns dois minutos para contá-la: a skill `jev` anota cada chamada em
+  `~/.claude/jev/chamadas.jsonl` (quando, quanto custou e um resumo da chave, nunca a chave), e cada
+  leitura nova desconta o que o OpenRouter já contou;
+- o crédito do OpenRouter é lido a cada minuto, em vez de a cada cinco.
+
 Detalhes em `docs/ia.md`.
