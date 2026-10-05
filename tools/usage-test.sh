@@ -185,6 +185,9 @@ sabotage "$HELPER" "the Jev asked by the wrong command" \
 sabotage "$HELPER" "a click on Medir agora not passed on to the Jev" \
     'case .now: arguments = ["--agora"]
         case .cached: arguments = ["--cache"]|||case .now, .cached: arguments = ["--cache"]' || ok=1
+sabotage "$HELPER" "a test app sending a refresh token to the real token service" \
+    '            ("KEEP_IA_TOKEN_URL", ["KEEP_IA_TOKEN_URL"]),
+|||' || ok=1
 sabotage "$HELPER" "a test app letting the Jev's key reach the real OpenRouter" \
     '            ("KEEP_IA_OPENROUTER_URL", ["KEEP_IA_OPENROUTER_URL"]),
 |||' || ok=1

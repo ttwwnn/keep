@@ -106,6 +106,9 @@ enum KeepCLI {
             ("KEEP_IA_CLAUDE_URL", ["KEEP_IA_CLAUDE_URL", "KEEP_AI_USAGE_CLAUDE_URL"]),
             ("KEEP_IA_CODEX_URL", ["KEEP_IA_CODEX_URL", "KEEP_AI_USAGE_CODEX_URL"]),
             ("KEEP_IA_OPENROUTER_URL", ["KEEP_IA_OPENROUTER_URL"]),
+            // The renewal of the logins (`keep ia renovar`): a refresh token
+            // of the made-up home is never sent anywhere either.
+            ("KEEP_IA_TOKEN_URL", ["KEEP_IA_TOKEN_URL"]),
         ]
         for (name, names) in services where !names.contains(where: { base[$0] != nil }) {
             environment[name] = nowhere
@@ -371,6 +374,15 @@ enum AIHelper {
     /// a tab at its shell.
     static func sync() -> Result<[String: Any], Problem> {
         ask(["sincronizar", "--json"], within: 300 * timeScale)
+    }
+
+    /// One round of the logins kept alive (`keep ia renovar`): every login of
+    /// Claude the core looks after, renewed before it runs out, and the one
+    /// at rest renewed before its refresh dies unseen — what lets a tab move
+    /// to any account without a new sign-in. Each renewal is one request of
+    /// at most thirty seconds, under Claude Code's own lock.
+    static func renew() -> Result<[String: Any], Problem> {
+        ask(["renovar", "--json"], within: 120 * timeScale)
     }
 
     private static func invalid(_ key: String) -> Problem {

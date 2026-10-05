@@ -27,7 +27,9 @@ Uma conta do Claude é um **armazém de credenciais** do Claude Code:
 - Cada armazém tem o seu próprio login (aprovação no navegador). O Keep **nunca copia** token de um
   armazém para outro: o refresh token gira a cada renovação, e duas cópias da mesma família
   terminam com uma delas morta e a aba em "Not logged in".
-- O Keep **nunca renova** token: quem renova é o próprio Claude Code, a cada uso.
+- O Keep **renova** o login de cada armazém que cuida, no próprio armazém, antes de ele vencer e
+  também na conta parada (ver "Renovação"): é o que deixa uma aba passar para qualquer conta sem
+  login novo. O gerente externo (kit) renova o global; o Keep então renova só as pastas fixas.
 - Dono de um armazém: `GET https://api.anthropic.com/api/oauth/profile` com o token dele
   (`User-Agent: claude-cli/<versão> (external, cli)`), em cache pela impressão do token. Nunca o
   `~/.claude.json`, que o CLI regrava com a conta do próprio token de qualquer aba.
@@ -60,6 +62,40 @@ Se o kit do autor estiver instalado (`~/.claude/contas/.ativa` e `~/.local/bin/c
 quem troca a conta do armazém global é ele: no Keep, `claude:ordem` passa a ser "o global", uma aba
 presa numa conta roda sempre na pasta própria dela (nunca no global, que muda de dono), e
 `sincronizar` não faz nada (o kit tem a própria). Sem o kit, o Keep faz tudo.
+
+## Renovação
+
+Nenhuma conta cai, nem a parada: o que a Clínica faz com as contas dela (`renovarTokenSePossivel` +
+`ia:healthcheck`) e o kit faz com o global (`claude-conectado`), para todo armazém do Keep.
+`keep ia renovar [--agora] --json`; o app chama a cada 60 s, e logo ao abrir.
+
+- Armazéns: as pastas fixas, sempre; o global só sem gerente externo. Nunca o cofre do kit, nunca
+  cópia de um armazém para outro: o login renovado volta para o mesmo lugar de onde saiu.
+- Quando: o acesso vence em menos de 60 min (o Claude Code só tenta nos 5 min finais, quando várias
+  abas cruzam o limiar juntas e uma derruba a outra); ou o refresh não gira há mais de 7 dias (a
+  conta parada: o refresh vive umas quatro semanas e morreria em silêncio). O nascimento de um
+  refresh é o do acesso que veio com ele (`expiresAt` − 8 h). Acesso já vencido de conta em uso não
+  é com o Keep: o Claude Code renova ao usar. `--agora` renova todos.
+- Como: `POST https://platform.claude.com/v1/oauth/token` com `grant_type=refresh_token`, o
+  `client_id` do Claude Code, os escopos do login e `User-Agent: claude-cli/<versão> (external,
+  cli)` (sem ele, o Cloudflare responde 403/1010). Sob a trava de renovação do próprio Claude Code
+  (`~/.claude/.oauth_refresh.lock`, um diretório, velha após 60 s, tocada a cada 2 s enquanto o
+  Keep a segura): nenhuma renovação nossa corre junto com a de uma aba. A credencial é relida sob a
+  trava; se o CLI já renovou, nada a fazer.
+- Gravação: compare-and-swap sob a trava de escrita do CLI (`~/.claude/.storage-write.lock`, velha
+  após 15 s): relê, e desiste se o refresh do armazém mudou enquanto o pedido estava no ar. Só a
+  chave `claudeAiOauth` muda (acesso, refresh, `expiresAt`, `refreshTokenExpiresAt`, `scopes`); o
+  resto do JSON fica (`mcpOAuth`…). No macOS, `security -i` com `add-generic-password -U … -X <hex>`
+  pela entrada padrão (o token não aparece no `ps`), como o CLI grava; conferido lendo de volta.
+- Recusa, no critério do CLI: `morto` (invalid_grant em 400/401) marca o armazém — a conta passa a
+  dizer "recusado" no rodapé, nenhuma aba sobe nela (`precisa-login`) e ele não é tentado de novo
+  até a credencial mudar (um login novo apaga a marca); `espera` (`account_on_hold`) tenta de novo
+  em 1 h; o resto (sem rede, 429, 5xx, Cloudflare) tenta no próximo tique.
+- Estado, sem token: `<estado>/renovar.json` (por armazém: impressão sha256[:12] do refresh,
+  quando girou, a marca de morto e a espera); registro em `<estado>/renovar.log`. Uma rodada por
+  vez (`<estado>/renovar.trava`).
+- Resposta: `{"estado": "feito"|"em-andamento", "renovados": [{"conta", "armazem"}], "falhas":
+  [{"conta", "armazem", "motivo"}]}`. `armazem` é `global` ou `fixa`; `conta`, a chave dela.
 
 ## Consumo
 
@@ -147,6 +183,7 @@ keep ia trocar --ws=<W> --aba=<N> --para=<chave> [--interromper] --json
 keep ia entrar claude|gpt --ws=<W> --json
 keep ia login claude|gpt [--apelido=<A>] [--depois=<W>:<N>:<chave>]     (interativo, roda na aba)
 keep ia sincronizar --json
+keep ia renovar [--agora] --json
 keep worktrees listar [--prazo SEG] <workspace>:<root>[,<painel>…]…
 keep worktrees preparar <caminho>
 keep worktrees concluir <caminho> <destino>
@@ -178,6 +215,8 @@ Toda resposta é um objeto JSON numa linha, com `"versao": 1` e `"ok"`. Recusa: 
 - `entrar` → `{"ws", "aba"}`: a aba nova, rodando `keep ia login …`.
 - `sincronizar` → `{"estado": "feito"|"gerente-externo"|"em-andamento"|"sem-keepd", "alvo": chave|null,
   "alteradas": [{"ws", "aba", "feito"}], "pendentes": [{"ws", "aba", "motivo", "detalhe"?}]}`.
+- `renovar` → `{"estado": "feito"|"em-andamento", "renovados": [{"conta", "armazem"}], "falhas":
+  [{"conta", "armazem", "motivo"}]}` (ver "Renovação").
 
 ### Quem chama o quê
 
@@ -188,6 +227,7 @@ Toda resposta é um objeto JSON numa linha, com `"versao": 1` e `"ok"`. Recusa: 
 | um arquivo de login mudou (vigia barato, sem rede) | `keep ia uso --cache --json` |
 | a cada 5 s com a janela à frente, e ao abrir o menu de uma aba | `keep ia abas --json` |
 | a cada 30 s | `keep ia sincronizar --json` |
+| a cada 60 s, e ao abrir (mesmo sem o daemon) | `keep ia renovar --json` |
 | a cada 2 min | `keep worktrees indexar --json` |
 | setas, "+", menu da aba, fechar aba | `ordem mover`, `entrar`, `trocar`, `worktrees listar/preparar/concluir` |
 
@@ -195,7 +235,7 @@ O app passa `KEEP_SOCKET` (o daemon dele). Um app de teste que lê uma casa fals
 `KEEP_IA_HOME` e `KEEP_IA_ESTADO` apontando para ela: o núcleo nunca toca na casa real nesse caso.
 
 Variáveis para teste: `KEEP_IA_HOME` (casa falsa), `KEEP_IA_ESTADO` (estado), `KEEP_IA_SECURITY`
-(o `security` do macOS), `KEEP_IA_CLAUDE_URL`/`KEEP_IA_CODEX_URL`/`KEEP_IA_PERFIL_URL` (só
+(o `security` do macOS), `KEEP_IA_CLAUDE_URL`/`KEEP_IA_CODEX_URL`/`KEEP_IA_PERFIL_URL`/`KEEP_IA_TOKEN_URL` (só
 `http://127.0.0.1`), `KEEP_IA_CLAUDE_BIN`, `KEEP_IA_CODEX_BIN`, `KEEP_IA_KEEP_BIN` (o `keep` que uma aba nova roda), `KEEP_SOCKET`.
 Teste de ponta a ponta: `trocar::ponta_a_ponta`, com um daemon do próprio teste e a IA falsa de
 `examples/ia_falsa.rs` (`cargo build -p keep-ia --examples`).

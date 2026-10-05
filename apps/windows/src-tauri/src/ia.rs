@@ -88,6 +88,7 @@ pub fn deadline(args: &[String]) -> Option<Duration> {
         ("ia", "trocar") => 40.0,
         ("ia", "entrar") => 20.0,
         ("ia", "sincronizar") => 60.0,
+        ("ia", "renovar") => 120.0,
         ("worktrees", "listar") => {
             let asked = args
                 .iter()

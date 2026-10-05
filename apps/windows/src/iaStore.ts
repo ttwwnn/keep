@@ -487,6 +487,23 @@ async function indexWorktrees(): Promise<void> {
   }
 }
 
+let renewing = false;
+
+/** Every login of Claude the core looks after, renewed before it runs out — the one at rest too. */
+async function renewLogins(): Promise<void> {
+  if (!iaAvailable.value || renewing) return;
+  renewing = true;
+  try {
+    const answer = await api.iaAsk(["ia", "renovar", "--json"]);
+    // A login the service turned down shows on its line at once.
+    if (answer.ok === true && Array.isArray(answer.falhas) && answer.falhas.length > 0) void look(false);
+  } catch {
+    /* the next round */
+  } finally {
+    renewing = false;
+  }
+}
+
 // ------------------------------------------------------------------ start
 
 let started = false;
@@ -515,6 +532,8 @@ export async function startIA(): Promise<void> {
   }, 5_000);
   setInterval(() => void synchronize(), 30_000);
   setInterval(() => void indexWorktrees(), 120_000);
+  void renewLogins();
+  setInterval(() => void renewLogins(), 60_000);
   setInterval(() => (usageClock.value = Date.now()), 30_000);
 }
 

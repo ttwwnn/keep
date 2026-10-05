@@ -111,7 +111,8 @@ pub fn ia(args: &[String]) -> i32 {
         "entrar" => crate::login::cli_entrar(&a),
         "login" => crate::login::cli_login(&a),
         "sincronizar" => crate::sincronizar::cli(),
-        _ => uso_errado("keep ia contas | uso | jev | ordem [mover] | abas | trocar | entrar | login | sincronizar"),
+        "renovar" => crate::renovar::cli(&a),
+        _ => uso_errado("keep ia contas | uso | jev | ordem [mover] | abas | trocar | entrar | login | sincronizar | renovar"),
     }
 }
 

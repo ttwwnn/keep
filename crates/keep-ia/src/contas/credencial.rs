@@ -1,8 +1,9 @@
-//! O login do Claude Code em cada armazém, só para ler.
+//! O login do Claude Code em cada armazém.
 //!
-//! O Keep nunca grava aqui e nunca renova: o refresh token gira a cada
-//! renovação, e quem renovasse por fora mataria o token que as abas abertas
-//! seguram. Quem renova é o próprio Claude Code, a cada uso.
+//! O Keep lê daqui, e grava só o que a renovação (`crate::renovar`) traz de
+//! volta para o MESMO armazém: nunca copia um login de um armazém para
+//! outro. O refresh token gira a cada renovação; duas cópias da mesma família
+//! terminam com uma delas morta.
 //!
 //! Como o Claude Code guarda (binário 2.1.289, funções `Nb()` e `x$()`):
 //! - macOS: item genérico do Chaveiro, conta `$USER` (ou `claude-code-user`),
@@ -144,11 +145,142 @@ fn chaveiro(servico: &str) -> Lido {
 }
 
 fn arquivo(pasta: &Path) -> Lido {
-    match std::fs::read_to_string(pasta.join(".credentials.json")) {
+    arquivo_em(&pasta.join(".credentials.json"))
+}
+
+fn arquivo_em(arq: &Path) -> Lido {
+    match std::fs::read_to_string(arq) {
         Ok(texto) => decodifica(&texto),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Lido::Ausente,
         Err(e) => Lido::Ilegivel(e.to_string()),
     }
+}
+
+/// Onde um login está guardado, para ler e regravar no mesmo lugar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Local {
+    /// Um item do Chaveiro (macOS), pelo serviço.
+    Chaveiro(String),
+    /// Um `.credentials.json`.
+    Arquivo(std::path::PathBuf),
+}
+
+/// Onde está o login global agora: no macOS, o Chaveiro, ou o arquivo quando
+/// o Chaveiro não tem o item e o arquivo existe (é a cópia que o CLI lê).
+pub fn local_global() -> Local {
+    #[cfg(target_os = "macos")]
+    {
+        let arq = crate::caminhos::claude().join(".credentials.json");
+        if matches!(chaveiro(SERVICO_GLOBAL), Lido::Ausente) && arq.is_file() {
+            return Local::Arquivo(arq);
+        }
+        Local::Chaveiro(SERVICO_GLOBAL.into())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Local::Arquivo(crate::caminhos::claude().join(".credentials.json"))
+    }
+}
+
+/// Onde está o login de uma pasta fixa.
+pub fn local_fixa(pasta: &Path) -> Local {
+    #[cfg(target_os = "macos")]
+    {
+        Local::Chaveiro(servico_de(&pasta.to_string_lossy()))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Local::Arquivo(pasta.join(".credentials.json"))
+    }
+}
+
+/// Lê o login de um local.
+pub fn ler(local: &Local) -> Lido {
+    match local {
+        #[cfg(target_os = "macos")]
+        Local::Chaveiro(servico) => chaveiro(servico),
+        #[cfg(not(target_os = "macos"))]
+        Local::Chaveiro(_) => Lido::Ausente,
+        Local::Arquivo(arq) => arquivo_em(arq),
+    }
+}
+
+/// Grava o JSON inteiro de um login no local, compacto e sem quebra de linha
+/// (com "\n" no valor, o `find-generic-password -w` devolve hex e o CLI diz
+/// "Not logged in"), e confere lendo de volta.
+pub fn gravar(local: &Local, valor: &Value) -> Result<(), String> {
+    let texto = serde_json::to_string(valor).map_err(|e| e.to_string())?;
+    match local {
+        Local::Chaveiro(servico) => grava_chaveiro(servico, &texto)?,
+        Local::Arquivo(arq) => grava_arquivo(arq, &texto)?,
+    }
+    match ler(local) {
+        Lido::Ok(v) if &v == valor => Ok(()),
+        Lido::Ok(_) => Err("o login lido de volta não é o gravado".into()),
+        Lido::Ausente => Err("o login sumiu depois de gravado".into()),
+        Lido::Ilegivel(por) => Err(format!("o login gravado não se lê ({por})")),
+    }
+}
+
+/// Grava um item do Chaveiro como o CLI grava: a linha
+/// `add-generic-password -U … -X <hex>` pela entrada padrão do `security -i`
+/// (o token não aparece no `ps`); linha longa demais para o modo interativo
+/// vai por argv, como no CLI.
+fn grava_chaveiro(servico: &str, texto: &str) -> Result<(), String> {
+    use std::io::Write as _;
+    const LIMITE_LINHA_INTERATIVA: usize = 4032;
+    let security = std::env::var("KEEP_IA_SECURITY").unwrap_or_else(|_| "/usr/bin/security".into());
+    let hex: String = texto.bytes().map(|b| format!("{b:02x}")).collect();
+    let conta = conta_do_item();
+    let linha = format!("add-generic-password -U -a \"{conta}\" -s \"{servico}\" -X \"{hex}\"\n");
+    let mut cmd = std::process::Command::new(&security);
+    let interativo = linha.len() <= LIMITE_LINHA_INTERATIVA;
+    if interativo {
+        cmd.arg("-i");
+    } else {
+        cmd.args(["add-generic-password", "-U", "-a", &conta, "-s", servico, "-X", &hex]);
+    }
+    let mut filho = cmd
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("security: {e}"))?;
+    if let Some(mut entrada) = filho.stdin.take() {
+        if interativo {
+            let _ = entrada.write_all(linha.as_bytes());
+        }
+    }
+    let fim = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        match filho.try_wait() {
+            Ok(Some(st)) if st.success() => return Ok(()),
+            Ok(Some(st)) => return Err(format!("security saiu {:?}", st.code())),
+            Ok(None) if std::time::Instant::now() < fim => std::thread::sleep(std::time::Duration::from_millis(20)),
+            _ => {
+                let _ = filho.kill();
+                let _ = filho.wait();
+                return Err("o security não respondeu (pedido de senha na tela?)".into());
+            }
+        }
+    }
+}
+
+/// Grava um `.credentials.json` de uma vez (arquivo ao lado e troca), só
+/// para o dono ler.
+fn grava_arquivo(arq: &Path, texto: &str) -> Result<(), String> {
+    let pasta = arq.parent().ok_or("arquivo sem pasta")?;
+    let tmp = pasta.join(format!(".credentials.json.keep-{}", std::process::id()));
+    std::fs::write(&tmp, texto).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+    }
+    std::fs::rename(&tmp, arq).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        e.to_string()
+    })
 }
 
 /// O login global: o que uma aba usa sem variável nenhuma.

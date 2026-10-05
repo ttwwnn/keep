@@ -29,6 +29,8 @@ impl Drop for Casa {
             "KEEP_IA_CLAUDE_URL",
             "KEEP_IA_CODEX_URL",
             "KEEP_IA_OPENROUTER_URL",
+            "KEEP_IA_TOKEN_URL",
+            "KEEP_IA_TESTE_CHAVEIRO_FALHA",
             "KEEP_IA_GERENTE_EXTERNO",
             "KEEP_IA_CLAUDE_BIN",
             "KEEP_IA_CODEX_BIN",
@@ -53,8 +55,17 @@ pub fn casa(nome: &str) -> Casa {
     let security = raiz.join("security");
     std::fs::write(
         &security,
-        "#!/bin/sh\nOP=\"$1\"; S=\nwhile [ $# -gt 0 ]; do [ \"$1\" = -s ] && { shift; S=\"$1\"; }; shift; done\n\
-         F=\"$KEEP_IA_TESTE_CHAVEIRO/$S\"\n[ -f \"$F\" ] || exit 44\n\
+        // Lê, apaga e grava (`add-generic-password -U … -X <hex>`, por argv
+        // ou pela entrada do `security -i`, como o CLI e a renovação gravam).
+        "#!/bin/sh\nOP=\"$1\"; S=; X=\n\
+         if [ \"$OP\" = -i ]; then IFS= read -r L; OP=${L%% *}; \
+         S=$(printf %s \"$L\" | sed -n 's/.* -s \"\\([^\"]*\\)\".*/\\1/p'); \
+         X=$(printf %s \"$L\" | sed -n 's/.* -X \"\\([0-9a-fA-F]*\\)\".*/\\1/p'); \
+         else while [ $# -gt 0 ]; do case \"$1\" in -s) shift; S=\"$1\";; -X) shift; X=\"$1\";; esac; shift; done; fi\n\
+         F=\"$KEEP_IA_TESTE_CHAVEIRO/$S\"\n\
+         if [ \"$OP\" = add-generic-password ]; then [ -n \"$KEEP_IA_TESTE_CHAVEIRO_FALHA\" ] && exit 1; \
+         printf %s \"$X\" | xxd -r -p > \"$F\"; exit 0; fi\n\
+         [ -f \"$F\" ] || exit 44\n\
          [ \"$OP\" = delete-generic-password ] && { rm -f \"$F\"; exit 0; }\ncat \"$F\"\n",
     )
     .unwrap();

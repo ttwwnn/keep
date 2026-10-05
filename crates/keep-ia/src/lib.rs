@@ -19,6 +19,7 @@ pub mod login;
 pub mod processos;
 pub mod programas;
 pub mod rede;
+pub mod renovar;
 pub mod sessoes;
 pub mod sincronizar;
 pub mod tela;

@@ -350,7 +350,8 @@ confere(teste["KEEP_IA_HOME"] == "/casa/falsa" && teste["KEEP_IA_ESTADO"] == "/c
 confere(teste["KEEP_IA_SECURITY"] == "/casa/falsa/.keep-ia-estado/sem-chaveiro",
         "ambiente: app de teste: o Chaveiro é um que não tem nada")
 confere(teste["KEEP_IA_PERFIL_URL"] == KeepCLI.nowhere && teste["KEEP_IA_CLAUDE_URL"] == KeepCLI.nowhere
-        && teste["KEEP_IA_CODEX_URL"] == KeepCLI.nowhere && teste["KEEP_IA_OPENROUTER_URL"] == KeepCLI.nowhere,
+        && teste["KEEP_IA_CODEX_URL"] == KeepCLI.nowhere && teste["KEEP_IA_OPENROUTER_URL"] == KeepCLI.nowhere
+        && teste["KEEP_IA_TOKEN_URL"] == KeepCLI.nowhere,
         "ambiente: app de teste: os serviços apontam para onde nada escuta")
 let comSubstitutos = KeepCLI.environment(["KEEP_AI_USAGE_HOME": "/c", "KEEP_IA_SECURITY": "/meu/security",
                                           "KEEP_AI_USAGE_CLAUDE_URL": "http://127.0.0.1:5/claude",
@@ -482,6 +483,9 @@ unsetenv("FAKE_IA_INICIO_MS")
 if case .success(let rodada) = AIHelper.sync() {
     confere(rodada["estado"] as? String == "feito" && leituras().last == ["sincronizar", "--json"], "sincronizar: argumentos e rodada")
 } else { confere(false, "sincronizar: ok") }
+if case .success(let rodada) = AIHelper.renew() {
+    confere(rodada["estado"] as? String == "feito" && leituras().last == ["renovar", "--json"], "renovar: argumentos e rodada")
+} else { confere(false, "renovar: ok") }
 // prazo: o lento é morto no prazo
 AIHelper.timeScale = 0.2
 try! "5".write(toFile: falsoDir + "/lento", atomically: true, encoding: .utf8)

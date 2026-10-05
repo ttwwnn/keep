@@ -127,20 +127,24 @@ final class AITabWatcher {
 /// sincronizar`, every thirty seconds), and the births of the worktrees
 /// conversations make written down while the conversations are still there
 /// to be asked (`keep worktrees indexar`, every two minutes) — what tells,
-/// when a tab closes, which worktrees were its.
+/// when a tab closes, which worktrees were its — and the logins of Claude
+/// renewed before they run out (`keep ia renovar`, every minute), the
+/// account at rest included, so that no tab finds its account signed out.
 ///
-/// Off the main thread, each one at a time, and only while the daemon
-/// answers: both are about the tabs it holds. The core stays its own judge
-/// of the rest — another manager of the accounts installed, it moves no tab
-/// and says so.
+/// Off the main thread, each one at a time. The first two only while the
+/// daemon answers: both are about the tabs it holds. The core stays its own
+/// judge of the rest — another manager of the accounts installed, it moves
+/// no tab and says so.
 @MainActor
 final class AIChores {
     private var timers: [Timer] = []
     private var syncing = false
     private var indexing = false
+    private var renewing = false
 
     nonisolated static let syncEvery: TimeInterval = 30
     nonisolated static let indexEvery: TimeInterval = 120
+    nonisolated static let renewEvery: TimeInterval = 60
 
     func start() {
         let sync = Timer(timeInterval: Self.syncEvery, repeats: true) { [weak self] _ in
@@ -149,8 +153,36 @@ final class AIChores {
         let index = Timer(timeInterval: Self.indexEvery, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.index() }
         }
-        for timer in [sync, index] { RunLoop.main.add(timer, forMode: .common) }
-        timers = [sync, index]
+        let renewal = Timer(timeInterval: Self.renewEvery, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.renew() }
+        }
+        for timer in [sync, index, renewal] { RunLoop.main.add(timer, forMode: .common) }
+        timers = [sync, index, renewal]
+        // A login that ran out while the app was closed is renewed at once.
+        renew()
+    }
+
+    /// Not tied to the daemon: a login runs out whether or not a tab is open.
+    private func renew() {
+        guard !renewing, AIHelper.path != nil else { return }
+        renewing = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let answer = AIHelper.renew()
+            DispatchQueue.main.async {
+                self?.renewing = false
+                switch answer {
+                case .success(let round):
+                    for done in (round["renovados"] as? [[String: Any]]) ?? [] {
+                        Trace.log("ia", "renovar: \(done["conta"] as? String ?? "?") (\(done["armazem"] as? String ?? "?"))")
+                    }
+                    for failed in (round["falhas"] as? [[String: Any]]) ?? [] {
+                        Trace.log("ia", "renovar: \(failed["conta"] as? String ?? "?"): \(failed["motivo"] as? String ?? "?")")
+                    }
+                case .failure(let problem):
+                    Trace.log("ia", "renovar: \(problem.detail)")
+                }
+            }
+        }
     }
 
     /// The daemon answered a poll in the last few seconds.
