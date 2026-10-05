@@ -31,12 +31,14 @@ for not. Out of a home and a directory of the test's own, never the real ones:
       $FAKE_IA_DIR/jev.json, or `"jev": null` (no key of the Jev's here)
   sincronizar --json
       a round that moved nothing
+  renovar --json
+      a round that renewed nothing
 
 The commands that change something (ordem mover, entrar, trocar) are logged,
 one JSON line each, to $FAKE_IA_DIR/calls.jsonl: their arguments (without
 the `ia`, and whether it came: "grupo"), the socket they were told to use
 and the home (KEEP_IA_HOME); the ones that only read (ordem, uso, abas,
-sincronizar), to $FAKE_IA_DIR/reads.jsonl — the app asks those on its own,
+sincronizar, renovar), to $FAKE_IA_DIR/reads.jsonl — the app asks those on its own,
 every few seconds, and a test counting what was asked of it counts the first.
 Files in $FAKE_IA_DIR change how it answers:
   lento     seconds to wait before answering anything that changes something
@@ -68,7 +70,7 @@ VAULT = os.path.join(HOME, ".claude", "contas")
 ORDER = os.path.join(VAULT, ".ordem")
 TABS = os.path.join(DIR, "abas.json")
 KEY = re.compile(r"^(claude|gpt):[^\s/:]+$")
-READS = ("uso", "jev", "abas", "sincronizar")
+READS = ("uso", "jev", "abas", "sincronizar", "renovar")
 
 
 def flag(name):
@@ -342,6 +344,10 @@ def sincronizar(argv):
     answer({"estado": "feito", "alvo": None, "alteradas": [], "pendentes": []})
 
 
+def renovar(argv):
+    answer({"estado": "feito", "renovados": [], "falhas": []})
+
+
 def main():
     argv = sys.argv[1:]
     group = argv[0] if argv[:1] == ["ia"] else None
@@ -358,7 +364,8 @@ def main():
         except (OSError, ValueError):
             pass
     commands = {"ordem": ordem, "entrar": entrar, "trocar": trocar,
-                "abas": abas, "uso": uso, "jev": jev, "sincronizar": sincronizar}
+                "abas": abas, "uso": uso, "jev": jev, "sincronizar": sincronizar,
+                "renovar": renovar}
     if argv[0] not in commands:
         sys.exit(2)
     commands[argv[0]](argv)

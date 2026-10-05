@@ -13,23 +13,45 @@ pub struct Resposta {
 /// GET com cabeçalhos. `Err` só quando não houve resposta nenhuma (rede, DNS,
 /// prazo); um 4xx ou 5xx é uma resposta e volta em `Ok`.
 pub fn get(url: &str, cabecalhos: &[(&str, String)], prazo: Duration) -> Result<Resposta, String> {
+    let mut pedido = agente(prazo).get(url);
+    for (nome, valor) in cabecalhos {
+        pedido = pedido.header(*nome, valor.as_str());
+    }
+    le(pedido.call().map_err(|e| e.to_string())?)
+}
+
+/// POST de um corpo JSON, com as mesmas regras do `get`. O erro de rede não
+/// leva o corpo, que pode ter segredo.
+pub fn post_json(
+    url: &str,
+    cabecalhos: &[(&str, String)],
+    corpo: &serde_json::Value,
+    prazo: Duration,
+) -> Result<Resposta, String> {
+    let mut pedido = agente(prazo).post(url).header("Content-Type", "application/json");
+    for (nome, valor) in cabecalhos {
+        pedido = pedido.header(*nome, valor.as_str());
+    }
+    let bytes = serde_json::to_vec(corpo).map_err(|e| e.to_string())?;
+    le(pedido.send(&bytes[..]).map_err(|e| e.to_string())?)
+}
+
+fn agente(prazo: Duration) -> ureq::Agent {
     // O TLS do sistema (Security.framework, SChannel, OpenSSL) com as raízes
     // do sistema: um proxy corporativo confiável para o sistema vale aqui.
     let tls = ureq::tls::TlsConfig::builder()
         .provider(ureq::tls::TlsProvider::NativeTls)
         .root_certs(ureq::tls::RootCerts::PlatformVerifier)
         .build();
-    let agente: ureq::Agent = ureq::Agent::config_builder()
+    ureq::Agent::config_builder()
         .http_status_as_error(false)
         .timeout_global(Some(prazo))
         .tls_config(tls)
         .build()
-        .into();
-    let mut pedido = agente.get(url);
-    for (nome, valor) in cabecalhos {
-        pedido = pedido.header(*nome, valor.as_str());
-    }
-    let mut resposta = pedido.call().map_err(|e| e.to_string())?;
+        .into()
+}
+
+fn le(mut resposta: ureq::http::Response<ureq::Body>) -> Result<Resposta, String> {
     let status = resposta.status().as_u16();
     let retry_after = resposta
         .headers()

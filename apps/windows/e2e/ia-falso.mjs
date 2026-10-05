@@ -154,6 +154,9 @@ function answer(args, state) {
   if (area === "ia" && command === "sincronizar") {
     return [0, { ok: true, estado: "feito", alvo: null, alteradas: [], pendentes: [] }];
   }
+  if (area === "ia" && command === "renovar") {
+    return [0, { ok: true, estado: "feito", renovados: [], falhas: [] }];
+  }
   if (area === "worktrees" && command === "listar") {
     const targets = more.filter((a) => !a.startsWith("--") && a.includes(":"));
     const wanted = state.worktreeAlvo;

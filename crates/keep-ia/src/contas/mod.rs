@@ -301,7 +301,9 @@ fn achado_de_login(lido: Lido, armazem: Armazem, perguntar: bool, quem: &str) ->
             let oauth = Oauth::de(&valor);
             let token = oauth.as_ref().and_then(token_claude);
             let dono = token.as_ref().and_then(|t| donos::dono(&t.acesso, perguntar));
-            let recusado = oauth.as_ref().is_none_or(|o| o.recusado());
+            // Sem refresh (o CLI zerou), ou com o refresh que o servidor
+            // recusou na renovação do Keep: só um login novo resolve.
+            let recusado = oauth.as_ref().is_none_or(|o| o.recusado() || crate::renovar::morto(&armazem, o));
             Some(Achado {
                 motor: Motor::Claude,
                 armazem,
@@ -688,9 +690,10 @@ pub enum Falta {
 }
 
 /// Se um login guardado pode rodar uma aba: tem o refresh que o CLI zera
-/// quando o servidor recusa.
-fn login_roda(lido: Lido) -> bool {
-    matches!(lido, Lido::Ok(ref v) if Oauth::de(v).is_some_and(|o| !o.recusado()))
+/// quando o servidor recusa, e o servidor não recusou esse refresh na
+/// renovação do Keep.
+fn login_roda(lido: Lido, armazem: &Armazem) -> bool {
+    matches!(lido, Lido::Ok(ref v) if Oauth::de(v).is_some_and(|o| !o.recusado() && !crate::renovar::morto(armazem, &o)))
 }
 
 /// O ambiente de uma aba que roda nesta conta: nada para o login global ou o
@@ -703,12 +706,12 @@ pub fn ambiente(conta: &Conta) -> Result<Vec<(String, String)>, Falta> {
     match conta.engine {
         Motor::Claude => {
             // O global, quando roda, é a casa da conta.
-            if conta.global() && !gerente_externo() && login_roda(credencial::global()) {
+            if conta.global() && !gerente_externo() && login_roda(credencial::global(), &Armazem::Global) {
                 return Ok(Vec::new());
             }
             for a in &conta.armazens {
                 if let Armazem::Fixa { pasta } = a {
-                    if login_roda(credencial::fixa(pasta)) {
+                    if login_roda(credencial::fixa(pasta), a) {
                         return Ok(vec![(
                             "CLAUDE_SECURESTORAGE_CONFIG_DIR".into(),
                             pasta.to_string_lossy().into_owned(),
