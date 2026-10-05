@@ -752,11 +752,11 @@ struct UsageFooter: View {
 
     // MARK: - the Jev's credit
 
-    /// "Jev · OpenRouter": the credit the Jev spends, in two counters. The
-    /// account: its bar is what is spent of what was bought, and the figure
-    /// what is left. The Jev's key: with a ceiling of its own, the same of the
-    /// ceiling; without one — it spends from the whole credit — what it has
-    /// spent ("gasto"), its bar that share of the credit. Each bar is what is
+    /// "Jev · OpenRouter": the credit the Jev spends, in two counters
+    /// (`JevCredit.counters`). The account: its bar is what is spent of what
+    /// was bought, and the figure what is left. The second: with a ceiling on
+    /// the Jev's key, the same of the ceiling; without one, what the whole
+    /// account has spent ("gasto"), every key's decisions. Each bar is what is
     /// spent, as the others are.
     private func jevBlock(_ jev: JevLine, now: Date) -> some View {
         let stale = jev.problem != nil
@@ -769,18 +769,9 @@ struct UsageFooter: View {
                 .help(jevHelp(jev, now: now))
             if let credit = jev.credit {
                 Group {
-                    creditBar("conta", spent: credit.accountPercent, figure: credit.accountLeft, says: "restam",
-                              help: "Crédito da conta no OpenRouter: \(UsageText.dollars(credit.used)) "
-                                  + "gastos de \(UsageText.dollars(credit.total))")
-                    if let keyPercent = credit.keyPercent, let keyLeft = credit.keyLeft, let limit = credit.keyLimit {
-                        creditBar("chave", spent: keyPercent, figure: keyLeft, says: "restam",
-                                  help: "Teto da chave do Jev: \(UsageText.dollars(credit.keyUsed ?? 0)) "
-                                      + "gastos de \(UsageText.dollars(limit))")
-                    } else if let keyUsed = credit.keyUsed {
-                        creditBar("gasto", spent: credit.keySharePercent, figure: keyUsed, says: "gastou",
-                                  help: "Gasto da chave do Jev, que não tem teto e usa todo o crédito da conta: "
-                                      + UsageText.dollars(keyUsed)
-                                      + (credit.usedToday.map { " (hoje \(UsageText.dollars($0)))" } ?? ""))
+                    ForEach(credit.counters, id: \.label) { counter in
+                        creditBar(counter.label, spent: counter.spent, figure: counter.figure, says: counter.says,
+                                  help: counter.help)
                     }
                 }
                 .opacity(stale ? 0.55 : 1)

@@ -298,15 +298,22 @@ describe("the Jev's credit", () => {
     expect(available(credit({ keyLimit: null }))).toBeCloseTo(9.9754, 9);
     expect(available(credit({ used: 12, keyLimit: null }))).toBe(0);
   });
-  it("two counters: the account, and the key's ceiling — or, without one, what the key spent", () => {
+  it("two counters: the account, and the key's ceiling — or, without one, what the whole account spent", () => {
     const comTeto = creditRows(credit());
     expect(comTeto.map((r) => [r.label, r.says])).toEqual([["conta", "restam"], ["chave", "restam"]]);
     expect(comTeto[1].figure).toBeCloseTo(4.9958, 9);
-    const semTeto = creditRows(credit({ keyLimit: null, keyUsed: 2.5 }));
+    // US$ 10 bought, 3 cents spent by every key, 1 cent of it by the Jev's
+    const semTeto = creditRows(credit({ used: 0.0317, keyLimit: null, keyUsed: 0.0109 }));
     expect(semTeto.map((r) => [r.label, r.says])).toEqual([["conta", "restam"], ["gasto", "gastou"]]);
-    expect(semTeto[1].figure).toBe(2.5);
-    expect(semTeto[1].spent).toBe(25);
-    expect(creditRows(credit({ keyLimit: null, keyUsed: null })).map((r) => r.label)).toEqual(["conta"]);
+    expect(semTeto[1].figure).toBeCloseTo(0.0317, 9);
+    expect(dollars(semTeto[1].figure)).toBe("US$ 0,03");
+    expect(semTeto[1].spent).toBeCloseTo(0.317, 9);
+    expect(semTeto[0].figure + semTeto[1].figure).toBeCloseTo(10, 9);
+    expect(semTeto[1].help).toContain("a chave do Jev gastou US$ 0,01");
+    expect(creditRows(credit({ used: 0.0317, keyLimit: null, keyUsed: null })).map((r) => r.label)).toEqual([
+      "conta",
+      "gasto",
+    ]);
   });
   it("reads the core's answer: no key is no Jev; a reading kept through a problem", () => {
     expect(readJev(null)).toBeNull();

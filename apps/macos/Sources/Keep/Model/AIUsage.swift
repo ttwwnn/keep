@@ -261,10 +261,37 @@ struct JevCredit: Equatable, Codable {
         return keyLimit > 0 ? min(100, (keyUsed ?? 0) / keyLimit * 100) : 100
     }
 
-    /// What the Jev's key has spent, as a share of all the credit the account
-    /// bought — the bar of a key with no ceiling of its own, which spends
-    /// from the whole credit.
-    var keySharePercent: Double { total > 0 ? min(100, (keyUsed ?? 0) / total * 100) : 0 }
+    /// One of the footer's two counters: `spent` is the bar, `figure` the
+    /// dollars beside it, and `says` how the figure reads aloud.
+    struct Counter: Equatable {
+        let label: String
+        let spent: Double
+        let figure: Double
+        let says: String
+        let help: String
+    }
+
+    /// The account — what is left of what it bought, its bar what is spent —
+    /// and a second counter: with a ceiling on the Jev's key, what is left of
+    /// the ceiling ("chave"); without one, what the whole account has spent
+    /// ("gasto"), every key's decisions and not only the Jev's, which is what
+    /// one reads against the credit one bought.
+    var counters: [Counter] {
+        var counters = [Counter(label: "conta", spent: accountPercent, figure: accountLeft, says: "restam",
+                                help: "Crédito da conta no OpenRouter: \(UsageText.dollars(used)) "
+                                    + "gastos de \(UsageText.dollars(total))")]
+        if let keyPercent, let keyLeft, let keyLimit {
+            counters.append(Counter(label: "chave", spent: keyPercent, figure: keyLeft, says: "restam",
+                                    help: "Teto da chave do Jev: \(UsageText.dollars(keyUsed ?? 0)) "
+                                        + "gastos de \(UsageText.dollars(keyLimit))"))
+        } else {
+            counters.append(Counter(label: "gasto", spent: accountPercent, figure: max(0, used), says: "gastou",
+                                    help: "Gasto da conta no OpenRouter, de todas as chaves: "
+                                        + "\(UsageText.dollars(used)) de \(UsageText.dollars(total))"
+                                        + (keyUsed.map { "; a chave do Jev gastou \(UsageText.dollars($0))" } ?? "")))
+        }
+        return counters
+    }
 }
 
 /// The Jev's line of the footer: the last credit that came back, kept through

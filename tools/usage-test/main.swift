@@ -16,6 +16,29 @@ func confere(_ ok: Bool, _ nome: String, _ detalhe: @autoclosure () -> String = 
     if ok { print("ok   \(nome)") } else { falhas += 1; print("FALHA \(nome) \(detalhe())") }
 }
 
+/// O que, no ambiente entregue a um `keep`, sai da casa falsa `casa`: nil
+/// quando nada sai. A casa e a pasta de estado são as dela; o Chaveiro é um
+/// de mentira; cada serviço tem endereço, e todos nesta máquina.
+func furoNoIsolamento(_ e: [String: String], casa: String) -> String? {
+    if e["KEEP_IA_HOME"] != casa { return "KEEP_IA_HOME=\(e["KEEP_IA_HOME"] ?? "nada")" }
+    guard let estado = e["KEEP_IA_ESTADO"], estado.hasPrefix(casa + "/") else {
+        return "KEEP_IA_ESTADO=\(e["KEEP_IA_ESTADO"] ?? "nada")"
+    }
+    guard let seguranca = e["KEEP_IA_SECURITY"], !seguranca.isEmpty, !seguranca.hasPrefix("/usr/bin/") else {
+        return "KEEP_IA_SECURITY=\(e["KEEP_IA_SECURITY"] ?? "nada") (o Chaveiro de verdade)"
+    }
+    let servicos = [["KEEP_IA_PERFIL_URL", "CLAUDE_KIT_PERFIL_URL"], ["KEEP_IA_CLAUDE_URL", "KEEP_AI_USAGE_CLAUDE_URL"],
+                    ["KEEP_IA_CODEX_URL", "KEEP_AI_USAGE_CODEX_URL"], ["KEEP_IA_OPENROUTER_URL"],
+                    ["KEEP_IA_OPENROUTER_AUTH_URL"], ["KEEP_IA_TOKEN_URL"]]
+    for nomes in servicos {
+        let valores = nomes.compactMap { e[$0] }
+        if valores.isEmpty || !valores.allSatisfy({ $0.hasPrefix("http://127.0.0.1") }) {
+            return "\(nomes[0])=\(valores.joined(separator: ",")) (um serviço de verdade)"
+        }
+    }
+    return nil
+}
+
 // Runs as an app that reads a made-up home (tools/usage-test.sh): everything
 // handed to a `keep` here is pointed at it. Refused outright otherwise.
 let ambiente = ProcessInfo.processInfo.environment
@@ -102,10 +125,23 @@ confere(abs((jev?.credit?.accountLeft ?? 0) - 9.9754) < 1e-9 && abs((jev?.credit
 confere(abs((jev?.credit?.available ?? 0) - 4.9958) < 1e-9, "jev: o que ainda pode gastar é o menor dos dois")
 confere(jev?.credit?.accountPercent ?? 0 < 1 && abs((jev?.credit?.keyPercent ?? 0) - 0.084) < 1e-9,
         "jev: o gasto em percentual, para a barra", "\(String(describing: jev?.credit?.keyPercent))")
-let chaveSemTeto = JevCredit(total: 10, used: 0.02, keyLimit: nil, keyUsed: 2.5, usedToday: nil, usedThisMonth: nil)
-confere(chaveSemTeto.keyPercent == nil && chaveSemTeto.keySharePercent == 25 && abs(chaveSemTeto.available - 9.98) < 1e-9,
-        "jev: chave sem teto gasta do crédito todo; a barra dela é a parte do crédito que ela gastou",
-        "\(chaveSemTeto.keySharePercent)")
+let chaveSemTeto = JevCredit(total: 10, used: 0.0317, keyLimit: nil, keyUsed: 0.0109, usedToday: nil, usedThisMonth: nil)
+confere(chaveSemTeto.keyPercent == nil && abs(chaveSemTeto.available - 9.9683) < 1e-9,
+        "jev: chave sem teto gasta do crédito todo")
+let contadores = chaveSemTeto.counters
+confere(contadores.map(\.label) == ["conta", "gasto"] && contadores.map(\.says) == ["restam", "gastou"],
+        "jev: sem teto, os contadores são a conta e o gasto", "\(contadores.map(\.label))")
+confere(abs(contadores[1].figure - 0.0317) < 1e-9 && abs(contadores[1].spent - 0.317) < 1e-9
+        && UsageText.dollars(contadores[1].figure) == "US$ 0,03",
+        "jev: o gasto é o da conta toda (US$ 10 comprados, 3 centavos gastos), não só o da chave do Jev",
+        "\(contadores[1].figure)")
+confere(abs(contadores[0].figure + contadores[1].figure - 10) < 1e-9,
+        "jev: o que resta e o que se gastou somam o que se comprou")
+confere(contadores[1].help.contains("a chave do Jev gastou US$ 0,01"), "jev: o gasto da chave do Jev fica na dica",
+        contadores[1].help)
+let comTeto = jev?.credit?.counters ?? []
+confere(comTeto.map(\.label) == ["conta", "chave"] && abs((comTeto.last?.figure ?? 0) - 4.9958) < 1e-9,
+        "jev: com teto na chave, o segundo contador é o que resta do teto", "\(comTeto.map(\.label))")
 let semTeto = JevCredit(total: 10, used: 12, keyLimit: nil, keyUsed: nil, usedToday: nil, usedThisMonth: nil)
 confere(semTeto.available == 0 && semTeto.keyPercent == nil && semTeto.accountPercent == 100,
         "jev: gasto além do comprado não dá saldo negativo nem barra além do fim")
@@ -557,6 +593,16 @@ if let nucleo = ambiente["NUCLEO"], fm.isExecutableFile(atPath: nucleo) {
     // medidos pelo substituto dos serviços nesta máquina.
     let outra = URL(fileURLWithPath: ambiente["CASA_NUCLEO"]!)
     setenv("KEEP_AI_USAGE_HOME", outra.path, 1)
+    // Antes de qualquer pergunta ao núcleo de verdade: o ambiente que o app
+    // lhe entregaria aponta só para a casa falsa, um Chaveiro de mentira e
+    // serviços nesta máquina. Um ajudante quebrado (as sabotagens do
+    // isolamento) para aqui: seguir em frente deixava o núcleo ler e gravar
+    // a casa de verdade — a ordem das contas da pessoa, por exemplo.
+    if let furo = furoNoIsolamento(KeepCLI.environment(ProcessInfo.processInfo.environment), casa: outra.path) {
+        confere(false, "núcleo de verdade: recuso perguntar fora da casa falsa", furo)
+        print("\(casos - falhas)/\(casos) ok")
+        exit(1)
+    }
     if case .success(let r) = AIHelper.usage(.cached) {
         confere(r.linhas.map(\.account.order) == ["claude:principal", "gpt:principal"],
                 "núcleo de verdade, sem rede: as contas da casa falsa, na ordem", "\(r.linhas.map(\.account.order))")

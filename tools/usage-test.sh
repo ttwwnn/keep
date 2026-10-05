@@ -37,7 +37,7 @@ build() {  # build <AIUsage.swift> <AIChoice.swift> <KeepCLI.swift>
 # was asked, and answers out of the test's made-up home.
 cp tools/ia-test/fake-keep-ia.py "$WORK/fake-keep-ia.py"
 chmod +x "$WORK/fake-keep-ia.py"
-mkdir -p "$WORK/home" "$WORK/ia"
+mkdir -p "$WORK/home" "$WORK/ia" "$WORK/sem-casa"
 # A Keychain that holds the Jev's key and nothing else, for the real core.
 cat >"$WORK/security-com-chave" <<'SH'
 #!/bin/sh
@@ -121,7 +121,10 @@ run() {
     # always set; a measurement starts afresh each run.
     rm -rf "${CORE_HOME:-/nonexistent}/.keep-ia-estado"
     rm -f "${CORE_HOME:-/nonexistent}/.claude/contas/.ordem"
-    KEEP_AI_USAGE_HOME=$WORK/home KEEP_IA_BIN=/var/empty \
+    # HOME is an empty folder of the test's own: a core handed no home of
+    # its own (a sabotage of the isolation) falls back to it, never to the
+    # person's — whose order of accounts a sabotaged run once rewrote.
+    HOME=$WORK/sem-casa KEEP_AI_USAGE_HOME=$WORK/home KEEP_IA_BIN=/var/empty \
         KEEP_AI_USAGE_CLAUDE_URL=http://127.0.0.1:${PORT:-9}/claude \
         KEEP_AI_USAGE_CODEX_URL=http://127.0.0.1:${PORT:-9}/codex \
         KEEP_IA_OPENROUTER_URL=http://127.0.0.1:${PORT:-9}/or \
@@ -174,8 +177,10 @@ sabotage "$USAGE" "the core's dates read as Foundation's own" \
         return try? decoder.decode(UsageAnswer.self, from: data)|||        return try? decoder.decode(UsageAnswer.self, from: data)' || ok=1
 sabotage "$USAGE" "the smaller of the two credits not the one that counts" \
     'keyLeft.map { min($0, accountLeft) } ?? accountLeft|||keyLeft.map { max($0, accountLeft) } ?? accountLeft' || ok=1
-sabotage "$USAGE" "a key with no ceiling measured against nothing" \
-    'var keySharePercent: Double { total > 0 ? min(100, (keyUsed ?? 0) / total * 100) : 0 }|||var keySharePercent: Double { 0 }' || ok=1
+sabotage "$USAGE" "the spending of the Jev's key alone shown as what was spent" \
+    'counters.append(Counter(label: "gasto", spent: accountPercent, figure: max(0, used), says: "gastou",|||counters.append(Counter(label: "gasto", spent: accountPercent, figure: keyUsed ?? 0, says: "gastou",' || ok=1
+sabotage "$USAGE" "a key with a ceiling counted as one without" \
+    'if let keyPercent, let keyLeft, let keyLimit {|||if false, let keyPercent, let keyLeft, let keyLimit {' || ok=1
 sabotage "$USAGE" "the watcher blind to the Jev's reading" \
     'parts.append("jev " + stamp(home.appendingPathComponent(state + "/jev.json")))|||_ = state' || ok=1
 sabotage "$USAGE" "a credit that rounds to nothing said as zero" \

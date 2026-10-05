@@ -502,9 +502,11 @@ export interface CreditRow {
 }
 
 /**
- * The account — what is left of what it bought — and the Jev's key: with a
- * ceiling, what is left of it; without one, what it spent ("gasto"), its bar
- * that share of the whole credit.
+ * The account — what is left of what it bought — and a second counter: with a
+ * ceiling on the Jev's key, what is left of it ("chave"); without one, what the
+ * whole account has spent ("gasto"), every key's decisions and not only the
+ * Jev's, which is what one reads against the credit one bought. The macOS
+ * app's `JevCredit.counters`.
  */
 export function creditRows(c: JevCredit): CreditRow[] {
   const rows: CreditRow[] = [
@@ -525,15 +527,15 @@ export function creditRows(c: JevCredit): CreditRow[] {
       says: "restam",
       help: `Teto da chave do Jev: ${dollars(c.keyUsed ?? 0)} gastos de ${dollars(c.keyLimit)}`,
     });
-  } else if (c.keyUsed !== null) {
+  } else {
     rows.push({
       label: "gasto",
-      spent: c.total > 0 ? Math.min(100, (c.keyUsed / c.total) * 100) : 0,
-      figure: c.keyUsed,
+      spent: share(c.used, c.total),
+      figure: Math.max(0, c.used),
       says: "gastou",
       help:
-        `Gasto da chave do Jev, que não tem teto e usa todo o crédito da conta: ${dollars(c.keyUsed)}` +
-        (c.usedToday !== null ? ` (hoje ${dollars(c.usedToday)})` : ""),
+        `Gasto da conta no OpenRouter, de todas as chaves: ${dollars(c.used)} de ${dollars(c.total)}` +
+        (c.keyUsed !== null ? `; a chave do Jev gastou ${dollars(c.keyUsed)}` : ""),
     });
   }
   return rows;

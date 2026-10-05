@@ -505,8 +505,8 @@ say "the Jev's key without a ceiling"
 touch "$WORK/jev-sem-teto"
 sleep 15
 "$AXPRESS" "$APP_NAME" press "Medir agora"
-until_text "Jev gasto: gastou US\$ 0,52" 150 >/dev/null
-check "the second counter is what the key spent" yes "$(has "Jev gasto: gastou US\$ 0,52")"
+until_text "Jev gasto: gastou US\$ 0,02" 150 >/dev/null
+check "the second counter is what the whole account spent, not the key's 0,52" yes "$(has "Jev gasto: gastou US\$ 0,02")"
 check "and the account's credit is still the first" yes "$(has "Jev conta: restam US\$ 9,98")"
 check "no ceiling counter any more" no "$(has "Jev chave:")"
 rm -f "$WORK/jev-sem-teto"

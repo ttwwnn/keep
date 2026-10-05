@@ -119,8 +119,9 @@ perguntas de decisão, no Claude Code e no Codex) gasta crédito do OpenRouter a
 - Mede: `GET https://openrouter.ai/api/v1/credits` (o que a conta comprou e gastou) e `/api/v1/key` (teto e
   gasto da chave do Jev). O que o Jev ainda pode gastar é o menor dos dois saldos.
 - Dois contadores no rodapé: "conta" (o que resta do crédito; a barra é o gasto) e, para a chave, "chave"
-  (o que resta do teto dela) ou, sem teto, "gasto" (o que ela gastou; a barra é essa parte do crédito
-  todo). Dobrado, uma linha com o que o Jev ainda pode gastar.
+  (o que resta do teto dela) ou, sem teto, "gasto" (o que a conta toda já gastou, de todas as chaves, e
+  não só a do Jev; a dica diz quanto foi da chave do Jev). Dobrado, uma linha com o que o Jev ainda pode
+  gastar.
 - Conectar: o "+" do rodapé oferece "Conectar o Jev ao OpenRouter…" ("Reconectar…" quando já há chave):
   `keep ia entrar openrouter --ws=<W>` abre uma aba com `keep ia login openrouter`, o login do OpenRouter
   no navegador (OAuth PKCE: `https://openrouter.ai/auth` com volta em `http://localhost:<porta>/callback`,
