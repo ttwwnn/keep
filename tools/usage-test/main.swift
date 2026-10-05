@@ -109,15 +109,16 @@ confere(chaveSemTeto.keyPercent == nil && chaveSemTeto.keySharePercent == 25 && 
 let semTeto = JevCredit(total: 10, used: 12, keyLimit: nil, keyUsed: nil, usedToday: nil, usedThisMonth: nil)
 confere(semTeto.available == 0 && semTeto.keyPercent == nil && semTeto.accountPercent == 100,
         "jev: gasto além do comprado não dá saldo negativo nem barra além do fim")
-confere(UsageText.dollars(9.9754) == "US$ 9,9754" && UsageText.dollars(0) == "US$ 0,0000"
-        && UsageText.dollars(0.00004) == "< US$ 0,0001" && UsageText.dollars(-1) == "US$ 0,0000",
-        "jev: dólar com vírgula, quatro casas, e o que arredonda a nada dito como tal",
-        "\(UsageText.dollars(9.9754)) \(UsageText.dollars(0.00004))")
-confere(UsageText.dollars(9.96871) != UsageText.dollars(9.96871 - 0.00016),
-        "jev: uma decisão do Jev (US$ 0,00016) muda o número", UsageText.dollars(9.96871))
-confere(UsageText.dollars(12.34567) == "US$ 12,346" && UsageText.dollars(150.5) == "US$ 150,50",
-        "jev: três casas acima de dez dólares, duas acima de cem",
-        "\(UsageText.dollars(12.34567)) \(UsageText.dollars(150.5))")
+confere(UsageText.dollars(9.9754) == "US$ 9,97540" && UsageText.dollars(0) == "US$ 0,00000"
+        && UsageText.dollars(0.000004) == "< US$ 0,00001" && UsageText.dollars(-1) == "US$ 0,00000",
+        "jev: dólar com vírgula, cinco casas, e o que arredonda a nada dito como tal",
+        "\(UsageText.dollars(9.9754)) \(UsageText.dollars(0.000004))")
+confere(UsageText.dollars(9.968493) != UsageText.dollars(9.968493 - 0.0000234),
+        "jev: a decisão mais barata do Jev (US$ 0,0000234) muda o número", UsageText.dollars(9.968493))
+confere(UsageText.dollars(12.345678) == "US$ 12,3457" && UsageText.dollars(150.5) == "US$ 150,500"
+        && UsageText.dollars(1500.5) == "US$ 1500,50",
+        "jev: uma casa a menos a cada dígito a mais, nunca menos de duas",
+        "\(UsageText.dollars(12.345678)) \(UsageText.dollars(150.5)) \(UsageText.dollars(1500.5))")
 let comPendente = JevAnswer.decode("""
 {"versao":1,"ok":true,"jev":{"credit":{"total":10,"used":0.0313,"keyLimit":null,"keyUsed":0.0109,"usedToday":null,
 "usedThisMonth":null},"measuredAt":1791084861.45,"problem":null,"pending":0.0002}}

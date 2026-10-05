@@ -542,8 +542,8 @@ button {
 
 /* The Jev's dollars: wider than a percentage ("< US$ 0,01"). */
 .usage-dollars {
-  /* "< US$ 0,0001", the longest the Jev's four places get, in 11px mono */
-  width: 84px;
+  /* "< US$ 0,00001", the longest a figure of the Jev's gets, in 11px mono */
+  width: 90px;
   flex: none;
   text-align: right;
   white-space: nowrap;

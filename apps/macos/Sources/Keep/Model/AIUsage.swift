@@ -300,15 +300,15 @@ enum UsageText {
         "\(Int(max(0, min(999, value)).rounded()))%"
     }
 
-    /// "US$ 9,9687": a dollar figure the way the footer says it — with a
-    /// comma, and places enough for one of the Jev's decisions (a hundredth
-    /// of a cent or so) to move it: four below ten dollars, three below a
-    /// hundred, two above, so it keeps to ten characters or so. "Menos de"
-    /// for what rounds to nothing.
+    /// "US$ 9,96846": a dollar figure the way the footer says it — with a
+    /// comma, and places enough for the cheapest of the Jev's decisions (two
+    /// thousandths of a cent or so) to move it: five below ten dollars, one
+    /// fewer for each digit more, never under two, so it keeps to eleven
+    /// characters. "Menos de" for what rounds to nothing.
     static func dollars(_ value: Double) -> String {
         let value = max(0, value)
-        if value > 0, value < 0.0001 { return "< US$ 0,0001" }
-        let places = value < 10 ? 4 : value < 100 ? 3 : 2
+        if value > 0, value < 0.00001 { return "< US$ 0,00001" }
+        let places = value < 10 ? 5 : value < 100 ? 4 : value < 1000 ? 3 : 2
         return "US$ " + String(format: "%.\(places)f", value).replacingOccurrences(of: ".", with: ",")
     }
 

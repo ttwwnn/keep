@@ -287,13 +287,15 @@ describe("the Jev's credit", () => {
     ...over,
   });
   it("dollars with a comma and places enough for one decision to show, and what rounds to nothing said as such", () => {
-    expect(dollars(9.9754)).toBe("US$ 9,9754");
-    expect(dollars(0)).toBe("US$ 0,0000");
-    expect(dollars(0.00004)).toBe("< US$ 0,0001");
-    expect(dollars(-1)).toBe("US$ 0,0000");
-    expect(dollars(9.96871)).not.toBe(dollars(9.96871 - 0.00016));
-    expect(dollars(12.34567)).toBe("US$ 12,346");
-    expect(dollars(150.5)).toBe("US$ 150,50");
+    expect(dollars(9.9754)).toBe("US$ 9,97540");
+    expect(dollars(0)).toBe("US$ 0,00000");
+    expect(dollars(0.000004)).toBe("< US$ 0,00001");
+    expect(dollars(-1)).toBe("US$ 0,00000");
+    // the cheapest decision seen (US$ 0,0000234) still moves it
+    expect(dollars(9.968493)).not.toBe(dollars(9.968493 - 0.0000234));
+    expect(dollars(12.345678)).toBe("US$ 12,3457");
+    expect(dollars(150.5)).toBe("US$ 150,500");
+    expect(dollars(1500.5)).toBe("US$ 1500,50");
   });
   it("what the Jev can still spend is the smaller of the account's credit and its key's ceiling", () => {
     expect(available(credit())).toBeCloseTo(4.9958, 9);
@@ -329,10 +331,10 @@ describe("the Jev's credit", () => {
     const line = { credit: credit({ keyLimit: null }), measuredAt: now / 1000 - 3600, problem: null, pending: null };
     expect(jevNote(line, now)).toBe("medido há 1h");
     expect(jevNote({ credit: null, measuredAt: null, problem: null, pending: null }, now)).toBe("medindo…");
-    expect(jevHelp(line, now)).toContain("Chave: sem teto, gastou US$ 0,0042");
+    expect(jevHelp(line, now)).toContain("Chave: sem teto, gastou US$ 0,00420");
     expect(jevHelp(line, now)).not.toContain("ainda não contou");
     expect(jevHelp({ ...line, pending: 0.0002 }, now)).toContain(
-      "Inclui US$ 0,0002 de decisões desta máquina que o OpenRouter ainda não contou",
+      "Inclui US$ 0,00020 de decisões desta máquina que o OpenRouter ainda não contou",
     );
   });
 });
