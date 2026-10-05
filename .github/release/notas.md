@@ -41,4 +41,9 @@ Fechar a janela não fecha nada: os terminais continuam no daemon e voltam como 
   leitura nova desconta o que o OpenRouter já contou;
 - o crédito do OpenRouter é lido a cada minuto, em vez de a cada cinco.
 
+**Gasto da conta (0.2.5):**
+- com a chave do Jev sem teto, o segundo contador do Jev, "gasto", é o que a conta toda já gastou, de
+  todas as chaves, e não só a do Jev: "restam" e "gasto" somam o crédito comprado; o gasto da chave do
+  Jev fica na dica.
+
 Detalhes em `docs/ia.md`.
