@@ -18,11 +18,41 @@ func confere(_ ok: Bool, _ nome: String, _ detalhe: @autoclosure () -> String = 
     if ok { print("ok   \(nome)") } else { falhas += 1; print("FALHA \(nome) \(detalhe())") }
 }
 
+/// O que, no ambiente entregue a um `keep`, sai da casa falsa `casa`: nil
+/// quando nada sai. A casa e a pasta de estado são as dela; o Chaveiro é um
+/// de mentira; cada serviço tem endereço, e todos nesta máquina. (O mesmo de
+/// tools/usage-test/main.swift.)
+func furoNoIsolamento(_ e: [String: String], casa: String) -> String? {
+    if e["KEEP_IA_HOME"] != casa { return "KEEP_IA_HOME=\(e["KEEP_IA_HOME"] ?? "nada")" }
+    guard let estado = e["KEEP_IA_ESTADO"], estado.hasPrefix(casa + "/") else {
+        return "KEEP_IA_ESTADO=\(e["KEEP_IA_ESTADO"] ?? "nada")"
+    }
+    guard let seguranca = e["KEEP_IA_SECURITY"], !seguranca.isEmpty, !seguranca.hasPrefix("/usr/bin/") else {
+        return "KEEP_IA_SECURITY=\(e["KEEP_IA_SECURITY"] ?? "nada") (o Chaveiro de verdade)"
+    }
+    let servicos = [["KEEP_IA_PERFIL_URL", "CLAUDE_KIT_PERFIL_URL"], ["KEEP_IA_CLAUDE_URL", "KEEP_AI_USAGE_CLAUDE_URL"],
+                    ["KEEP_IA_CODEX_URL", "KEEP_AI_USAGE_CODEX_URL"], ["KEEP_IA_OPENROUTER_URL"],
+                    ["KEEP_IA_OPENROUTER_AUTH_URL"], ["KEEP_IA_TOKEN_URL"]]
+    for nomes in servicos {
+        let valores = nomes.compactMap { e[$0] }
+        if valores.isEmpty || !valores.allSatisfy({ $0.hasPrefix("http://127.0.0.1") }) {
+            return "\(nomes[0])=\(valores.joined(separator: ",")) (um serviço de verdade)"
+        }
+    }
+    return nil
+}
+
 let ambiente = ProcessInfo.processInfo.environment
 guard KeepCLI.madeUpHome(ambiente) != nil, let keepdPid = ambiente["KEEPD_PID"].flatMap(UInt32.init),
       let digita = ambiente["DIGITA"], AIHelper.path != nil
 else {
     print("FALHA recuso rodar: falta a casa falsa, o keepd do teste, o digita.py ou o keep (KEEP_IA_BIN)")
+    exit(2)
+}
+// Trocar, entrar e mover na ordem gravam na casa que o núcleo recebe: com o
+// isolamento furado, seria a da pessoa. Nada roda antes de conferir.
+if let furo = furoNoIsolamento(KeepCLI.environment(ambiente), casa: KeepCLI.madeUpHome(ambiente)!) {
+    print("FALHA recuso rodar fora da casa falsa: \(furo)")
     exit(2)
 }
 let ws = "T"

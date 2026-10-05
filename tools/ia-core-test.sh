@@ -138,4 +138,7 @@ waited=0
 while [ ! -S "$KEEP_SOCKET" ] && [ "$waited" -lt 120 ]; do sleep 0.25; waited=$((waited + 1)); done
 [ -S "$KEEP_SOCKET" ] || { echo "the test's keepd did not start; its log:"; tail -5 "$WORK/daemon.log"; exit 1; }
 
-KEEPD_PID=$DAEMON_PID DIGITA=$PWD/tools/ia-core-test/digita.py "$WORK/test"
+# HOME is an empty folder of the test's own: a core handed no home of its own
+# falls back to it, never to the person's.
+mkdir -p "$WORK/sem-casa"
+HOME=$WORK/sem-casa KEEPD_PID=$DAEMON_PID DIGITA=$PWD/tools/ia-core-test/digita.py "$WORK/test"

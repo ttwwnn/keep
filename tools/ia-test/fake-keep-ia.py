@@ -330,10 +330,42 @@ def abas(argv):
     answer({"keepd": {"pid": pid, "inicioMs": start}, "exato": True, "ia": tabs.get("ia") or []})
 
 
-def uso(argv):
+def isolamento_furado():
+    """What, in what the app handed this stand-in, would let the real core
+    reach the person's home, Keychain or services; None when nothing would.
+    The same rule as tools/usage-test/main.swift's furoNoIsolamento."""
+    import pwd
+    real = os.path.realpath(pwd.getpwuid(os.getuid()).pw_dir)
+    home = os.environ.get("KEEP_IA_HOME") or ""
+    if not home or os.path.realpath(home) == real:
+        return "KEEP_IA_HOME=%s" % (home or "nada")
+    if not (os.environ.get("KEEP_IA_ESTADO") or "").startswith(home.rstrip("/") + "/"):
+        return "KEEP_IA_ESTADO=%s" % (os.environ.get("KEEP_IA_ESTADO") or "nada")
+    security = os.environ.get("KEEP_IA_SECURITY") or ""
+    if not security or security.startswith("/usr/bin/"):
+        return "KEEP_IA_SECURITY=%s (o Chaveiro de verdade)" % (security or "nada")
+    for names in (("KEEP_IA_PERFIL_URL", "CLAUDE_KIT_PERFIL_URL"), ("KEEP_IA_CLAUDE_URL", "KEEP_AI_USAGE_CLAUDE_URL"),
+                  ("KEEP_IA_CODEX_URL", "KEEP_AI_USAGE_CODEX_URL"), ("KEEP_IA_OPENROUTER_URL",),
+                  ("KEEP_IA_OPENROUTER_AUTH_URL",), ("KEEP_IA_TOKEN_URL",)):
+        values = [os.environ[n] for n in names if os.environ.get(n)]
+        if not values or not all(v.startswith("http://127.0.0.1") for v in values):
+            return "%s=%s (um serviço de verdade)" % (names[0], ",".join(values))
+    return None
+
+
+def to_core(argv):
+    """Hand the question to the real core — only inside the made-up home."""
     core = os.environ.get("FAKE_IA_CORE")
-    if core:
-        os.execv(core, [core, "ia"] + argv + ["--json"])
+    if not core:
+        return
+    leak = isolamento_furado()
+    if leak:
+        refuse("erro", "recuso passar ao núcleo de verdade fora da casa falsa: " + leak)
+    os.execv(core, [core, "ia"] + argv + ["--json"])
+
+
+def uso(argv):
+    to_core(argv)
     saved = read_json(flag("uso.json"))
     if isinstance(saved, dict):
         answer(saved)
@@ -341,9 +373,7 @@ def uso(argv):
 
 
 def jev(argv):
-    core = os.environ.get("FAKE_IA_CORE")
-    if core:
-        os.execv(core, [core, "ia"] + argv + ["--json"])
+    to_core(argv)
     saved = read_json(flag("jev.json"))
     if isinstance(saved, dict):
         answer(saved)
