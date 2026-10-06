@@ -1283,8 +1283,19 @@ final class TerminalSurfaceView: NSView {
     /// dropped on the way rather than passed along, because to a terminal
     /// shift on a drag means "widen what is already selected" — the two would
     /// be asking for different things at once.
-    private static func mouseMods(from flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
-        guard isColumnChord(flags) else { return mods(from: flags) }
+    private func mouseMods(from flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
+        guard Self.isColumnChord(flags) else {
+            let held = Self.mods(from: flags)
+            guard flags.contains(.command), let surface, ghostty_surface_mouse_captured(surface)
+            else { return held }
+            // ⌘ on the mouse means "open what is under it", and a program
+            // that has asked for the mouse (Claude Code's full-screen mode)
+            // would be handed the click instead and the link never seen.
+            // Shift is the terminal's own way past that, so ⌘ carries it —
+            // only then: with the mouse not taken, ⌘ and Shift together are
+            // no longer the chord that opens a link.
+            return ghostty_input_mods_e(held.rawValue | GHOSTTY_MODS_SHIFT.rawValue)
+        }
         return ghostty_input_mods_e(GHOSTTY_MODS_ALT.rawValue)
     }
 
@@ -1355,7 +1366,7 @@ final class TerminalSurfaceView: NSView {
     ) {
         guard let surface else { return }
         _ = ghostty_surface_mouse_button(
-            surface, action, button, Self.mouseMods(from: event.modifierFlags))
+            surface, action, button, mouseMods(from: event.modifierFlags))
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -1366,7 +1377,7 @@ final class TerminalSurfaceView: NSView {
         guard let surface else { return }
         let p = convert(event.locationInWindow, from: nil)
         ghostty_surface_mouse_pos(
-            surface, p.x, bounds.height - p.y, Self.mouseMods(from: event.modifierFlags))
+            surface, p.x, bounds.height - p.y, mouseMods(from: event.modifierFlags))
     }
 
     // MARK: - where this shell is

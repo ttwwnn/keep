@@ -14,13 +14,25 @@
 # Checked:
 #   - a click without ⌘ opens nothing;
 #   - a click with ⌘ opens the file, the :line left off;
-#   - the same when the pointer is resting on the path and ⌘ is pressed after.
+#   - the same when the pointer is resting on the path and ⌘ is pressed after;
+#   - all of it again with the tab's program having asked for the mouse.
 #
 # It takes the pointer for a few seconds. Your app and your daemon are never
 # touched.
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
+# Twice: the tab's program leaving the mouse alone, and asking for it as Claude
+# Code's full-screen mode does (MOUSE_MODE=1), where ⌘-click used to reach the
+# program and never the link.
+if [ -z "${MOUSE_MODE:-}" ]; then
+    status=0
+    for mode in 0 1; do
+        echo "== the program takes the mouse: $([ "$mode" = 1 ] && echo yes || echo no)"
+        MOUSE_MODE=$mode "$0" || status=1
+    done
+    exit $status
+fi
 # shellcheck source=tools/scratch.sh
 . tools/scratch.sh
 
@@ -73,7 +85,9 @@ TARGET=$WORK/nota.txt
 # The tab's program: fills the screen with the path and waits.
 cat >"$WORK/printer" <<PY
 #!/usr/bin/env python3
-import time
+import sys, time
+if "$MOUSE_MODE" == "1":
+    sys.stdout.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h")
 for _ in range(40):
     print(("$TARGET:12  " * 6).rstrip())
 open("$WORK/ready", "w").close()
