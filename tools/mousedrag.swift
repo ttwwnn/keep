@@ -6,6 +6,8 @@
 //   mousedrag watch <seconds>                        -> a line per position it takes
 //   mousedrag move <x> <y>                           -> park the pointer, press nothing
 //   mousedrag click <x> <y>                          -> walk there and click once
+//   mousedrag cmdclick <x> <y>                       -> the same with ⌘ held, all the way
+//   mousedrag cmdkey down|up                         -> press or let go of the ⌘ key itself
 //   mousedrag drag <x1> <y1> <x2> <y2> <steps> <ms>
 //
 // Separate from sendkey, and posting to the HID tap rather than to the app's
@@ -133,13 +135,27 @@ case "move":
         usleep(12_000)
     }
 
-case "click":
+case "cmdkey":
+    // The key, not a flag on a mouse event: what AppKit turns into the
+    // flagsChanged a view hears when a person presses ⌘ with the pointer
+    // already resting where it is.
+    guard args.count >= 3 else { exit(2) }
+    let down = args[2] == "down"
+    let source = CGEventSource(stateID: .hidSystemState)
+    let event = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: down)
+    event?.type = .flagsChanged
+    event?.flags = down ? .maskCommand : []
+    event?.post(tap: .cghidEventTap)
+    usleep(100_000)
+
+case "click", "cmdclick":
     // One click, as a hand makes it: walked there, a pause for the view
     // under the pointer to have been told it is there, then down and up.
     guard args.count >= 4, let x = Double(args[2]), let y = Double(args[3]) else { exit(2) }
     let source = CGEventSource(stateID: .hidSystemState)
     let target = CGPoint(x: x, y: y)
     let from = CGEvent(source: nil)?.location ?? target
+    let held: CGEventFlags = args[1] == "cmdclick" ? .maskCommand : []
     for step in 1...12 {
         let t = Double(step) / 12
         let event = CGEvent(
@@ -147,7 +163,7 @@ case "click":
             mouseCursorPosition: CGPoint(
                 x: from.x + (x - from.x) * t, y: from.y + (y - from.y) * t),
             mouseButton: .left)
-        event?.flags = []
+        event?.flags = held
         event?.post(tap: .cghidEventTap)
         usleep(12_000)
     }
@@ -156,7 +172,7 @@ case "click":
         let event = CGEvent(
             mouseEventSource: source, mouseType: type, mouseCursorPosition: target,
             mouseButton: .left)
-        event?.flags = []
+        event?.flags = held
         event?.setIntegerValueField(.mouseEventClickState, value: 1)
         event?.post(tap: .cghidEventTap)
         usleep(60_000)
@@ -200,6 +216,8 @@ default:
                mousedrag watch <seconds>
                mousedrag move <x> <y>
                mousedrag click <x> <y>
+               mousedrag cmdclick <x> <y>
+               mousedrag cmdkey down|up
                mousedrag drag <x1> <y1> <x2> <y2> <steps> <ms>
 
         """.utf8))

@@ -554,6 +554,26 @@ final class GhosttyApp {
                 }
                 return true
 
+            case GHOSTTY_ACTION_OPEN_URL:
+                // ⌘-click on a link or a file path in the terminal's text.
+                // The runtime finds the text; opening it is the platform's.
+                // Left unhandled, the runtime falls back to `open <text>`,
+                // which cannot find `file.swift:42` or a path relative to the
+                // shell's directory.
+                guard let raw = action.action.open_url.url else { return false }
+                let text = String(
+                    decoding: UnsafeBufferPointer(
+                        start: UnsafeRawPointer(raw).assumingMemoryBound(to: UInt8.self),
+                        count: Int(action.action.open_url.len)),
+                    as: UTF8.self)
+                var surface: ghostty_surface_t?
+                if target.tag == GHOSTTY_TARGET_SURFACE { surface = target.target.surface }
+                DispatchQueue.main.async {
+                    let directory = surface.flatMap { GhosttyApp.shared.view(for: $0)?.currentDirectory }
+                    LinkOpener.open(text, from: directory)
+                }
+                return true
+
             case GHOSTTY_ACTION_GOTO_SPLIT:
                 // The keybinds for this are the person's own, in their
                 // ghostty config — `super+alt+h=goto_split:left` and the rest
