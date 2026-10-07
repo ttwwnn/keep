@@ -569,8 +569,12 @@ final class GhosttyApp {
                 var surface: ghostty_surface_t?
                 if target.tag == GHOSTTY_TARGET_SURFACE { surface = target.target.surface }
                 DispatchQueue.main.async {
-                    let directory = surface.flatMap { GhosttyApp.shared.view(for: $0)?.currentDirectory }
-                    LinkOpener.open(text, from: directory)
+                    let view = surface.flatMap { GhosttyApp.shared.view(for: $0) }
+                    view?.linkHandedAt = CACurrentMediaTime()
+                    let screen = view?.visibleText() ?? (lines: [], pointerRow: nil)
+                    LinkOpener.open(
+                        text, from: view?.currentDirectory,
+                        screen: screen.lines, near: screen.pointerRow)
                 }
                 return true
 

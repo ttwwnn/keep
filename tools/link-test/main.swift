@@ -33,5 +33,47 @@ check("a name that really ends in :7", path("odd:7", root), root + "/odd:7")
 check("a folder", path(root, nil), root)
 check("missing file", path("nope.txt:3", root), nil)
 check("home", path("~", nil), NSHomeDirectory())
+// What the runtime found is part of a path; the screen holds the rest.
+let deep = root + "/projetos/clinica-integrativa/app/Filament/Resources/PacienteResource/Pages"
+try! FileManager.default.createDirectory(atPath: deep, withIntermediateDirectories: true)
+FileManager.default.createFile(atPath: deep + "/EditPaciente.php", contents: Data())
+try! FileManager.default.createDirectory(atPath: root + "/Área de trabalho", withIntermediateDirectories: true)
+let shot = root + "/Área de trabalho/Captura de Tela 2026-10-07 às 10.00.png"
+FileManager.default.createFile(atPath: shot, contents: Data())
+
+func recovered(_ text: String, _ lines: [String], _ row: Int? = nil, _ dir: String? = nil) -> String? {
+    LinkOpener.recover(text, in: lines, near: row, from: dir)?.path
+}
+
+// As Claude Code prints a path wider than the screen: the rest on the next
+// row, indented under the first.
+let full = deep + "/EditPaciente.php"
+let cut = full.index(full.endIndex, offsetBy: -9)
+let head = String(full[..<cut]), tail = String(full[cut...]) + ":42"
+let wrapped = ["⏺ Abri o arquivo:", "", "  " + head, "  " + tail, "", "  Mais texto."]
+check("a path broken across two rows, clicked on the first", recovered(head, wrapped, 2), full)
+check("the same, clicked on the second", recovered(tail, wrapped, 3), full)
+check(
+    "a path over three rows",
+    recovered(
+        String(full.dropFirst(20).prefix(20)),
+        ["  " + String(full.prefix(20)), "  " + String(full.dropFirst(20).prefix(20)),
+         "  " + String(full.dropFirst(40)) + "."]),
+    full)
+check(
+    "a path that ends its row, the next row another sentence",
+    recovered(root + "/a.txt", ["  veja " + root + "/a.txt", "  e depois"]), root + "/a.txt")
+
+// As a file dropped into the tab arrives: spaces escaped.
+let escaped = shot.replacingOccurrences(of: " ", with: "\\ ")
+let cutAtBackslash = String(escaped[..<escaped.firstIndex(of: "\\")!])
+check("a dropped file, spaces escaped", recovered(cutAtBackslash, ["❯ " + escaped + " "], 0), shot)
+check(
+    "a dropped file, clicked past the first escaped space",
+    recovered("trabalho/Captura", ["❯ olha " + escaped]), shot)
+check("inside backticks, a full stop after", recovered(root + "/a.txt", ["Gravei em `" + root + "/a.txt`."]), root + "/a.txt")
+check("relative, with the gutter", recovered("sub\\ dir/b.md:3", ["  ⎿  sub\\ dir/b.md:3"], nil, root), root + "/sub dir/b.md")
+check("nothing on screen", recovered(head, []), nil)
+check("nothing there to piece together", recovered("nope/x.txt", ["  nope/x.txt", "  y"], nil, root), nil)
 _ = real
 exit(failures == 0 ? 0 : 1)

@@ -1332,11 +1332,38 @@ final class TerminalSurfaceView: NSView {
         mouseButton(event, action: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_LEFT)
     }
 
+    /// When a ⌘-click last made the runtime hand over a link.
+    var linkHandedAt: CFTimeInterval = 0
+
+    /// A ⌘-click the runtime found no link under. Its pattern wants a slash,
+    /// so it passes over the rest of a path Claude Code carried onto the next
+    /// row (`nte.php:42`) and over a bare `README.md`; the word under the
+    /// pointer is taken instead and pieced back together from the screen.
+    /// Nothing opens unless that names a file.
+    private func openWordIfNoLink() {
+        // The runtime may hand the link over on the press, a moment before.
+        let clicked = CACurrentMediaTime() - 0.5
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self, let surface = self.surface, self.linkHandedAt < clicked else { return }
+            var text = ghostty_text_s()
+            guard ghostty_surface_quicklook_word(surface, &text) else { return }
+            defer { ghostty_surface_free_text(surface, &text) }
+            guard let raw = text.text else { return }
+            let word = String(cString: raw).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !word.isEmpty else { return }
+            let screen = self.visibleText()
+            Trace.log("link", "no link under the click; the word: \(word)")
+            LinkOpener.openRecovered(
+                word, from: self.currentDirectory, screen: screen.lines, near: screen.pointerRow)
+        }
+    }
+
     override func mouseUp(with event: NSEvent) {
         noteActivity()
         reportMouse(event)
         mouseButton(event, action: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT)
         traceSelection()
+        if event.modifierFlags.contains(.command) { openWordIfNoLink() }
     }
 
     /// What ended up selected, for the test that asks whether a drag with a
@@ -1376,8 +1403,38 @@ final class TerminalSurfaceView: NSView {
     private func reportMouse(_ event: NSEvent) {
         guard let surface else { return }
         let p = convert(event.locationInWindow, from: nil)
+        pointerFromTop = bounds.height - p.y
         ghostty_surface_mouse_pos(
             surface, p.x, bounds.height - p.y, mouseMods(from: event.modifierFlags))
+    }
+
+    /// Where the pointer last was, in points down from the top.
+    private var pointerFromTop: CGFloat?
+
+    /// The rows on screen, top to bottom, and roughly which of them is under
+    /// the pointer: what a ⌘-click on a path is pieced back together from
+    /// when the runtime found only part of it — a path Claude Code broke
+    /// across two rows, or one dropped in with its spaces escaped.
+    func visibleText() -> (lines: [String], pointerRow: Int?) {
+        guard let surface else { return ([], nil) }
+        let selection = ghostty_selection_s(
+            top_left: ghostty_point_s(
+                tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
+            bottom_right: ghostty_point_s(
+                tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0),
+            rectangle: false)
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_text(surface, selection, &text) else { return ([], nil) }
+        defer { ghostty_surface_free_text(surface, &text) }
+        guard let raw = text.text else { return ([], nil) }
+        let lines = String(cString: raw).components(separatedBy: "\n")
+        let size = ghostty_surface_size(surface)
+        let scale = window?.backingScaleFactor ?? 2.0
+        var row: Int?
+        if let y = pointerFromTop, size.cell_height_px > 0 {
+            row = Int(y * scale / CGFloat(size.cell_height_px))
+        }
+        return (lines, row)
     }
 
     // MARK: - where this shell is

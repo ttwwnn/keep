@@ -15,7 +15,9 @@
 #   - a click without ⌘ opens nothing;
 #   - a click with ⌘ opens the file, the :line left off;
 #   - the same when the pointer is resting on the path and ⌘ is pressed after;
-#   - all of it again with the tab's program having asked for the mouse.
+#   - all of it again with the tab's program having asked for the mouse;
+#   - a path the program broke across two rows, as Claude Code does with one
+#     wider than the screen, opens whole from either row.
 #
 # It takes the pointer for a few seconds. Your app and your daemon are never
 # touched.
@@ -25,14 +27,18 @@ cd "$(dirname "$0")/.."
 # Twice: the tab's program leaving the mouse alone, and asking for it as Claude
 # Code's full-screen mode does (MOUSE_MODE=1), where ⌘-click used to reach the
 # program and never the link.
+# Then once more with the path broken across rows (PRINT=wrapped).
 if [ -z "${MOUSE_MODE:-}" ]; then
     status=0
     for mode in 0 1; do
         echo "== the program takes the mouse: $([ "$mode" = 1 ] && echo yes || echo no)"
         MOUSE_MODE=$mode "$0" || status=1
     done
+    echo "== a path broken across two rows, the mouse taken"
+    MOUSE_MODE=1 PRINT=wrapped "$0" || status=1
     exit $status
 fi
+PRINT=${PRINT:-plain}
 # shellcheck source=tools/scratch.sh
 . tools/scratch.sh
 
@@ -81,6 +87,9 @@ rm -f "$SOCKET"
 
 TARGET=$WORK/nota.txt
 : >"$TARGET"
+LONG=$WORK/projetos/clinica/app/Filament/Resources/relatorio_de_atendimento_completo_do_paciente.txt
+mkdir -p "$(dirname "$LONG")"
+: >"$LONG"
 
 # The tab's program: fills the screen with the path and waits.
 cat >"$WORK/printer" <<PY
@@ -88,8 +97,16 @@ cat >"$WORK/printer" <<PY
 import sys, time
 if "$MOUSE_MODE" == "1":
     sys.stdout.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h")
-for _ in range(40):
-    print(("$TARGET:12  " * 6).rstrip())
+if "$PRINT" == "wrapped":
+    # Broken by the program, the rest indented on the next row: to the
+    # terminal two words, the second without a slash for the runtime to see
+    # a path in.
+    for _ in range(20):
+        print("  " + "$LONG"[:-44])
+        print("  " + "$LONG"[-44:] + ":12")
+else:
+    for _ in range(40):
+        print(("$TARGET:12  " * 6).rstrip())
 open("$WORK/ready", "w").close()
 time.sleep(300)
 PY
@@ -119,6 +136,26 @@ read -r FX FY FW FH <<<"$("$MOUSE" frame)"
 # The terminal's upper part, clear of the sidebar and of the tab strip.
 TX=$(( ${FX%.*} + ${FW%.*} * 2 / 3 ))
 TY=$(( ${FY%.*} + 120 ))
+
+if [ "$PRINT" = wrapped ]; then
+    # Six clicks a few points apart, so rows of both kinds get some.
+    LX=$(( ${FX%.*} + 420 ))
+    for step in 0 1 2 3 4 5; do
+        "$MOUSE" move "$((LX - 150))" "$((TY + step * 7 + 60))"
+        "$MOUSE" cmdclick "$LX" "$((TY + step * 7))"
+        sleep 1
+    done
+    sleep 1
+    check "every click opens the whole path" "6 $LONG" \
+        "$(wc -l <"$KEEP_LINK_LOG" | tr -d ' ') $(sort -u "$KEEP_LINK_LOG")"
+    check "the row without a slash was among them" "yes" \
+        "$(grep -q 'no link under the click; the word: .*_paciente' "$WORK/app.log" && echo yes || echo no)"
+    stop_app
+    say ""
+    say "passed $PASSED, failed $FAILED"
+    [ "$FAILED" -eq 0 ]
+    exit
+fi
 
 say ""
 say "a path on the screen"
