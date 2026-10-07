@@ -12,7 +12,8 @@
 #   tools/link-click-test.sh
 #
 # Checked:
-#   - a click without ⌘ opens nothing;
+#   - a plain click opens the file too; a double click, a drag across it and
+#     the click that brings the window forward open nothing;
 #   - a click with ⌘ opens the file, the :line left off;
 #   - the same when the pointer is resting on the path and ⌘ is pressed after;
 #   - all of it again with the tab's program having asked for the mouse;
@@ -160,8 +161,24 @@ fi
 say ""
 say "a path on the screen"
 "$MOUSE" click "$TX" "$TY"
+sleep 2
+check "a plain click opens the file" "$TARGET" "$(cat "$KEEP_LINK_LOG")"
+: >"$KEEP_LINK_LOG"
+"$MOUSE" dblclick "$TX" "$((TY + 40))"
+sleep 2
+check "a double click opens nothing" "" "$(cat "$KEEP_LINK_LOG")"
+"$MOUSE" drag "$((TX - 60))" "$TY" "$((TX + 60))" "$TY" 10 20
+sleep 2
+check "a drag across it opens nothing" "" "$(cat "$KEEP_LINK_LOG")"
+osascript -e 'tell application "Finder" to activate' >/dev/null 2>&1
 sleep 1
-check "a click without ⌘ opens nothing" "" "$(cat "$KEEP_LINK_LOG")"
+"$MOUSE" click "$TX" "$((TY + 80))"
+sleep 2
+check "the click that brings the window forward opens nothing" "" "$(cat "$KEEP_LINK_LOG")"
+"$MOUSE" click "$TX" "$((TY + 80))"
+sleep 2
+check "the next one opens it" "$TARGET" "$(cat "$KEEP_LINK_LOG")"
+: >"$KEEP_LINK_LOG"
 "$MOUSE" move "$((TX - 150))" "$((TY + 60))"
 "$MOUSE" cmdclick "$TX" "$TY"
 sleep 2

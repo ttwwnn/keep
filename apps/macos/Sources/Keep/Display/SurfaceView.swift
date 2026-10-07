@@ -84,6 +84,7 @@ final class TerminalSurfaceView: NSView {
         // draws into something the window never composites.
         layerContentsRedrawPolicy = .duringViewResize
         registerForDraggedTypes(DroppedFiles.types)
+        _ = Self.windowKeyWatch
     }
 
     @available(*, unavailable)
@@ -1324,6 +1325,11 @@ final class TerminalSurfaceView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         noteActivity()
+        let now = CACurrentMediaTime()
+        pressed = (
+            event.locationInWindow, now,
+            window?.isKeyWindow == true && isFirstResponderHere && now - Self.windowKeyAt > 0.5
+        )
         window?.makeFirstResponder(self)
         // Where before whether. A press in a window that was not key arrives
         // without any of the tracked movement that would have said where the
@@ -1363,7 +1369,52 @@ final class TerminalSurfaceView: NSView {
         reportMouse(event)
         mouseButton(event, action: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT)
         traceSelection()
-        if event.modifierFlags.contains(.command) { openWordIfNoLink() }
+        if event.modifierFlags.contains(.command) {
+            openWordIfNoLink()
+        } else {
+            openPathUnderPlainClick(event)
+        }
+    }
+
+    /// Where, when, and whether this pane already had the keyboard: the last
+    /// press, for telling a plain click from a drag, a double click or the
+    /// click that only brought the window forward.
+    private var pressed: (at: NSPoint, time: CFTimeInterval, focused: Bool)?
+
+    /// When a window of this app last took the keyboard. The click that
+    /// brings a window forward is already in a key window by the time it
+    /// arrives, so this is how it is told apart.
+    private static var windowKeyAt: CFTimeInterval = 0
+    private static let windowKeyWatch = NotificationCenter.default.addObserver(
+        forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
+    ) { _ in windowKeyAt = CACurrentMediaTime() }
+
+    /// A plain click on a path opens it, as ⌘-click does — people click
+    /// what looks like a link. Only a click that is nothing else: one press,
+    /// not dragged (that selects), not the first of two (a double click
+    /// selects the word, so this waits the double-click interval out), with
+    /// no modifier, in a pane that already had the keyboard (the click that
+    /// brings a window or a pane forward opens nothing). And only when the
+    /// word under it, pieced back together from the screen, names a file.
+    private func openPathUnderPlainClick(_ event: NSEvent) {
+        guard let pressed, pressed.focused, event.clickCount == 1,
+            event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+            hypot(event.locationInWindow.x - pressed.at.x, event.locationInWindow.y - pressed.at.y) < 4,
+            let surface
+        else { return }
+        var text = ghostty_text_s()
+        guard ghostty_surface_quicklook_word(surface, &text) else { return }
+        let raw = text.text.map { String(cString: $0) }
+        ghostty_surface_free_text(surface, &text)
+        guard let word = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !word.isEmpty else { return }
+        let screen = visibleText()
+        let directory = currentDirectory
+        let at = pressed.time
+        DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval) { [weak self] in
+            guard let self, self.pressed?.time == at else { return }
+            Trace.log("link", "plain click on: \(word)")
+            LinkOpener.openRecovered(word, from: directory, screen: screen.lines, near: screen.pointerRow)
+        }
     }
 
     /// What ended up selected, for the test that asks whether a drag with a

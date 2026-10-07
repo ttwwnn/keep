@@ -148,7 +148,7 @@ case "cmdkey":
     event?.post(tap: .cghidEventTap)
     usleep(100_000)
 
-case "click", "cmdclick":
+case "click", "cmdclick", "dblclick":
     // One click, as a hand makes it: walked there, a pause for the view
     // under the pointer to have been told it is there, then down and up.
     guard args.count >= 4, let x = Double(args[2]), let y = Double(args[3]) else { exit(2) }
@@ -168,14 +168,16 @@ case "click", "cmdclick":
         usleep(12_000)
     }
     usleep(150_000)
-    for type in [CGEventType.leftMouseDown, .leftMouseUp] {
-        let event = CGEvent(
-            mouseEventSource: source, mouseType: type, mouseCursorPosition: target,
-            mouseButton: .left)
-        event?.flags = held
-        event?.setIntegerValueField(.mouseEventClickState, value: 1)
-        event?.post(tap: .cghidEventTap)
-        usleep(60_000)
+    for count in 1...(args[1] == "dblclick" ? 2 : 1) {
+        for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+            let event = CGEvent(
+                mouseEventSource: source, mouseType: type, mouseCursorPosition: target,
+                mouseButton: .left)
+            event?.flags = held
+            event?.setIntegerValueField(.mouseEventClickState, value: Int64(count))
+            event?.post(tap: .cghidEventTap)
+            usleep(60_000)
+        }
     }
 
 case "drag":
