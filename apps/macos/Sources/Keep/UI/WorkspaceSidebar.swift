@@ -476,7 +476,7 @@ struct WorkspaceSidebar: View {
                     BusyMark(program: tab.command, font: .system(size: 10 * titleZoom))
                 }
                 Text(tab.title)
-                    .font(.system(size: 12 * titleZoom, weight: wantsYou ? .semibold : chosen ? .medium : .regular))
+                    .font(.system(size: 12 * titleZoom, weight: wantsYou || chosen ? .semibold : .regular))
                     .accessibilityIdentifier("sidebar-title-\(tab.id)")
                     .foregroundStyle(titleInk(for: tab, chosen: chosen, hovered: hoveredHere))
                     .lineLimit(1)
@@ -985,7 +985,10 @@ struct WorkspaceSidebar: View {
         if wantsYou {
             AttentionCapsule(until: chosen ? nil : Attention.lastBreath(since: since))
         } else if chosen {
-            GlassRow(cornerRadius: 13, tint: Palette.litRow)
+            // The strip's selected tab, as it is drawn there: its glass tint
+            // and the hairline around it, which is what makes it read.
+            GlassRow(cornerRadius: 13, tint: Palette.tabGlass)
+                .overlay(Capsule(style: .continuous).strokeBorder(Palette.tabEdge, lineWidth: 1))
         } else if hovered {
             Capsule(style: .continuous).fill(Palette.wash(0.055))
         }
@@ -1349,6 +1352,18 @@ private enum Palette {
     /// same colour, which is honest. Sharing is common with few workspaces and
     /// costs nothing: only the current row is washed, so two washes are never
     /// on screen together to be compared.
+    static let tabGlass = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor.white.withAlphaComponent(0.22)
+            : NSColor.black.withAlphaComponent(0.14)
+    }
+
+    static let tabEdge = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor.white.withAlphaComponent(0.16)
+            : NSColor.black.withAlphaComponent(0.10)
+    })
+
     static let litRow = NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
             ? NSColor.white.withAlphaComponent(0.30)
