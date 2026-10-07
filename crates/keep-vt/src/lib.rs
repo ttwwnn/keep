@@ -39,10 +39,64 @@ pub mod ffi {
         unsafe extern "C" fn(terminal: Terminal, userdata: *mut c_void, data: *const u8, len: usize);
 
     /// `GhosttyTerminalData` values we read.
+    pub const DATA_COLS: c_int = 1;
+    pub const DATA_ROWS: c_int = 2;
+    pub const DATA_CURSOR_X: c_int = 3;
+    pub const DATA_CURSOR_Y: c_int = 4;
     pub const DATA_KITTY_KEYBOARD_FLAGS: c_int = 8;
     pub const DATA_TITLE: c_int = 12;
     pub const DATA_PWD: c_int = 13;
     pub const DATA_MODE: c_int = 37;
+
+    /// `GhosttyGridRef`: a cell, resolved.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct GridRef {
+        pub size: usize,
+        pub node: *mut c_void,
+        pub x: u16,
+        pub y: u16,
+    }
+
+    /// `GhosttyPoint` with the `active` tag: a cell of the screen the
+    /// program draws on, counted from its top left.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct PointCoordinate {
+        pub x: u16,
+        pub y: u32,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub union PointValue {
+        pub coordinate: PointCoordinate,
+        pub padding: [u64; 2],
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct Point {
+        pub tag: c_int,
+        pub value: PointValue,
+    }
+
+    pub const POINT_TAG_ACTIVE: c_int = 0;
+
+    /// `GhosttySelection`: the cells from `start` to `end`, both included.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct Selection {
+        pub size: usize,
+        pub start: GridRef,
+        pub end: GridRef,
+        pub rectangle: bool,
+    }
+
+    pub type Row = u64;
+    /// `GhosttyRowData`: whether any cell of the row may have a hyperlink.
+    pub const ROW_DATA_HYPERLINK: c_int = 5;
+    pub const OUT_OF_SPACE: c_int = -3;
 
     /// `GhosttyTerminalModeConfig`: a mode to ask about, and its answer.
     /// `mode` is a `GhosttyMode` — the number, with bit 15 set for ANSI
@@ -138,6 +192,16 @@ pub mod ffi {
             out_len: *mut usize,
         ) -> c_int;
         pub fn ghostty_formatter_free(formatter: Formatter);
+
+        pub fn ghostty_terminal_grid_ref(terminal: Terminal, point: Point, out: *mut GridRef) -> c_int;
+        pub fn ghostty_grid_ref_row(grid_ref: *const GridRef, out: *mut Row) -> c_int;
+        pub fn ghostty_row_get(row: Row, data: c_int, out: *mut c_void) -> c_int;
+        pub fn ghostty_grid_ref_hyperlink_uri(
+            grid_ref: *const GridRef,
+            buf: *mut u8,
+            buf_len: usize,
+            out_len: *mut usize,
+        ) -> c_int;
 
         pub fn ghostty_free(allocator: *const c_void, ptr: *mut u8, len: usize);
     }
@@ -364,9 +428,158 @@ impl Terminal {
             }
         }
         out.extend_from_slice(b"\x1b[>4m");
-        out.extend_from_slice(&body);
+        // The body leaves hyperlinks out: its OSC 8 is only the one the
+        // cursor is inside of. Each linked run is written again over itself,
+        // inside its link, before the body's last words put the cursor and
+        // its style back where the program had them.
+        let links = self.hyperlinks();
+        let cursor = format!("\x1b[{};{}H", self.cursor().1 + 1, self.cursor().0 + 1);
+        let at = (!links.is_empty())
+            .then(|| body.windows(cursor.len()).rposition(|w| w == cursor.as_bytes()))
+            .flatten();
+        match at {
+            Some(at) => {
+                out.extend_from_slice(&body[..at]);
+                out.extend_from_slice(&links);
+                out.extend_from_slice(&body[at..]);
+            }
+            None => out.extend_from_slice(&body),
+        }
         out.extend_from_slice(format!("\x1b[={};1u", self.kitty_keyboard_flags()).as_bytes());
         Ok(out)
+    }
+
+    fn get_u16(&self, data: c_int) -> u16 {
+        let mut out: u16 = 0;
+        let rc = unsafe { ffi::ghostty_terminal_get(self.raw, data, &mut out as *mut u16 as *mut c_void) };
+        if rc == ffi::SUCCESS { out } else { 0 }
+    }
+
+    /// Column and row of the cursor on the active screen, from zero.
+    fn cursor(&self) -> (u16, u16) {
+        (self.get_u16(ffi::DATA_CURSOR_X), self.get_u16(ffi::DATA_CURSOR_Y))
+    }
+
+    fn cell(&self, x: u16, y: u16) -> Option<ffi::GridRef> {
+        let point = ffi::Point {
+            tag: ffi::POINT_TAG_ACTIVE,
+            value: ffi::PointValue { coordinate: ffi::PointCoordinate { x, y: y as u32 } },
+        };
+        let mut cell = ffi::GridRef {
+            size: std::mem::size_of::<ffi::GridRef>(),
+            node: std::ptr::null_mut(),
+            x: 0,
+            y: 0,
+        };
+        let rc = unsafe { ffi::ghostty_terminal_grid_ref(self.raw, point, &mut cell) };
+        (rc == ffi::SUCCESS && !cell.node.is_null()).then_some(cell)
+    }
+
+    fn uri(cell: &ffi::GridRef) -> Vec<u8> {
+        let mut buf = vec![0u8; 256];
+        let mut len: usize = 0;
+        let mut rc = unsafe { ffi::ghostty_grid_ref_hyperlink_uri(cell, buf.as_mut_ptr(), buf.len(), &mut len) };
+        if rc == ffi::OUT_OF_SPACE {
+            buf = vec![0u8; len];
+            rc = unsafe { ffi::ghostty_grid_ref_hyperlink_uri(cell, buf.as_mut_ptr(), buf.len(), &mut len) };
+        }
+        if rc != ffi::SUCCESS {
+            return Vec::new();
+        }
+        buf.truncate(len);
+        buf
+    }
+
+    /// Every run of cells on the active screen that shares a hyperlink,
+    /// written as it is on screen, styles and all, inside its OSC 8 and at
+    /// its place. Empty when there is none.
+    ///
+    /// Claude Code links what it prints (a markdown link to a file becomes
+    /// `file://…`), and a client attaching to the tab after it printed would
+    /// otherwise get the text without the link, which a ⌘-click then cannot
+    /// open.
+    fn hyperlinks(&self) -> Vec<u8> {
+        let (cols, rows) = (self.get_u16(ffi::DATA_COLS), self.get_u16(ffi::DATA_ROWS));
+        let mut out = Vec::new();
+        for y in 0..rows {
+            let Some(first) = self.cell(0, y) else { continue };
+            let mut row: ffi::Row = 0;
+            let mut linked = false;
+            let has = unsafe {
+                ffi::ghostty_grid_ref_row(&first, &mut row) == ffi::SUCCESS
+                    && ffi::ghostty_row_get(row, ffi::ROW_DATA_HYPERLINK, &mut linked as *mut bool as *mut c_void)
+                        == ffi::SUCCESS
+            };
+            if !has || !linked {
+                continue;
+            }
+            let mut x = 0;
+            while x < cols {
+                let Some(start) = self.cell(x, y) else { break };
+                let uri = Self::uri(&start);
+                if uri.is_empty() {
+                    x += 1;
+                    continue;
+                }
+                let mut last = start;
+                let mut end = x;
+                while end + 1 < cols {
+                    let Some(next) = self.cell(end + 1, y) else { break };
+                    if Self::uri(&next) != uri {
+                        break;
+                    }
+                    last = next;
+                    end += 1;
+                }
+                if let Ok(text) = self.formatted_run(start, last) {
+                    out.extend_from_slice(format!("\x1b[{};{}H\x1b[0m\x1b]8;;", y + 1, x + 1).as_bytes());
+                    out.extend_from_slice(&uri);
+                    out.extend_from_slice(b"\x1b\\");
+                    out.extend_from_slice(&text);
+                    out.extend_from_slice(b"\x1b]8;;\x1b\\");
+                }
+                x = end + 1;
+            }
+        }
+        out
+    }
+
+    /// The cells from `start` to `end` as VT: their text and its styles,
+    /// nothing about the terminal around them.
+    fn formatted_run(&self, start: ffi::GridRef, end: ffi::GridRef) -> Result<Vec<u8>, Error> {
+        let selection = ffi::Selection {
+            size: std::mem::size_of::<ffi::Selection>(),
+            start,
+            end,
+            rectangle: false,
+        };
+        let none = ffi::ScreenExtra {
+            size: std::mem::size_of::<ffi::ScreenExtra>(),
+            cursor: false,
+            style: false,
+            hyperlink: false,
+            protection: false,
+            kitty_keyboard: false,
+            charsets: false,
+        };
+        let options = ffi::FormatterOptions {
+            size: std::mem::size_of::<ffi::FormatterOptions>(),
+            emit: ffi::FORMAT_VT,
+            unwrap: false,
+            trim: false,
+            extra: ffi::TerminalExtra {
+                size: std::mem::size_of::<ffi::TerminalExtra>(),
+                palette: false,
+                modes: false,
+                scrolling_region: false,
+                tabstops: false,
+                pwd: false,
+                keyboard: false,
+                screen: none,
+            },
+            selection: &selection as *const ffi::Selection as *const c_void,
+        };
+        self.format_with(options)
     }
 
     /// DEC modes that decide what a key press or a mouse movement writes:
@@ -410,7 +623,10 @@ impl Terminal {
             },
             selection: std::ptr::null(),
         };
+        self.format_with(options)
+    }
 
+    fn format_with(&self, options: ffi::FormatterOptions) -> Result<Vec<u8>, Error> {
         let mut formatter: ffi::Formatter = std::ptr::null_mut();
         let rc = unsafe {
             ffi::ghostty_formatter_terminal_new(
@@ -484,6 +700,31 @@ mod tests {
         let vt = t.snapshot(Format::Vt).expect("vt");
         assert!(vt.windows(2).any(|w| w == b"\x1b["), "no escapes in VT snapshot");
         assert!(vt.len() > text.len(), "VT snapshot should be richer than plain");
+    }
+
+    #[test]
+    fn snapshot_keeps_the_links_on_screen() {
+        // What Claude Code writes for a markdown link to a file: OSC 8 with
+        // an id, ended by BEL, the text coloured.
+        let mut t = Terminal::new(60, 6).unwrap();
+        t.write(b"\x1b[?1049h\x1b[H  veja \x1b]8;id=a1;file:///tmp/n%20a.txt\x07\x1b[94mnota\x1b]8;;\x07\x1b[39m e mais\r\n");
+        t.write(b"\x1b[3;5H\x1b]8;;https://example.com/x\x1b\\site\x1b]8;;\x1b\\\x1b[5;9H\x1b[1m");
+        let fresh = replayed(&t, 60, 6);
+        let vt = String::from_utf8_lossy(&fresh.snapshot(Format::Vt).unwrap()).into_owned();
+        assert!(vt.contains("\x1b]8;;file:///tmp/n%20a.txt\x1b\\"), "file link lost: {vt:?}");
+        assert!(vt.contains("\x1b]8;;https://example.com/x\x1b\\"), "web link lost: {vt:?}");
+        // Text, cursor and pen as the program left them.
+        assert_eq!(fresh.text().unwrap(), t.text().unwrap());
+        assert_eq!(fresh.cursor(), (8, 4));
+        let tail = |t: &Terminal| {
+            let vt = String::from_utf8_lossy(&t.snapshot(Format::Vt).unwrap()).into_owned();
+            vt[vt.rfind("\x1b[5;9H").expect("no cursor")..].to_string()
+        };
+        assert_eq!(tail(&fresh), tail(&t), "the cursor and its style are not the last word");
+        // A screen without links is said exactly as before.
+        let mut plain = Terminal::new(60, 6).unwrap();
+        plain.write(b"sem link\r\n");
+        assert!(!String::from_utf8_lossy(&plain.snapshot(Format::Vt).unwrap()).contains("]8;;"));
     }
 
     /// Replay a snapshot into a terminal that has never seen anything else,
@@ -622,6 +863,9 @@ mod abi {
         assert_eq!(std::mem::size_of::<ffi::ScreenExtra>(), 16, "ScreenExtra");
         assert_eq!(std::mem::size_of::<ffi::TerminalExtra>(), 32, "TerminalExtra");
         assert_eq!(std::mem::size_of::<ffi::FormatterOptions>(), 56, "FormatterOptions");
+        assert_eq!(std::mem::size_of::<ffi::GridRef>(), 24, "GridRef");
+        assert_eq!(std::mem::size_of::<ffi::Point>(), 24, "Point");
+        assert_eq!(std::mem::size_of::<ffi::Selection>(), 64, "Selection");
     }
 }
 
