@@ -26,6 +26,8 @@ export interface TabInfo {
   lastActive: number;
   /** The running command's name, or the shell's at a prompt ("claude", "pwsh"). */
   command: string;
+  /** The tab's shell, which names its Claude Code status file; 0 from a daemon that predates it. */
+  shellPid: number;
 }
 
 export interface WorkspaceInfo {
@@ -128,6 +130,8 @@ export const iaSignature = () => invoke<string>("ia_signature");
 /** Send listed worktrees to the Recycle Bin, once these processes are gone; what did not go. */
 export const iaTrash = (items: { caminho: string; nasceu_ns: string | null }[], pids: number[]) =>
   invoke<string[]>("ia_trash", { items, pids });
+/** What Claude Code's status line saved for each of these shells: its JSON text, by shell pid. */
+export const claudeStatuses = (shells: number[]) => invoke<Record<string, string>>("claude_statuses", { shells });
 export const pathExists = (path: string) => invoke<boolean>("path_exists", { path });
 export const e2eShot = (name: string) => invoke<void>("e2e_shot", { name });
 export const e2eFake = (state: unknown) => invoke<void>("e2e_fake", { state });
