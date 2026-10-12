@@ -132,6 +132,14 @@ osascript -e "tell application \"System Events\" to set frontmost of process \"$
     >/dev/null 2>&1
 sleep 1
 
+# The window may still be taking its final size (the grid reflows, and rows
+# move): wait until the app has said nothing about layout for two seconds.
+for _ in $(seq 40); do
+    before=$(grep -c ' layout ' "$WORK/app.log")
+    sleep 2
+    [ "$(grep -c ' layout ' "$WORK/app.log")" = "$before" ] && break
+done
+
 read -r FX FY FW FH <<<"$("$MOUSE" frame)"
 [ -n "${FH:-}" ] || { say "could not find $APP_NAME's window"; exit 1; }
 # The terminal's upper part, clear of the sidebar and of the tab strip.
