@@ -1441,9 +1441,9 @@ final class TerminalSurfaceView: NSView {
         else { return nil }
         let menu = NSMenu()
         for (title, action) in [
-            ("Open", #selector(openFileFromMenu(_:))),
-            ("Reveal in Finder", #selector(revealFileFromMenu(_:))),
-            ("Copy Path", #selector(copyFilePathFromMenu(_:))),
+            ("Abrir", #selector(openFileFromMenu(_:))),
+            ("Mostrar no Finder", #selector(revealFileFromMenu(_:))),
+            ("Copiar caminho", #selector(copyFilePathFromMenu(_:))),
         ] {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
             item.target = self

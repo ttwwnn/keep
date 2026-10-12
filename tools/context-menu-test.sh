@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Right-click on a file path printed in a tab puts up a menu with Open, Reveal
-# in Finder and Copy Path; on text that names no file there is no menu.
+# Right-click on a file path printed in a tab puts up a menu with Abrir, Mostrar
+# no Finder and Copiar caminho; on text that names no file there is no menu.
 #
 # The tab's program asks for the mouse, as Claude Code's full-screen mode
 # does. The right button is pressed by the window server
@@ -130,22 +130,22 @@ say "right-click on the path"
 "$MOUSE" rightclick "$TX" "$TY"
 sleep 1
 # The system adds its own entries (AutoFill) after ours.
-ITEMS=$("$AXPRESS" "$APP_NAME" items 2>/dev/null | cut -f3 | grep -E '^(Open|Reveal in Finder|Copy Path)$' | tr '\n' '|')
-check "the menu offers the three actions" "Open|Reveal in Finder|Copy Path|" "$ITEMS"
-"$AXPRESS" "$APP_NAME" pick "Reveal in Finder" >/dev/null 2>&1
+ITEMS=$("$AXPRESS" "$APP_NAME" items 2>/dev/null | cut -f3 | grep -E '^(Abrir|Mostrar no Finder|Copiar caminho)$' | tr '\n' '|')
+check "the menu offers the three actions" "Abrir|Mostrar no Finder|Copiar caminho|" "$ITEMS"
+"$AXPRESS" "$APP_NAME" pick "Mostrar no Finder" >/dev/null 2>&1
 sleep 1
 check "Reveal in Finder shows the file" "reveal $TARGET" "$(cat "$KEEP_LINK_LOG")"
 
 : >"$KEEP_LINK_LOG"
 "$MOUSE" rightclick "$TX" "$TY"
 sleep 1
-"$AXPRESS" "$APP_NAME" pick "Open" >/dev/null 2>&1
+"$AXPRESS" "$APP_NAME" pick "Abrir" >/dev/null 2>&1
 sleep 1
 check "Open opens the file" "$TARGET" "$(cat "$KEEP_LINK_LOG")"
 
 "$MOUSE" rightclick "$TX" "$TY"
 sleep 1
-"$AXPRESS" "$APP_NAME" pick "Copy Path" >/dev/null 2>&1
+"$AXPRESS" "$APP_NAME" pick "Copiar caminho" >/dev/null 2>&1
 sleep 1
 COPIED=$(pbpaste)
 printf %s "$SAVED_CLIP" | pbcopy
@@ -155,7 +155,7 @@ say ""
 say "right-click on text that names no file"
 "$MOUSE" rightclick "$TX" "$((TY + 12 * 17))"
 sleep 1
-ITEMS=$("$AXPRESS" "$APP_NAME" items 2>/dev/null | cut -f3 | grep -E '^(Open|Reveal in Finder|Copy Path)$' | tr '\n' '|')
+ITEMS=$("$AXPRESS" "$APP_NAME" items 2>/dev/null | cut -f3 | grep -E '^(Abrir|Mostrar no Finder|Copiar caminho)$' | tr '\n' '|')
 "$AXPRESS" "$APP_NAME" cancel >/dev/null 2>&1
 check "there is no menu" "" "$ITEMS"
 
