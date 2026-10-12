@@ -287,6 +287,14 @@ struct WorkspaceSidebar: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .onHover { inside in notePointer(inside, onNameOf: .workspace(row.name)) }
+                if let folder = row.confinedTo {
+                    // The AI in here is held to one folder.
+                    Image(systemName: "lock.fill")
+                        .font(counter)
+                        .foregroundStyle(Palette.inkFaint)
+                        .help("A IA deste workspace só acessa \(folder)")
+                        .accessibilityIdentifier("confined-\(row.name)")
+                }
                 if row.working {
                     // The one fact worth carrying up from the tabs: something
                     // is at work in here, visible with the group folded shut.
@@ -353,6 +361,17 @@ struct WorkspaceSidebar: View {
             Button("New Tab") { dispatch(.newTab(in: row.name)) }
             Button("Rename Workspace…") { beginRename(.workspace(row.name)) }
             Divider()
+            // The AI of this workspace held to one folder of the computer.
+            // Chosen here, kept by the app, held by the shell when the AI
+            // starts (`keep-confine`): so it holds for the sessions started
+            // after, which the panel says.
+            Button("Restringir a IA a uma pasta…") { chooseConfinement(for: row) }
+            if row.confinedTo != nil {
+                Button("Liberar a IA (hoje: \(row.confinedTo ?? ""))") {
+                    dispatch(.confineWorkspace(row.name, to: nil))
+                }
+            }
+            Divider()
             // Also in the menu, not only under the pointer. A list you can
             // only rearrange by dragging is a list most people never learn
             // can be rearranged.
@@ -371,6 +390,23 @@ struct WorkspaceSidebar: View {
                 dispatch(.killWorkspace(row.name))
             }
         }
+    }
+
+    /// Ask for the folder this workspace's AI may use. A panel of the system,
+    /// folders only; the choice is the intent's.
+    private func chooseConfinement(for row: SessionSnapshot.SidebarRow) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Restringir"
+        panel.title = "Pasta que a IA de \(row.title) pode acessar"
+        panel.message = "A IA deste workspace só vai ler e gravar nesta pasta. Vale para as sessões da IA "
+            + "iniciadas daqui em diante (feche e abra o claude nas abas já abertas)."
+        if let current = row.confinedTo { panel.directoryURL = URL(fileURLWithPath: current) }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        dispatch(.confineWorkspace(row.name, to: url.path))
     }
 
     /// The fold. Its own button, not part of the workspace's: a chevron that

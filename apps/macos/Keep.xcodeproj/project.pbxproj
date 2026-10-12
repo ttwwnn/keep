@@ -38,6 +38,7 @@
 		D4F0FFEE0000000000000001 /* TerminalZoom.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F0FFEE0000000000000002 /* TerminalZoom.swift */; };
 		D4F0FFEF0000000000000001 /* LinkOpener.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F0FFEF0000000000000002 /* LinkOpener.swift */; };
 		D4F0FFEF0000000000000011 /* CutSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F0FFEF0000000000000012 /* CutSelection.swift */; };
+		D4F0FFEF0000000000000107 /* WorkspaceConfinement.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F0FFEF0000000000000106 /* WorkspaceConfinement.swift */; };
 		D4F0FFEF0000000000000105 /* ClaudeStatusBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F0FFEF0000000000000104 /* ClaudeStatusBar.swift */; };
 		D4F0FFEF0000000000000103 /* ClaudeStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F0FFEF0000000000000102 /* ClaudeStatus.swift */; };
 		D4F0FFEE0000000000000003 /* ZoomControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F0FFEE0000000000000004 /* ZoomControl.swift */; };
@@ -69,6 +70,7 @@
 		D4F0FFEE0000000000000002 /* TerminalZoom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalZoom.swift; sourceTree = "<group>"; };
 		D4F0FFEF0000000000000002 /* LinkOpener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkOpener.swift; sourceTree = "<group>"; };
 		D4F0FFEF0000000000000012 /* CutSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CutSelection.swift; sourceTree = "<group>"; };
+		D4F0FFEF0000000000000106 /* WorkspaceConfinement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceConfinement.swift; sourceTree = "<group>"; };
 		D4F0FFEF0000000000000104 /* ClaudeStatusBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeStatusBar.swift; sourceTree = "<group>"; };
 		D4F0FFEF0000000000000102 /* ClaudeStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeStatus.swift; sourceTree = "<group>"; };
 		D4F0FFEE0000000000000004 /* ZoomControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomControl.swift; sourceTree = "<group>"; };
@@ -154,6 +156,7 @@
 				D4F0FFEE0000000000000002 /* TerminalZoom.swift */,
 				D4F0FFEF0000000000000002 /* LinkOpener.swift */,
 				D4F0FFEF0000000000000012 /* CutSelection.swift */,
+				D4F0FFEF0000000000000106 /* WorkspaceConfinement.swift */,
 				D4F0FFEF0000000000000102 /* ClaudeStatus.swift */,
 				455B3F87550E85E26FFD249F /* WorkspaceEntity.swift */,
 			);
@@ -305,6 +308,7 @@
 				D4F0FFEE0000000000000001 /* TerminalZoom.swift in Sources */,
 				D4F0FFEF0000000000000001 /* LinkOpener.swift in Sources */,
 				D4F0FFEF0000000000000011 /* CutSelection.swift in Sources */,
+				D4F0FFEF0000000000000107 /* WorkspaceConfinement.swift in Sources */,
 				D4F0FFEF0000000000000105 /* ClaudeStatusBar.swift in Sources */,
 				D4F0FFEF0000000000000103 /* ClaudeStatus.swift in Sources */,
 				1DB5C2ADB8A13CF62A60771D /* TerminalText.swift in Sources */,

@@ -7,8 +7,9 @@
 
 pub mod abas;
 pub mod caminhos;
-pub mod codex_daemon;
 pub mod cli;
+pub mod codex_daemon;
+pub mod confinar;
 pub mod contas;
 pub mod contexto;
 pub mod daemon;

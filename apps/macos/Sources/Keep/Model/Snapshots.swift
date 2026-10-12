@@ -444,6 +444,10 @@ enum Intent {
     /// about what exists.
     case removeWorkspace(String)
     case killWorkspace(String)
+    /// Hold a workspace's AI to one folder, or let it go anywhere again (nil).
+    /// Applies to the sessions started after it: one already running keeps the
+    /// access it was started with.
+    case confineWorkspace(String, to: String?)
     case split(UInt8)                 // protocol values: 1 = right, 2 = down
     /// A surface took the keyboard. The tab travels with it: rebuilding an
     /// arrangement makes AppKit reassign the first responder, and a surface
@@ -804,6 +808,9 @@ struct SessionSnapshot: Hashable {
         /// `expanded` flag says whether the sidebar shows them.
         let tabRows: [SidebarTab]
         let expanded: Bool
+        /// The folder this workspace's AI is held to, when one was chosen
+        /// (`WorkspaceConfinement`). Nil: it goes where it likes.
+        var confinedTo: String? = nil
         var id: String { name }
         enum Dot: Hashable { case empty, busy, attached, idle }
     }

@@ -738,6 +738,10 @@ final class Session {
             // Wherever the name was typed, the keyboard goes back to the work.
             renderer(window)?.focusActiveTerminal()
 
+        case .confineWorkspace(let workspace, let folder):
+            WorkspaceConfinement.set(folder, for: workspace)
+            publish()
+
         case .renameWorkspace(let workspace, let name):
             nameStore.setWorkspace(workspace, to: Self.chosenName(name))
             refreshOpenLists()
@@ -1957,6 +1961,7 @@ final class Session {
         let sidebar = sidebarStore.state(for: window)
         // The workspaces this window carries, in its order — not everything
         // the daemon has. Anything missing is still a ⌘P away.
+        let confinements = WorkspaceConfinement.all()
         let rows = view.workspaces.compactMap { name -> SessionSnapshot.SidebarRow? in
             guard let workspace = workspaces.first(where: { $0.name == name }) else { return nil }
             return SessionSnapshot.SidebarRow(
@@ -1994,7 +1999,8 @@ final class Session {
                         runningAccount: aiRunning(of: tab)
                     )
                 },
-                expanded: !sidebar.folded.contains(workspace.name)
+                expanded: !sidebar.folded.contains(workspace.name),
+                confinedTo: confinements[workspace.name]
             )
         }
         let strip = (workspace(for: window)?.tabs ?? []).map { tab in

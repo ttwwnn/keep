@@ -434,7 +434,7 @@ fn home_codex(contas: &[Conta], chave: Option<&str>) -> PathBuf {
 }
 
 /// A linha que sobe a IA do destino.
-fn subida(d: &Destino, ident: Option<&str>, parametros: &[String], contexto: Option<&Path>) -> Subida {
+fn subida(ws: &str, d: &Destino, ident: Option<&str>, parametros: &[String], contexto: Option<&Path>) -> Subida {
     let mut args = Vec::new();
     let programa = match d.motor() {
         Motor::Claude => {
@@ -459,6 +459,8 @@ fn subida(d: &Destino, ident: Option<&str>, parametros: &[String], contexto: Opt
     }
     let mut definir = d.ambiente.clone();
     definir.push(("KEEP_IA_ESCOLHA".into(), d.escolha.clone()));
+    // Workspace com pasta permitida: a IA sobe presa a ela (confinar.rs).
+    let (programa, args) = crate::confinar::envolve(ws, programa, args);
     Subida {
         programa,
         args,
@@ -523,7 +525,7 @@ fn devolve_ao_codex(
     let Some(conta) = conta else { return false };
     let Ok(ambiente) = contas::ambiente(conta) else { return false };
     let d = Destino { escolha: escolha.into(), conta: conta.clone(), ambiente };
-    let s = subida(&d, Some(tid), parametros, None);
+    let s = subida(ws, &d, Some(tid), parametros, None);
     matches!(digita(ws, tab, &linha::linha(sintaxe, &s), true), Ok(true)) && subiu(ws, tab, "codex", 10)
 }
 
@@ -860,7 +862,7 @@ pub fn trocar(p: &Pedido) -> Result<String, Recusa> {
         .cloned()
         .or_else(|| (prog.agente() == Some(agente_alvo)).then(|| parametros_agora.clone().unwrap_or_default()))
         .unwrap_or_default();
-    let mut s = subida(&destino, ident.as_deref(), &parametros, contexto_arq.as_deref());
+    let mut s = subida(&p.ws, &destino, ident.as_deref(), &parametros, contexto_arq.as_deref());
     s.pasta = pasta_de_partida(&a, anterior_claude.as_deref());
     let texto = linha::linha(sintaxe, &s);
     if !digita(&p.ws, p.aba, &texto, true)? {
