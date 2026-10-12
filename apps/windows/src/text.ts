@@ -83,3 +83,29 @@ export function homeRelative(path: string, home: string): string {
   }
   return path;
 }
+
+const CURSOR_RIGHT = "\x1b[C";
+const CURSOR_LEFT = "\x1b[D";
+const BACKSPACE = "\x7f";
+
+/**
+ * The keys that take `selected` out of the line a program is editing, or
+ * undefined when that cannot be told. The selection is a view of the screen,
+ * not of the program's text, so the program is told as a person would: move
+ * to the end of the selection, then backspace over it. That works when the
+ * text is on the cursor's row exactly once — the prompt of a shell or of
+ * Claude Code — and nowhere else, where a cut is only a copy.
+ */
+export function cutKeys(selected: string, row: string, cursorColumn: number): string | undefined {
+  const wanted = Array.from(selected);
+  const cells = Array.from(row);
+  if (wanted.length === 0 || selected.includes("\n") || cells.length < wanted.length) return undefined;
+  const starts: number[] = [];
+  for (let start = 0; start + wanted.length <= cells.length; start++) {
+    if (wanted.every((c, i) => cells[start + i] === c)) starts.push(start);
+  }
+  if (starts.length !== 1) return undefined;
+  const move = starts[0] + wanted.length - cursorColumn;
+  const steps = move >= 0 ? CURSOR_RIGHT.repeat(move) : CURSOR_LEFT.repeat(-move);
+  return steps + BACKSPACE.repeat(wanted.length);
+}

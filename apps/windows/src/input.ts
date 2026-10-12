@@ -9,7 +9,7 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { SPLIT_DOWN, SPLIT_RIGHT } from "./api";
-import { SHIFT_ENTER_SEQUENCE, isPlainCopy, isShiftEnter, shortcut, type Action } from "./keys";
+import { SHIFT_ENTER_SEQUENCE, imagePasteSequence, isPlainCopy, isPlainCut, isShiftEnter, shortcut, type Action } from "./keys";
 import {
   activeTab,
   activeView,
@@ -30,7 +30,7 @@ import {
   zoomReset,
 } from "./store";
 import type { TermView } from "./terminals";
-import { quotePaths } from "./text";
+import { cutKeys, quotePaths } from "./text";
 
 export function perform(action: Action): void {
   switch (action.kind) {
@@ -85,6 +85,9 @@ export function perform(action: Action): void {
     case "copy":
       void copySelection();
       break;
+    case "pasteImage":
+      void activeView()?.type(imagePasteSequence(isMac.value)).catch(() => {});
+      break;
     case "paste": {
       const view = activeView();
       void readText()
@@ -121,7 +124,28 @@ export function terminalKey(view: TermView, event: KeyboardEvent): boolean {
     }
     return false;
   }
+  if (isPlainCut(event, mac) && view.term.hasSelection()) {
+    if (event.type === "keydown") {
+      event.preventDefault();
+      cutSelection(view);
+    }
+    return false;
+  }
   return true;
+}
+
+/**
+ * Ctrl+X on a selection: copied, and taken out of the line the program is
+ * editing when the selection is on the row the cursor is on (see `cutKeys`).
+ */
+function cutSelection(view: TermView): void {
+  const text = view.term.getSelection();
+  void writeText(text).catch(() => navigator.clipboard?.writeText(text));
+  const buffer = view.term.buffer.active;
+  const row = buffer.getLine(buffer.baseY + buffer.cursorY)?.translateToString(true) ?? "";
+  const keys = cutKeys(text, row, buffer.cursorX);
+  view.term.clearSelection();
+  if (keys) void view.type(keys).catch(() => {});
 }
 
 const BROWSER_CHORDS = new Set(["KeyR", "KeyP", "KeyJ", "KeyU", "KeyS", "KeyO", "KeyG", "KeyH", "KeyF"]);

@@ -472,8 +472,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // path a Mac user can count on.
         let editItem = NSMenuItem()
         let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        // The clipboard's image, for a program that reads it itself (Claude
+        // Code). Only a terminal answers, so it is greyed anywhere else.
+        let pasteImage = editMenu.addItem(
+            withTitle: "Paste Image",
+            action: #selector(TerminalSurfaceView.pasteImage(_:)), keyEquivalent: "v")
+        pasteImage.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(.separator())
         editMenu.addItem(
             withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")

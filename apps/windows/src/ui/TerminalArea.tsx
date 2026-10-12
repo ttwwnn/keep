@@ -17,6 +17,7 @@ import {
   daemonError,
   findOpen,
   focusPane,
+  isMac,
   loaded,
   orderedWorkspaces,
   split,
@@ -25,6 +26,7 @@ import {
   activeView,
 } from "../store";
 import { SPLIT_DOWN, SPLIT_RIGHT } from "../api";
+import { imagePasteSequence } from "../keys";
 import { openMenu } from "./common";
 import * as icon from "./icons";
 
@@ -53,6 +55,11 @@ function PaneHost(props: { workspace: string; root: number; pane: number; visibl
             label: "Colar",
             hint: "Ctrl+V",
             action: () => void readText().then((text) => text && view?.paste(text)).catch(() => {}),
+          },
+          {
+            label: "Colar imagem",
+            hint: "Ctrl+Shift+V",
+            action: () => void view?.type(imagePasteSequence(isMac.value)).catch(() => {}),
           },
           { label: "Selecionar tudo", action: () => view?.term.selectAll() },
           { label: "Limpar a tela", action: () => view?.term.clear() },

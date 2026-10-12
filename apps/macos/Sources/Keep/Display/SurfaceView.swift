@@ -1583,6 +1583,54 @@ final class TerminalSurfaceView: NSView {
     }
     @objc override func selectAll(_ sender: Any?) { perform("select_all") }
 
+    /// ⌘⇧V: the clipboard's image, for a program that reads it itself. Claude
+    /// Code does so on Ctrl+V, which is the byte ^V, not a paste.
+    @objc func pasteImage(_ sender: Any?) {
+        commitComposition()
+        perform("text:\\x16")
+    }
+
+    /// ⌘X: copies the selection and, when it is on the row the cursor is on
+    /// (the prompt being typed in), takes it out of that line with keys. See
+    /// `CutSelection`. Anywhere else it only copies.
+    @objc func cut(_ sender: Any?) {
+        guard let surface, ghostty_surface_has_selection(surface) else { return }
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_selection(surface, &text), let raw = text.text else { return }
+        let selected = String(cString: raw)
+        ghostty_surface_free_text(surface, &text)
+        perform("copy_to_clipboard")
+        guard let (row, column) = cursorCell() else { return }
+        let lines = visibleText().lines
+        guard lines.indices.contains(row),
+            let keys = CutSelection.keys(selected: selected, row: lines[row], cursorColumn: column)
+        else {
+            Trace.log("cut", "copied only: \(selected.count) chars, cursor row \(row)")
+            return
+        }
+        Trace.log("cut", "cut \(selected.count) chars, cursor row \(row) column \(column)")
+        perform(CutSelection.action(for: keys))
+        perform("clear_selection")
+    }
+
+    /// The row and column of the cell the cursor is in, from the point the
+    /// runtime gives the input method.
+    private func cursorCell() -> (row: Int, column: Int)? {
+        guard let surface else { return nil }
+        var x = 0.0, y = 0.0, width = 0.0, height = 0.0
+        ghostty_surface_ime_point(surface, &x, &y, &width, &height)
+        let size = ghostty_surface_size(surface)
+        guard size.cell_width_px > 0, size.cell_height_px > 0 else { return nil }
+        let scale = Double(window?.backingScaleFactor ?? 2.0)
+        // The point is the cursor cell's left edge, inside the window's
+        // padding, and its bottom edge: the input method's window goes below
+        // the caret. Flooring and stepping back half a row stay inside the
+        // right cell for any padding under half a cell.
+        let column = Int((x * scale / Double(size.cell_width_px)).rounded(.down))
+        let row = Int(((y - height / 2) * scale / Double(size.cell_height_px)).rounded(.down))
+        return (row, column)
+    }
+
     // MARK: - files dropped on the terminal
 
     /// A drag of files over this pane is offered a copy; anything else — the

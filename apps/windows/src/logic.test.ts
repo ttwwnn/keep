@@ -2,10 +2,10 @@
 // state file, and the small text helpers.
 import { describe, expect, it } from "vitest";
 import type { TabInfo } from "./api";
-import { shortcut, isShiftEnter, isPlainCopy, type KeyLike } from "./keys";
+import { shortcut, isShiftEnter, isPlainCopy, isPlainCut, imagePasteSequence, type KeyLike } from "./keys";
 import { buildTree, isPathTitle, leaves, rootTabs } from "./layout";
 import { defaultState, normalizeState } from "./state";
-import { fuzzyScore, matchRanges, quotePaths } from "./text";
+import { cutKeys, fuzzyScore, matchRanges, quotePaths } from "./text";
 import { normalizeZoom, zoomPercent, zoomStep, zoomedSize } from "./zoom";
 
 describe("zoom", () => {
@@ -62,6 +62,28 @@ describe("chords", () => {
     expect(shortcut(key("F2"))).toEqual({ kind: "rename" });
     expect(shortcut(key("KeyV", { ctrlKey: true }))).toEqual({ kind: "paste" });
     expect(shortcut(key("KeyC", { ctrlKey: true, shiftKey: true }))).toEqual({ kind: "copy" });
+    expect(shortcut(key("KeyV", { ctrlKey: true, shiftKey: true }))).toEqual({ kind: "pasteImage" });
+    expect(shortcut(key("KeyV", { metaKey: true, shiftKey: true }), true)).toEqual({ kind: "pasteImage" });
+  });
+  it("cuts with Ctrl+X, or ⌘X, only on its own", () => {
+    expect(isPlainCut(key("KeyX", { ctrlKey: true }))).toBe(true);
+    expect(isPlainCut(key("KeyX", { ctrlKey: true, shiftKey: true }))).toBe(false);
+    expect(isPlainCut(key("KeyX", { metaKey: true }), true)).toBe(true);
+    expect(isPlainCut(key("KeyX", { ctrlKey: true }), true)).toBe(false);
+  });
+  it("asks for the clipboard's image as the program expects", () => {
+    expect(imagePasteSequence(false)).toBe("\x1bv");
+    expect(imagePasteSequence(true)).toBe("\x16");
+  });
+  it("tells a program to take selected text out of its line", () => {
+    const row = "❯ ola mundo cruel";
+    expect(cutKeys("mundo", row, 17)).toBe("\x1b[D".repeat(6) + "\x7f".repeat(5));
+    expect(cutKeys("mundo", row, 11)).toBe("\x7f".repeat(5));
+    expect(cutKeys("mundo", row, 2)).toBe("\x1b[C".repeat(9) + "\x7f".repeat(5));
+    expect(cutKeys("a", "banana", 6)).toBeUndefined();
+    expect(cutKeys("a\nb", "a", 1)).toBeUndefined();
+    expect(cutKeys("zzz", row, 5)).toBeUndefined();
+    expect(cutKeys("", row, 5)).toBeUndefined();
   });
   it("leaves the program its keys", () => {
     expect(shortcut(key("KeyC", { ctrlKey: true }))).toBeNull();

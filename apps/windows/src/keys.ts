@@ -21,7 +21,8 @@ export type Action =
   | { kind: "splitDown" }
   | { kind: "rename" }
   | { kind: "copy" }
-  | { kind: "paste" };
+  | { kind: "paste" }
+  | { kind: "pasteImage" };
 
 export interface KeyLike {
   key: string;
@@ -62,7 +63,7 @@ export function shortcut(ev: KeyLike, mac = false): Action | null {
       case "KeyC":
         return { kind: "copy" };
       case "KeyV":
-        return { kind: "paste" };
+        return { kind: "pasteImage" };
       // Shift with = types +: Ctrl+Shift+= is Ctrl++.
       case "Equal":
         return { kind: "zoomIn" };
@@ -102,3 +103,14 @@ export const SHIFT_ENTER_SEQUENCE = "\x1b\r";
 /** Ctrl+C on its own: copy when something is selected, ^C otherwise. */
 export const isPlainCopy = (ev: KeyLike, mac = false) =>
   ev.code === "KeyC" && (mac ? ev.metaKey : ev.ctrlKey) && !ev.shiftKey && !ev.altKey;
+
+/** Ctrl+X on its own (⌘X on a Mac): cut when something is selected, ^X otherwise. */
+export const isPlainCut = (ev: KeyLike, mac = false) =>
+  ev.code === "KeyX" && (mac ? ev.metaKey : ev.ctrlKey) && !ev.shiftKey && !ev.altKey;
+
+/**
+ * What a program is sent to read the image on the clipboard: Claude Code
+ * answers Alt+V on Windows and Ctrl+V elsewhere. The terminal's own paste
+ * is Ctrl+V (⌘V), which is text.
+ */
+export const imagePasteSequence = (mac = false) => (mac ? "\x16" : "\x1bv");
