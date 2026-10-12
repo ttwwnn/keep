@@ -252,6 +252,26 @@ final class ClaudeModeWatcher {
         }
     }
 
+    /// When each tab was last answered, so that a question still on screen a
+    /// second later (the answer not yet taken) is not answered twice.
+    private var trustAnswered: [TabID: Date] = [:]
+
+    /// Claude Code asks whether to trust a folder the first time it opens in
+    /// it. Typing `claude` there is the person saying yes, so Enter is sent
+    /// on the first choice. Only through a surface the app already has: a
+    /// tab nobody has opened here is not one somebody just typed into.
+    private func answerTrustQuestions(_ tabs: [TabID]) {
+        trustAnswered = trustAnswered.filter { tabs.contains($0.key) }
+        for id in tabs {
+            if let at = trustAnswered[id], Date().timeIntervalSince(at) < 10 { continue }
+            guard let surface = SurfacePool.shared.anyExisting(workspace: id.workspace, tab: id.root)
+            else { continue }
+            trustAnswered[id] = Date()
+            Trace.log("trust", "\(id.workspace)/\(id.root) asked to trust the folder: yes")
+            surface.perform("text:\\x0d")
+        }
+    }
+
     private func poll() {
         guard !inFlight else { return }
         let tabs = Array(session.aiTabs().prefix(Self.perTick))
@@ -260,9 +280,12 @@ final class ClaudeModeWatcher {
             return
         }
         inFlight = true
+        let shells = session.aiShellPids()
         DispatchQueue.global(qos: .utility).async { [weak self] in
             var modes: [TabID: ClaudeMode?] = [:]
             var activities: [TabID: ClaudeActivity] = [:]
+            var statuses: [TabID: ClaudeStatus] = [:]
+            var trusting: [TabID] = []
             for (id, program) in tabs {
                 guard let screen = try? Daemon.preview(workspace: id.workspace, tab: id.root)
                 else { continue }
@@ -273,12 +296,22 @@ final class ClaudeModeWatcher {
                 if let declared = ClaudeMode.declared(onScreen: screen) { modes[id] = declared }
                 // A dialog in front hides the mode but is itself the answer
                 // to where the turn stands.
-                if let activity = ClaudeActivity.read(onScreen: screen) { activities[id] = activity }
+                if ClaudeTrustDialog.isAsking(onScreen: screen) { trusting.append(id) }
+                let activity = ClaudeActivity.read(onScreen: screen)
+                if let activity { activities[id] = activity }
+                if let file = shells[id].flatMap(ClaudeStatusReader.read(shellPid:)) {
+                    statuses[id] = ClaudeStatus(
+                        modelID: file.modelID, modelName: file.modelName, effort: file.effort,
+                        agents: ClaudeStatusReader.agents(onScreen: screen),
+                        canType: activity == .done && ClaudeStatusReader.promptIsEmpty(onScreen: screen))
+                }
             }
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.inFlight = false
                 self.session.noteClaudeModes(modes, activities: activities)
+                self.session.noteClaudeStatuses(statuses)
+                self.answerTrustQuestions(trusting)
             }
         }
     }

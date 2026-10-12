@@ -871,6 +871,8 @@ struct SessionSnapshot: Hashable {
         let title: String               // window title
         let panes: [PaneState]          // beyond the root, daemon order
         let focusedPane: UInt32         // daemon tab id holding the keyboard
+        /// The bar under the conversation, when Claude Code runs in it.
+        var status: ClaudeStatus? = nil
     }
 
     var sidebar: SidebarState

@@ -55,6 +55,9 @@ final class Session {
     /// Where Claude Code's turn stands in each tab that runs it, as last read
     /// off its screen. Absent: not Claude Code, or not read yet.
     private var claudeActivities: [TabID: ClaudeActivity] = [:]
+    /// The model, effort and agents of each Claude Code tab, for the bar
+    /// under its conversation.
+    private var claudeStatuses: [TabID: ClaudeStatus] = [:]
     /// When each tab's Claude Code started waiting on an answer.
     private var waitingSince: [TabID: Date] = [:]
     /// The account each tab's AI runs on, as the core last said.
@@ -1677,6 +1680,27 @@ final class Session {
         }
     }
 
+    /// The shell process of each AI tab, which names the file Claude Code's
+    /// status line leaves for it. Absent where the daemon cannot say.
+    func aiShellPids() -> [TabID: UInt32] {
+        var out: [TabID: UInt32] = [:]
+        for tab in workspaces.flatMap(\.tabs) where tab.shellPid > 0 { out[tab.id] = tab.shellPid }
+        return out
+    }
+
+    /// What the screens and the status line files said about each Claude Code
+    /// tab. A tab missing from `statuses` could not be read this time and
+    /// keeps what it had; tabs that stopped running one lose it.
+    func noteClaudeStatuses(_ statuses: [TabID: ClaudeStatus]) {
+        var next = claudeStatuses
+        for (id, status) in statuses { next[id] = status }
+        let running = Set(claudeTabs())
+        next = next.filter { running.contains($0.key) }
+        guard next != claudeStatuses else { return }
+        claudeStatuses = next
+        publish()
+    }
+
     /// Whether a tab is doing something, as opposed to having something open.
     ///
     /// The daemon's `busy` is a program running in front of the shell, which
@@ -1995,7 +2019,8 @@ final class Session {
                 id: tab.id,
                 title: displayTitle(of: tab),
                 panes: tab.panes,
-                focusedPane: focusedPane(of: tab, in: window)
+                focusedPane: focusedPane(of: tab, in: window),
+                status: claudeStatuses[tab.id]
             )
         }
         let universe = Set(workspaces.flatMap { $0.tabs.map(\.id) })

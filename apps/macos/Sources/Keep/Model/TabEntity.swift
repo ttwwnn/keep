@@ -30,6 +30,9 @@ final class TabEntity {
     /// What is holding the terminal. The root's, like `cwd` — a tab is one
     /// row in the picker, and the root is the pane it opened as.
     private(set) var command: String = ""
+    /// The root's shell process, from the daemon; zero when it cannot say.
+    /// Not part of what "changed" means: it is set once and stays.
+    private(set) var shellPid: UInt32 = 0
 
     init(id: TabID) {
         self.id = id
@@ -67,6 +70,7 @@ final class TabEntity {
         cwd = newCwd
         lastActive = newLastActive
         command = newCommand
+        shellPid = root.shellPid
         // A focused pane that died falls back to the root.
         if focusedPane != id.root && !newPanes.contains(where: { $0.tab == focusedPane }) {
             focusedPane = id.root

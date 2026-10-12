@@ -30,6 +30,9 @@ enum Daemon {
         /// What is holding the terminal — `claude`, `nvim`, `zsh`. Empty from
         /// a daemon too old to say.
         var command: String = ""
+        /// The tab's shell process. Zero from a daemon too old to say. Stable
+        /// for the tab's life, unlike the process in front of it.
+        var shellPid: UInt32 = 0
 
         /// Shells retitle constantly and usually with the host and path,
         /// which says nothing useful in a list of tabs from one machine.
@@ -618,11 +621,13 @@ enum Daemon {
                     tab.command = try r.string()
                 }
                 if level >= 3 {
-                    // The shell's process and the one holding the terminal:
-                    // read past, not kept. The core's `keep ia abas` is what
-                    // reads processes, and a figure that changes with every
-                    // command run would have the sidebar redrawn for nothing.
-                    _ = try r.u32()
+                    // The shell's process is kept: it names the tab for the
+                    // status line's files and never changes. The one holding
+                    // the terminal is read past — the core's `keep ia abas`
+                    // is what reads processes, and a figure that changes with
+                    // every command run would have the sidebar redrawn for
+                    // nothing.
+                    tab.shellPid = try r.u32()
                     _ = try r.u32()
                 }
                 tabs.append(tab)

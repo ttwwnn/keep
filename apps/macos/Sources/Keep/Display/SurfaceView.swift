@@ -1590,6 +1590,15 @@ final class TerminalSurfaceView: NSView {
         perform("text:\\x16")
     }
 
+    /// A line typed into the program and sent, as a person would: the text,
+    /// then Enter a moment later so the program has taken the text first.
+    func typeCommand(_ text: String) {
+        perform(CutSelection.action(for: text))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.perform("text:\\x0d")
+        }
+    }
+
     /// ⌘X: copies the selection and, when it is on the row the cursor is on
     /// (the prompt being typed in), takes it out of that line with keys. See
     /// `CutSelection`. Anywhere else it only copies.

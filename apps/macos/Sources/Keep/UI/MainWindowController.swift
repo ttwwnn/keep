@@ -31,6 +31,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private var inFullScreen = false
     private var sizeObserver: NSObjectProtocol?
     private let container = TabContentContainer()
+    /// Model, effort and agents of the Claude Code conversation shown.
+    private let statusBar = ClaudeStatusBar()
+    private var statusBarHeight: NSLayoutConstraint!
     private let sidebarHost: SidebarHost
     private let picker = PickerView()
     private weak var sidebarItem: NSSplitViewItem?
@@ -90,6 +93,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         tabStrip.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(chromeBackdrop)
         content.addSubview(container)
+        statusBar.translatesAutoresizingMaskIntoConstraints = false
+        statusBar.isHidden = true
+        content.addSubview(statusBar)
+        statusBarHeight = statusBar.heightAnchor.constraint(equalToConstant: 0)
         // The strip lives in the chrome row — the same region the backdrop
         // tints, above the terminal, beside the sidebar. Plain content: no
         // toolbar sizing, no private views, and empty regions still drag the
@@ -114,7 +121,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             tabStrip.topAnchor.constraint(equalTo: content.topAnchor),
             container.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             container.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            container.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            container.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
+            statusBar.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            statusBar.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            statusBar.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            statusBarHeight,
         ] + windowedChrome)
         let terminal = NSViewController()
         terminal.view = content
@@ -166,6 +177,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         self.splitView = split.splitView
 
         super.init(window: window)
+        statusBar.onEffort = { [weak self] level in self?.typeIntoActive("/effort \(level)") }
+        statusBar.onModel = { [weak self] id in self?.typeIntoActive("/model \(id)") }
         window.delegate = self
         // The row is as tall as the titles in it need: see `updateZoomHeight`.
         updateZoomHeight()
@@ -310,6 +323,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             layOutChrome()
         }
 
+        showStatusBar(snapshot.active?.status)
         guard let active = snapshot.active else {
             if let visible = container.visibleTab {
                 container.hide(visible)
@@ -339,6 +353,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             updateTitle(active)
         }
         applied = snapshot
+    }
+
+    /// The bar under the conversation: shown with the status of the tab on
+    /// view, hidden (and out of the terminal's way) when there is none.
+    private func showStatusBar(_ status: ClaudeStatus?) {
+        statusBar.apply(status)
+        let height = status == nil ? 0 : ClaudeStatusBar.height
+        if statusBarHeight.constant != height { statusBarHeight.constant = height }
+    }
+
+    /// Type a slash command and send it, into the root pane of the tab on
+    /// view. The bar only offers this when the prompt is empty.
+    private func typeIntoActive(_ command: String) {
+        guard let id = container.visibleTab,
+            let surface = container.hosts[id]?.surface(for: id.root)
+        else { return }
+        surface.typeCommand(command)
     }
 
     func focusActiveTerminal() {
