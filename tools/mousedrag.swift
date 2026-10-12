@@ -7,6 +7,7 @@
 //   mousedrag move <x> <y>                           -> park the pointer, press nothing
 //   mousedrag click <x> <y>                          -> walk there and click once
 //   mousedrag cmdclick <x> <y>                       -> the same with ⌘ held, all the way
+//   mousedrag rightclick <x> <y>                     -> walk there and click with the right button
 //   mousedrag cmdkey down|up                         -> press or let go of the ⌘ key itself
 //   mousedrag drag <x1> <y1> <x2> <y2> <steps> <ms>
 //
@@ -178,6 +179,30 @@ case "click", "cmdclick", "dblclick":
             event?.post(tap: .cghidEventTap)
             usleep(60_000)
         }
+    }
+
+case "rightclick":
+    guard args.count >= 4, let x = Double(args[2]), let y = Double(args[3]) else { exit(2) }
+    let source = CGEventSource(stateID: .hidSystemState)
+    let target = CGPoint(x: x, y: y)
+    let from = CGEvent(source: nil)?.location ?? target
+    for step in 1...12 {
+        let t = Double(step) / 12
+        CGEvent(
+            mouseEventSource: source, mouseType: .mouseMoved,
+            mouseCursorPosition: CGPoint(
+                x: from.x + (x - from.x) * t, y: from.y + (y - from.y) * t),
+            mouseButton: .right
+        )?.post(tap: .cghidEventTap)
+        usleep(12_000)
+    }
+    usleep(150_000)
+    for type in [CGEventType.rightMouseDown, .rightMouseUp] {
+        CGEvent(
+            mouseEventSource: source, mouseType: type, mouseCursorPosition: target,
+            mouseButton: .right
+        )?.post(tap: .cghidEventTap)
+        usleep(60_000)
     }
 
 case "drag":

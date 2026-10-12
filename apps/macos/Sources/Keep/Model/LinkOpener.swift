@@ -167,6 +167,51 @@ enum LinkOpener {
         return true
     }
 
+    /// The file or folder the word under the pointer stands for, pieced back
+    /// together from the screen as for a click, or nil when it names nothing.
+    static func file(
+        for word: String, from directory: String?, screen: [String], near row: Int?
+    ) -> URL? {
+        recover(word, in: screen, near: row, from: directory)
+            ?? resolve(word, from: directory)
+    }
+
+    /// The word at a cell of the screen, as a shell would read it (blanks
+    /// escaped by a backslash stay inside it), or nil on a blank or off the
+    /// screen.
+    static func wordAt(_ lines: [String], row: Int, column: Int) -> String? {
+        guard lines.indices.contains(row) else { return nil }
+        let chars = Array(lines[row])
+        guard chars.indices.contains(column),
+            !chars[column].isWhitespace || (column > 0 && chars[column - 1] == "\\")
+        else { return nil }
+        let (low, high) = word(chars, column, column + 1)
+        return String(chars[low..<high])
+    }
+
+    /// Shows a file in the Finder, selected in its folder. Under test the
+    /// request is appended to the log, as an opening is.
+    @discardableResult
+    static func reveal(_ url: URL) -> Bool {
+        guard let logPath else {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            return true
+        }
+        let line = "reveal " + url.path + "\n"
+        if let handle = FileHandle(forWritingAtPath: logPath) {
+            handle.seekToEndOfFile()
+            handle.write(Data(line.utf8))
+            try? handle.close()
+        } else {
+            try? line.write(toFile: logPath, atomically: false, encoding: .utf8)
+        }
+        return true
+    }
+
+    /// Opens a file already found, the same way a click does.
+    @discardableResult
+    static func open(_ url: URL) -> Bool { hand(url) }
+
     /// A word under a ⌘-click the runtime saw no link in: opened only when
     /// the screen around it names a file, and silently left alone otherwise.
     @discardableResult

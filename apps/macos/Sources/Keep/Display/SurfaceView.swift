@@ -1417,6 +1417,56 @@ final class TerminalSurfaceView: NSView {
         }
     }
 
+    /// The menu of a right-click: when the word under the pointer names a
+    /// file or folder, open it, show it in the Finder, or copy its path.
+    /// Anywhere else there is no menu, as before.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let surface else { return nil }
+        // The cell under the pointer is worked out from the event itself: the
+        // runtime's idea of where the pointer is trails a press by a moment,
+        // and its word was sometimes the one a row or two above.
+        let size = ghostty_surface_size(surface)
+        guard size.cell_width_px > 0, size.cell_height_px > 0 else { return nil }
+        let scale = window?.backingScaleFactor ?? 2.0
+        let point = convert(event.locationInWindow, from: nil)
+        let row = Int((bounds.height - point.y) * scale / CGFloat(size.cell_height_px))
+        let column = Int(point.x * scale / CGFloat(size.cell_width_px))
+        let screen = visibleText().lines
+        guard let word = LinkOpener.wordAt(screen, row: row, column: column) else {
+            Trace.log("link", "right-click on no word: row \(row), column \(column)")
+            return nil
+        }
+        Trace.log("link", "right-click on: \(word), row \(row)")
+        guard let url = LinkOpener.file(for: word, from: currentDirectory, screen: screen, near: row)
+        else { return nil }
+        let menu = NSMenu()
+        for (title, action) in [
+            ("Open", #selector(openFileFromMenu(_:))),
+            ("Reveal in Finder", #selector(revealFileFromMenu(_:))),
+            ("Copy Path", #selector(copyFilePathFromMenu(_:))),
+        ] {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.representedObject = url
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    @objc private func openFileFromMenu(_ sender: NSMenuItem) {
+        if let url = sender.representedObject as? URL { LinkOpener.open(url) }
+    }
+
+    @objc private func revealFileFromMenu(_ sender: NSMenuItem) {
+        if let url = sender.representedObject as? URL { LinkOpener.reveal(url) }
+    }
+
+    @objc private func copyFilePathFromMenu(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.path, forType: .string)
+    }
+
     /// What ended up selected, for the test that asks whether a drag with a
     /// modifier selects a column or a run of lines.
     private func traceSelection() {
