@@ -67,6 +67,7 @@ say "building $APP_NAME, the client, the daemon and the tools (yours is left alo
 
 swiftc -O tools/mousedrag.swift -o "$MOUSE" 2>/dev/null || { say "could not build mousedrag"; exit 1; }
 swiftc -O tools/sendkey.swift -o "$SENDKEY" 2>/dev/null || { say "could not build sendkey"; exit 1; }
+swiftc -O tools/axpress.swift -o "$WORK/axpress" 2>/dev/null || { say "could not build axpress"; exit 1; }
 
 export KEEP_SOCKET=$SOCKET
 # What the app remembers between launches goes in here too, so this test
@@ -302,7 +303,10 @@ check "and the row it came from moved on" yes "$(switched_away_from "$TORN")"
 
 # Closed again, so the rest of the run has one window to talk about: every
 # probe below asks for "the Keep window" and gets whichever is in front.
-"$SENDKEY" "$APP_PID" key 13 cmd alt; sleep 3     # alt-cmd-w
+# With a click, File > Close Window, on the window the tab was pulled into,
+# in front: no chord closes anything in Keep (`swallowUnwantedKeys`).
+focus_app
+"$WORK/axpress" "$APP_NAME" menu File "Close Window" >/dev/null 2>&1; sleep 3
 check "and closing it leaves the one we started with" \
     "$WINDOWS_BEFORE" "$(window_count)"
 

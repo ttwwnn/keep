@@ -70,6 +70,7 @@ say "building $APP_NAME, the client, the daemon and the tools (yours is left alo
 
 swiftc -O tools/mousedrag.swift -o "$MOUSE" 2>/dev/null || { say "could not build mousedrag"; exit 1; }
 swiftc -O tools/sendkey.swift -o "$SENDKEY" 2>/dev/null || { say "could not build sendkey"; exit 1; }
+swiftc -O tools/axpress.swift -o "$WORK/axpress" 2>/dev/null || { say "could not build axpress"; exit 1; }
 
 export KEEP_SOCKET=$SOCKET
 export KEEP_STATE_DIR=$WORK/state
@@ -171,7 +172,10 @@ check "and both are watching that shell again" 2 "$(viewers_settle 2)"
 # ---------------------------------------------- closing a window kills nothing
 say ""
 say "closing one of them"
-"$SENDKEY" "$APP_PID" key 13 cmd alt; sleep 3     # alt-cmd-w
+# With a click, File > Close Window: no chord closes anything in Keep
+# (⌘W and ⌥⌘W are swallowed, `swallowUnwantedKeys`).
+focus_app
+"$WORK/axpress" "$APP_NAME" menu File "Close Window" >/dev/null 2>&1; sleep 3
 check "one window is left" 1 "$(window_count)"
 check "every shell is still running" "$TABS_BEFORE" "$(tab_count)"
 check "with one window watching, not two" 1 "$(viewers_settle 1)"

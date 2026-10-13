@@ -521,6 +521,7 @@ else
 # go of.
 show 2 || say "  (tab 2 would not come up)"
 HIB2=$(trace_count "pool +hibernating w[0-9]+ $WS/2 ")
+FIRST_WINDOW=$("$WORK/mousedrag" windows 2>/dev/null | head -1 | awk '{print $1}')
 # In front for this: with the app behind, a key the menu answers (⌘P) goes
 # to one window and the return after it to the other.
 osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" \
@@ -545,16 +546,19 @@ check "neither window let go of tab 2 while the first shows it" "$HIB2" \
     "$(trace_count "pool +hibernating w[0-9]+ $WS/2 ")"
 check "while tabs out of sight in the second window were let go of" "yes" \
     "$([ -n "$SECOND" ] && grep -aqE "pool +hibernating $SECOND $WS/[56] " "$WORK/app.log" && echo yes || echo no)"
-# ⌥⌘W closes the window in front: the second, put there again first.
+# Closed as a person closes it, with a click — no chord closes anything in
+# Keep: File > Close Window, which closes the window in front, the second,
+# put there again first.
 for attempt in 1 2 3; do
     [ "$(window_count)" -le 1 ] && break
     osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" \
         >/dev/null 2>&1
     sleep 1
-    "$SENDKEY" "$APP_PID" key 13 cmd alt >/dev/null 2>&1      # ⌥⌘W
+    "$AXPRESS" "$APP_NAME" menu File "Close Window" >/dev/null 2>&1
     until_true 10 '[ "$(window_count)" -le 1 ]'
 done
-check "the second window is closed, the first left" "1" "$(window_count)"
+check "the second window is closed, the first left" "1 $FIRST_WINDOW" \
+    "$(window_count) $("$WORK/mousedrag" windows 2>/dev/null | head -1 | awk '{print $1}')"
 give_back_front
 fi
 
