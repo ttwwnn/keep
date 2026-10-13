@@ -12,6 +12,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { SearchAddon } from "@xterm/addon-search";
 import * as api from "./api";
+import { installKitty, type Kitty } from "./kitty";
 import { installLinks, type LinkEnv, type Links } from "./links";
 import { installOsc52 } from "./osc52";
 import { isSafePaste, pasteQuestion, preparePaste, type Question } from "./paste";
@@ -73,6 +74,8 @@ export class TermView {
   private readonly scheme: SchemeReporter;
   /** The addresses and paths in its text that can be clicked. */
   readonly links: Links;
+  /** The keyboard protocol the program in it has turned on. */
+  private readonly kitty: Kitty;
   /** The last text a program put on the clipboard (OSC 52), and when. */
   programCopied: { text: string; at: number } | null = null;
   /** When the pointer last went down in this terminal. */
@@ -146,6 +149,8 @@ export class TermView {
       answer: (data) => this.term.input(data, false),
       wrote: (text) => (this.programCopied = { text, at: Date.now() }),
     });
+    // A program may ask for more of the keyboard than a terminal gives, and is told it can have it.
+    this.kitty = installKitty(this.term, (data) => this.term.input(data, false));
     this.fit = new FitAddon();
     this.search = new SearchAddon({ highlightLimit: 2000 });
     this.term.loadAddon(this.fit);
@@ -448,6 +453,11 @@ export class TermView {
     return copied.at >= this.pressedAt && this.pressedAt > windowBlurredAt ? copied.text : undefined;
   }
 
+  /** The Kitty keyboard flags the program has on; 0 while it has asked for none. */
+  kittyFlags(): number {
+    return this.kitty.flags();
+  }
+
   /** Bytes as if typed. */
   type(data: string): Promise<void> {
     return this.attachment ? this.attachment.input(data) : Promise.reject(new Error("aba não anexada"));
@@ -466,6 +476,7 @@ export class TermView {
     clearTimeout(this.badgeTimer);
     this.observer.disconnect();
     this.links.dispose();
+    this.kitty.dispose();
     this.release();
     this.disableWebgl();
     this.term.dispose();

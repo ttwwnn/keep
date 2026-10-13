@@ -37,6 +37,7 @@ import {
 import type { TermView } from "./terminals";
 import { keysToCut } from "./cut";
 import { dropText, lightPane, paneAt, shellKind } from "./drop";
+import { kittyKey } from "./kittyKeys";
 
 export function perform(action: Action): void {
   switch (action.kind) {
@@ -149,20 +150,15 @@ function chordOf(event: KeyboardEvent): Action | null {
 
 /**
  * A key on its way into a terminal: true lets xterm.js have it. The window's
- * chords go on to the window; Shift+Enter becomes what Claude Code reads as a
- * new line; Ctrl+C with something selected copies it rather than
- * interrupting the program.
+ * chords go on to the window; Ctrl+C with something selected copies it rather
+ * than interrupting the program; with a program speaking the Kitty keyboard
+ * protocol, the keys it asked to be told about are sent as it asked; and
+ * Shift+Enter becomes what Claude Code reads as a new line where the protocol
+ * is not there to say so.
  */
 export function terminalKey(view: TermView, event: KeyboardEvent): boolean {
   const mac = isMac.value;
   if (chordOf(event)) return false;
-  if (isShiftEnter(event)) {
-    if (event.type === "keydown") {
-      event.preventDefault();
-      void view.type(SHIFT_ENTER_SEQUENCE).catch(() => {});
-    }
-    return false;
-  }
   if (isPlainCopy(event, mac) && view.term.hasSelection()) {
     if (event.type === "keydown") {
       event.preventDefault();
@@ -176,6 +172,22 @@ export function terminalKey(view: TermView, event: KeyboardEvent): boolean {
     if (event.type === "keydown") {
       event.preventDefault();
       cutSelection(view);
+    }
+    return false;
+  }
+  const flags = view.kittyFlags();
+  if (flags !== 0) {
+    const sequence = kittyKey(event, flags, { mac });
+    if (sequence !== undefined) {
+      if (event.type === "keydown") event.preventDefault();
+      if (sequence !== "") void view.type(sequence).catch(() => {});
+      return false;
+    }
+  }
+  if (isShiftEnter(event)) {
+    if (event.type === "keydown") {
+      event.preventDefault();
+      void view.type(SHIFT_ENTER_SEQUENCE).catch(() => {});
     }
     return false;
   }
