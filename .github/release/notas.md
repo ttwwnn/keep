@@ -46,4 +46,22 @@ Fechar a janela não fecha nada: os terminais continuam no daemon e voltam como 
   todas as chaves, e não só a do Jev: "restam" e "gasto" somam o crédito comprado; o gasto da chave do
   Jev fica na dica.
 
+**Abas guardadas, zoom e novidades (0.2.6):**
+- **hibernação sem perda:** a aba hibernada é guardada pelo próprio cliente `keep` (espelho da tela e
+  entrega do terminal ao daemon), e nada do que ela tinha se perde ao acordar: bordas, links após
+  quebra de linha, área de transferência, cor do tema e imagem desenhada (que acorda a aba);
+- **reinício traz tudo de volta:** `keep restauro` recria as abas e as conversas sozinho, e
+  `keep continuar` retoma a conversa parada por login caído, rede ou limite de uso;
+- **troca de conta a quente:** a conversa do Claude muda de conta sem fechar, no armazém de login da
+  própria aba, e o título mostra "(IA·1→2)" até o Claude responder na conta nova;
+- **contas pela posição:** cada conta é "IA-n", a ordem do rodapé de consumo, em todas as telas;
+- **barra do Claude Code:** modelo e esforço clicáveis só para a conversa, e ajudantes
+  (`keep nova`, `keep ia statusline`, `confiar`, `confinar`) dentro do próprio Keep;
+- **zoom:** o 100% é o tamanho da fonte do usuário mais 25%; o texto do chrome, os ícones, a bateria
+  e o quadro de memória acompanham o zoom. O quadro de RAM abre o Monitor de Atividade;
+- **lixeira de worktrees:** as worktrees de abas fechadas sem a pergunta também vão para a Lixeira
+  (macOS e Windows); o que o Keep mandou para a Lixeira sai de vez depois de 3 dias;
+- ⌘X recorta pelas linhas da caixa do Claude Code, ⌘V entra "bracketed" quando o programa pede, e o
+  Windows entende "max" e "ultra" do Codex 0.162.
+
 Detalhes em `docs/ia.md`.
