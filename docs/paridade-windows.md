@@ -171,7 +171,9 @@ formato do Mac) e quem prende é o `keep ia confinar -- <programa>`.
   outras unidades), o registro do sistema, a área de trabalho (o programa preso
   pode mandar teclas a outras janelas), o WSL. Programas
   instalados só para o usuário (nvm, cargo, pyenv) ficam de fora, como o
-  `~/.nvm` no Mac; o Gerenciador de Credenciais do Git também.
+  `~/.nvm` no Mac; o Gerenciador de Credenciais do Git também. Um arquivo
+  movido (não copiado) de fora para dentro da pasta presa leva a permissão que
+  tinha, e a IA não o abre.
 
 ## Fatia `windows` (várias janelas)
 
