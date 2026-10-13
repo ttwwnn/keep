@@ -718,7 +718,7 @@ final class TerminalSurfaceView: NSView {
     func takeSizeOutOfSight() {
         // The layout's size waits to be shown, as for any surface out of
         // sight; the one the pane rested at is taken now, the text at the
-        // size it rested at too — the grid its program draws for.
+        // size it rested at too.
         updateSize()
         guard let surface else { return }
         if let points = restingPoints, points != GhosttyApp.shared.terminalFontSize {
@@ -729,6 +729,35 @@ final class TerminalSurfaceView: NSView {
         sentSize = size
         Trace.log("layout", "\(workspace)/\(tab) size \(Int(size.width))x\(Int(size.height)) (out of sight)")
         ghostty_surface_set_size(surface, UInt32(max(1, size.width)), UInt32(max(1, size.height)))
+        // And then the grid its program draws for, as the daemon has it,
+        // where the size the pane rested at gives another: the window's
+        // grid, which its client never told the daemon when the tab was let
+        // go of a moment after it was shown, or a smaller viewer of the tab
+        // somewhere else. What the tab is woken for is drawn for that grid.
+        guard let program = Self.programGrid(workspace: workspace, tab: tab) else { return }
+        let now = ghostty_surface_size(surface)
+        guard let fitted = KeeperProtocol.pixels(
+            (Double(size.width), Double(size.height)),
+            grid: (Int(now.columns), Int(now.rows)),
+            cell: (Double(now.cell_width_px), Double(now.cell_height_px)),
+            program: program)
+        else { return }
+        let fit = CGSize(width: fitted.width, height: fitted.height)
+        sentSize = fit
+        Trace.log("layout", "\(workspace)/\(tab) size \(Int(fit.width))x\(Int(fit.height)) "
+            + "(out of sight, the program's \(program.cols)x\(program.rows))")
+        ghostty_surface_set_size(surface, UInt32(max(1, fit.width)), UInt32(max(1, fit.height)))
+    }
+
+    /// The grid the daemon gives a tab — the smallest viewer's looking, or
+    /// the last one told while nobody looks —: the grid its program draws
+    /// for. Nil when the daemon does not answer or has none.
+    static func programGrid(workspace: String, tab: UInt32) -> (cols: Int, rows: Int)? {
+        guard let listing = try? Daemon.list(),
+              let found = listing.first(where: { $0.name == workspace })?.tabs.first(where: { $0.id == tab }),
+              found.cols > 0, found.rows > 0
+        else { return nil }
+        return (Int(found.cols), Int(found.rows))
     }
 
     private func flushPendingSize() {
