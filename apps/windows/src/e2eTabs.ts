@@ -19,7 +19,10 @@ import {
   activePane,
   activeTab,
   activeWorkspace,
+  answer,
+  closePane,
   createWorkspace,
+  dialog,
   editing,
   focusPane,
   gui,
@@ -35,9 +38,11 @@ import {
   tabLabel,
   tabsByWorkspace,
   terminals,
+  toggleSidebar,
   toggleVerticalTabs,
   workspaces,
 } from "./store";
+import { menu } from "./ui/common";
 
 type StepRunner = (name: string, run: () => Promise<string>) => Promise<void>;
 interface Point {
@@ -334,6 +339,65 @@ export async function tabsSteps(step: StepRunner, windows: boolean, home: string
     return `${count} → ${idsOf(A).length} abas (a aba ${tab.root.id} deixou de ter painéis)`;
   });
 
+  await step("painéis: o painel segurado sobre uma aba da fileira a abre, e soltar nela junta o painel", async () => {
+    const x = (await newTab(A))!;
+    const y = (await newTab(A))!;
+    select(A, x);
+    await split(SPLIT_RIGHT);
+    await waitFor(() => tabsByWorkspace.value.get(A)?.find((t) => t.root.id === x)?.panes.length === 2, 10000, "a aba com dois painéis");
+    const grips = await waitFor(() => (all(".tab-view.shown .pane-grip").length === 2 ? all<HTMLElement>(".tab-view.shown .pane-grip") : null), 5000, "as duas alças");
+    const pane = tabsByWorkspace.value.get(A)!.find((t) => t.root.id === x)!.panes[1].id;
+    const strip = () => all<HTMLElement>(".strip .tab").find((e) => e.dataset.tab === tabKey(A, y));
+    const tab = strip();
+    check(tab, "sem a aba de destino na fileira");
+    await drag(grips[1], line(middle(grips[1]), middle(tab), 10), async () => {
+      // Held over the tab for a moment, it opens.
+      await waitFor(() => activeTab.value?.root.id === y, 2000, "a aba abrir sob o painel");
+      await photo("paineis-mola", windows);
+    });
+    await waitFor(() => tabsByWorkspace.value.get(A)?.find((t) => t.root.id === y)?.panes.some((p) => p.id === pane), 10000, "o painel na outra aba");
+    const left = tabsByWorkspace.value.get(A)?.find((t) => t.root.id === x);
+    check(left && left.panes.length === 1, `a aba de origem ficou com ${left?.panes.length} painéis`);
+    check(activeTab.value?.root.id === y, "a aba de destino não ficou em frente");
+    return `o painel ${pane} saiu da aba ${x} e entrou na ${y}, que abriu sob ele`;
+  });
+
+  await step("painéis: fechar o painel raiz passa o nome e o lugar da aba ao herdeiro", async () => {
+    const x = (await newTab(A))!;
+    select(A, x);
+    renameTab(A, x, "Herdada");
+    await split(SPLIT_RIGHT);
+    const heir = await waitFor(() => tabsByWorkspace.value.get(A)?.find((t) => t.root.id === x)?.panes[1]?.id, 10000, "a aba com dois painéis");
+    const place = idsOf(A).indexOf(x);
+    const closing = closePane(A, x);
+    await waitFor(() => dialog.value, 3000, "a pergunta de fechar o painel");
+    answer("close");
+    await closing;
+    const tab = await waitFor(() => tabsByWorkspace.value.get(A)?.find((t) => t.root.id === heir), 10000, "o herdeiro como aba");
+    check(tab.panes.length === 1, "o herdeiro ficou com painéis demais");
+    check(tabLabel(A, tab, 0) === "Herdada", `a aba se chama “${tabLabel(A, tab, 0)}”`);
+    check(idsOf(A).indexOf(heir) === place, `o herdeiro está no lugar ${idsOf(A).indexOf(heir)}, não no ${place}`);
+    check(activeTab.value?.root.id === heir, "a aba em frente não seguiu o herdeiro");
+    renameTab(A, heir, "");
+    return `o painel ${heir} é a aba ${x} agora, no lugar ${place}, com o nome`;
+  });
+
+  await step("workspaces: arrastar o cabeçalho pela barra lateral reordena a lista", async () => {
+    const names = () => all<HTMLElement>(".sidebar .workspace").map((e) => e.dataset.workspace);
+    check(names().indexOf(A) < names().indexOf(B), `${A} devia vir antes de ${B}: ${names()}`);
+    const header = one<HTMLElement>(`.sidebar .workspace[data-workspace="${B}"] .workspace-row`);
+    const above = middle(one<HTMLElement>(`.sidebar .workspace[data-workspace="${A}"] .workspace-row`));
+    await drag(header, line(middle(header), { x: above.x, y: above.y - 8 }, 10), () => photo("workspaces-arrasto", windows));
+    await waitFor(() => names().indexOf(B) < names().indexOf(A), 3000, "a nova ordem dos workspaces");
+    check(gui.value.order.indexOf(B) < gui.value.order.indexOf(A), "o estado não guarda a ordem");
+    // And back.
+    const again = one<HTMLElement>(`.sidebar .workspace[data-workspace="${A}"] .workspace-row`);
+    const below = middle(one<HTMLElement>(`.sidebar .workspace[data-workspace="${B}"] .workspace-row`));
+    await drag(again, line(middle(again), { x: below.x, y: below.y + 8 }, 10));
+    await waitFor(() => names().indexOf(A) < names().indexOf(B), 3000, "a ordem de volta");
+    return `${B} subiu e ${A} voltou a subir`;
+  });
+
   await step("renomear: Enter sem mudar não fixa o título, e há um só campo", async () => {
     const root = activeTab.value!.root.id;
     const key = tabKey(A, root);
@@ -404,13 +468,26 @@ export async function tabsSteps(step: StepRunner, windows: boolean, home: string
   await step("abas verticais: a fileira sai e as abas ficam na barra lateral", async () => {
     select(A, idsOf(A)[0]);
     await waitFor(() => stripIds().length > 1, 3000, "a fileira com abas");
-    toggleVerticalTabs();
+    // From the empty stretch of the row itself, as a person would.
+    one<HTMLElement>(".strip").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+    const item = await waitFor(() => document.querySelector<HTMLElement>(".context-menu .menu-item"), 3000, "o menu da fileira");
+    check(menu.value?.items.length === 1, "o menu da fileira tem mais que um item");
+    item.click();
     await waitFor(() => stripIds().length === 0, 3000, "a fileira sair"); 
     check(rowIds(A).length === idsOf(A).length, "a barra lateral perdeu abas");
     await photo("abas-verticais", windows);
+    // Nowhere to type a name in place: it is asked for.
+    toggleSidebar();
+    const root = activeTab.value!.root.id;
+    startRename(A, root);
+    await waitFor(() => dialog.value?.title === "Renomear a aba", 3000, "a pergunta do nome");
+    answer("rename", { name: "Pela pergunta" });
+    await waitFor(() => gui.value.tabNames[tabKey(A, root)] === "Pela pergunta", 3000, "o nome dado pela pergunta");
+    renameTab(A, root, "");
+    toggleSidebar();
     toggleVerticalTabs();
     await waitFor(() => stripIds().length === idsOf(A).length, 3000, "a fileira voltar");
-    return "sem a fileira, com as abas na barra lateral, e de volta";
+    return "sem a fileira, com as abas na barra lateral; sem ela, o nome é perguntado; e de volta";
   });
 
   await step("hibernação: com mais de seis abas as menos recentes adormecem e acordam com a rolagem", async () => {

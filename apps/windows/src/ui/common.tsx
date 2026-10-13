@@ -2,6 +2,7 @@
 
 import { signal } from "@preact/signals";
 import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
+import { keptName } from "../naming";
 
 /**
  * A name being edited in place: Enter or leaving keeps it, Esc puts it back.
@@ -30,7 +31,7 @@ export function InlineEditor(props: {
   const finish = (value: string | null, keyboard: "back" | "elsewhere") => {
     if (done.current) return;
     done.current = true;
-    props.onDone(value !== null && value.trim() === seed.current.trim() ? null : value, keyboard);
+    props.onDone(keptName(value, seed.current), keyboard);
   };
   return (
     <input

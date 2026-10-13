@@ -38,6 +38,7 @@ import { chooseClaudeEffort, chooseClaudeModel, chooseCodex, type PickerIO } fro
 import { baseName, isPathTitle, rootTabs, type RootTab } from "./layout";
 import { defaultState, normalizeState, tabKey, type GuiState, type RestoreWorkspace } from "./state";
 import { refile } from "./hibernation";
+import { listed, neighbour, putAwayWith, putAwayWithout, stillRunning } from "./putAway";
 import { arrangeTabs, heirsOf, insertBefore, memberIds, pruneOrders, substitute } from "./tabOrder";
 import { TerminalManager, viewKey, type TermView } from "./terminals";
 import { DEFAULT_FONT_SIZE, applyPalette, defaultFontFamily, onSystemAppearanceChange, resolvePalette } from "./theme";
@@ -157,10 +158,7 @@ export const orderedWorkspaces = computed(() => {
 });
 
 /** The workspaces the sidebar lists: those not put away, still running and a Go To from being listed again. */
-export const shownWorkspaces = computed(() => {
-  const away = new Set(gui.value.hidden);
-  return orderedWorkspaces.value.filter((w) => !away.has(w.name));
-});
+export const shownWorkspaces = computed(() => listed(orderedWorkspaces.value, gui.value.hidden));
 
 /** A workspace's tabs, each with its panes, in the order the window gave them (tabOrder.ts). */
 function orderedTabs(tabs: WorkspaceInfo["tabs"], remembered: number[] | undefined): RootTab[] {
@@ -371,7 +369,7 @@ function reconcile(list: WorkspaceInfo[], previous: WorkspaceInfo[]): void {
   const tabNames = Object.fromEntries(Object.entries(named).filter(([k]) => alive.has(k)));
   const workspaceNames = Object.fromEntries(Object.entries(state.workspaceNames).filter(([k]) => names.has(k)));
   const folded = state.folded.filter((n) => names.has(n));
-  const hidden = state.hidden.filter((n) => names.has(n));
+  const hidden = stillRunning(state.hidden, names);
   const lastTab = Object.fromEntries(
     Object.entries(state.lastTab)
       .filter(([k]) => names.has(k))
@@ -817,7 +815,7 @@ export function select(workspace: string, tab?: number): void {
   const id = tab ?? gui.value.lastTab[workspace] ?? tabs[0]?.root.id;
   update((s) => {
     // Going to a workspace puts it back in the sidebar if it was put away.
-    s.hidden = s.hidden.filter((n) => n !== workspace);
+    s.hidden = putAwayWithout(s.hidden, workspace);
     if (id === undefined) {
       s.active = { workspace, tab: -1 };
       return;
@@ -1180,12 +1178,10 @@ export function toggleVerticalTabs(): void {
  */
 export function putAway(workspace: string): void {
   const names = shownWorkspaces.value.map((w) => w.name);
-  const at = names.indexOf(workspace);
-  if (at < 0) return;
-  // Standing in the one going out: step to a neighbour rather than stay
-  // pointed at something the list no longer has.
-  const next = activeWorkspace.value === workspace ? names[at + 1] ?? names[at - 1] : undefined;
-  update((s) => void (s.hidden = [...s.hidden.filter((n) => n !== workspace), workspace]));
+  if (!names.includes(workspace)) return;
+  // Standing in the one going out: step to a neighbour.
+  const next = activeWorkspace.value === workspace ? neighbour(names, workspace) : undefined;
+  update((s) => void (s.hidden = putAwayWith(s.hidden, workspace)));
   if (next !== undefined) select(next);
 }
 
@@ -1263,7 +1259,7 @@ export async function moveTabTo(workspace: string, tab: RootTab, to: string, bef
         if (inFront) {
           s.active = { workspace: to, tab: newRoot };
           s.lastTab[to] = newRoot;
-          s.hidden = s.hidden.filter((n) => n !== to);
+          s.hidden = putAwayWithout(s.hidden, to);
         }
       });
       applyList(list);

@@ -6,6 +6,17 @@
 // one; and anything done meanwhile — a key, another press, the pointer
 // moving off the name — means the click was not asking for a name.
 
+/**
+ * The name a field comes to, once it is done: what was typed, or null when
+ * there is nothing to keep — Esc, or text that came back as it went out. A
+ * title kept by accident would pin it as it stood, and the tab would stop
+ * following its program, all for a return pressed out of habit.
+ */
+export function keptName(typed: string | null, seed: string): string | null {
+  if (typed === null) return null;
+  return typed.trim() === seed.trim() ? null : typed;
+}
+
 /** Windows' own double-click time, which the page cannot ask for. */
 export const SLOW_CLICK_MS = 500;
 
