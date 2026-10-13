@@ -16,8 +16,8 @@ use windows_sys::Win32::Foundation::{
 };
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSidToSidW, EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW,
-    NO_MULTIPLE_TRUSTEE, SE_FILE_OBJECT, SetEntriesInAclW, SetNamedSecurityInfoW, TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN,
-    TRUSTEE_W,
+    GetSecurityInfo, NO_MULTIPLE_TRUSTEE, SE_FILE_OBJECT, SE_KERNEL_OBJECT, SetEntriesInAclW, SetNamedSecurityInfoW,
+    SetSecurityInfo, TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
 };
 use windows_sys::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_REVISION, ACL_SIZE_INFORMATION, AclSizeInformation, AddAccessAllowedAce,
@@ -680,6 +680,58 @@ pub fn nao_morrer_com_ctrl_c() {
         i32::from(tipo == CTRL_C_EVENT || tipo == CTRL_BREAK_EVENT)
     }
     unsafe { SetConsoleCtrlHandler(Some(rotina), 1) };
+}
+
+/// O que o processo preso pode fazer com o próprio token: consultar, copiar
+/// e passar-se por ele (`TOKEN_DUPLICATE | TOKEN_IMPERSONATE | TOKEN_QUERY |
+/// TOKEN_QUERY_SOURCE` e `READ_CONTROL`). Quase todo programa pergunta ao
+/// token quem ele é (o `git`, ao conferir de quem é a pasta; o .NET; o Node).
+const O_QUE_O_TOKEN_DEIXA: u32 = 0x0002_001E;
+
+/// Deixa o processo preso abrir o próprio token. O token de um processo só
+/// nomeia, na DACL, quem o criou; com a segunda checagem do token restrito,
+/// nenhum SID de restrição casaria e o `OpenProcessToken` do próprio processo
+/// seria negado. Quem dá a permissão é este processo, que pode (o usuário é o
+/// dono) e antes de o filho andar. O que não der é só dito: um token que já
+/// se abre, ou que nunca se abrirá, não impede o resto.
+pub fn abrir_o_token_ao_filho(filho: &Filho, sid: &Sid) -> Result<(), String> {
+    let mut t: HANDLE = null_mut();
+    // READ_CONTROL e WRITE_DAC: o que `GetSecurityInfo` e `SetSecurityInfo` pedem.
+    if unsafe { OpenProcessToken(filho.processo.0, 0x0002_0000 | 0x0004_0000, &mut t) } == 0 {
+        return Err(falha_ultimo("não foi possível abrir o token do filho"));
+    }
+    let token = Alca(t);
+    let (mut sd, mut dacl): (PSECURITY_DESCRIPTOR, *mut ACL) = (null_mut(), null_mut());
+    let r = unsafe {
+        GetSecurityInfo(token.0, SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION, null_mut(), null_mut(), &mut dacl, null_mut(), &mut sd)
+    };
+    if r != 0 {
+        return Err(falha("não foi possível ler as permissões do token do filho", r));
+    }
+    let _guarda = Local(sd);
+    let ea = EXPLICIT_ACCESS_W {
+        grfAccessPermissions: O_QUE_O_TOKEN_DEIXA,
+        grfAccessMode: GRANT_ACCESS,
+        grfInheritance: NO_INHERITANCE,
+        Trustee: TRUSTEE_W {
+            pMultipleTrustee: null_mut(),
+            MultipleTrusteeOperation: NO_MULTIPLE_TRUSTEE,
+            TrusteeForm: TRUSTEE_IS_SID,
+            TrusteeType: TRUSTEE_IS_UNKNOWN,
+            ptstrName: sid.ptr() as PWSTR,
+        },
+    };
+    let mut nova: *mut ACL = null_mut();
+    let r = unsafe { SetEntriesInAclW(1, &ea, dacl, &mut nova) };
+    if r != 0 {
+        return Err(falha("SetEntriesInAcl (token do filho)", r));
+    }
+    let _nova = Local(nova as *mut c_void);
+    let r = unsafe { SetSecurityInfo(token.0, SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION, null_mut(), null_mut(), nova, null()) };
+    if r != 0 {
+        return Err(falha("não foi possível dar a permissão no token do filho", r));
+    }
+    Ok(())
 }
 
 /// Esperar sem prazo.

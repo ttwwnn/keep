@@ -105,8 +105,10 @@ formato do Mac) e quem prende é o `keep ia confinar -- <programa>`.
   `envolve`) prendem; digitar `claude` no shell, não.
 - [ ] O que o Windows não deixa fechar sem administrador: pastas de rede (o
   servidor confere o usuário, não o token), o que o Windows deixa qualquer um
-  ler (`C:\Windows`, `Arquivos de Programas`, e, no nível compatível, o que
-  `Usuários` lê em outras unidades), o registro do sistema, o WSL. Programas
+  ler (`C:\Windows`, `Arquivos de Programas`, e, nos níveis compatível e amplo,
+  que valem se o estrito não deixa o programa partir, o que `Usuários` lê em
+  outras unidades), o registro do sistema, a área de trabalho (o programa preso
+  pode mandar teclas a outras janelas), o WSL. Programas
   instalados só para o usuário (nvm, cargo, pyenv) ficam de fora, como o
   `~/.nvm` no Mac; o Gerenciador de Credenciais do Git também.
 

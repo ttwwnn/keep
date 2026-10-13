@@ -9,7 +9,7 @@ use std::path::Path;
 
 use super::sistema::{self, Padrao, Sid};
 use super::{
-    Ambiente, Entrada, Nivel, Quem, ambiente_preso, bloco_de_ambiente, dentro_de, eh_script_do_cmd, falha_de_partida,
+    Ambiente, Entrada, NIVEIS, Nivel, Quem, ambiente_preso, bloco_de_ambiente, dentro_de, eh_script_do_cmd, falha_de_partida,
     junta, linha_de_comando, linha_de_script, lugar_da_isca, pasta_larga_demais, plano, procura_programa, sem_prefixo,
     sid_base, sid_da_pasta, sids_de_restricao, sondar_fs,
 };
@@ -196,13 +196,16 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
     }
 
     let mut tentativas: Vec<String> = Vec::new();
-    for nivel in [Nivel::Estrito, Nivel::Compativel] {
+    for nivel in NIVEIS {
         let sids: Vec<Sid> = sids_de_restricao(nivel, &pasta_txt, &base_txt, &logon_txt)
             .iter()
             .map(|s| Sid::de_texto(s))
             .collect::<Result<_, _>>()?;
         let a_restringir: Vec<&Sid> = sids.iter().collect();
-        let token = sistema::token_restrito(&token0, &usuario, &sistema_sid, &a_restringir, &administrativos, &[&sid_pasta, &sid_basico])?;
+        // A DACL padrão do token: o usuário, o sistema e a pasta. Não o SID base,
+        // que todo workspace preso leva: com ele o processo de um workspace
+        // abriria os objetos (e o processo) de outro.
+        let token = sistema::token_restrito(&token0, &usuario, &sistema_sid, &a_restringir, &administrativos, &[&sid_pasta])?;
         if !sistema::e_restrito(&token) {
             return Err("o token que devia ser restrito não é".into());
         }
@@ -227,6 +230,9 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
                 rastro(|| format!("fora do Job: {e}"));
             }
         }
+        if let Err(e) = sistema::abrir_o_token_ao_filho(&filho, &sid_pasta) {
+            rastro(|| format!("o token do filho não foi aberto a ele: {e}"));
+        }
         sistema::retomar(&filho)?;
         let cedo = sistema::esperar(&filho.processo, OLHADA_NA_PARTIDA_MS)?;
         if let Some(c) = cedo.filter(|c| falha_de_partida(*c)) {
@@ -246,6 +252,9 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
             None => sistema::esperar(&filho.processo, sistema::INFINITO)?.unwrap_or(1),
         };
         rastro(|| format!("o programa saiu com {codigo} (nível {nivel:?})"));
+        if nivel != Nivel::Estrito {
+            rastro(|| "nível mais aberto que o estrito: outras unidades de disco podem estar legíveis".to_string());
+        }
         return Ok(codigo as i32);
     }
     Err(format!("o Windows não deixou o programa partir com o token restrito ({})", tentativas.join("; ")))

@@ -6,10 +6,18 @@
 //! programa roda com um token RESTRITO (`CreateRestrictedToken`), que faz uma
 //! segunda checagem de acesso: além de permitir ao usuário, o objeto precisa
 //! permitir a um dos SIDs de restrição do token. Os SIDs de restrição são só
-//! os do sistema que qualquer programa e o console usam (Todos, Restrito, o
-//! da sessão) e dois do Keep, que as pastas permitidas recebem de propósito.
-//! O perfil do usuário só dá acesso ao usuário: não passa na segunda
-//! checagem, nem para ler nem para gravar.
+//! os do sistema que qualquer programa e o console usam (Todos, Restrito, os
+//! pacotes de aplicativo, o da sessão de logon) e dois do Keep, que as pastas
+//! permitidas recebem de propósito. O perfil do usuário só dá acesso ao
+//! usuário: não passa na segunda checagem, nem para ler nem para gravar.
+//!
+//! Os do sistema vêm em três níveis (`Nivel`): o estrito (o que o Windows dá a
+//! todos e aos pacotes de aplicativo), o compatível (com `Usuários`: a lista
+//! do USER_LIMITED do Chromium) e o amplo (com os grupos de toda sessão
+//! interativa). O primeiro que deixa o programa partir vale. Os programas
+//! comuns não partem de um token restrito como o Chromium parte os dele (que
+//! começa a thread inicial com um token folgado e o aperta depois): por isso
+//! os níveis, e por isso a prova abaixo, que vale para os três.
 //!
 //! Por que token restrito e não AppContainer. O AppContainer isola a rede:
 //! sem uma isenção que só o administrador concede, o `localhost` some (o
@@ -28,10 +36,13 @@
 //!    (derivado do caminho): trocar de pasta não leva a permissão antiga
 //!    junto. O resto da lista usa um SID base, do usuário.
 //! 2. O token restrito leva esses SIDs, perde os privilégios e os grupos
-//!    administrativos, e ganha uma DACL padrão que os inclui (senão um objeto
-//!    criado por um processo preso não abre para o irmão dele).
+//!    administrativos, e ganha uma DACL padrão com o usuário, o sistema e o
+//!    SID da pasta (senão um objeto criado por um processo preso não abre para
+//!    o irmão dele; sem o SID base, o de um workspace não abre para o de outro).
 //! 3. O processo nasce suspenso, entra num Job que o mata junto com este
-//!    processo, e só então anda. O console da aba passa por herança.
+//!    processo, ganha acesso ao próprio token (quase todo programa pergunta
+//!    ao token quem ele é) e só então anda. O console da aba passa por
+//!    herança, e é conferido que chegou.
 //!
 //! Falha FECHADA, como no macOS: sem pasta, sem permissão para preparar a
 //! pasta, sem token ou sem processo, a IA não sobe. Antes de subir, o token é
@@ -40,9 +51,13 @@
 //! contém não é deixado passar calado.
 //!
 //! O que NÃO contém: o que o Windows deixa qualquer um ler (`C:\Windows`,
-//! `Program Files`, o que `Usuários` lê em outras unidades, `C:\Users\Public`),
-//! as pastas de rede (o servidor confere o usuário, não o token) e o
-//! registro do sistema. O perfil do usuário e o que está nele ficam de fora.
+//! `Program Files`, o que `Usuários` lê em outras unidades nos níveis que o
+//! levam, `C:\Users\Public`), as pastas de rede (o servidor confere o
+//! usuário, não o token), o registro do sistema, a área de trabalho (o
+//! processo preso divide a do usuário e pode mandar mensagens e teclas às
+//! outras janelas) e o que um serviço faz em nome do usuário (abrir um
+//! programa pelo shell, o WSL), como no macOS o `open`. O perfil do usuário e
+//! o que está nele ficam de fora.
 //!
 //! Esta parte não chama o Windows: caminhos, SIDs, a lista de permissões, a
 //! linha de comando e o ambiente, para os testes rodarem em qualquer sistema.
@@ -77,6 +92,10 @@ pub const SID_RESTRITO: &str = "S-1-5-12";
 pub const SID_USUARIOS: &str = "S-1-5-32-545";
 pub const SID_PACOTES: &str = "S-1-15-2-1";
 pub const SID_PACOTES_RESTRITOS: &str = "S-1-15-2-2";
+pub const SID_AUTENTICADOS: &str = "S-1-5-11";
+pub const SID_INTERATIVO: &str = "S-1-5-4";
+pub const SID_LOCAL: &str = "S-1-2-0";
+pub const SID_CONSOLE: &str = "S-1-2-1";
 pub const SID_SISTEMA: &str = "S-1-5-18";
 
 /// A primeira sub-autoridade dos SIDs do Keep (`KEEP` em ASCII): um número
@@ -108,20 +127,31 @@ pub fn sid_base(usuario: &str) -> String {
     sid_do_keep(usuario, "base")
 }
 
-/// Quanto do sistema o token restrito enxerga além do que o Keep concede.
+/// Quanto do sistema o token restrito enxerga além do que o Keep concede. O
+/// primeiro nível que deixa o programa partir é o que vale; a prova do token
+/// vale para os três (o perfil do usuário fica negado em todos).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Nivel {
     /// Só o que o Windows concede a todos e aos pacotes de aplicativo: o que
     /// está em outras unidades e que só `Usuários` lê fica de fora.
     Estrito,
-    /// O estrito mais `Usuários`: se o sistema não cumpre o estrito, este é
-    /// o que o Windows Terminal e o Chromium usam. Lê o que `Usuários` lê.
+    /// O estrito mais `Usuários`: a lista do USER_LIMITED do Chromium (que o
+    /// Firefox e o Chrome usam). Lê o que `Usuários` lê.
     Compativel,
+    /// O compatível mais os grupos que todo token de uma sessão interativa
+    /// leva (autenticados, interativo, local, console): para o computador em
+    /// que algum objeto do console ou da sessão só os nomeia. Também grava
+    /// onde os autenticados gravam (a raiz de outras unidades).
+    Amplo,
 }
+
+/// Os níveis, do mais fechado ao mais aberto.
+pub const NIVEIS: [Nivel; 3] = [Nivel::Estrito, Nivel::Compativel, Nivel::Amplo];
 
 /// Os SIDs de restrição do token de um nível: o da pasta, o base, o da sessão
 /// de logon (sem ele o processo não abre a estação de janelas) e os do
-/// sistema.
+/// sistema. O do usuário e o dos administradores nunca entram: seriam o
+/// perfil de volta.
 pub fn sids_de_restricao(nivel: Nivel, da_pasta: &str, base: &str, logon: &str) -> Vec<String> {
     let mut v = vec![
         da_pasta.to_string(),
@@ -132,8 +162,11 @@ pub fn sids_de_restricao(nivel: Nivel, da_pasta: &str, base: &str, logon: &str) 
         SID_PACOTES.to_string(),
         SID_PACOTES_RESTRITOS.to_string(),
     ];
-    if nivel == Nivel::Compativel {
+    if nivel != Nivel::Estrito {
         v.push(SID_USUARIOS.to_string());
+    }
+    if nivel == Nivel::Amplo {
+        v.extend([SID_AUTENTICADOS, SID_INTERATIVO, SID_LOCAL, SID_CONSOLE].map(String::from));
     }
     v
 }
@@ -813,18 +846,25 @@ mod testes {
     }
 
     #[test]
-    fn os_niveis_diferem_so_em_usuarios() {
+    fn cada_nivel_acrescenta_ao_anterior_e_nenhum_traz_o_usuario() {
         let e = sids_de_restricao(Nivel::Estrito, "P", "B", "L");
         let c = sids_de_restricao(Nivel::Compativel, "P", "B", "L");
+        let a = sids_de_restricao(Nivel::Amplo, "P", "B", "L");
         assert_eq!(&e[..3], ["P", "B", "L"]);
         assert!(e.contains(&SID_TODOS.to_string()) && e.contains(&SID_PACOTES.to_string()));
         assert!(!e.contains(&SID_USUARIOS.to_string()));
         assert_eq!(c.len(), e.len() + 1);
         assert!(c.contains(&SID_USUARIOS.to_string()));
-        // O usuário e os autenticados nunca entram: seriam o perfil de volta.
-        for lista in [&e, &c] {
-            assert!(!lista.contains(&"S-1-5-11".to_string()));
-            assert!(!lista.iter().any(|s| s.starts_with("S-1-5-21-")));
+        assert!(c.starts_with(&e));
+        assert!(a.starts_with(&c));
+        for s in [SID_AUTENTICADOS, SID_INTERATIVO, SID_LOCAL, SID_CONSOLE] {
+            assert!(a.contains(&s.to_string()) && !c.contains(&s.to_string()), "{s}");
+        }
+        assert_eq!(NIVEIS, [Nivel::Estrito, Nivel::Compativel, Nivel::Amplo]);
+        // O usuário (S-1-5-21-…) e os administradores nunca entram, em nível
+        // nenhum: seriam o perfil de volta.
+        for lista in [&e, &c, &a] {
+            assert!(!lista.iter().any(|s| s.starts_with("S-1-5-21-") || s == "S-1-5-32-544"));
         }
     }
 
