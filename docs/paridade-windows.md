@@ -53,7 +53,9 @@ verdade (só compilado no CI), `[ ]` por fazer, `[-]` não se aplica.
   pela tabela `name` do próprio arquivo (testado no Mac, com fontes reais), e a
   página fica com as que o canvas mede de largura fixa (i, l, ., m, W). O
   código do registro compila para o alvo Windows (`cargo check --target
-  x86_64-pc-windows-msvc` de `fonts.rs` isolado) mas só roda no Windows.
+  x86_64-pc-windows-msvc` de `fonts.rs` isolado) mas só roda no Windows; o
+  passo de ponta a ponta de `src/e2eAppearance.ts` confere no CI que o comando
+  lista famílias e que a página reconhece uma monoespaçada conhecida.
   Fallback Nerd Font: "Symbols Nerd Font Mono" (MIT) embutida em WOFF2 e
   acrescentada à pilha antes do monospace; os ícones foram vistos na WebView
   do Mac, não na WebView2.
