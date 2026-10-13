@@ -247,8 +247,15 @@ final class Session {
         checkDaemon()
         refreshFromDaemon()
 
-        // Something must be on screen; a fresh daemon gets a default
-        // workspace named after the user.
+        // A fresh daemon (the computer restarted) first gets back the tabs the
+        // last one had — workspaces, folders, panes and names; the
+        // conversations in them follow in the background (`AIChores`).
+        if workspaces.allSatisfy({ $0.tabs.isEmpty }) {
+            TabRestore.tabs()
+            refreshFromDaemon()
+        }
+        // Something must be on screen; a fresh daemon with nothing to bring
+        // back gets a default workspace named after the user.
         if workspaces.allSatisfy({ $0.tabs.isEmpty }) {
             _ = try? Daemon.newTab(in: NSUserName())
             refreshFromDaemon()

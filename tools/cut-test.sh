@@ -40,3 +40,9 @@ echo "sabotage: any selection empties the whole prompt"
 sed 's/guard !squeezed(selected).isEmpty, squeezed(selected) == squeezed(all) else { return nil }/_ = all/' "$SOURCE" > "$WORK/Sabotaged.swift"
 build "$WORK/Sabotaged.swift" || exit 1
 if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
+echo "sabotage: a word cut where the row ends is taken for two words"
+sed 's/let cutMidWord = row.count >= width \&\& tail > 0 \&\& head > 0 \&\& tail + head > width/let cutMidWord = false/' "$SOURCE" > "$WORK/Sabotaged.swift"
+grep -q 'let cutMidWord = false' "$WORK/Sabotaged.swift" || { echo "sabotage did not apply"; exit 1; }
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi

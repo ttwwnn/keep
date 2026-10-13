@@ -1646,12 +1646,22 @@ final class TerminalSurfaceView: NSView {
         }
         guard let (row, column) = cursorCell() else { return }
         let lines = visibleText().lines
-        let keys = lines.indices.contains(row)
-            ? CutSelection.keys(selected: selected, row: lines[row], cursorColumn: column)
-                ?? CutSelection.promptBox(lines, cursorRow: row).flatMap {
-                    CutSelection.keysEmptying(selected: selected, box: $0)
-                }
-            : nil
+        let keys: String?
+        if let (box, first) = CutSelection.promptBoxRows(lines, cursorRow: row) {
+            // Claude Code's prompt box: the selection may span its rows, and
+            // the same words may sit on another row, so it is looked for in
+            // the whole box. Its text is as wide as the rule over it, less
+            // the gutter and the margin (`CutSelection.logical`).
+            let width = lines[first - 1].trimmingCharacters(in: .whitespaces).count - 4
+            keys = CutSelection.keysAcrossRows(
+                selected: selected, box: box, width: width,
+                cursorRow: row - first, cursorColumn: column - 2)
+                ?? CutSelection.keysEmptying(selected: selected, box: box)
+        } else if lines.indices.contains(row) {
+            keys = CutSelection.keys(selected: selected, row: lines[row], cursorColumn: column)
+        } else {
+            keys = nil
+        }
         guard let keys else {
             Trace.log("cut", "copied only: \(selected.count) chars, cursor row \(row)")
             return
