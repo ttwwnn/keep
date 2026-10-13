@@ -1,7 +1,7 @@
 // The look the settings change: the face, what a program that asks is told of
 // the ground, the window's title, and what the state keeps of it all.
 import { describe, expect, it } from "vitest";
-import { SYMBOLS_FAMILY, isFixedPitch, isTextFace, quoteFamily, terminalFontStack } from "./fonts";
+import { SYMBOLS_FAMILY, isFixedPitch, isTextFace, monospacedNames, quoteFamily, terminalFontStack } from "./fonts";
 import { SchemeReporter, schemeReport } from "./schemeReport";
 import { DEFAULT_SCROLLBACK, SCROLLBACK_MAX, defaultState, normalizeScrollback, normalizeState } from "./state";
 import { windowTitle } from "./windowTitle";
@@ -47,6 +47,39 @@ describe("which faces are monospaced", () => {
   it("takes nothing measured, or nothing wide, for neither", () => {
     expect(isFixedPitch([])).toBe(false);
     expect(isFixedPitch([0, 0, 0])).toBe(false);
+  });
+});
+
+describe("the monospaced families of a machine", () => {
+  const fixed = (...drawn: string[]) => (name: string) => drawn.includes(name);
+
+  it("takes the first name of each font that the page draws fixed-pitch", () => {
+    const fonts = [
+      ["Cascadia Mono", "Cascadia Mono SemiLight"],
+      ["Cascadia Mono", "Cascadia Mono Light"],
+      ["JetBrainsMono Nerd Font Mono", "JetBrainsMono NFM"],
+      ["Arial"],
+    ];
+    expect(monospacedNames(fonts, fixed("Cascadia Mono", "Cascadia Mono Light", "JetBrainsMono NFM"))).toEqual([
+      "Cascadia Mono",
+      "JetBrainsMono NFM",
+    ]);
+  });
+  it("gives up the typographic name for the legacy one a page cannot draw it by, and keeps a family once", () => {
+    const fonts = [["Foo Mono", "Foo Mono Light"], ["Foo Mono", "Foo Mono Medium"]];
+    expect(monospacedNames(fonts, fixed("Foo Mono Light", "Foo Mono Medium"))).toEqual(["Foo Mono Light", "Foo Mono Medium"]);
+  });
+  it("leaves out what is not drawn fixed-pitch, and what is not for text, and sorts without regard to case", () => {
+    const fonts = [["zed Mono"], ["Arial"], ["Wingdings"], ["Ábaco Mono"], ["Andale Mono"]];
+    expect(monospacedNames(fonts, fixed("zed Mono", "Wingdings", "Ábaco Mono", "Andale Mono"))).toEqual([
+      "Ábaco Mono",
+      "Andale Mono",
+      "zed Mono",
+    ]);
+  });
+  it("is empty for a machine that lists nothing fixed-pitch", () => {
+    expect(monospacedNames([], fixed())).toEqual([]);
+    expect(monospacedNames([["Arial"]], fixed())).toEqual([]);
   });
 });
 

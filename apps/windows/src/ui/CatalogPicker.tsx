@@ -128,6 +128,9 @@ export function CatalogPicker(props: Props) {
           <button
             key={name}
             class={`card-row catalog-row ${i === index ? "selected" : ""}`}
+            // The keyboard stays in the field, which is where the arrows are read.
+            tabIndex={-1}
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => move(i)}
             onDblClick={() => choose(name)}
           >

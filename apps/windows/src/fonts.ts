@@ -97,9 +97,26 @@ const WELL_KNOWN = [
   "Cascadia Mono", "Cascadia Code", "Consolas", "Courier New", "Lucida Console", "JetBrains Mono", "Fira Code",
   "Source Code Pro", "Hack", "DejaVu Sans Mono", "Liberation Mono", "IBM Plex Mono", "Roboto Mono", "Menlo", "Monaco",
   "SF Mono", "Andale Mono",
-];
+].map((name) => [name]);
 
-/** Fixed-pitch or not, by family, so a list opened again measures only what is new. */
+/**
+ * From each font's names, best first, the first the page draws fixed-pitch:
+ * the one a font matching that knows only the legacy names would miss is
+ * given up for the other, and a family is kept once however many fonts it has.
+ */
+export function monospacedNames(
+  fonts: readonly (readonly string[])[],
+  isFixed: (name: string) => boolean,
+): string[] {
+  const found = new Set<string>();
+  for (const names of fonts) {
+    const name = names.find((candidate) => isTextFace(candidate) && isFixed(candidate));
+    if (name !== undefined) found.add(name);
+  }
+  return [...found].sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }));
+}
+
+/** Fixed-pitch or not, by name, so a list opened again measures only what is new. */
 const classified = new Map<string, boolean>();
 
 const frame = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -111,20 +128,17 @@ const frame = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
  * window let breathe between them: there are hundreds.
  */
 export async function listMonospaceFonts(): Promise<string[]> {
-  const families = await api.installedFonts().catch(() => WELL_KNOWN);
-  const found: string[] = [];
+  const listed = await api.installedFonts().catch(() => []);
+  const fonts = listed.length > 0 ? listed : WELL_KNOWN;
   let measured = 0;
-  for (const family of new Set(families)) {
-    if (!isTextFace(family)) continue;
-    let fixed = classified.get(family);
-    if (fixed === undefined) {
-      fixed = isFixedPitch(measure(family));
-      classified.set(family, fixed);
+  for (const names of fonts) {
+    for (const name of names) {
+      if (!isTextFace(name) || classified.has(name)) continue;
+      classified.set(name, isFixedPitch(measure(name)));
       if (++measured % 60 === 0) await frame();
     }
-    if (fixed) found.push(family);
   }
-  return found.sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }));
+  return monospacedNames(fonts, (name) => classified.get(name) === true);
 }
 
 /**

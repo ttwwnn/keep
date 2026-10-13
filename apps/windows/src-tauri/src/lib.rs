@@ -229,10 +229,11 @@ fn choose_shell(command: String) -> Answer<()> {
     settings::choose_shell(&command).map_err(text)
 }
 
-/// The font families installed here, for the settings' list of faces; the
-/// page keeps the monospaced ones. See `fonts`.
+/// The font families installed here, for the settings' list of faces: each
+/// the names a family goes by, best first; the page keeps the monospaced ones.
+/// See `fonts`.
 #[tauri::command]
-async fn installed_fonts() -> Answer<Vec<String>> {
+async fn installed_fonts() -> Answer<Vec<Vec<String>>> {
     tauri::async_runtime::spawn_blocking(fonts::installed_families).await.map_err(|e| e.to_string())
 }
 

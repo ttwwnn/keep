@@ -2,7 +2,7 @@
 // itself — its ground with its own colours on it — since the name of a theme
 // says nothing (ThemeSwatchView in the macOS picker).
 
-import { useEffect } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { applyTheme, previewTheme } from "../appearance";
 import { gui } from "../store";
 import { isSingleTheme, listThemes, loadThemes, themeColors } from "../themes";
@@ -18,8 +18,9 @@ export function Swatch(props: { ground: string; dots: readonly string[] | null }
 }
 
 export function ThemePicker() {
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
-    void loadThemes().catch(() => {});
+    void loadThemes().catch(() => setFailed(true));
   }, []);
   const names = listThemes();
   const theme = gui.value.theme;
@@ -27,8 +28,8 @@ export function ThemePicker() {
     <CatalogPicker
       label="Tema do terminal"
       placeholder="um tema para vestir…"
-      names={names.length > 0 ? names : null}
-      none="Nenhum tema com esse nome."
+      names={names.length > 0 ? names : failed ? [] : null}
+      none={failed ? "Não deu para ler os temas." : "Nenhum tema com esse nome."}
       worn={isSingleTheme(theme) ? theme : ""}
       row={(name, query, worn) => {
         const colors = themeColors(name);
