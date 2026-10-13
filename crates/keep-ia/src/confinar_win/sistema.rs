@@ -26,8 +26,8 @@ use windows_sys::Win32::Security::{
     InitializeAcl, IsTokenRestricted, NO_INHERITANCE, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
     PSID, RevertToSelf, SE_DACL_PROTECTED, SID_AND_ATTRIBUTES, SUB_CONTAINERS_AND_OBJECTS_INHERIT,
     SecurityImpersonation, SetTokenInformation, TOKEN_ADJUST_DEFAULT, TOKEN_ALL_ACCESS, TOKEN_ASSIGN_PRIMARY,
-    TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE, TOKEN_GROUPS, TOKEN_INFORMATION_CLASS, TOKEN_QUERY, TOKEN_USER,
-    TokenDefaultDacl, TokenGroups, TokenImpersonation, TokenUser, UNPROTECTED_DACL_SECURITY_INFORMATION,
+    TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE, TOKEN_GROUPS, TOKEN_INFORMATION_CLASS, TOKEN_OWNER, TOKEN_QUERY,
+    TOKEN_USER, TokenDefaultDacl, TokenGroups, TokenImpersonation, TokenOwner, TokenUser, UNPROTECTED_DACL_SECURITY_INFORMATION,
 };
 use windows_sys::Win32::System::Console::{
     CTRL_BREAK_EVENT, CTRL_C_EVENT, GetConsoleProcessList, GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE,
@@ -326,6 +326,19 @@ pub fn token_restrito(
     };
     if ok == 0 {
         return Err(falha_ultimo("SetTokenInformation(DACL padrão)"));
+    }
+    // O dono do que o programa preso cria: o usuário. Num token elevado o dono
+    // padrão é o grupo dos administradores, que aqui só nega, e o Git recusa um
+    // repositório cujo dono não é quem o usa. Se o sistema não aceitar, fica o
+    // dono padrão: o programa roda do mesmo jeito.
+    let dono = TOKEN_OWNER { Owner: usuario.ptr() };
+    unsafe {
+        SetTokenInformation(
+            novo.0,
+            TokenOwner,
+            (&dono as *const TOKEN_OWNER).cast(),
+            std::mem::size_of::<TOKEN_OWNER>() as u32,
+        );
     }
     Ok(novo)
 }

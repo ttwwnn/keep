@@ -90,6 +90,70 @@ try {
     & $Keep ia confinar -- cmd.exe /d /c exit 7 | Out-Null
     Confere "o código de saída volta" 7 $LASTEXITCODE
 
+    # Programas de verdade, não só o cmd: o que a IA usa no dia a dia. Cada um
+    # só entra se está instalado.
+    Write-Host "programas de verdade"
+    $git = (Get-Command git -ErrorAction SilentlyContinue).Source
+    $node = (Get-Command node -ErrorAction SilentlyContinue).Source
+    $bash = $null
+    if ($git) {
+        $achado = Join-Path (Split-Path -Parent (Split-Path -Parent $git)) "bin\bash.exe"
+        if (Test-Path $achado) { $bash = $achado }
+    }
+    function Posix([string]$caminho) { return ($caminho -replace '\\', '/') }
+    if ($git) {
+        $repo = Join-Path $permitida "repo"
+        $env:KEEP_WORKSPACE = "presa"
+        & $Keep ia confinar -- git init -q $repo 2>&1 | Out-Null
+        Confere "git cria o repositório na pasta" "True" (Test-Path (Join-Path $repo ".git"))
+        Set-Content -Path (Join-Path $repo "novo.txt") -Value "x"
+        Confere "git vê o arquivo novo" "?? novo.txt" (Roda "presa" @("git", "-C", $repo, "status", "--short"))
+        $env:KEEP_WORKSPACE = "presa"
+        & $Keep ia confinar -- git init -q (Join-Path $fora "repo-fora") 2>&1 | Out-Null
+        Confere "git não cria repositório fora" "False" (Test-Path (Join-Path $fora "repo-fora"))
+    }
+    if ($node) {
+        $js = Join-Path $permitida "grava.js"
+        Set-Content -Path $js -Value 'require("fs").writeFileSync(process.argv[2], "node")'
+        $n1 = Join-Path $permitida "do-node.txt"
+        $n2 = Join-Path $fora "do-node.txt"
+        Roda "presa" @($node, $js, $n1) | Out-Null
+        Confere "node grava na pasta" "True" (Test-Path $n1)
+        Roda "presa" @($node, $js, $n2) | Out-Null
+        Confere "node não grava fora" "False" (Test-Path $n2)
+        $leitura = Join-Path $permitida "le.js"
+        Set-Content -Path $leitura -Value 'process.stdout.write(require("fs").readFileSync(process.argv[2], "utf8"))'
+        Confere "node lê na pasta" "dentro" (Roda "presa" @($node, $leitura, (Join-Path $permitida "a.txt")))
+        Confere "node não lê o que está fora" "False" ((Roda "presa" @($node, $leitura, (Join-Path $fora "b.txt"))) -match "fora")
+        # O localhost, que o AppContainer tiraria: o servidor de desenvolvimento
+        # que a IA sobe e o retorno do login.
+        $laco = Join-Path $permitida "laco.js"
+        Set-Content -Path $laco -Value @'
+const net = require("net");
+const s = net.createServer((c) => c.end("pong")).listen(0, "127.0.0.1", () => {
+  net.connect(s.address().port, "127.0.0.1").on("data", (d) => { process.stdout.write(String(d)); s.close(); });
+});
+'@
+        Confere "localhost funciona" "pong" (Roda "presa" @($node, $laco))
+    }
+    if ($bash) {
+        # O Git Bash (MSYS2) é o que o Claude Code usa para o Bash. Com outro
+        # bash do usuário já aberto, que é o caso de quem usa o Git Bash.
+        # As aspas são nossas: o Start-Process junta os argumentos sem pô-las.
+        $aberto = Start-Process -FilePath $bash -ArgumentList @("-c", '"sleep 60"') -PassThru -WindowStyle Hidden
+        Start-Sleep -Seconds 1
+        Confere "o bash roda" "ola" (Roda "presa" @($bash, "-c", "echo ola"))
+        $b1 = Join-Path $permitida "do-bash.txt"
+        $b2 = Join-Path $fora "do-bash.txt"
+        Roda "presa" @($bash, "-c", ("echo bash > '" + (Posix $b1) + "'")) | Out-Null
+        Confere "o bash grava na pasta" "True" (Test-Path $b1)
+        Roda "presa" @($bash, "-c", ("echo bash > '" + (Posix $b2) + "'")) | Out-Null
+        Confere "o bash não grava fora" "False" (Test-Path $b2)
+        Confere "o bash não lê o que está fora" "False" ((Roda "presa" @($bash, "-c", ("cat '" + (Posix (Join-Path $fora "b.txt")) + "'"))) -match "fora")
+        Confere "o bash faz um filho e espera" "filho" (Roda "presa" @($bash, "-c", "(echo filho) | cat"))
+        Stop-Process -Id $aberto.Id -Force -ErrorAction SilentlyContinue
+    }
+
     Write-Host "um workspace sem pasta"
     Confere "lê onde quiser" "fora" (Roda "livre" @("cmd.exe", "/d", "/c", "type", (Join-Path $fora "b.txt")))
 

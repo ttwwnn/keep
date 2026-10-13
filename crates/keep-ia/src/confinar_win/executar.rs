@@ -315,8 +315,8 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
             None => tenta!(sistema::esperar(&filho.processo, sistema::INFINITO)).unwrap_or(1),
         };
         rastro(|| format!("o programa saiu com {codigo} (nível {nivel:?})"));
-        if nivel != Nivel::Estrito {
-            rastro(|| "nível mais aberto que o estrito: outras unidades de disco podem estar legíveis".to_string());
+        if nivel == Nivel::Amplo {
+            rastro(|| "nível amplo: o compatível não deixou o programa partir; os autenticados também gravam na raiz de outras unidades".to_string());
         }
         return Ok(codigo as i32);
     }
@@ -471,6 +471,7 @@ pub fn autoteste() -> i32 {
     let b = junta(&fora, "b.txt");
     let c = junta(&fora, "c.txt");
     let d = junta(&permitida, "d.txt");
+    let sub = junta(&fora, "sub");
     match roda_linha(&format!("type \"{a}\""), false) {
         Ok((0, t)) => confere("lê na pasta", t.trim() == "dentro", &t),
         Ok((n, t)) => confere("lê na pasta", false, &format!("saiu com {n}: {t}")),
@@ -485,9 +486,31 @@ pub fn autoteste() -> i32 {
         Ok((n, t)) => confere("não lê o que está fora", n != 0 && !t.contains("fora"), &format!("saiu com {n}: {t}")),
         Err(e) => confere("não lê o que está fora", false, &e),
     }
+    // O que prova que não gravou é o arquivo não existir: o `cmd` pode sair com
+    // 0 mesmo quando o redirecionamento foi negado ("Acesso negado").
     match roda_linha(&format!("echo x> \"{c}\""), false) {
-        Ok((n, _)) => confere("não grava fora", n != 0 && !Path::new(&c).exists(), &format!("saiu com {n}")),
+        Ok((n, t)) => confere(
+            "não grava fora",
+            !Path::new(&c).exists(),
+            &format!("saiu com {n}; {c} existe: {}; disse: {}", Path::new(&c).exists(), t.trim()),
+        ),
         Err(e) => confere("não grava fora", false, &e),
+    }
+    match roda_linha(&format!("mkdir \"{sub}\""), false) {
+        Ok((n, t)) => confere(
+            "não cria pasta fora",
+            !Path::new(&sub).exists(),
+            &format!("saiu com {n}; {sub} existe: {}; disse: {}", Path::new(&sub).exists(), t.trim()),
+        ),
+        Err(e) => confere("não cria pasta fora", false, &e),
+    }
+    match roda_linha(&format!("del /f /q \"{b}\""), false) {
+        Ok((n, t)) => confere(
+            "não apaga o que está fora",
+            Path::new(&b).exists(),
+            &format!("saiu com {n}; {b} existe: {}; disse: {}", Path::new(&b).exists(), t.trim()),
+        ),
+        Err(e) => confere("não apaga o que está fora", false, &e),
     }
     match roda_linha(&format!("dir /b \"{casa}\""), false) {
         Ok((n, t)) => confere("não lista a casa do usuário", n != 0 || t.trim().is_empty(), &t),
@@ -517,13 +540,31 @@ pub fn autoteste() -> i32 {
     }
 
     let _ = std::io::stdout().flush();
-    let _ = std::fs::remove_dir_all(&raiz);
     if falhas > 0 {
+        // Antes de apagar a pasta de prova: quem pode o quê nela é o que explica a falha.
+        println!();
+        for caminho in [&casa, &raiz, &permitida, &fora, &b] {
+            mostra_acl(caminho);
+        }
         println!();
         diagnostico();
     }
+    let _ = std::fs::remove_dir_all(&raiz);
     println!("{}", if falhas == 0 { "tudo certo" } else { "há falhas: a IA não deve ser tida como presa neste computador" });
     i32::from(falhas > 0)
+}
+
+/// As permissões de um caminho como o `icacls` as conta, para o diagnóstico.
+fn mostra_acl(caminho: &str) {
+    println!("  icacls {caminho}");
+    match std::process::Command::new("icacls").arg(caminho).output() {
+        Ok(o) => {
+            for l in String::from_utf8_lossy(&o.stdout).lines().filter(|l| !l.trim().is_empty()) {
+                println!("    {l}");
+            }
+        }
+        Err(e) => println!("    o icacls não rodou: {e}"),
+    }
 }
 
 // ------------------------------------------------------------------ o que o Windows aceita
@@ -608,8 +649,9 @@ pub fn diagnostico() -> i32 {
         ("Todos", super::SID_TODOS.to_string()),
         ("Restrito", super::SID_RESTRITO.to_string()),
         ("Usuários", super::SID_USUARIOS.to_string()),
-        ("Pacotes de aplicativo", super::SID_PACOTES.to_string()),
-        ("Pacotes restritos", super::SID_PACOTES_RESTRITOS.to_string()),
+        // Os dois que o Windows recusa (erro 87): ficam para mostrar que ainda recusa.
+        ("Pacotes de aplicativo", "S-1-15-2-1".to_string()),
+        ("Pacotes restritos", "S-1-15-2-2".to_string()),
         ("Autenticados", super::SID_AUTENTICADOS.to_string()),
         ("Interativo", super::SID_INTERATIVO.to_string()),
         ("Local", super::SID_LOCAL.to_string()),

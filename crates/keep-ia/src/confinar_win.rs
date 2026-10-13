@@ -6,18 +6,21 @@
 //! programa roda com um token RESTRITO (`CreateRestrictedToken`), que faz uma
 //! segunda checagem de acesso: além de permitir ao usuário, o objeto precisa
 //! permitir a um dos SIDs de restrição do token. Os SIDs de restrição são só
-//! os do sistema que qualquer programa e o console usam (Todos, Restrito, os
-//! pacotes de aplicativo, o da sessão de logon) e dois do Keep, que as pastas
-//! permitidas recebem de propósito. O perfil do usuário só dá acesso ao
-//! usuário: não passa na segunda checagem, nem para ler nem para gravar.
+//! os do sistema que qualquer programa e o console usam (Todos, Restrito,
+//! Usuários, o da sessão de logon) e dois do Keep, que as pastas permitidas
+//! recebem de propósito. O perfil do usuário só dá acesso ao usuário: não
+//! passa na segunda checagem, nem para ler nem para gravar.
 //!
-//! Os do sistema vêm em três níveis (`Nivel`): o estrito (o que o Windows dá a
-//! todos e aos pacotes de aplicativo), o compatível (com `Usuários`: a lista
-//! do USER_LIMITED do Chromium) e o amplo (com os grupos de toda sessão
+//! Os do sistema vêm em dois níveis (`Nivel`): o compatível (a lista do
+//! USER_LIMITED do Chromium) e o amplo (com os grupos de toda sessão
 //! interativa). O primeiro que deixa o programa partir vale. Os programas
 //! comuns não partem de um token restrito como o Chromium parte os dele (que
 //! começa a thread inicial com um token folgado e o aperta depois): por isso
-//! os níveis, e por isso a prova abaixo, que vale para os três.
+//! os níveis, e por isso a prova abaixo, que vale para os dois. Não há nível
+//! mais fechado, com os pacotes de aplicativo (`S-1-15-2-1`, que dá leitura
+//! em `C:\Windows` a quem não é o usuário): `CreateRestrictedToken` os recusa
+//! como SID de restrição (erro 87, visto no Windows do CI). Sem eles, o que
+//! deixa um token restrito ler `C:\Windows` é `Usuários`.
 //!
 //! Por que token restrito e não AppContainer. O AppContainer isola a rede:
 //! sem uma isenção que só o administrador concede, o `localhost` some (o
@@ -91,8 +94,6 @@ pub const ENCAIXE_POWERSHELL: &str = "& $keep ia confinar -- $claude @args";
 pub const SID_TODOS: &str = "S-1-1-0";
 pub const SID_RESTRITO: &str = "S-1-5-12";
 pub const SID_USUARIOS: &str = "S-1-5-32-545";
-pub const SID_PACOTES: &str = "S-1-15-2-1";
-pub const SID_PACOTES_RESTRITOS: &str = "S-1-15-2-2";
 pub const SID_AUTENTICADOS: &str = "S-1-5-11";
 pub const SID_INTERATIVO: &str = "S-1-5-4";
 pub const SID_LOCAL: &str = "S-1-2-0";
@@ -128,15 +129,12 @@ pub fn sid_base(usuario: &str) -> String {
 
 /// Quanto do sistema o token restrito enxerga além do que o Keep concede. O
 /// primeiro nível que deixa o programa partir é o que vale; a prova do token
-/// vale para os três (o perfil do usuário fica negado em todos).
+/// vale para os dois (o perfil do usuário fica negado em ambos).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Nivel {
-    /// Só o que o Windows concede a todos e aos pacotes de aplicativo (os
-    /// arquivos do sistema o dão): o que está em outras unidades e que só
-    /// `Usuários` lê fica de fora.
-    Estrito,
     /// A lista do USER_LIMITED do Chromium (que o Firefox e o Chrome usam):
-    /// `Usuários` em vez dos pacotes de aplicativo. Lê o que `Usuários` lê.
+    /// `Usuários` lê os arquivos do sistema. Lê também o que `Usuários` lê em
+    /// outras unidades.
     Compativel,
     /// O compatível mais os grupos que todo token de uma sessão interativa
     /// leva (autenticados, interativo, local, console): para o computador em
@@ -146,19 +144,21 @@ pub enum Nivel {
 }
 
 /// Os níveis, do mais fechado ao mais aberto.
-pub const NIVEIS: [Nivel; 3] = [Nivel::Estrito, Nivel::Compativel, Nivel::Amplo];
+pub const NIVEIS: [Nivel; 2] = [Nivel::Compativel, Nivel::Amplo];
 
 /// Os SIDs de restrição do token de um nível: o da pasta, o base, o da sessão
 /// de logon (sem ele o processo não abre a estação de janelas) e os do
 /// sistema. O do usuário e o dos administradores nunca entram: seriam o
 /// perfil de volta.
 pub fn sids_de_restricao(nivel: Nivel, da_pasta: &str, base: &str, logon: &str) -> Vec<String> {
-    let mut v = vec![da_pasta.to_string(), base.to_string(), logon.to_string(), SID_TODOS.to_string(), SID_RESTRITO.to_string()];
-    if nivel == Nivel::Estrito {
-        v.extend([SID_PACOTES, SID_PACOTES_RESTRITOS].map(String::from));
-    } else {
-        v.push(SID_USUARIOS.to_string());
-    }
+    let mut v = vec![
+        da_pasta.to_string(),
+        base.to_string(),
+        logon.to_string(),
+        SID_TODOS.to_string(),
+        SID_RESTRITO.to_string(),
+        SID_USUARIOS.to_string(),
+    ];
     if nivel == Nivel::Amplo {
         v.extend([SID_AUTENTICADOS, SID_INTERATIVO, SID_LOCAL, SID_CONSOLE].map(String::from));
     }
@@ -856,29 +856,24 @@ mod testes {
     }
 
     #[test]
-    fn os_niveis_vao_do_estrito_ao_amplo_e_nenhum_traz_o_usuario() {
-        let e = sids_de_restricao(Nivel::Estrito, "P", "B", "L");
+    fn os_niveis_vao_do_compativel_ao_amplo_e_nenhum_traz_o_usuario() {
         let c = sids_de_restricao(Nivel::Compativel, "P", "B", "L");
         let a = sids_de_restricao(Nivel::Amplo, "P", "B", "L");
-        for lista in [&e, &c, &a] {
-            assert_eq!(&lista[..5], ["P", "B", "L", SID_TODOS, SID_RESTRITO]);
+        for lista in [&c, &a] {
+            assert_eq!(&lista[..6], ["P", "B", "L", SID_TODOS, SID_RESTRITO, SID_USUARIOS]);
         }
-        // O estrito tem os pacotes de aplicativo e não `Usuários`; o compatível é
-        // a lista do Chromium (`Usuários`, sem os pacotes); o amplo a acrescenta.
-        assert!(e.contains(&SID_PACOTES.to_string()) && e.contains(&SID_PACOTES_RESTRITOS.to_string()));
-        assert!(!e.contains(&SID_USUARIOS.to_string()));
-        assert!(c.contains(&SID_USUARIOS.to_string()));
-        assert!(!c.contains(&SID_PACOTES.to_string()) && !c.contains(&SID_PACOTES_RESTRITOS.to_string()));
+        // O compatível é a lista do Chromium; o amplo a acrescenta. Os pacotes
+        // de aplicativo (S-1-15-2-*) não entram: o Windows os recusa (erro 87).
         assert_eq!(c.len(), 6);
         assert!(a.starts_with(&c));
         for s in [SID_AUTENTICADOS, SID_INTERATIVO, SID_LOCAL, SID_CONSOLE] {
             assert!(a.contains(&s.to_string()) && !c.contains(&s.to_string()), "{s}");
         }
-        assert_eq!(NIVEIS, [Nivel::Estrito, Nivel::Compativel, Nivel::Amplo]);
+        assert_eq!(NIVEIS, [Nivel::Compativel, Nivel::Amplo]);
         // O usuário (S-1-5-21-…) e os administradores nunca entram, em nível
         // nenhum: seriam o perfil de volta.
-        for lista in [&e, &c, &a] {
-            assert!(!lista.iter().any(|s| s.starts_with("S-1-5-21-") || s == "S-1-5-32-544"));
+        for lista in [&c, &a] {
+            assert!(!lista.iter().any(|s| s.starts_with("S-1-5-21-") || s == "S-1-5-32-544" || s.starts_with("S-1-15-")));
         }
     }
 

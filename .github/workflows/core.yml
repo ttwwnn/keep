@@ -69,6 +69,7 @@ jobs:
       # KEEP_CONFINE_PROVA: o teste que sobe programas presos de verdade (a
       # contenção da IA no Windows) só roda com ela; só o Windows o tem.
       - name: Testes
+        timeout-minutes: 25
         env:
           KEEP_CONFINE_PROVA: "1"
         run: cargo test --workspace --no-fail-fast -- --test-threads=4
@@ -78,12 +79,14 @@ jobs:
       # da contenção, e o roteiro em PowerShell que o usuário roda à mão.
       - name: Contenção da IA (keep.exe)
         if: always() && matrix.name == 'Windows'
+        timeout-minutes: 8
         run: |
           target/debug/keep.exe ia confinar --diagnostico
           target/debug/keep.exe ia confinar --autoteste
 
       - name: Contenção da IA (roteiro em PowerShell)
         if: always() && matrix.name == 'Windows'
+        timeout-minutes: 10
         shell: pwsh
         run: ./tools/confine-test.ps1 -Keep "$PWD/target/debug/keep.exe"
 
