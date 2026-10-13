@@ -59,7 +59,7 @@ function TabRow(props: { workspace: string; tab: RootTab; index: number; selecte
   const close = () => void closeTab(workspace, tab, look.label);
   const where = homeRelative(tab.root.cwd, info.value?.home ?? "");
   // An AI says only the number of the account it runs on, its place in the
-  // footer's list — "(IA-3)" —, and follows that list's order; any other
+  // footer's list — "(IA·3)" —, and follows that list's order; any other
   // program says its name — "— pwsh" —, unless the title already is it.
   const account = tabAccount(workspace, tab.root);
   const program = tabAccountLabel(account.program, tab.root.command, account.key, account.running, usageLines.value);

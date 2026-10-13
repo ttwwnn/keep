@@ -97,7 +97,7 @@ function Bar(props: { window: UsageWindow; name: string; nowMs: number }) {
 
 /**
  * "2 · Claude": the place in the order, which the arrows change and the tabs
- * call the account by ("IA-2"), then the service. Never the order's own
+ * call the account by ("IA·2"), then the service. Never the order's own
  * names for the accounts ("principal", "reserva"): an account is its place
  * in this list (13/10/2026).
  */

@@ -98,13 +98,13 @@ export const keyOf = (engine: Engine, alias: string) => `${orderPrefix(engine)}:
 
 /**
  * An account is called by its place in the footer's list, "Consumo de IA",
- * from 1: "IA-2". Never by the order's own names for the accounts (asked for
+ * from 1: "IA·2". Never by the order's own names for the accounts (asked for
  * 13/10/2026: "não use mais a nomenclatura principal e reserva, deve ser só
  * a posição das contas na lista"). The macOS app's `AIChoices.name(number:)`.
  */
-export const iaName = (number: number) => `IA-${number}`;
+export const iaName = (number: number) => `IA·${number}`;
 
-/** "IA-2 · Claude": what the tabs call the account, then its service — the footer's tooltips. */
+/** "IA·2 · Claude": what the tabs call the account, then its service — the footer's tooltips. */
 export const numberedName = (number: number, account: Account) => `${iaName(number)} · ${engineTitle(account.engine)}`;
 
 /** Every key that names an account, one per name it has. */
@@ -248,7 +248,7 @@ export function menuRows(
 }
 
 /**
- * "IA-2 · ana@… — no limite": the account's place in the list, the address
+ * "IA·2 · ana@… — no limite": the account's place in the list, the address
  * the service knows it by, and — when it cannot take work now — why.
  */
 export function accountTitle(line: UsageLine, number: number): string {
@@ -267,7 +267,7 @@ export function numberOf(key: string | null | undefined, lines: readonly UsageLi
 
 /**
  * What the sidebar writes after a tab's title. For a tab running an AI, only
- * the number of the account it runs on — "(IA-3)", never the AI's name
+ * the number of the account it runs on — "(IA·3)", never the AI's name
  * (asked for 13/10/2026) —: the one the core says it runs on, else the one
  * it was put on, and for a tab following the order the Claude login the
  * tabs share; nothing when no account can be told. For any other program,
@@ -391,7 +391,7 @@ export function noteText(line: UsageLine, nowMs: number): string | null {
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
-/** The tooltip on an account's name: what the tabs call it ("IA-2 · Claude"), its address and plan, and how old its figures are. */
+/** The tooltip on an account's name: what the tabs call it ("IA·2 · Claude"), its address and plan, and how old its figures are. */
 export function accountHelp(line: UsageLine, number: number, nowMs: number, used: boolean): string {
   const out: string[] = [numberedName(number, line.account)];
   if (line.account.email) out.push(line.account.email);

@@ -92,11 +92,11 @@ describe("which accounts can take work", () => {
 
 describe("an account is its place in the list", () => {
   const lines = [ana, bia, gpt];
-  it("IA-1, IA-2, IA-3: from 1, never by the order's own names", () => {
-    expect(iaName(1)).toBe("IA-1");
-    expect(iaName(12)).toBe("IA-12");
-    expect(numberedName(3, gpt.account)).toBe("IA-3 · GPT");
-    expect(numberedName(2, bia.account)).toBe("IA-2 · Claude");
+  it("IA·1, IA·2, IA·3: from 1, never by the order's own names", () => {
+    expect(iaName(1)).toBe("IA·1");
+    expect(iaName(12)).toBe("IA·12");
+    expect(numberedName(3, gpt.account)).toBe("IA·3 · GPT");
+    expect(numberedName(2, bia.account)).toBe("IA·2 · Claude");
   });
   it("the place of the account a key names, by any of its names or its order key", () => {
     expect(numberOf("claude:ana", lines)).toBe(1);
@@ -114,8 +114,8 @@ describe("an account is its place in the list", () => {
   });
   it("the footer's tooltip starts with it, and says no other name", () => {
     const twoNames = line({ key: "u-7", alias: "x", aliases: ["x", "y"], email: null, plan: null }, null, { measuredAt: null });
-    expect(accountHelp(twoNames, 2, 0, false)).toBe("IA-2 · Claude");
-    expect(accountHelp(ana, 1, 0, true)).toBe("IA-1 · Claude\nana@exemplo.com\nPlano Max 20x\nConta usada nesta aba");
+    expect(accountHelp(twoNames, 2, 0, false)).toBe("IA·2 · Claude");
+    expect(accountHelp(ana, 1, 0, true)).toBe("IA·1 · Claude\nana@exemplo.com\nPlano Max 20x\nConta usada nesta aba");
   });
 });
 
@@ -123,17 +123,17 @@ describe("a tab's menu", () => {
   const lines = [ana, bia, gpt];
   it("following the order always asks for claude:ordem, whatever it resolves to now", () => {
     const rows = menuRows([bia, gpt], null, { kind: "shell" });
-    expect(rows[0]).toMatchObject({ kind: "follow", key: FOLLOW_ORDER, mark: null, enabled: true, help: "Agora: IA-2" });
+    expect(rows[0]).toMatchObject({ kind: "follow", key: FOLLOW_ORDER, mark: null, enabled: true, help: "Agora: IA·2" });
     // None can take work: the first.
-    expect(menuRows([bia], null, { kind: "shell" })[0].help).toBe("Agora: IA-1");
+    expect(menuRows([bia], null, { kind: "shell" })[0].help).toBe("Agora: IA·1");
     expect(menuRows([], null, { kind: "shell" })[0].help).toBeNull();
   });
-  it("each account by its place, its address and why it cannot take work; spoken of as IA-n", () => {
+  it("each account by its place, its address and why it cannot take work; spoken of as IA·n", () => {
     const rows = menuRows(lines, FOLLOW_ORDER, { kind: "claude" });
     expect(rows.filter((r) => r.kind === "account").map((r) => [r.title, r.label, r.key])).toEqual([
-      ["IA-1 · ana@exemplo.com", "IA-1", "claude:ana"],
-      ["IA-2 · bia@exemplo.com — no limite", "IA-2", "claude:trabalho"],
-      ["IA-3 · ana@exemplo.com", "IA-3", "gpt:principal"],
+      ["IA·1 · ana@exemplo.com", "IA·1", "claude:ana"],
+      ["IA·2 · bia@exemplo.com — no limite", "IA·2", "claude:trabalho"],
+      ["IA·3 · ana@exemplo.com", "IA·3", "gpt:principal"],
     ]);
     expect(rows.some((r) => /ana$|trabalho|principal|·\s*Claude/.test(r.title))).toBe(false);
   });
@@ -147,9 +147,9 @@ describe("a tab's menu", () => {
   });
   it("says why an account cannot take work, and still lets it be chosen", () => {
     const rows = menuRows(lines, FOLLOW_ORDER, { kind: "claude" });
-    expect(rows[3]).toMatchObject({ title: "IA-2 · bia@exemplo.com — no limite", key: "claude:trabalho", enabled: true });
+    expect(rows[3]).toMatchObject({ title: "IA·2 · bia@exemplo.com — no limite", key: "claude:trabalho", enabled: true });
     expect(accountTitle(line({ warning: "sem login próprio: entre pelo menu da aba" }), 4)).toBe(
-      "IA-4 · ana@exemplo.com — sem login próprio: entre pelo menu da aba",
+      "IA·4 · ana@exemplo.com — sem login próprio: entre pelo menu da aba",
     );
   });
   it("another program: said first, and nothing can be chosen", () => {
@@ -186,13 +186,13 @@ describe("what a tab runs", () => {
     const claude = { kind: "claude" } as const;
     const codex = { kind: "codex" } as const;
     // Where it runs, as the core says, over what it was put on.
-    expect(tabAccountLabel(claude, "claude", FOLLOW_ORDER, "claude:trabalho", lines)).toBe("(IA-2)");
-    expect(tabAccountLabel(codex, "codex", FOLLOW_ORDER, "gpt:principal", lines)).toBe("(IA-3)");
+    expect(tabAccountLabel(claude, "claude", FOLLOW_ORDER, "claude:trabalho", lines)).toBe("(IA·2)");
+    expect(tabAccountLabel(codex, "codex", FOLLOW_ORDER, "gpt:principal", lines)).toBe("(IA·3)");
     // Put on an account, the core not having said.
-    expect(tabAccountLabel(claude, "claude", "claude:trabalho", null, lines)).toBe("(IA-2)");
-    expect(tabAccountLabel(codex, "codex", "gpt:principal", null, lines)).toBe("(IA-3)");
+    expect(tabAccountLabel(claude, "claude", "claude:trabalho", null, lines)).toBe("(IA·2)");
+    expect(tabAccountLabel(codex, "codex", "gpt:principal", null, lines)).toBe("(IA·3)");
     // Following the order, where to unknown: the Claude login the tabs share.
-    expect(tabAccountLabel(claude, "claude", FOLLOW_ORDER, null, lines)).toBe("(IA-1)");
+    expect(tabAccountLabel(claude, "claude", FOLLOW_ORDER, null, lines)).toBe("(IA·1)");
     expect(tabAccountLabel(claude, "claude", FOLLOW_ORDER, null, [bia, gpt])).toBe("");
     // No account known: nothing.
     expect(tabAccountLabel(claude, "claude", "claude:ninguem", null, lines)).toBe("");
@@ -206,9 +206,9 @@ describe("what a tab runs", () => {
   it("the number follows the footer's order", () => {
     const lines = [ana, bia, gpt];
     const codex = { kind: "codex" } as const;
-    expect(tabAccountLabel(codex, "codex", "gpt:principal", null, lines)).toBe("(IA-3)");
-    expect(tabAccountLabel(codex, "codex", "gpt:principal", null, moved(lines, lineId(gpt), -1))).toBe("(IA-2)");
-    expect(tabAccountLabel(codex, "codex", "gpt:principal", null, [gpt, ana, bia])).toBe("(IA-1)");
+    expect(tabAccountLabel(codex, "codex", "gpt:principal", null, lines)).toBe("(IA·3)");
+    expect(tabAccountLabel(codex, "codex", "gpt:principal", null, moved(lines, lineId(gpt), -1))).toBe("(IA·2)");
+    expect(tabAccountLabel(codex, "codex", "gpt:principal", null, [gpt, ana, bia])).toBe("(IA·1)");
   });
 });
 

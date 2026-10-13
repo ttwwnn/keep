@@ -448,7 +448,7 @@ struct WorkspaceSidebar: View {
     @ViewBuilder
     private func confinementButton(_ row: SessionSnapshot.SidebarRow) -> some View {
         let hovering = hoveredLock == row.name
-        let glyph = Image(systemName: row.confinedTo == nil ? "lock.open" : "lock.fill")
+        let glyph = Image(systemName: row.confinedTo == nil ? "folder" : "folder.fill")
             .font(.system(size: 9, weight: .semibold))
             .foregroundStyle(row.confinedTo != nil || hovering ? Palette.inkResting : Palette.inkFaint)
             .frame(width: 10)
@@ -560,7 +560,7 @@ struct WorkspaceSidebar: View {
                     .onHover { inside in notePointer(inside, onNameOf: .tab(tab.id)) }
                 // The program — "— bash" —, or for an AI only the number of
                 // the account it runs on, its place in the footer's list:
-                // "(IA-3)". Read, not watched (see `accountGlyph`): the
+                // "(IA·3)". Read, not watched (see `accountGlyph`): the
                 // session republishes when the list's order changes.
                 let program = AIChoices.tabLabel(
                     command: tab.command, account: tab.account, running: tab.runningAccount,

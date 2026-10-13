@@ -1938,7 +1938,7 @@ final class Session {
     /// quiet on their own.
     /// The footer's list changed in a way the sidebar shows: its order, or
     /// which Claude account the tabs following it share. The tabs are named
-    /// by their account's place in that list ("(IA-2)").
+    /// by their account's place in that list ("(IA·2)").
     func noteAccountListChanged() {
         publish()
     }
