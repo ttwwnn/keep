@@ -81,38 +81,69 @@ pub fn age_text(age: Duration) -> String {
     }
 }
 
+/// How long to wait between tries when the state cannot be read: a program
+/// holding it for a moment (a virus scanner, a sync client) is no reason to
+/// call it unreadable.
+const READ_PAUSES: [Duration; 4] =
+    [Duration::from_millis(100), Duration::from_millis(200), Duration::from_millis(400), Duration::from_millis(800)];
+
+/// What reading the state found.
+#[derive(Debug, PartialEq)]
+struct Found {
+    state: Option<serde_json::Value>,
+    /// What to tell the person, if anything.
+    said: Option<String>,
+    /// The file is there and could not be read at all: nothing is saved over it this time.
+    unread: bool,
+}
+
+impl Found {
+    fn nothing() -> Found {
+        Found { state: None, said: None, unread: false }
+    }
+}
+
 /// The state as it was left, or `None` for a first run. A file that cannot be
 /// read is kept aside (`state.json.ilegivel`) and the newest copy that can is
 /// put in its place; with none, the app starts from its defaults and says so.
 /// Either way the person is told (`take_warning`), where before an unreadable
 /// state quietly became the defaults — and the next save made that final.
 pub fn load(path: &Path) -> Option<serde_json::Value> {
-    let (state, said) = read_state(path, SystemTime::now());
-    if let Some(message) = said {
+    let found = read_state(path, SystemTime::now(), &READ_PAUSES);
+    if found.unread {
+        // Not that it is bad: it could not be read just now. Saving the
+        // defaults over it would make that final, so nothing is saved this time.
+        UNREAD.store(true, Ordering::SeqCst);
+    }
+    if let Some(message) = found.said {
         warn(message);
     }
-    state
+    found.state
 }
 
-fn read_state(path: &Path, now: SystemTime) -> (Option<serde_json::Value>, Option<String>) {
+fn read_state(path: &Path, now: SystemTime, pauses: &[Duration]) -> Found {
     let _only = STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let bytes = match std::fs::read(path) {
+    let mut read = std::fs::read(path);
+    for pause in pauses {
+        if read.as_ref().err().is_none_or(|e| e.kind() == std::io::ErrorKind::NotFound) {
+            break;
+        }
+        std::thread::sleep(*pause);
+        read = std::fs::read(path);
+    }
+    let bytes = match read {
         Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (None, None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Found::nothing(),
         Err(e) => {
-            // Not that it is bad: it could not be read just now (a program
-            // holding it, say). Saving the defaults over it would make that
-            // final, so nothing is saved this time.
-            UNREAD.store(true, Ordering::SeqCst);
             let said = format!("O Keep não conseguiu ler o arquivo de estado ({e}); as mudanças desta vez não serão guardadas.");
-            return (None, Some(said));
+            return Found { state: None, said: Some(said), unread: true };
         }
     };
     match parse(&bytes) {
-        Some(value) => (Some(value), None),
+        Some(state) => Found { state: Some(state), said: None, unread: false },
         None => {
-            let (value, said) = recover(path, &bytes, now);
-            (value, Some(said))
+            let (state, said) = recover(path, &bytes, now);
+            Found { state, said: Some(said), unread: false }
         }
     }
 }
@@ -437,14 +468,15 @@ mod tests {
         set_mtime(&copy_path(&path, 1), at(20));
         // The state is damaged (a write that stopped halfway, a sync conflict).
         std::fs::write(&path, b"{\"order\": [\"b\"").unwrap();
-        let (got, said) = read_state(&path, at(35));
+        let found = read_state(&path, at(35), &[]);
+        let (got, said) = (found.state, found.said);
         assert_eq!(got, Some(json!({"order": ["a"]})));
         assert_eq!(parse(&std::fs::read(&path).unwrap()).unwrap(), json!({"order": ["a"]}), "put back as the state");
         assert_eq!(std::fs::read(unreadable_path(&path)).unwrap(), b"{\"order\": [\"b\"", "the bad one is kept");
         let said = said.expect("the person is told");
         assert!(said.contains("ilegível") && said.contains("cópia de há 15 min") && said.contains("state.json.ilegivel"), "{said}");
         // Read again, it is the good one now: nothing more to say.
-        assert_eq!(read_state(&path, at(36)), (Some(json!({"order": ["a"]})), None));
+        assert_eq!(read_state(&path, at(36), &[]), Found { state: Some(json!({"order": ["a"]})), said: None, unread: false });
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -454,9 +486,9 @@ mod tests {
         let path = dir.join("state.json");
         std::fs::write(&path, b"nao e json").unwrap();
         std::fs::write(copy_path(&path, 1), b"[1, 2]").unwrap();
-        let (got, said) = read_state(&path, at(0));
-        assert_eq!(got, None);
-        let said = said.expect("the person is told");
+        let found = read_state(&path, at(0), &[]);
+        assert_eq!(found.state, None);
+        let said = found.said.expect("the person is told");
         assert!(said.contains("começou do zero") && said.contains("state.json.ilegivel"), "{said}");
         assert_eq!(std::fs::read(unreadable_path(&path)).unwrap(), b"nao e json");
         std::fs::remove_dir_all(&dir).unwrap();
@@ -466,12 +498,12 @@ mod tests {
     fn a_first_run_and_a_good_state_say_nothing() {
         let dir = scratch("quiet");
         let path = dir.join("state.json");
-        assert_eq!(read_state(&path, at(0)), (None, None));
+        assert_eq!(read_state(&path, at(0), &[]), Found::nothing());
         save_at(&path, &json!({"zoom": 1.25}), at(0)).unwrap();
-        assert_eq!(read_state(&path, at(1)), (Some(json!({"zoom": 1.25})), None));
+        assert_eq!(read_state(&path, at(1), &[]), Found { state: Some(json!({"zoom": 1.25})), said: None, unread: false });
         // A byte order mark some tool put in front is no damage.
         std::fs::write(&path, b"\xEF\xBB\xBF{\"zoom\": 2}").unwrap();
-        assert_eq!(read_state(&path, at(2)), (Some(json!({"zoom": 2})), None));
+        assert_eq!(read_state(&path, at(2), &[]), Found { state: Some(json!({"zoom": 2})), said: None, unread: false });
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -484,6 +516,26 @@ mod tests {
         assert_eq!(std::fs::read(unreadable_path(&path)).unwrap(), b"{ nao fechou");
         assert_eq!(parse(&std::fs::read(&path).unwrap()).unwrap(), json!({"zoom": 1}));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_state_that_cannot_be_read_at_all_is_not_taken_for_a_bad_one() {
+        // A folder where the file should be: reading it fails for good, after the tries.
+        let dir = scratch("unread");
+        let path = dir.join("state.json");
+        std::fs::create_dir_all(&path).unwrap();
+        let tries = [Duration::from_millis(1), Duration::from_millis(1)];
+        let found = read_state(&path, at(0), &tries);
+        assert!(found.unread && found.state.is_none(), "{found:?}");
+        let said = found.said.expect("the person is told");
+        assert!(said.contains("não conseguiu ler") && said.contains("não serão guardadas"), "{said}");
+        // Nothing was kept aside or put in its place: it is not a bad state, it is one that could not be read.
+        assert!(!unreadable_path(&path).exists() && path.is_dir());
+        std::fs::remove_dir_all(&dir).unwrap();
+        // A file that is not there is a first run, at once.
+        let started = std::time::Instant::now();
+        assert_eq!(read_state(&dir.join("nada.json"), at(0), &READ_PAUSES), Found::nothing());
+        assert!(started.elapsed() < Duration::from_millis(90), "no tries for a file that is not there");
     }
 
     #[test]
