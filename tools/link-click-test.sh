@@ -149,8 +149,17 @@ elif "$PRINT" in ("web", "osc8", "webwrapped"):
     signal.signal(signal.SIGWINCH, draw)
     draw()
 else:
-    for _ in range(40):
-        print(("$TARGET:12  " * 6).rstrip())
+    import os, signal
+    def draw(*_):
+        # As many copies as fit in a row: a row the terminal wraps comes back
+        # joined to the next, and the click lands on the blank it leaves.
+        cols, rows = os.get_terminal_size()
+        unit = "$TARGET:12  "
+        line = (unit * max(1, (cols - 1) // len(unit))).rstrip()
+        sys.stdout.write("\x1b[H\x1b[2J" + "\r\n".join([line] * (rows - 1)))
+        sys.stdout.flush()
+    signal.signal(signal.SIGWINCH, draw)
+    draw()
 open("$WORK/ready", "w").close()
 time.sleep(300)
 PY
@@ -272,8 +281,19 @@ fi
 
 say ""
 say "a path on the screen"
-"$MOUSE" click "$TX" "$TY"
-sleep 2
+# Every row is the same, so a column on a path is one on every row. The
+# first column tried may fall on the blank between two copies (the app says
+# so: "plain click on nothing"), and a click there rightly opens nothing; a
+# few cells on is a path.
+for _ in 1 2 3; do
+    before=$(grep -c 'plain click on nothing' "$WORK/app.log")
+    "$MOUSE" click "$TX" "$TY"
+    sleep 2
+    [ -s "$KEEP_LINK_LOG" ] && break
+    [ "$(grep -c 'plain click on nothing' "$WORK/app.log")" -gt "$before" ] || break
+    say "  (column on the blank between two copies; moving 3 cells on)"
+    TX=$((TX + 24))
+done
 check "a plain click opens the file" "$TARGET" "$(cat "$KEEP_LINK_LOG")"
 : >"$KEEP_LINK_LOG"
 "$MOUSE" dblclick "$TX" "$((TY + 40))"
