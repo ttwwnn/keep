@@ -2,21 +2,36 @@
 
 import { signal } from "@preact/signals";
 import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
+import { keptName } from "../naming";
 
-/** A name being edited in place: Enter or leaving keeps it, Esc puts it back. */
-export function InlineEditor(props: { value: string; onDone: (value: string | null) => void; class?: string }) {
+/**
+ * A name being edited in place: Enter or leaving keeps it, Esc puts it back.
+ * `onDone` hears the name to keep — null when there is none: Esc, or the
+ * field left as it was opened, since a title kept by accident would stop
+ * following its program — and where the keyboard should go: back to the work
+ * after Enter and Esc, but not after leaving, which already put it where the
+ * click went.
+ */
+export function InlineEditor(props: {
+  value: string;
+  onDone: (value: string | null, keyboard: "back" | "elsewhere") => void;
+  class?: string;
+}) {
   const ref = useRef<HTMLInputElement>(null);
   const done = useRef(false);
+  // What it opened with, not what the row says by the time it is closed: a
+  // title that its program rewrites meanwhile is still the one being compared.
+  const seed = useRef(props.value);
   useLayoutEffect(() => {
     const input = ref.current;
     if (!input) return;
     input.focus();
     input.select();
   }, []);
-  const finish = (value: string | null) => {
+  const finish = (value: string | null, keyboard: "back" | "elsewhere") => {
     if (done.current) return;
     done.current = true;
-    props.onDone(value);
+    props.onDone(keptName(value, seed.current), keyboard);
   };
   return (
     <input
@@ -26,11 +41,12 @@ export function InlineEditor(props: { value: string; onDone: (value: string | nu
       spellcheck={false}
       onKeyDown={(e) => {
         e.stopPropagation();
-        if (e.key === "Enter") finish((e.currentTarget as HTMLInputElement).value);
-        else if (e.key === "Escape") finish(null);
+        if (e.key === "Enter") finish((e.currentTarget as HTMLInputElement).value, "back");
+        else if (e.key === "Escape") finish(null, "back");
       }}
-      onBlur={(e) => finish((e.currentTarget as HTMLInputElement).value)}
+      onBlur={(e) => finish((e.currentTarget as HTMLInputElement).value, "elsewhere")}
       onMouseDown={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
       onDblClick={(e) => e.stopPropagation()}
     />

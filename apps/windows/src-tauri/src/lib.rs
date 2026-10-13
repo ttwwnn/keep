@@ -41,6 +41,8 @@ struct Startup {
     platform: &'static str,
     windows_build: u32,
     home: String,
+    /// The login name: what a daemon with nothing in it first names a workspace.
+    user: String,
     address: String,
     version: &'static str,
     /// Set by tests: the page runs its scripted check and reports here.
@@ -58,6 +60,7 @@ fn startup() -> Startup {
         home: std::env::var("USERPROFILE")
             .or_else(|_| std::env::var("HOME"))
             .unwrap_or_default(),
+        user: std::env::var("USERNAME").or_else(|_| std::env::var("USER")).unwrap_or_default(),
         address: daemon::address().display().to_string(),
         version: env!("CARGO_PKG_VERSION"),
         e2e_report: std::env::var("KEEP_E2E_REPORT").ok(),

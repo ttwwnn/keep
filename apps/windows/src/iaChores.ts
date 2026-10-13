@@ -20,7 +20,7 @@
 
 import * as api from "./api";
 import { daemonStartOf, planNames, type NamesFile } from "./names";
-import { isQuietResume, isQuietRestore, readResume, readRestore, restoreLine, resumeLine } from "./restauro";
+import { isQuietResume, isQuietRestore, readResume, readRestore, restoreLine, resumeLine, type Restored } from "./restauro";
 import { daemonError, gui, loaded, log, renameTab } from "./store";
 
 const daemonUp = () => loaded.value && daemonError.value === null;
@@ -35,23 +35,24 @@ async function coreHere(): Promise<boolean> {
 /**
  * The tabs the last daemon had, made again in this one (`keep restauro
  * restaurar --fase=abas`: each in its folder, the panes beside the tab they
- * were split from, the names given, nothing run again yet); true when some
- * came back. The core knows by itself whether there is anything to restore and
- * does it once per daemon, so asking an empty daemon is always safe.
+ * were split from, the names given, nothing run again yet); which came back,
+ * under what numbers, or null when none did. The core knows by itself whether
+ * there is anything to restore and does it once per daemon, so asking an empty
+ * daemon is always safe.
  */
-export async function restoreTabs(): Promise<boolean> {
-  if (!(await coreHere())) return false;
-  let back = false;
+export async function restoreTabs(): Promise<Restored | null> {
+  if (!(await coreHere())) return null;
+  let restored: Restored | null = null;
   try {
     const round = readRestore(await api.iaAsk(["restauro", "restaurar", "--fase=abas"]));
     if (!isQuietRestore(round)) log(restoreLine(round));
-    back = round.tabs > 0;
+    if (round.tabs > 0) restored = { made: round.made };
   } catch (error) {
     log(`restauro: ${String(error)}`);
   }
   // The names the core gave them, before the window shows them.
-  if (back) await syncNames().catch(() => {});
-  return back;
+  if (restored) await syncNames().catch(() => {});
+  return restored;
 }
 
 let keeping = false;

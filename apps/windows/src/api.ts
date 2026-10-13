@@ -53,6 +53,8 @@ export interface Startup {
   /** The Windows build (e.g. 26100), for xterm's ConPTY handling; 0 elsewhere. */
   windowsBuild: number;
   home: string;
+  /** The login name, for the workspace a fresh daemon starts with. */
+  user: string;
   /** The pipe or socket the daemon listens on. */
   address: string;
   version: string;

@@ -5,10 +5,11 @@
 // shape carries the state as well as the hue (DESIGN.md). Folded, a workspace
 // still says how many of its tabs wait on you.
 
-import { signal } from "@preact/signals";
 import { useRef, useState } from "preact/hooks";
 import { SPLIT_DOWN, SPLIT_RIGHT } from "../api";
+import { endedADrag } from "../drag";
 import type { RootTab } from "../layout";
+import { mayArmRename, slowRename } from "../naming";
 import { SIDEBAR_MAX, SIDEBAR_MIN, tabKey } from "../state";
 import {
   activeTab,
@@ -17,48 +18,62 @@ import {
   closeWorkspace,
   createWorkspace,
   editing,
+  editingTabOn,
+  finishTabName,
+  finishWorkspaceName,
   gui,
   isMac,
   moveWorkspace,
   newTab,
   notice,
-  orderedWorkspaces,
-  renameTab,
-  renameWorkspace,
+  putAway,
   select,
   setSidebarWidth,
+  shownWorkspaces,
   split,
+  startRename,
   tabActivity,
   tabBusy,
+  tabLabel,
   tabsByWorkspace,
   toggleFolded,
   toggleSidebar,
   workspaceLabel,
+  workspaces,
   zoom,
   zoomReset,
 } from "../store";
-import { busyMark, programOf } from "../claude";
+import { busyMark, plainTitle, programOf } from "../claude";
 import { tabAccountLabel } from "../ia";
 import { tabAccount, usageLines } from "../iaStore";
 import { homeRelative } from "../text";
 import { info } from "../store";
+import { workspaceState, workspaceTooltip } from "../tooltips";
 import { zoomPercent } from "../zoom";
 import { Battery } from "./Battery";
 import { AccountChevron } from "./AccountMenu";
 import { InlineEditor, openMenu } from "./common";
 import * as icon from "./icons";
+import { PaneMark } from "./paneIcons";
+import { sidebarMove, startSidebarTabDrag, startWorkspaceDrag } from "./tabDrag";
 import { tabLook, useBreath } from "./tabLook";
 import { MemoryMeter } from "./MemoryMeter";
 import { UsageFooter } from "./UsageFooter";
 
-function TabRow(props: { workspace: string; tab: RootTab; index: number; selected: boolean }) {
-  const { workspace, tab, index, selected } = props;
+function TabRow(props: { workspace: string; tab: RootTab; tabs: RootTab[]; index: number; selected: boolean }) {
+  const { workspace, tab, tabs, index, selected } = props;
   const look = tabLook(workspace, tab, index, selected);
   const badge = useBreath(look.breathing);
-  const renaming =
-    editing.value?.kind === "tab" && editing.value.workspace === workspace && editing.value.tab === tab.root.id;
-  const startRename = () => (editing.value = { kind: "tab", workspace, tab: tab.root.id });
+  const renaming = editingTabOn("sidebar", workspace, tab.root.id);
+  const rename = () => startRename(workspace, tab.root.id, "sidebar");
   const close = () => void closeTab(workspace, tab, look.label);
+  // Carried by hand: the tab dims where it will land and the others slide to
+  // leave the gap; another workspace's tab under the carried one lights.
+  const carry = sidebarMove.value?.kind === "tab" ? sidebarMove.value : null;
+  const mine = carry?.workspace === workspace;
+  const carried = mine && carry.from === index;
+  const offered = carry !== null && carry.into === workspace && carry.before === tab.root.id;
+  const shown = mine ? carry.slid[index] : 0;
   const where = homeRelative(tab.root.cwd, info.value?.home ?? "");
   // An AI says only the number of the account it runs on, its place in the
   // footer's list — "(IA·3)" —, and follows that list's order; any other
@@ -70,11 +85,23 @@ function TabRow(props: { workspace: string; tab: RootTab; index: number; selecte
   return (
     <div
       ref={badge as never}
-      class={`tab-row ${selected ? "selected" : ""} ${look.wantsYou ? "wants" : ""}`}
-      style={look.wantsYou ? { background: look.fill } : undefined}
+      class={`tab-row ${selected ? "selected" : ""} ${look.wantsYou ? "wants" : ""} ${carried ? "carried" : ""} ${offered ? "offered" : ""}`}
+      style={look.wantsYou || shown ? { background: look.wantsYou ? look.fill : undefined, transform: shown ? `translateY(${shown}px)` : undefined } : undefined}
       title={where || undefined}
-      onClick={() => select(workspace, tab.root.id)}
-      onDblClick={startRename}
+      data-row={tabKey(workspace, tab.root.id)}
+      onPointerDown={(e) => startSidebarTabDrag(e, workspace, tabs, index)}
+      onClick={(e) => {
+        // The click that ends a drag is not a click on the row.
+        if (endedADrag()) return;
+        select(workspace, tab.root.id);
+        // Finder's slow click: the name of the tab already in front, clicked once, opens for typing.
+        slowRename.disarm();
+        const onName = (e.target as HTMLElement).closest(".tab-title") !== null;
+        if (mayArmRename({ wasChosen: selected, onName, dragged: false, count: e.detail })) {
+          slowRename.arm(rename, () => activeWorkspace.value === workspace && activeTab.value?.root.id === tab.root.id);
+        }
+      }}
+      onDblClick={() => (slowRename.disarm(), rename())}
       onMouseDown={(e) => {
         if (e.button === 1) {
           e.preventDefault();
@@ -83,7 +110,7 @@ function TabRow(props: { workspace: string; tab: RootTab; index: number; selecte
       }}
       onContextMenu={(e) =>
         openMenu(e, [
-          { label: "Renomear", hint: "F2", action: startRename },
+          { label: "Renomear", hint: "F2", action: rename },
           { label: "Dividir à direita", action: () => (select(workspace, tab.root.id), void split(SPLIT_RIGHT)) },
           { label: "Dividir abaixo", action: () => (select(workspace, tab.root.id), void split(SPLIT_DOWN)) },
           "separator",
@@ -94,10 +121,7 @@ function TabRow(props: { workspace: string; tab: RootTab; index: number; selecte
       {renaming ? (
         <InlineEditor
           value={gui.value.tabNames[tabKey(workspace, tab.root.id)] ?? look.label}
-          onDone={(value) => {
-            editing.value = null;
-            if (value !== null) renameTab(workspace, tab.root.id, value);
-          }}
+          onDone={(value, keyboard) => finishTabName(workspace, tab.root.id, value, keyboard)}
         />
       ) : (
         <span class="tab-label">
@@ -112,9 +136,10 @@ function TabRow(props: { workspace: string; tab: RootTab; index: number; selecte
               </span>
             )
           )}
-          <span class="tab-title" style={look.color ? { color: look.color } : undefined}>
+          <span class="tab-title" style={look.color ? { color: look.color } : undefined} onPointerLeave={() => slowRename.disarm()}>
             {look.label}
           </span>
+          {tab.panes.length > 1 && <PaneMark />}
           {suffix}
           <AccountChevron workspace={workspace} tab={tab} label={look.label} />
         </span>
@@ -153,23 +178,54 @@ function WorkspaceGroup(props: { name: string }) {
   ];
   const waiting = tabs.filter((t) => tabActivity(name, t) === "waitingForYou").length;
   const renaming = editing.value?.kind === "workspace" && editing.value.workspace === name;
-  const startRename = () => (editing.value = { kind: "workspace", workspace: name });
+  const rename = () => (editing.value = { kind: "workspace", workspace: name });
   const selectedTab = activeTab.value;
-  const ordered = orderedWorkspaces.value.map((w) => w.name);
+  const ordered = shownWorkspaces.value.map((w) => w.name);
   const position = ordered.indexOf(name);
+  // Carried by hand: this group goes where the gap is and its header dims,
+  // the others slide aside; a tab of another workspace over the header lights it.
+  const carry = sidebarMove.value;
+  const group = carry?.kind === "workspace" ? carry : null;
+  const carried = group?.name === name;
+  const shown = group ? group.slid[position] ?? 0 : 0;
+  const offered = carry?.kind === "tab" && carry.into === name && carry.before === null;
+  const live = workspaces.value.find((w) => w.name === name)?.tabs.filter((t) => !t.finished) ?? [];
+  const tooltip = workspaceTooltip({
+    name,
+    label: workspaceLabel(name),
+    tabs: tabs.length,
+    state: workspaceState(live),
+    // What runs, by the title it is shown under; a pane beside the root is named by its own.
+    running: tabs.flatMap((tab, i) =>
+      tab.panes.filter((p) => p.busy).map((p) => (p.id === tab.root.id ? tabLabel(name, tab, i) : plainTitle(p.title, p.command || `painel ${p.id}`))),
+    ),
+  });
   return (
-    <section class={`workspace ${current ? "current" : ""}`} data-workspace={name}>
+    <section
+      class={`workspace ${current ? "current" : ""}`}
+      data-workspace={name}
+      style={shown ? { transform: `translateY(${shown}px)` } : undefined}
+    >
       <div
-        class={`workspace-row ${dragging.value?.over === name && dragging.value.from !== name ? "drop-before" : ""}`}
-        onPointerDown={(e) => startReorder(e, name, renaming)}
-        onClick={() => {
-          if (!justDragged) select(name);
+        class={`workspace-row ${carried ? "carried" : ""} ${offered ? "offered" : ""}`}
+        title={tooltip}
+        onPointerDown={(e) => !renaming && startWorkspaceDrag(e, name)}
+        onClick={(e) => {
+          // The click that ends a drag is not a click on the header.
+          if (endedADrag()) return;
+          select(name);
+          // Finder's slow click: the name of the workspace in front, clicked once, opens for typing.
+          slowRename.disarm();
+          const onName = (e.target as HTMLElement).closest(".workspace-name") !== null;
+          if (mayArmRename({ wasChosen: current, onName, dragged: false, count: e.detail })) {
+            slowRename.arm(rename, () => activeWorkspace.value === name);
+          }
         }}
-        onDblClick={startRename}
+        onDblClick={() => (slowRename.disarm(), rename())}
         onContextMenu={(e) =>
           openMenu(e, [
             { label: "Nova aba aqui", action: () => void newTab(name) },
-            { label: "Renomear", action: startRename },
+            { label: "Renomear", action: rename },
             { label: folded ? "Mostrar as abas" : "Recolher as abas", action: () => toggleFolded(name) },
             "separator",
             { label: "Mover para cima", disabled: position === 0, action: () => moveWorkspace(name, ordered[position - 1]) },
@@ -179,6 +235,11 @@ function WorkspaceGroup(props: { name: string }) {
               action: () => moveWorkspace(name, ordered[position + 2] ?? null),
             },
             "separator",
+            {
+              label: "Remover da barra lateral",
+              help: "O workspace continua rodando; Ir para (Ctrl+Shift+P) o traz de volta.",
+              action: () => putAway(name),
+            },
             { label: "Fechar o workspace…", danger: true, action: () => void closeWorkspace(name) },
           ])
         }
@@ -186,13 +247,10 @@ function WorkspaceGroup(props: { name: string }) {
         {renaming ? (
           <InlineEditor
             value={workspaceLabel(name)}
-            onDone={(value) => {
-              editing.value = null;
-              if (value !== null) renameWorkspace(name, value);
-            }}
+            onDone={(value, keyboard) => finishWorkspaceName(name, value, keyboard)}
           />
         ) : (
-          <span class="workspace-name" title={name}>
+          <span class="workspace-name" onPointerLeave={() => slowRename.disarm()}>
             {workspaceLabel(name)}
           </span>
         )}
@@ -246,6 +304,7 @@ function WorkspaceGroup(props: { name: string }) {
               key={tabKey(name, tab.root.id)}
               workspace={name}
               tab={tab}
+              tabs={tabs}
               index={i}
               selected={current && tab === selectedTab}
             />
@@ -254,46 +313,6 @@ function WorkspaceGroup(props: { name: string }) {
       </div>
     </section>
   );
-}
-
-/**
- * Moving a workspace up or down the list, by its row.
- *
- * With the pointer rather than HTML drag and drop: on Windows the webview
- * hands every drag to the window's own file-drop handler — which is what
- * lets files dropped on a terminal arrive as their paths — and HTML drag and
- * drop inside the page never starts.
- */
-const dragging = signal<{ from: string; over: string | null } | null>(null);
-let justDragged = false;
-
-function startReorder(event: PointerEvent, name: string, renaming: boolean) {
-  if (renaming || event.button !== 0 || (event.target as HTMLElement).closest("button, input")) return;
-  const row = event.currentTarget as HTMLElement;
-  const startY = event.clientY;
-  let active = false;
-  const move = (e: PointerEvent) => {
-    if (!active && Math.abs(e.clientY - startY) < 5) return;
-    if (!active) {
-      active = true;
-      row.setPointerCapture(e.pointerId);
-    }
-    const under = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>(".workspace");
-    dragging.value = { from: name, over: under?.dataset.workspace ?? null };
-  };
-  const up = () => {
-    window.removeEventListener("pointermove", move);
-    window.removeEventListener("pointerup", up);
-    const result = dragging.value;
-    dragging.value = null;
-    if (!active || !result) return;
-    // The click that ends a drag is not a click on the row.
-    justDragged = true;
-    setTimeout(() => (justDragged = false), 0);
-    if (result.over && result.over !== name) moveWorkspace(name, result.over);
-  };
-  window.addEventListener("pointermove", move);
-  window.addEventListener("pointerup", up);
 }
 
 function ZoomControl() {
@@ -320,7 +339,7 @@ function ZoomControl() {
 /** A new workspace is named where it is made: the field under the list, and return. */
 function NewWorkspaceField() {
   const [value, setValue] = useState("");
-  const empty = orderedWorkspaces.value.length === 0;
+  const empty = shownWorkspaces.value.length === 0;
   return (
     <label class="new-workspace" title="Novo workspace (Ctrl+Shift+N)">
       <icon.Plus />
@@ -374,8 +393,8 @@ export function Sidebar() {
           <icon.Sidebar />
         </button>
       </div>
-      <div class="sidebar-list">
-        {orderedWorkspaces.value.map((w) => (
+      <div class={`sidebar-list ${sidebarMove.value ? "moving" : ""}`}>
+        {shownWorkspaces.value.map((w) => (
           <WorkspaceGroup key={w.name} name={w.name} />
         ))}
         <NewWorkspaceField />

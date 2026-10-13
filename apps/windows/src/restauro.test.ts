@@ -1,7 +1,16 @@
 // What the core says about the restart and the conversations a drop stopped.
 import { describe, expect, it } from "vitest";
 import type { CoreAnswer } from "./api";
-import { isQuietResume, isQuietRestore, readResume, readRestore, restoreLine, resumeLine } from "./restauro";
+import {
+  isQuietResume,
+  isQuietRestore,
+  noTabNumbers,
+  readResume,
+  readRestore,
+  remapTabNumbers,
+  restoreLine,
+  resumeLine,
+} from "./restauro";
 
 const answer = (body: Record<string, unknown>, exit = 0): CoreAnswer => ({ versao: 1, _saida: exit, ...body });
 
@@ -10,7 +19,7 @@ describe("the tabs back after a restart", () => {
     const round = readRestore(
       answer({ restaurar: { origem: "keepd 4242 de 17", abas: 3, conversas: 1, falhas: [], motivo: "restaurado" }, retrato: { abas: 3, conversas: 1 } }),
     );
-    expect(round).toEqual({ tabs: 3, conversations: 1, failures: [], reason: "restaurado", error: null });
+    expect(round).toEqual({ tabs: 3, made: [], conversations: 1, failures: [], reason: "restaurado", error: null });
     expect(isQuietRestore(round)).toBe(false);
     expect(restoreLine(round)).toBe("restauro: 3 aba(s), 1 conversa(s), restaurado");
   });
@@ -41,7 +50,7 @@ describe("the tabs back after a restart", () => {
 
   it("an answer that is not what was expected counts for nothing", () => {
     const odd = readRestore(answer({ restaurar: { abas: "três", conversas: null, falhas: "x" } }));
-    expect(odd).toEqual({ tabs: 0, conversations: 0, failures: [], reason: "", error: null });
+    expect(odd).toEqual({ tabs: 0, made: [], conversations: 0, failures: [], reason: "", error: null });
   });
 });
 
@@ -65,5 +74,63 @@ describe("the conversations a drop stopped", () => {
     expect(isQuietResume(failed)).toBe(false);
     expect(resumeLine(failed)).toBe("continuar: o Keep não respondeu");
     expect(readResume(answer({ ok: false, motivo: "uso" }, 2)).error).toBe("esta versão do keep não sabe continuar as conversas");
+  });
+});
+
+describe("the tabs the restore made", () => {
+  it("are told with the number each had before", () => {
+    const round = readRestore(
+      answer({
+        restaurar: {
+          abas: 3,
+          conversas: 0,
+          falhas: [],
+          motivo: "abas recriadas; as conversas seguem",
+          criadas: [
+            { workspace: "alfa", origem: 2, aba: 1 },
+            { workspace: "alfa", origem: 5, aba: 2 },
+            { workspace: "beta", origem: 1, aba: 1 },
+            { workspace: "sem número", origem: 0, aba: 1 },
+            "lixo",
+          ],
+        },
+      }),
+    );
+    expect(round.made).toEqual([
+      { workspace: "alfa", from: 2, to: 1 },
+      { workspace: "alfa", from: 5, to: 2 },
+      { workspace: "beta", from: 1, to: 1 },
+    ]);
+  });
+
+  const made = [
+    { workspace: "alfa", from: 2, to: 1 },
+    { workspace: "alfa", from: 5, to: 2 },
+    { workspace: "alfa", from: 9, to: 3 },
+    { workspace: "beta", from: 1, to: 1 },
+  ];
+
+  it("carry the order the tabs were listed in, the last one shown and the one in front to their new numbers", () => {
+    const was = {
+      tabOrder: { alfa: [9, 2, 5], beta: [1] },
+      lastTab: { alfa: 5, beta: 1 },
+      active: { workspace: "alfa", tab: 9 },
+    };
+    expect(remapTabNumbers(was, made)).toEqual({
+      tabOrder: { alfa: [3, 1, 2], beta: [1] },
+      lastTab: { alfa: 2, beta: 1 },
+      active: { workspace: "alfa", tab: 3 },
+    });
+  });
+
+  it("leave behind what belonged to a tab that did not come back, and a workspace of none", () => {
+    const was = {
+      tabOrder: { alfa: [7, 2, 5], gama: [1, 2] },
+      lastTab: { alfa: 7, gama: 1 },
+      active: { workspace: "alfa", tab: 7 },
+    };
+    expect(remapTabNumbers(was, made)).toEqual({ tabOrder: { alfa: [1, 2] }, lastTab: {}, active: null });
+    expect(remapTabNumbers({ tabOrder: {}, lastTab: {}, active: null }, made)).toEqual(noTabNumbers());
+    expect(remapTabNumbers({ tabOrder: { alfa: [2] }, lastTab: {}, active: null }, [])).toEqual(noTabNumbers());
   });
 });
