@@ -71,8 +71,13 @@ mod testes {
         assert_eq!(pasta("vazia"), None);
         assert_eq!(pasta("livre"), None);
         let (p, a) = envolve("presa", "/bin/claude".into(), vec!["--effort".into(), "max".into()]);
-        assert_eq!(p, helper.to_string_lossy());
-        assert_eq!(a, vec!["/bin/claude", "--effort", "max"]);
+        if cfg!(unix) {
+            assert_eq!(p, helper.to_string_lossy());
+            assert_eq!(a, vec!["/bin/claude", "--effort", "max"]);
+        } else {
+            // O sandbox é o do macOS: no Windows a linha fica a de sempre.
+            assert_eq!((p.as_str(), a), ("/bin/claude", vec!["--effort".to_string(), "max".to_string()]));
+        }
         let (p, a) = envolve("livre", "/bin/claude".into(), vec!["--effort".into()]);
         assert_eq!((p.as_str(), a), ("/bin/claude", vec!["--effort".to_string()]));
         // Sem o helper instalado, a linha é a de sempre.
