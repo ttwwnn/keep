@@ -126,7 +126,12 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
         casa: casa.clone(),
         dados: dados.clone(),
         local: local.clone(),
-        keep: std::env::current_exe().ok().map(|e| sem_prefixo(&e.to_string_lossy())),
+        // O `keep` que a IA chama: só se este processo é ele (um teste não é, e a
+        // pasta de `target` não é do que se dá permissão).
+        keep: std::env::current_exe()
+            .ok()
+            .filter(|e| e.file_name().is_some_and(|n| n.eq_ignore_ascii_case("keep.exe")))
+            .map(|e| sem_prefixo(&e.to_string_lossy())),
         git,
         node,
         sistema: sistema_dirs,
@@ -198,6 +203,9 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
             .collect::<Result<_, _>>()?;
         let a_restringir: Vec<&Sid> = sids.iter().collect();
         let token = sistema::token_restrito(&token0, &usuario, &sistema_sid, &a_restringir, &administrativos, &[&sid_pasta, &sid_basico])?;
+        if !sistema::e_restrito(&token) {
+            return Err("o token que devia ser restrito não é".into());
+        }
 
         // A prova: com este token o de fora é negado e a pasta funciona. Um
         // sandbox que não contém não sobe a IA, e outro nível não o conserta.

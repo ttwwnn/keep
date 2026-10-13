@@ -23,9 +23,10 @@ use windows_sys::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_REVISION, ACL_SIZE_INFORMATION, AclSizeInformation, AddAccessAllowedAce,
     CreateRestrictedToken, DACL_SECURITY_INFORMATION, DISABLE_MAX_PRIVILEGE, DuplicateTokenEx, EqualSid, GetAce,
     GetAclInformation, GetLengthSid, GetSecurityDescriptorControl, GetTokenInformation, INHERIT_ONLY_ACE,
-    InitializeAcl, NO_INHERITANCE, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
-    RevertToSelf, SE_DACL_PROTECTED, SID_AND_ATTRIBUTES, SUB_CONTAINERS_AND_OBJECTS_INHERIT, SecurityImpersonation,
-    SetTokenInformation, TOKEN_ALL_ACCESS, TOKEN_DEFAULT_DACL, TOKEN_GROUPS, TOKEN_INFORMATION_CLASS, TOKEN_USER,
+    InitializeAcl, IsTokenRestricted, NO_INHERITANCE, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+    PSID, RevertToSelf, SE_DACL_PROTECTED, SID_AND_ATTRIBUTES, SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+    SecurityImpersonation, SetTokenInformation, TOKEN_ADJUST_DEFAULT, TOKEN_ALL_ACCESS, TOKEN_ASSIGN_PRIMARY,
+    TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE, TOKEN_GROUPS, TOKEN_INFORMATION_CLASS, TOKEN_QUERY, TOKEN_USER,
     TokenDefaultDacl, TokenGroups, TokenImpersonation, TokenUser, UNPROTECTED_DACL_SECURITY_INFORMATION,
 };
 use windows_sys::Win32::System::Console::{
@@ -50,6 +51,9 @@ const GRUPO_LOGON: u32 = 0xC000_0000;
 
 /// A permissão de acesso total (`GENERIC_ALL`) da DACL padrão do token.
 const TUDO: u32 = 0x1000_0000;
+
+/// Pedir à alça o que o sistema deixar (`MAXIMUM_ALLOWED`).
+const O_QUE_DEIXAR: u32 = 0x0200_0000;
 
 fn larga(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -150,14 +154,24 @@ impl Sid {
 
 // ------------------------------------------------------------------ o token
 
-/// O token deste processo, com tudo o que `CreateRestrictedToken` e a DACL
-/// padrão pedem.
+/// O token deste processo, com o que `CreateRestrictedToken` e a DACL padrão
+/// pedem. Com tudo (o que o Chromium pede ao fazer o mesmo) e, se o sistema
+/// não der tanto, com o que basta.
 pub fn token_do_processo() -> Result<Alca, String> {
     let mut t: HANDLE = null_mut();
     if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, &mut t) } == 0 {
-        return Err(falha_ultimo("não foi possível abrir o token do processo"));
+        let basta = TOKEN_DUPLICATE | TOKEN_QUERY | TOKEN_ASSIGN_PRIMARY | TOKEN_ADJUST_DEFAULT;
+        if unsafe { OpenProcessToken(GetCurrentProcess(), basta, &mut t) } == 0 {
+            return Err(falha_ultimo("não foi possível abrir o token do processo"));
+        }
     }
     Ok(Alca(t))
+}
+
+/// Se o token é restrito: a prova de que o processo não leva a vantagem do
+/// usuário inteiro.
+pub fn e_restrito(token: &Alca) -> bool {
+    unsafe { IsTokenRestricted(token.0) != 0 }
 }
 
 fn info_do_token(token: HANDLE, classe: TOKEN_INFORMATION_CLASS) -> Result<Vec<u64>, String> {
@@ -296,7 +310,7 @@ pub fn token_restrito(
 /// são checados contra ele, como os do processo que vai nascer com ele.
 pub fn como_o_token<R: Send>(token: &Alca, f: impl FnOnce() -> R + Send) -> Result<R, String> {
     let mut imp: HANDLE = null_mut();
-    let ok = unsafe { DuplicateTokenEx(token.0, TOKEN_ALL_ACCESS, null(), SecurityImpersonation, TokenImpersonation, &mut imp) };
+    let ok = unsafe { DuplicateTokenEx(token.0, O_QUE_DEIXAR, null(), SecurityImpersonation, TokenImpersonation, &mut imp) };
     if ok == 0 {
         return Err(falha_ultimo("DuplicateTokenEx"));
     }
