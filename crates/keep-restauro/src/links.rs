@@ -208,6 +208,13 @@ pub fn conferir() -> Vec<(bool, String)> {
 }
 
 pub fn cli(args: &[String]) -> i32 {
+    // O desvio é um app do macOS (Ghostty.app, codesign, lsregister): fora dele nada é montado, para não deixar uma
+    // pasta de app e uma cópia do `keep` onde ninguém vai usá-los. No Windows o Claude Code escolhe o terminal por
+    // conta própria (docs/restauro.md).
+    if !cfg!(target_os = "macos") {
+        eprintln!("keep links: só existe no macOS (docs/restauro.md, \"No Windows\")");
+        return 2;
+    }
     match args.first().map(String::as_str) {
         Some("instalar") => match instalar() {
             Ok(feito) => {

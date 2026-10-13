@@ -308,6 +308,48 @@ mod in_powershell {
         assert!(out.contains("The term 'claude' is not recognized"), "{out}");
     }
 
+    /// The script as a tab hands it to PowerShell: UTF-16, in base64, as an encoded command.
+    fn encoded(script: &str) -> String {
+        const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let bytes: Vec<u8> = script.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+        let mut out = String::new();
+        for chunk in bytes.chunks(3) {
+            let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+            let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+            out.push(TABLE[(n >> 18) as usize & 63] as char);
+            out.push(TABLE[(n >> 12) as usize & 63] as char);
+            out.push(if chunk.len() > 1 { TABLE[(n >> 6) as usize & 63] as char } else { '=' });
+            out.push(if chunk.len() > 2 { TABLE[n as usize & 63] as char } else { '=' });
+        }
+        out
+    }
+
+    #[test]
+    fn handed_over_as_an_encoded_command_the_accents_of_its_message_survive() {
+        let Some(pwsh) = pwsh() else {
+            eprintln!("sem pwsh (KEEP_TEST_PWSH ou no PATH): pulado");
+            return;
+        };
+        let w = World::new("encoded", pwsh);
+        let keep = w.dir.join("keep");
+        let out = Command::new(&w.pwsh)
+            .args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &encoded(&format!("{AI}\nclaude hi"))])
+            .env_clear()
+            .env("PATH", format!("{}:/usr/bin:/bin", w.dir.join("bin").display()))
+            .env("HOME", w.dir.join("home"))
+            .env("POWERSHELL_TELEMETRY_OPTOUT", "1")
+            .env("KEEP_TEST_LOG", w.dir.join("core.log"))
+            .env("KEEP_TEST_CORE", "refuse")
+            .env("KEEP_WORKSPACE", "w1")
+            .env("KEEP_IA_BIN", &keep)
+            .stdin(Stdio::null())
+            .output()
+            .expect("pwsh");
+        let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+        assert!(text.contains("Keep: não deu para preparar o login desta aba (Nao ha conta.); o Claude sobe como antes."), "{text}");
+        assert!(text.contains("[claude] n=1"), "{text}");
+    }
+
     #[test]
     fn a_function_or_alias_of_the_persons_is_never_replaced() {
         let Some(pwsh) = pwsh() else {
