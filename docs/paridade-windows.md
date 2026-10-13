@@ -21,6 +21,11 @@ Ir para (Ctrl+Shift+P), Comandos (Ctrl+Shift+Alt+P), Buscar neste painel
 (Ctrl+F) e Buscar em tudo (Ctrl+Shift+F). A barra de busca do xterm ficou em
 Ctrl+Alt+F e no menu do painel ("Procurar na tela").
 
+Conferida no Mac pelo roteiro do app (`src/e2ePalette.ts`, cinco passos contra
+um keepd de verdade) e à mão, nos temas escuro e claro, com a prévia, as ações,
+a busca e as listas de temas e de fontes; as teclas no WebView2 e o Explorer
+não foram vistos no Windows de verdade.
+
 - [x] Ir para: recentes primeiro (a 1ª linha é a última aba de OUTRO
   workspace), cabeçalhos "terminais" e "abrir em", linha rica, busca em colunas
   com as letras acesas, ↑↓ / Ctrl+J / Ctrl+N / Ctrl+P, duplo clique escolhe,
@@ -36,21 +41,31 @@ Ctrl+Alt+F e no menu do painel ("Procurar na tela").
 - [~] Painel de ações (Ctrl+K e botão direito): ir, nova aba, mostrar no
   Explorer, copiar o caminho, fechar; ações de pasta, de linha da busca e de
   comando. Testado no Mac; "Mostrar no Explorer" no Windows só compilado.
-- [ ] Ações de tema e de fonte: dependem dos catálogos da fatia `appearance`
-  (o gancho é `registerCatalog` em commands.ts; o componente da lista tem as
-  próprias ações).
+- [ ] Ações de tema e de fonte (Ctrl+K numa linha das listas: "Vestir este
+  tema" / "Usar esta fonte" e "Copiar o nome"): as listas são as da fatia
+  `appearance` (`ui/CatalogPicker.tsx`), cartões autônomos em que Ctrl+K sobe a
+  seleção e que não têm painel de ações; dá-lo a elas é mexer no teclado dessa
+  fatia, e Enter e Esc já fazem o essencial.
 - [x] Paleta de comandos: os 17 do Mac em 3 grupos, com as teclas desenhadas e
   os destrutivos em vermelho, mais Configurações, Tela cheia e Colar imagem. O
   botão redondo da fileira de abas virou "Comandos" (a engrenagem é um comando
-  e segue em Ctrl+,).
-- [ ] Quatro comandos ficam cinza até a fatia dona deles ligar o comando com
-  `registerCommand` (commands.ts): Alternar abas verticais (`tabs`), Nova janela
-  (`windows`), Remover este workspace da janela (`tabs`) e Usar o tema do Keep
-  (`appearance`). "Mudar o tema…" e "Mudar a fonte…" abrem as Configurações até
-  haver catálogo registrado.
+  e segue em Ctrl+,). Ligados a funções das outras fatias em
+  `palette/bindings.ts`: "Alternar abas verticais" (`toggleVerticalTabs`),
+  "Remover este workspace da janela" (`putAway`), "Usar o tema do Keep"
+  (`clearTheme`) e "Redefinir o tamanho do texto" (`resetText`, que também
+  desfaz o zoom e a fonte).
+- [x] "Mudar o tema…" e "Mudar a fonte…" põem a lista da fatia `appearance`
+  (`ThemePicker`, `FontPicker`) no lugar do cartão da paleta: a seta veste ao
+  vivo, Enter usa e fecha tudo, Esc volta à paleta (um passo para trás, como
+  no Mac) e desfaz o que se viu.
+- [ ] "Nova janela" fica cinza na paleta até a fatia `windows` ligá-la com
+  `registerCommand` (commands.ts), que vale mais que qualquer padrão da janela.
 - [x] Busca no painel (Ctrl+F, pelo keepd) e em tudo (Ctrl+Shift+F): escopo,
   contador "3 de 47", prévia, ida à aba, ao painel e à linha exata (contada do
-  fim, como o Mac), com a linha marcada por instantes.
+  fim, como o Mac), com a linha marcada por instantes nas cores de busca do
+  tema em uso (`Palette.search`, legíveis em qualquer fundo). Numa aba
+  adormecida (hibernação) espera o terminal por `viewWhenAwake` antes de ir à
+  linha.
 
 ## Fatia `appearance` (temas, fontes, janela)
 
