@@ -34,6 +34,15 @@ export function keepShares(wanted: (key: string) => boolean): void {
   if (kept.length !== Object.keys(shares.value).length) shares.value = Object.fromEntries(kept);
 }
 
+/** The dividers of one tab now known by another's key: an heir carrying on a closed root's tab keeps what the panes still there had. */
+export function moveShares(fromPrefix: string, toPrefix: string): void {
+  const moved = Object.entries(shares.value).filter(([key]) => key.startsWith(`${fromPrefix}\u0000`));
+  if (moved.length === 0) return;
+  const kept = Object.fromEntries(Object.entries(shares.value).filter(([key]) => !key.startsWith(`${fromPrefix}\u0000`)));
+  for (const [key, share] of moved) kept[`${toPrefix}${key.slice(fromPrefix.length)}`] = share;
+  shares.value = kept;
+}
+
 /** The leftmost, topmost pane of a tree. */
 export function firstLeaf(tree: PaneTree): number {
   return tree.kind === "leaf" ? tree.id : firstLeaf(tree.first);

@@ -8,6 +8,7 @@ import {
   dividerFor,
   firstLeaf,
   keepShares,
+  moveShares,
   paneBeside,
   setShare,
   shareAt,
@@ -48,6 +49,15 @@ describe("a divider's share", () => {
       { tab: 4, splitOf: 3, splitDir: R },
     ]) as Extract<PaneTree, { kind: "split" }>;
     expect(splitKey("w", after)).toBe(splitKey("w", rootSplit));
+  });
+  it("goes with the tab to the heir that carries it on", () => {
+    setShare("w\u00001\u0000v1-2", 0.3);
+    setShare("w\u00001\u0000h2-3", 0.6);
+    setShare("w\u00009\u0000v9-10", 0.7);
+    moveShares("w\u00001", "w\u00002");
+    expect(shares.value).toEqual({ "w\u00002\u0000v1-2": 0.3, "w\u00002\u0000h2-3": 0.6, "w\u00009\u0000v9-10": 0.7 });
+    moveShares("w\u00005", "w\u00006");
+    expect(Object.keys(shares.value)).toHaveLength(3);
   });
   it("forgets the dividers nobody wants", () => {
     setShare("a\u0000v1-2", 0.3);

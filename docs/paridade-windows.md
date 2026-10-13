@@ -43,17 +43,40 @@ verdade (só compilado no CI), `[ ]` por fazer, `[-]` não se aplica.
 
 ## Fatia `tabs`
 
-- [ ] Reordenar abas por arrasto (faixa e barra lateral); mover aba para outro
-  workspace (api.moveTab).
-- [ ] Alça do painel: trocar, encostar nos 4 lados, soltar numa aba, destacar
-  em aba nova; mola de 0,45 s (api.rearrange).
-- [ ] Divisor arrastável; foco e redimensionamento de painéis por teclado.
-- [ ] Alternar abas verticais (Vertical Tabs).
-- [ ] Selo cols x rows; marca de painéis na aba; tooltip do workspace.
-- [ ] Renomear sem fixar o título atual; o herdeiro herda o nome ao fechar a raiz.
-- [ ] Workspace padrão quando o keepd está vazio.
-- [ ] Hibernação: no máximo 6 abas com superfícies, LRU.
-- [ ] Workspaces guardados ("put away") e "Remover desta janela".
+Conferida no Mac (roteiro do app, `src/e2eTabs.ts`, com eventos de ponteiro da própria página, e testes
+do vitest); o mouse real, os cursores e a dica nativa do workspace não foram exercitados no Windows.
+
+- [x] Reordenar abas por arrasto, na fileira (a aba segue o ponteiro e as outras abrem a lacuna) e na barra
+  lateral (cópia na mão, linha apagada no lugar de pouso, lacuna que acompanha), com a ordem no estado
+  (`tabOrder`, validada contra o que o keepd lista e esquecida se o keepd for outro).
+- [x] Mover aba (com os painéis) para outro workspace arrastando na barra lateral (`api.moveTab`): o terminal é
+  religado, não refeito, e o nome, o lugar, o painel com o teclado e o estado do Claude vão junto. Soltar
+  no cabeçalho põe no fim; soltar sobre uma aba põe antes dela.
+- [x] Arrastar o cabeçalho do workspace reordena a lista, com a mesma lacuna.
+- [x] Alça do painel (44x14, três pontos, só com mais de um painel): cartão com o texto do painel, pouso nos
+  quatro lados e na troca (`api.rearrange`), soltar numa aba da fileira junta o painel a ela, soltar fora o
+  destaca em aba nova, 0,45 s sobre uma aba a abre (a mola). Trocar dois painéis mantém o layout e troca
+  os lugares (também entre abas); o herdeiro assume o nome e o lugar da aba.
+- [x] Divisor arrastável (razão em memória, 50/50 no início, mínimo de 12 colunas e 4 linhas, duplo clique volta
+  ao meio) e selo "cols × rows" enquanto o painel muda de tamanho.
+- [x] Foco por geometria (Alt+setas) e redimensionamento (Alt+Shift+setas, 20 px) só em abas com painéis; nas
+  outras as setas são do programa. Documentados no menu do painel.
+- [x] Abas verticais: `toggleVerticalTabs` (store.ts), no estado, e no menu de contexto da fileira. O registro
+  do comando na paleta fica com a fatia `palette` (não há `commands.ts` neste ramo).
+- [x] Marca de painéis na aba (na fileira e na barra lateral) e dica do workspace (nome real, o que roda ou
+  "N abas · estado").
+- [x] Renomear sem fixar o título atual (só grava o que mudou), um só campo de nome por vez, clique lento no
+  nome da aba ou do workspace em frente (meio segundo, uma tecla ou outro clique cancelam), F2 pergunta o
+  nome quando nada mostra as abas; o herdeiro herda o nome ao fechar a raiz.
+- [x] Workspace padrão com o nome do usuário quando o keepd está vazio (campo `user` em `startup`).
+- [x] Hibernação: no máximo 6 abas com terminal (a em frente nunca; seleção, teclado ou composição seguram a
+  aba); a rolagem é guardada e o keepd repinta a tela. O que rola para fora da tela enquanto a aba dorme
+  não entra na rolagem local (o keepd tem; a busca em tudo acha). Como no Mac, uma aba ocupada também
+  dorme. As adormecidas seguem lidas pela tela do keepd (`preview`); quem agir sobre o terminal de uma aba
+  que acabou de abrir deve esperar por `viewWhenAwake` (store.ts), por exemplo ir à linha de um resultado.
+- [x] Workspaces guardados: "Remover da barra lateral" no menu do workspace (`putAway`, lista `hidden` no
+  estado), o Ir para (`select`) devolve; só vale enquanto o workspace roda. O comando "Remover este
+  workspace da janela" fica para o registro de comandos da paleta.
 
 ## Fatia `terminal`
 

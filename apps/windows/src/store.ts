@@ -38,6 +38,7 @@ import { chooseClaudeEffort, chooseClaudeModel, chooseCodex, type PickerIO } fro
 import { baseName, isPathTitle, rootTabs, type RootTab } from "./layout";
 import { defaultState, normalizeState, tabKey, type GuiState, type RestoreWorkspace } from "./state";
 import { refile } from "./hibernation";
+import { keepShares, moveShares } from "./splits";
 import { listed, neighbour, putAwayWith, putAwayWithout, stillRunning } from "./putAway";
 import { arrangeTabs, heirsOf, insertBefore, memberIds, pruneOrders, substitute } from "./tabOrder";
 import { TerminalManager, viewKey, type TermView } from "./terminals";
@@ -313,13 +314,27 @@ async function refreshOnce(): Promise<void> {
     if (moves > 0) return;
     const firstAnswer = daemonError.value !== null;
     applyList(list);
-    if (firstAnswer) terminals.reattach();
+    if (firstAnswer) {
+      terminals.reattach();
+      void forgetOrderOfAnotherDaemon();
+    }
   } catch (error) {
     daemonError.value = String(error);
     // Started again if it went away: the first launch after it was killed,
     // say. Its tabs are gone with it, which the restore picture is for.
     void api.ensureDaemon().catch(() => {});
   }
+}
+
+/**
+ * A daemon that answers again may be another one — the first was killed and
+ * this was started in its place — and the order of the tabs is of ids, which
+ * another daemon counts from one again.
+ */
+async function forgetOrderOfAnotherDaemon(): Promise<void> {
+  const identity = await api.daemonIdentity().catch(() => null);
+  if (identity === null || identity === gui.value.daemon) return;
+  gui.value = { ...gui.value, daemon: identity, tabOrder: gui.value.daemon === "" ? gui.value.tabOrder : {} };
 }
 
 function applyList(list: WorkspaceInfo[]): void {
@@ -361,6 +376,7 @@ function reconcile(list: WorkspaceInfo[], previous: WorkspaceInfo[]): void {
     for (const [root, heir] of found) {
       const from = tabKey(workspace, root);
       refile(from, tabKey(workspace, heir));
+      moveShares(from, tabKey(workspace, heir));
       if (named[from] === undefined) continue;
       named[tabKey(workspace, heir)] ??= named[from];
       delete named[from];
@@ -384,6 +400,11 @@ function reconcile(list: WorkspaceInfo[], previous: WorkspaceInfo[]): void {
     }),
   );
   const tabOrder = pruneOrders(handed, roots);
+  // The dividers of tabs that are gone go with them.
+  keepShares((key) => {
+    const [workspace, root] = key.split("\u0000");
+    return roots.get(workspace)?.has(Number(root)) === true;
+  });
   const restore = picture(list, tabNames, tabOrder);
 
   // The tab in front went away: the one beside it comes forward.
@@ -1329,6 +1350,23 @@ export async function copySelection(): Promise<void> {
   const view = terminals.existing(ws, pane.id);
   const text = view?.term.getSelection() ?? "";
   if (text) await writeText(text).catch(() => navigator.clipboard?.writeText(text));
+}
+
+/**
+ * The terminal of a pane, once it has one: a pane of a tab that is asleep has
+ * none until the tab is shown (hibernation.ts), and a terminal built for it
+ * is empty until the daemon repaints. For what has to act on the screen of a
+ * tab it has just gone to — a search result, a line to scroll to.
+ */
+export async function viewWhenAwake(workspace: string, pane: number, timeoutMs = 3000): Promise<TermView | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const view = terminals.existing(workspace, pane);
+    // Attached: the daemon's repaint is on its way, or in.
+    if (view?.isAttached) return view;
+    if (Date.now() > deadline) return view;
+    await sleep(50);
+  }
 }
 
 export function activeView(): TermView | undefined {
