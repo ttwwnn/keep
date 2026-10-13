@@ -252,6 +252,15 @@ que não existe. Mudar de motor abre conversa nova no outro, com o
 contexto visível da anterior num arquivo privado. Conta fixa sem login = `precisa-login`: a conversa
 não sai, abre-se a aba do login, e a troca acontece sozinha quando ele termina.
 
+O resumo chega pronto na primeira mensagem: `keep ia iniciar-com-contexto` lê o cartão local e passa
+seu conteúdo diretamente como argumento da IA, sem inserir mensagens no comando do shell. O arquivo
+continua disponível para consulta; a IA não precisa gastar uma chamada para abri-lo. Comandos locais
+como `/effort`, análises internas e atualizações intermediárias do Codex ficam fora do resumo.
+A orientação é continuar somente trabalho autorizado pendente; uma tarefa concluída recebe uma
+confirmação curta, sem repetir testes, consultas ao Git ou pesquisas por causa da troca.
+No macOS, o nome exibido da aba fica preservado durante a troca e salvo quando ela é aceita, inclusive
+quando depende de login. Um nome escolhido pela pessoa durante a troca tem prioridade.
+
 ### Entrar em outra conta
 
 Aba nova rodando `keep ia login claude|gpt`: cria o armazém (pasta fixa nova, ou `CODEX_HOME` novo),

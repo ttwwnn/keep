@@ -60,6 +60,17 @@ try JSONSerialization.data(withJSONObject: live).write(to: namesFile, options: .
 names.setTab(tab, to: "Renomeada")
 check(names.tab(TabID(workspace: "Work", root: 2)) == "Restaurada", "external restoration survives another rename")
 check(names.tab(tab) == "Renomeada", "explicit rename wins")
+
+let automatic = TabID(workspace: "Work", root: 3)
+names.preserveTab(automatic, title: "Troca de conta")
+check(NameStore(directory: namesDir).tab(automatic) == "Troca de conta", "AI switch persists the previous automatic title")
+names.preserveTab(automatic, title: "Nova conversa Codex")
+check(names.tab(automatic) == "Troca de conta", "switching back does not rename the tab again")
+names.setTab(automatic, to: "Nome escolhido durante a troca")
+names.preserveTab(automatic, title: "Título anterior")
+check(names.tab(automatic) == "Nome escolhido durante a troca", "a name chosen while switching wins")
+names.setTab(automatic, to: nil)
+check(names.tab(automatic) == nil, "clearing the preserved name restores automatic titles")
 }
 
 print("\(cases - failures)/\(cases) ok")

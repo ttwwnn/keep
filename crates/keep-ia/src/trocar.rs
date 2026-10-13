@@ -480,13 +480,11 @@ fn subida(ws: &str, d: &Destino, ident: Option<&str>, parametros: &[String], con
             codex_bin()
         }
     };
-    if let Some(arq) = contexto {
-        args.push(contexto::prompt(arq));
-    }
     let mut definir = d.ambiente.clone();
     definir.push(("KEEP_IA_ESCOLHA".into(), d.escolha.clone()));
     // Workspace com pasta permitida: a IA sobe presa a ela (confinar.rs).
     let (programa, args) = crate::confinar::envolve(ws, programa, args);
+    let (programa, args) = contexto::envolve(programa, args, contexto);
     Subida {
         programa,
         args,
@@ -1018,6 +1016,8 @@ mod ponta_a_ponta {
             eprintln!("sem a IA falsa (cargo build -p keep-ia --examples): pulado");
             return;
         };
+        let keep = falsa.parent().unwrap().parent().unwrap().join("keep");
+        assert!(keep.is_file(), "compile o launcher: cargo build -p keep -p keep-ia --examples --bins");
         let c = casa("troca");
         perfis(&[("G", "u-1", "ana@x.com"), ("F", "u-2", "bia@y.com")]);
         c.global("G", "r");
@@ -1034,6 +1034,7 @@ mod ponta_a_ponta {
         unsafe {
             std::env::set_var("KEEP_IA_CLAUDE_BIN", bin.join("claude"));
             std::env::set_var("KEEP_IA_CODEX_BIN", bin.join("codex"));
+            std::env::set_var("KEEP_IA_KEEP_BIN", &keep);
             std::env::set_var("KEEP_SOCKET", &sock);
             std::env::set_var("SHELL", "/bin/sh");
             std::env::set_var("PS1", "$ ");
