@@ -700,7 +700,23 @@ final class TerminalSurfaceView: NSView {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.9, execute: hide)
     }
 
+    /// Take the size the layout gives though out of sight: a surface made
+    /// for a hibernated tab woken without being shown (`TabHostView.wake`)
+    /// has no size of its own yet, and libghostty's default grid is not the
+    /// tab's — its client takes the pane over at the grid this gives. The
+    /// grid is reported when the tab is shown.
+    func takeSizeOutOfSight() {
+        updateSize()
+        guard let surface, let pending = pendingSize else { return }
+        pendingSize = nil
+        sentSize = pending
+        Trace.log("layout", "\(workspace)/\(tab) size \(Int(pending.width))x\(Int(pending.height)) (out of sight)")
+        ghostty_surface_set_size(surface, UInt32(max(1, pending.width)), UInt32(max(1, pending.height)))
+    }
+
     private func flushPendingSize() {
+        // Sized out of sight, never reported: reported now it is seen.
+        if pendingSize == nil, lastGrid == nil, sentSize != nil { reportGrid() }
         guard let surface, let pending = pendingSize else { return }
         pendingSize = nil
         sentSize = pending

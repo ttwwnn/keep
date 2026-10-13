@@ -20,6 +20,8 @@
 #   - ⌘P to a hibernated tab;
 #   - a tab on screen in another window is never let go of;
 #   - full screen: tabs are let go of and come back at the full-screen grid;
+#   - a picture drawn in a hibernated tab: its client asks for a surface,
+#     the tab is woken out of sight, and is not let go of again;
 #   - what a Keep that is gone left beside its clients is swept at launch,
 #     and nothing of a Keep still running.
 #
@@ -153,6 +155,15 @@ wait_for() {  # wait_for <seconds> <command...>
     local limit=$1 start=$SECONDS
     shift
     while ! "$@" >/dev/null 2>&1; do
+        [ $((SECONDS - start)) -ge "$limit" ] && return 1
+        sleep 0.5
+    done
+}
+# The same for a condition with a value read in it: read again each time,
+# where `wait_for <n> test "$(…)"` reads it once, before the wait.
+until_true() {  # until_true <seconds> '<condition>'
+    local limit=$1 start=$SECONDS
+    while ! eval "$2" >/dev/null 2>&1; do
         [ $((SECONDS - start)) -ge "$limit" ] && return 1
         sleep 0.5
     done
@@ -332,13 +343,20 @@ rm -rf "$ORPHANS/hk-gone-$$" "$ORPHANS/hk-alive-$$" "$ORPHANS/hk-unnamed-$$"
 
 say ""
 say "a tab's history and its program's answers, through hibernation"
+until_true 30 '[ "$(watched 1)" = attached ]'
 tell 1 "title tab-1"
 wait_for 30 test -s "$WORK/dump/$WS-1.txt"
 print_seen 1 3000 1
 check "tab 1 shows the 3000 lines it printed" "yes" "$(lines_whole 1 3000)"
+# A tab shown for the first time is told what to print once its client is
+# attached: printed before, it reaches the surface as the daemon's repaint,
+# which has nothing of the main screen under a program on the alternate one.
+attached() { [ "$(watched "$1")" = attached ]; }
 show 2 || say "  (tab 2 would not come up)"
+wait_for 30 attached 2
 tell 2 "title tab-2" "print 50"
 show 3 || say "  (tab 3 would not come up)"
+wait_for 30 attached 3
 tell 3 "title tab-3" "print 200" "claude on" "claude count 1"
 wait_for 30 dump_has 3 "count 1"
 # Tab 2's program asks its questions with its surface still there, out of
@@ -346,10 +364,11 @@ wait_for 30 dump_has 3 "count 1"
 tell 2 "ask"
 for n in 4 5 6 7; do
     show "$n" || say "  (tab $n would not come up)"
+    wait_for 30 attached "$n"
     tell "$n" "title tab-$n" "print 20"
 done
 # A second after the last switch the tabs out of sight are let go of.
-wait_for 30 test "$(hibernated 3)" -ge 1
+until_true 30 '[ "$(hibernated 3)" -ge 1 ]'
 sleep 2
 check "the three tabs used least recently were let go of, kept by their clients" "1 1 1" \
     "$(hibernated 1) $(hibernated 2) $(hibernated 3)"
@@ -368,7 +387,7 @@ check "the title set while hibernated reached the app at once" "yes" \
 if [ -n "$LOCKED" ]; then
     skip "and the strip"
 else
-    wait_for 20 test "$(ask_ax value "strip-title-$WS/1")" = "renamed-while-hibernated"
+    until_true 20 '[ "$(ask_ax value "strip-title-$WS/1")" = renamed-while-hibernated ]'
     check "and the strip" "renamed-while-hibernated" "$(ask_ax value "strip-title-$WS/1")"
 fi
 SHOWN_ANSWERS=$(cat "$WORK/answers-${PID[2]}-1" 2>/dev/null)
@@ -409,7 +428,7 @@ say "the zoom, changed while tabs are hibernated"
 # zoom at once, and its client tells the daemon: the grid read there.
 BEFORE=$(daemon_grid 3)
 "$AXPRESS" "$APP_NAME" menu View "Zoom In" >/dev/null 2>&1
-wait_for 20 test "$(daemon_grid 3)" != "$BEFORE"
+until_true 20 '[ "$(daemon_grid 3)" != "$BEFORE" ]'
 sleep 2
 ZOOMED=$(daemon_grid 3)
 check "the zoom changed the grid of the tab on screen" "yes" "$([ "$ZOOMED" != "$BEFORE" ] && echo yes || echo no)"
@@ -469,7 +488,7 @@ sleep 3
 "$SENDKEY" "$APP_PID" key 35 cmd >/dev/null 2>&1              # ⌘P
 sleep 2
 "$SENDKEY" "$APP_PID" key 36 >/dev/null 2>&1                  # return
-wait_for 20 test "$(watched 2 | tr -d ' ')" = "attached×2"
+until_true 20 '[ "$(watched 2 | tr -d " ")" = attached×2 ]'
 check "the daemon counts two viewers of tab 2" "attached×2" "$(watched 2 | tr -d ' ')"
 SECOND=$(grep -aoE "pool +made (w[0-9]+) $WS/2 " "$WORK/app.log" | tail -1 | awk '{print $3}')
 for n in 5 6 7; do
@@ -499,7 +518,7 @@ elif [ "$("$FULLSCREEN" "$APP_NAME" state 2>/dev/null)" = "" ]; then
 else
     WINDOWED=$(grid 7)
     "$FULLSCREEN" "$APP_NAME" on >/dev/null 2>&1
-    wait_for 20 test "$("$FULLSCREEN" "$APP_NAME" state 2>/dev/null)" = 1
+    until_true 20 '[ "$("$FULLSCREEN" "$APP_NAME" state 2>/dev/null)" = 1 ]'
     sleep 4
     FULL=$(grep -aoE "layout +$WS/[0-9]+ grid [0-9]+x[0-9]+" "$WORK/app.log" | tail -1 | awk '{print $NF}')
     check "the window is in full screen" "1" "$("$FULLSCREEN" "$APP_NAME" state 2>/dev/null)"
@@ -520,8 +539,47 @@ else
         "$([ "$(trace_count "pool +hibernating w[0-9]+ $WS/")" -gt "$HIB_BEFORE" ] && echo yes || echo no)"
     check "still $LIMIT clients under the app" "$LIMIT" "$(clients)"
     "$FULLSCREEN" "$APP_NAME" off >/dev/null 2>&1
-    wait_for 20 test "$("$FULLSCREEN" "$APP_NAME" state 2>/dev/null)" = 0
+    until_true 20 '[ "$("$FULLSCREEN" "$APP_NAME" state 2>/dev/null)" = 0 ]'
     sleep 3
+fi
+give_back_front
+
+# --- a picture ---------------------------------------------------------------------------
+
+say ""
+say "a picture drawn in a hibernated tab"
+# The tabs let go of in the first window and not made again since.
+asleep_tab() {
+    local n made_at hib_at
+    for n in $(seq "$TABS"); do
+        hib_at=$(grep -anE "pool +hibernating w0 $WS/$n kept=true" "$WORK/app.log" | tail -1 | cut -d: -f1)
+        made_at=$(grep -anE "pool +made w0 $WS/$n " "$WORK/app.log" | tail -1 | cut -d: -f1)
+        [ -n "$hib_at" ] && [ "$hib_at" -gt "${made_at:-0}" ] && { echo "$n"; return; }
+    done
+}
+PIC=$(asleep_tab)
+if [ -z "$PIC" ]; then
+    check "a tab is hibernated to draw in" "yes" "no"
+else
+    MADE_PIC=$(made "$PIC")
+    tell "$PIC" "image" "print 3"
+    until_true 20 '[ "$(made "$PIC")" -gt "$MADE_PIC" ]'
+    sleep 2
+    check "its client asks for a surface, and the tab is woken out of sight" "yes yes $((MADE_PIC + 1))" \
+        "$(grep -aqE "keeper .* asks for a surface: image" "$WORK/app.log" && echo yes || echo no) $(grep -aqE "hibernate +$WS/$PIC woken" "$WORK/app.log" && echo yes || echo no) $(made "$PIC")"
+    WOKEN=$(grep -aE "handing over at .* held" "$WORK/client.log" | grep -vE " 0 held" | tail -1)
+    check "the picture went to the surface as it came, with the rest" "yes" \
+        "$([ -n "$WOKEN" ] && echo yes || echo no)"
+    check "at the grid the tab has, out of sight as it is" "$(daemon_grid "$PIC")" \
+        "$(printf '%s\n' "$WOKEN" | grep -oE 'at [0-9]+x[0-9]+' | head -1 | cut -c4-)"
+    HIB_PIC=$(hibernated "$PIC")
+    # A settle comes a second after a tab is shown, and every fifteen.
+    show "$(( PIC == 1 ? 2 : 1 ))" || say "  (could not show another tab)"
+    sleep 17
+    check "and it is not let go of again" "$HIB_PIC" "$(hibernated "$PIC")"
+    show "$PIC" || say "  (tab $PIC would not come up)"
+    wait_for 30 dump_has "$PIC" "after the image"
+    check "shown, it has what came after the picture" "yes" "$(dump_has "$PIC" "after the image" && echo yes || echo no)"
 fi
 give_back_front
 

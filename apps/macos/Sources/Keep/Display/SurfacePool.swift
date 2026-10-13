@@ -131,7 +131,7 @@ final class SurfacePool {
     /// The caller takes the surface out of its layout: this only lets go.
     func hibernate(
         window: WindowID, workspace: String, tab: UInt32, shownIn host: NSWindow? = nil,
-        onTitle: @escaping (String) -> Void
+        onTitle: @escaping (String) -> Void, onWake: @escaping () -> Void = {}
     ) {
         let key = Key(window: window, workspace: workspace, tab: tab)
         guard let surface = surfaces[key] else { return }
@@ -154,6 +154,7 @@ final class SurfacePool {
                 directory: keeper,
                 window: host,
                 onTitle: onTitle,
+                onWake: onWake,
                 onDirectory: { [weak self] raw in
                     let path = raw.hasPrefix("file://") ? (URL(string: raw)?.path ?? raw) : raw
                     guard !path.isEmpty else { return }

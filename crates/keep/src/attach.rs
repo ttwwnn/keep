@@ -145,19 +145,17 @@ pub fn attach(
         None => (cols, rows),
     };
     #[cfg(unix)]
-    let handed = options.take.as_deref().and_then(|from| {
-        let taken = match crate::keeper::take(from, cols, rows) {
-            Ok(handed) => Some(handed),
-            Err(error) => {
-                crate::keeper::note(format_args!("could not take over {}: {error}", from.display()));
-                None
-            }
-        };
-        if keeping {
-            crate::keeper::tried_to_take(&dir, taken.is_some());
+    let handed = options.take.as_deref().and_then(|from| match crate::keeper::take(from, cols, rows) {
+        Ok(handed) => Some(handed),
+        Err(error) => {
+            crate::keeper::note(format_args!("could not take over {}: {error}", from.display()));
+            None
         }
-        taken
     });
+    // Said once what was handed over is in the mirror: from then on what the
+    // mirror holds — an image among it — is this client's to tell the app.
+    #[cfg(unix)]
+    let taken = options.take.as_ref().map(|_| handed.is_some());
     #[cfg(not(unix))]
     let handed: Option<(Stream, Vec<u8>)> = None;
     let (mut sock, handed_screen) = match handed {
@@ -369,6 +367,10 @@ pub fn attach(
         }
         #[cfg(not(unix))]
         written?;
+    }
+    #[cfg(unix)]
+    if let (true, Some(taken)) = (keeping, taken) {
+        crate::keeper::tried_to_take(&dir, taken);
     }
 
     let outcome = loop {

@@ -97,7 +97,9 @@ sabotage "a program that asked to be told of the scheme is not" \
 sabotage "the client coming for a pane does not wait for its keeper" \
     crates/keep/src/keeper.rs 's/Err(error) if Instant::now() >= deadline || !dir.join(FLAG).exists() => return Err(error),/Err(error) => return Err(error),/'
 sabotage "the client says nothing of having taken the pane" \
-    crates/keep/src/attach.rs 's/crate::keeper::tried_to_take(\&dir, taken.is_some());/let _ = \&taken;/'
+    crates/keep/src/attach.rs 's/crate::keeper::tried_to_take(\&dir, taken);/let _ = taken;/'
+sabotage "the keeper feeds an image to its mirror instead of asking for a surface" \
+    crates/keep/src/keeper.rs 's/if held.is_none() \&\& !bytes.is_empty() \&\& mirror.would_place_image(\&bytes) {/if false {/'
 sabotage "the client dies with its surface while it waits to take the pane" \
     crates/keep/src/attach.rs 's/unsafe { libc::signal(libc::SIGHUP, libc::SIG_IGN) };/{}/;s/let mut mirror = if keeping {/if keeping { unsafe { libc::signal(libc::SIGHUP, libc::SIG_IGN) }; } let mut mirror = if keeping {/'
 sabotage "the client's question written into the middle of the program's sequence" \

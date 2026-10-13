@@ -398,6 +398,7 @@ try:
     two = Surface(take=one.dir)
     wait_for(90, lambda: not os.path.exists(one.dir))
     check("the keeper is gone, and its directory with it", False, os.path.exists(one.dir))
+    wait_for(10, lambda: os.path.exists(os.path.join(two.dir, "took")))
     check("the new client says it took the pane", b"1\n", open(os.path.join(two.dir, "took"), "rb").read() if os.path.exists(os.path.join(two.dir, "took")) else b"")
     command("print 500")
     wait_for(90, lambda: two.has("L0005500"))
@@ -508,17 +509,35 @@ try:
     wait_for(30, lambda: seven.has("L0005701"))
     check("a sequence the handover cut off is finished on the new surface", "handed over", seven.replay()[0].get("title"))
 
-    print("the keeper goes when it should")
+    print("an image drawn while kept")
+    # The one thing a handover cannot carry: the keeper holds what the
+    # program writes from the image on and asks the app for a surface,
+    # played here, which is handed the pane and then that, as it came.
     seven.hibernate()
     wait_for(30, seven.kept)
-    keeper_dir = seven.dir
+    command("raw before the image\\r\\n\\e_Ga=T,f=24,s=1,v=1;AAAA\\e\\ after the image\\r\\n", "print 1")
+    wait_for(10, lambda: os.path.exists(os.path.join(seven.dir, "wake")))
+    check("the keeper asks the app for a surface", True, os.path.exists(os.path.join(seven.dir, "wake")))
+    woken = Surface(take=seven.dir)
+    wait_for(30, lambda: woken.has("L0005702"))
+    check("the image reaches the surface made for it, with what came before and after it", True,
+          b"before the image\r\n\x1b_Ga=T,f=24,s=1,v=1;AAAA\x1b\\ after the image\r\nL0005702" in bytes(woken.received))
+    found = numbers(woken.replay()[1])
+    check("and every line, once and in order (5702)", True, in_order_once(found, 5702))
+    check("its client says the pane is not to be let go of again", True,
+          wait_for(10, lambda: os.path.exists(os.path.join(woken.dir, "unkeepable"))))
+
+    print("the keeper goes when it should")
+    woken.hibernate()
+    wait_for(30, woken.kept)
+    keeper_dir = woken.dir
     os.unlink(os.path.join(keeper_dir, "hibernate"))
-    wait_for(30, lambda: not seven.alive())
-    check("when the app says it will not come back", False, seven.alive())
+    wait_for(30, lambda: not woken.alive())
+    check("when the app says it will not come back", False, woken.alive())
     check("the tab is untouched", True, pid_alive(PROGRAM_PID))
     eight = Surface(take=keeper_dir)
-    wait_for(90, lambda: eight.has("L0005701"))
-    check("a surface that finds no keeper attaches the ordinary way", True, eight.has("L0005701"))
+    wait_for(90, lambda: eight.has("L0005702"))
+    check("a surface that finds no keeper attaches the ordinary way", True, eight.has("L0005702"))
     eight.hibernate()
     wait_for(30, eight.kept)
     app.kill()
@@ -527,7 +546,7 @@ try:
     check("when the app is gone", False, eight.alive())
     app2 = subprocess.Popen(["/bin/sleep", "3600"])
     nine = Surface(take=eight.dir, app_pid=app2.pid)
-    wait_for(90, lambda: nine.has("L0005701"))
+    wait_for(90, lambda: nine.has("L0005702"))
     nine.hibernate()
     wait_for(30, nine.kept)
     with open(os.path.join(nine.dir, "somebody's"), "w") as f:

@@ -369,6 +369,22 @@ final class TabHostView: NSView {
         let next = PaneTree.build(root: root, panes: panes)
         guard next != tree || isHibernated else { return false }
         let dividers = isHibernated && next == tree ? restingDividers : []
+        rebuild(next, dividers: dividers)
+        return true
+    }
+
+    /// Build the surfaces of this tab again while it is out of sight: a
+    /// kept pane's client asked for one (`Keeper.wake`) — its program is
+    /// drawing an image, which only a surface can keep. As showing the tab
+    /// would, from the arrangement kept; the clients take the panes over.
+    func wake() {
+        guard isHibernated, let tree else { return }
+        Trace.log("hibernate", "\(id) woken: a kept pane asked for a surface")
+        rebuild(tree, dividers: restingDividers)
+        for surface in surfaces.values { surface.takeSizeOutOfSight() }
+    }
+
+    private func rebuild(_ next: PaneTree, dividers: [CGFloat]) {
         tree = next
         isHibernated = false
         restingDividers = []
@@ -395,7 +411,6 @@ final class TabHostView: NSView {
             split.layoutSubtreeIfNeeded()
         }
         applyResting()
-        return true
     }
 
     // MARK: - hibernating
@@ -440,7 +455,8 @@ final class TabHostView: NSView {
                 onTitle: { [weak self] title in
                     guard let self else { return }
                     self.onPaneTitle?(self.id, pane, title)
-                })
+                },
+                onWake: { [weak self] in self?.wake() })
         }
     }
 

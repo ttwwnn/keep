@@ -57,12 +57,17 @@ pub const TOOK: &str = "took";
 /// the app, and the answer the app leaves for the keeper.
 pub const CLIPBOARD_REQUEST: &str = "clipboard-request";
 pub const CLIPBOARD_ANSWER: &str = "clipboard-answer";
+/// The keeper asks the app for a surface now: the program is drawing an
+/// image, which only a surface can keep.
+pub const WAKE: &str = "wake";
 /// The app's own files beside the client.
 const SHOWING: &str = "showing";
 const ATTACH_FILE: &str = ".keep-attach";
 /// How much of a sequence cut off at the end of a write the mirror keeps,
 /// to hand over: an image's chunk, a clipboard's text.
 const CONTINUATION_LIMIT: usize = 1 << 20;
+/// How much a keeper holds for a surface to draw an image with.
+const HELD_LIMIT: usize = 64 << 20;
 
 /// Whether a directory is one the app made for a surface's client — inside
 /// one named `keep-attach` — rather than wherever somebody ran `keep` with an
@@ -81,8 +86,11 @@ pub fn note(what: std::fmt::Arguments) {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
+    // One write a line: clients note at the same moment, and a line written
+    // in pieces was read with another's pieces in between.
+    let line = format!("{stamp} {} {what}\n", std::process::id());
     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(file, "{stamp} {} {what}", std::process::id());
+        let _ = file.write_all(line.as_bytes());
     }
 }
 
@@ -191,6 +199,13 @@ impl Mirror {
     /// it is in the middle of began: a handover now loses nothing.
     pub fn can_hand_over(&self) -> bool {
         self.terminal.continuation().is_some()
+    }
+
+    /// Whether these bytes, fed next, would put an image in the terminal —
+    /// asked without feeding them.
+    fn would_place_image(&self, bytes: &[u8]) -> bool {
+        let mut carried = self.tail.clone();
+        places_image(&mut carried, bytes)
     }
 
     #[cfg(test)]
@@ -581,16 +596,19 @@ pub fn keep(kept: Kept) -> ! {
     // sequence it cannot say the start of: handed over between two, or
     // after a while whatever the mirror is in the middle of.
     let mut waiting: Option<(UnixStream, u16, u16, Instant)> = None;
+    // The program began drawing an image: what it writes from then on is
+    // held, as it came, for the surface the app is asked for, which draws
+    // it — an image is the one thing a handover cannot carry. The mirror
+    // stops where the image began. Given up on, if no surface comes, by
+    // feeding the mirror all the same: the image lost, nothing else.
+    let mut held: Option<(Vec<u8>, Instant)> = None;
 
     loop {
         let listening = if waiting.is_none() { Some(listener.as_raw_fd()) } else { None };
         let ready = readable(daemon.as_raw_fd(), listening, 250);
         if ready.0 {
-            match ServerMsg::read(&mut daemon) {
-                Ok(Some(ServerMsg::Output(data))) => {
-                    flags.observe(&data);
-                    mirror.feed(&data);
-                }
+            let bytes = match ServerMsg::read(&mut daemon) {
+                Ok(Some(ServerMsg::Output(data))) => data,
                 Ok(Some(ServerMsg::Repaint(data))) => {
                     // As the client writes a repaint to its surface.
                     let mut bytes = b"\x1b[H\x1b[2J".to_vec();
@@ -599,12 +617,22 @@ pub fn keep(kept: Kept) -> ! {
                         flags.reset();
                     }
                     bytes.extend_from_slice(&data);
+                    bytes
+                }
+                Ok(Some(_)) => Vec::new(),
+                Ok(None) | Err(_) => leave(&dir),
+            };
+            if held.is_none() && !bytes.is_empty() && mirror.would_place_image(&bytes) {
+                note(format_args!("an image while kept: asking the app for a surface"));
+                publish(&dir, WAKE, b"image\n");
+                held = Some((Vec::new(), Instant::now()));
+            }
+            match held.as_mut() {
+                Some((kept, _)) => kept.extend_from_slice(&bytes),
+                None => {
                     flags.observe(&bytes);
                     mirror.feed(&bytes);
                 }
-                Ok(Some(ServerMsg::Attached { .. })) => {}
-                Ok(Some(_)) => {}
-                Ok(None) | Err(_) => leave(&dir),
             }
             let events = mirror.terminal.take_events();
             if !events.replies.is_empty() && ClientMsg::write_input(&mut daemon, &events.replies).is_err() {
@@ -634,10 +662,22 @@ pub fn keep(kept: Kept) -> ! {
                 }
             }
         }
+        // No surface came for the image, or what it held grew too big to
+        // hold: the mirror takes it all the same.
+        if let Some((kept, since)) = held.as_ref() {
+            if waiting.is_none() && (since.elapsed() >= Duration::from_secs(60) || kept.len() > HELD_LIMIT) {
+                note(format_args!("no surface came for the image: {} bytes to the mirror", kept.len()));
+                let (kept, _) = held.take().expect("held");
+                flags.observe(&kept);
+                mirror.feed(&kept);
+                let _ = std::fs::remove_file(dir.join(WAKE));
+            }
+        }
         if let Some((conn, cols, rows, since)) = waiting.take() {
             if mirror.can_hand_over() || since.elapsed() >= Duration::from_secs(2) {
                 let keyboard = Keyboard { main: flags.pushed(false), alternate: flags.pushed(true) };
-                match hand_over(conn, cols, rows, &daemon, &mut mirror, &keyboard) {
+                let after = held.as_ref().map(|(kept, _)| kept.as_slice()).unwrap_or_default();
+                match hand_over(conn, cols, rows, &daemon, &mut mirror, &keyboard, after) {
                     Ok(()) => leave(&dir),
                     // The terminal was read for the handover, which leaves it
                     // changed: made again from what was to be handed over.
@@ -695,22 +735,24 @@ fn greet(mut conn: UnixStream) -> Option<(UnixStream, u16, u16)> {
 /// here.
 fn hand_over(
     mut conn: UnixStream, cols: u16, rows: u16, daemon: &UnixStream, mirror: &mut Mirror, keyboard: &Keyboard,
+    after: &[u8],
 ) -> Result<(), Failed> {
     let before = mirror.size;
     mirror.follow((cols, rows));
     let snapshot = mirror.terminal.handover(Some(keyboard));
     note(format_args!(
-        "handing over at {cols}x{rows} (kept at {}x{}): {} bytes, {} rows",
-        before.0, before.1, snapshot.len(), mirror.terminal.total_rows()
+        "handing over at {cols}x{rows} (kept at {}x{}): {} bytes, {} rows, {} held",
+        before.0, before.1, snapshot.len(), mirror.terminal.total_rows(), after.len()
     ));
     let mut header = HANDED.to_vec();
-    header.extend_from_slice(&(snapshot.len() as u32).to_be_bytes());
+    header.extend_from_slice(&((snapshot.len() + after.len()) as u32).to_be_bytes());
     if send_with_fd(&conn, &header, daemon.as_raw_fd()).is_err() {
         return Err(Failed(Some(snapshot)));
     }
     // The connection is the other client's now: whatever happens to the
-    // rest, nothing more is read from it here.
-    let _ = conn.write_all(&snapshot);
+    // rest, nothing more is read from it here. After the terminal, what was
+    // held from an image on, for the surface to draw as it came.
+    let _ = conn.write_all(&snapshot).and_then(|_| conn.write_all(after));
     Ok(())
 }
 
@@ -726,7 +768,7 @@ fn leave(dir: &Path) -> ! {
 fn clear_out(dir: &Path) {
     for name in [
         SOCKET, FLAG, FACTS, TITLE, PWD, CLIPBOARD, BACKGROUND, KEPT, UNKEEPABLE, TOOK, CLIPBOARD_REQUEST,
-        CLIPBOARD_ANSWER, SHOWING, ATTACH_FILE,
+        CLIPBOARD_ANSWER, WAKE, SHOWING, ATTACH_FILE,
     ] {
         let _ = std::fs::remove_file(dir.join(name));
     }

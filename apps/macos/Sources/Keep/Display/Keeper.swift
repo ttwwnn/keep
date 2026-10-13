@@ -30,6 +30,7 @@ enum Keeper {
     static let took = "took"
     static let clipboardRequest = "clipboard-request"
     static let clipboardAnswer = "clipboard-answer"
+    static let wake = "wake"
 
     /// What a surface answers that libghostty-vt would answer otherwise:
     /// CSI c and CSI > c as Ghostty answers them (it leaves CSI = c
@@ -104,17 +105,21 @@ final class KeeperWatch {
     private var seen: [String: Data] = [:]
     private let onTitle: (String) -> Void
     private let onDirectory: (String) -> Void
+    /// The keeper asks for a surface (`Keeper.wake`): its program is drawing
+    /// an image.
+    private let onWake: () -> Void
     /// The window the pane was shown in, where a question about it is asked.
     private weak var window: NSWindow?
 
     init?(
         directory: URL, window: NSWindow? = nil, onTitle: @escaping (String) -> Void,
-        onDirectory: @escaping (String) -> Void
+        onWake: @escaping () -> Void = {}, onDirectory: @escaping (String) -> Void
     ) {
         let fd = open(directory.path, O_EVTONLY)
         guard fd >= 0 else { return nil }
         self.directory = directory
         self.window = window
+        self.onWake = onWake
         self.onTitle = onTitle
         self.onDirectory = onDirectory
         // Files are written whole, under another name and renamed into
@@ -130,6 +135,7 @@ final class KeeperWatch {
         seen[Keeper.clipboard] = read(Keeper.clipboard)
         seen[Keeper.background] = read(Keeper.background)
         seen[Keeper.clipboardRequest] = read(Keeper.clipboardRequest)
+        seen[Keeper.wake] = read(Keeper.wake)
     }
 
     deinit {
@@ -145,7 +151,9 @@ final class KeeperWatch {
     }
 
     private func look() {
-        for name in [Keeper.title, Keeper.directory, Keeper.clipboard, Keeper.background, Keeper.clipboardRequest] {
+        for name in [
+            Keeper.title, Keeper.directory, Keeper.clipboard, Keeper.background, Keeper.clipboardRequest, Keeper.wake,
+        ] {
             guard let body = read(name), body != seen[name] else { continue }
             seen[name] = body
             let text = String(decoding: body, as: UTF8.self)
@@ -169,6 +177,9 @@ final class KeeperWatch {
                 Trace.log("keeper", "\(directory.lastPathComponent) clipboard: \(body.count) bytes")
             case Keeper.clipboardRequest:
                 answerClipboard(request: text.split(separator: "\n").first.map(String.init) ?? "")
+            case Keeper.wake:
+                Trace.log("keeper", "\(directory.lastPathComponent) asks for a surface: \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
+                onWake()
             case Keeper.background:
                 guard let rgb = KeeperProtocol.colour(text) else { continue }
                 let color = NSColor(

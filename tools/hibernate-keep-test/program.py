@@ -13,6 +13,7 @@ work directory, one command a line, then writes `done-<pid>`:
                      there, with the Kitty keyboard pushed
   claude count N     the counter on that screen, drawn again
   claude off         back to the main screen, as Claude Code leaves
+  image              a picture in the Kitty graphics protocol, then a line
 """
 
 import os
@@ -88,6 +89,8 @@ while True:
                 answers = [repr(ask(q)) for q in QUERIES]
                 with open(os.path.join(WORK, "answers-%d-%d" % (ME, asked)), "w") as f:
                     f.write("\n".join(answers) + "\n")
+            elif op == "image":
+                write(b"\x1b_Ga=T,f=24,s=1,v=1;AAAA\x1b\\after the image\r\n")
             elif op == "claude":
                 what, _, value = arg.partition(" ")
                 if what == "on":
