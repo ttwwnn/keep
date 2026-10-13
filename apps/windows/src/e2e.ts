@@ -8,6 +8,7 @@ import { SPLIT_RIGHT } from "./api";
 import { parseStatusFile } from "./aiStatus";
 import { busyMark, programOf, readActivity } from "./claude";
 import { defaultsOf, parseSettings, statusLineCommand } from "./claudeSettings";
+import { tabsSteps } from "./e2eTabs";
 import { iaName, lineId } from "./ia";
 import { chooseAccount, e2eHooks, iaAvailable, measureNow, moveOrder, signIn, usageLines } from "./iaStore";
 import {
@@ -209,6 +210,8 @@ export async function runE2E(): Promise<void> {
     await barSteps(step);
     if (iaAvailable.value) await sidebarSteps(step);
   }
+
+  await tabsSteps(step, windows, WORKSPACE);
 
   const tab = firstTab();
   const report = {

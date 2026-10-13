@@ -38,6 +38,10 @@ import { fontPreview, loadSymbolsFont, terminalFontStack } from "./fonts";
 import { chooseClaudeEffort, chooseClaudeModel, chooseCodex, type PickerIO } from "./pickers";
 import { baseName, isPathTitle, rootTabs, type RootTab } from "./layout";
 import { defaultState, normalizeState, tabKey, type GuiState, type RestoreWorkspace } from "./state";
+import { refile } from "./hibernation";
+import { keepShares, moveShares } from "./splits";
+import { listed, neighbour, putAwayWith, putAwayWithout, stillRunning } from "./putAway";
+import { arrangeTabs, heirsOf, insertBefore, memberIds, pruneOrders, substitute } from "./tabOrder";
 import { TerminalManager, viewKey, type TermView } from "./terminals";
 import { DEFAULT_FONT_SIZE, applyPalette, onSystemAppearanceChange, resolvePalette } from "./theme";
 import { loadThemes, themePreview } from "./themes";
@@ -78,9 +82,16 @@ export const waitingSince = signal<ReadonlyMap<string, number>>(new Map());
 export type Overlay = "picker" | "search" | "settings" | "themes" | "fonts" | null;
 export const overlay = signal<Overlay>(null);
 export const findOpen = signal(false);
-export const editing = signal<{ kind: "tab"; workspace: string; tab: number } | { kind: "workspace"; workspace: string } | null>(
-  null,
-);
+/** Where a tab's name is typed: over its title in the row, or in the sidebar. */
+export type NameSurface = "strip" | "sidebar";
+/**
+ * The name being typed. A tab's is typed in one place only — two fields for
+ * one name take the keyboard from each other —: the surface asked for, else
+ * the row above the terminal, else the sidebar (see `defaultNameSurface`).
+ */
+export const editing = signal<
+  { kind: "tab"; workspace: string; tab: number; surface?: NameSurface } | { kind: "workspace"; workspace: string } | null
+>(null);
 /** A line said quietly at the foot of the sidebar, for a while. */
 export const notice = signal<string | null>(null);
 /** The pane holding the keyboard, per tab. */
@@ -160,14 +171,23 @@ export const orderedWorkspaces = computed(() => {
   return [...list].sort((a, b) => (rank.get(a.name) ?? Infinity) - (rank.get(b.name) ?? Infinity));
 });
 
+/** The workspaces the sidebar lists: those not put away, still running and a Go To from being listed again. */
+export const shownWorkspaces = computed(() => listed(orderedWorkspaces.value, gui.value.hidden));
+
+/** A workspace's tabs, each with its panes, in the order the window gave them (tabOrder.ts). */
+function orderedTabs(tabs: WorkspaceInfo["tabs"], remembered: number[] | undefined): RootTab[] {
+  return arrangeTabs(rootTabs(tabs.filter((t) => !t.finished)), remembered, (t) => t.root.id);
+}
+
 export const tabsByWorkspace = computed(() => {
   const out = new Map<string, RootTab[]>();
-  for (const w of workspaces.value) out.set(w.name, rootTabs(w.tabs.filter((t) => !t.finished)));
+  const orders = gui.value.tabOrder;
+  for (const w of workspaces.value) out.set(w.name, orderedTabs(w.tabs, orders[w.name]));
   return out;
 });
 
 export const activeWorkspace = computed<string | null>(() => {
-  const names = orderedWorkspaces.value.map((w) => w.name);
+  const names = shownWorkspaces.value.map((w) => w.name);
   const wanted = gui.value.active?.workspace;
   if (wanted && names.includes(wanted)) return wanted;
   return names[0] ?? null;
@@ -287,34 +307,76 @@ function scheduleSave(): void {
 
 // ------------------------------------------------------------------ the daemon
 
-let refreshing = false;
+let running: Promise<void> | null = null;
+let again = false;
+/** Tab moves under way: the window's list waits for them, which re-file what the window keeps. */
+let moves = 0;
 
-/** Ask the daemon for its workspaces, and make the window agree. */
-export async function refresh(): Promise<void> {
-  if (refreshing) return;
-  refreshing = true;
+/**
+ * Ask the daemon for its workspaces, and make the window agree. Asked while
+ * one answer is on its way, it asks once more when that arrives — the one in
+ * flight may be older than what the caller just did — and the promise is of
+ * that last one.
+ */
+export function refresh(): Promise<void> {
+  if (running) {
+    again = true;
+    return running;
+  }
+  running = (async () => {
+    do {
+      again = false;
+      await refreshOnce();
+    } while (again);
+  })().finally(() => (running = null));
+  return running;
+}
+
+async function refreshOnce(): Promise<void> {
+  if (moves > 0) return;
   try {
     const list = await api.list();
+    // A move began while this was on its way: the answer may be from either side of it.
+    if (moves > 0) return;
     const firstAnswer = daemonError.value !== null;
-    batch(() => {
-      workspaces.value = list;
-      daemonError.value = null;
-      loaded.value = true;
-      reconcile(list);
-    });
-    if (firstAnswer) terminals.reattach();
+    // After an outage the list may be another daemon's: its ids are not the
+    // ones the last list had, and a tab is not an heir to one of those.
+    applyList(list, firstAnswer);
+    if (firstAnswer) {
+      terminals.reattach();
+      void forgetOrderOfAnotherDaemon();
+    }
   } catch (error) {
     daemonError.value = String(error);
     // Started again if it went away: the first launch after it was killed,
     // say. Its tabs are gone with it, which the restore picture is for.
     void api.ensureDaemon().catch(() => {});
-  } finally {
-    refreshing = false;
   }
 }
 
+/**
+ * A daemon that answers again may be another one — the first was killed and
+ * this was started in its place — and the order of the tabs is of ids, which
+ * another daemon counts from one again.
+ */
+async function forgetOrderOfAnotherDaemon(): Promise<void> {
+  const identity = await api.daemonIdentity().catch(() => null);
+  if (identity === null || identity === gui.value.daemon) return;
+  gui.value = { ...gui.value, daemon: identity, tabOrder: gui.value.daemon === "" ? gui.value.tabOrder : {} };
+}
+
+function applyList(list: WorkspaceInfo[], fresh = false): void {
+  const previous = fresh ? [] : workspaces.value;
+  batch(() => {
+    workspaces.value = list;
+    daemonError.value = null;
+    loaded.value = true;
+    reconcile(list, previous);
+  });
+}
+
 /** Bring the window's own state in line with what the daemon says exists. */
-function reconcile(list: WorkspaceInfo[]): void {
+function reconcile(list: WorkspaceInfo[], previous: WorkspaceInfo[]): void {
   const names = new Set(list.map((w) => w.name));
   const alive = new Set<string>();
   for (const w of list) for (const t of w.tabs) if (!t.finished) alive.add(viewKey(w.name, t.id));
@@ -324,37 +386,106 @@ function reconcile(list: WorkspaceInfo[]): void {
   if (!settled) return;
 
   const state = gui.value;
+  // A root that closed, or left its panes behind: the pane that stood in for
+  // it is the tab now, and carries on with its name, its place and the
+  // keyboard.
+  const heirs = new Map<string, Map<number, number>>();
+  for (const w of list) {
+    const was = previous.find((p) => p.name === w.name);
+    const found = was && heirsOf(was.tabs.filter((t) => !t.finished), w.tabs.filter((t) => !t.finished));
+    if (found && found.size > 0) heirs.set(w.name, found);
+  }
+  const heirOf = (workspace: string, id: number) => heirs.get(workspace)?.get(id);
+
   const order = state.order.filter((n) => names.has(n));
   for (const w of list) if (!order.includes(w.name)) order.push(w.name);
-  const tabNames = Object.fromEntries(Object.entries(state.tabNames).filter(([k]) => alive.has(k)));
+  const named = { ...state.tabNames };
+  for (const [workspace, found] of heirs) {
+    for (const [root, heir] of found) {
+      const from = tabKey(workspace, root);
+      refile(from, tabKey(workspace, heir));
+      moveShares(from, tabKey(workspace, heir));
+      if (named[from] === undefined) continue;
+      named[tabKey(workspace, heir)] ??= named[from];
+      delete named[from];
+    }
+  }
+  const tabNames = Object.fromEntries(Object.entries(named).filter(([k]) => alive.has(k)));
   const workspaceNames = Object.fromEntries(Object.entries(state.workspaceNames).filter(([k]) => names.has(k)));
   const folded = state.folded.filter((n) => names.has(n));
-  const lastTab = Object.fromEntries(Object.entries(state.lastTab).filter(([k]) => names.has(k)));
-  const restore = picture(list, tabNames);
+  const hidden = stillRunning(state.hidden, names);
+  const lastTab = Object.fromEntries(
+    Object.entries(state.lastTab)
+      .filter(([k]) => names.has(k))
+      .map(([k, id]) => [k, heirOf(k, id) ?? id]),
+  );
+  const roots = new Map(list.map((w) => [w.name, new Set(rootTabs(w.tabs.filter((t) => !t.finished)).map((t) => t.root.id))]));
+  const handed = Object.fromEntries(
+    Object.entries(state.tabOrder).map(([workspace, ids]) => {
+      let next = ids;
+      for (const [root, heir] of heirs.get(workspace) ?? []) next = substitute(next, root, heir);
+      return [workspace, next];
+    }),
+  );
+  const tabOrder = pruneOrders(handed, roots);
+  // The dividers of tabs that are gone go with them.
+  keepShares((key) => {
+    const [workspace, root] = key.split("\u0000");
+    return roots.get(workspace)?.has(Number(root)) === true;
+  });
+  const restore = picture(list, tabNames, tabOrder);
 
   // The tab in front went away: the one beside it comes forward.
   let active = state.active;
-  const tabsOf = (ws: string) => rootTabs((list.find((w) => w.name === ws)?.tabs ?? []).filter((t) => !t.finished));
+  if (active) {
+    const heir = heirOf(active.workspace, active.tab);
+    if (heir !== undefined) active = { workspace: active.workspace, tab: heir };
+  }
+  const tabsOf = (ws: string) => orderedTabs(list.find((w) => w.name === ws)?.tabs ?? [], tabOrder[ws]);
   if (active) {
     const tabs = tabsOf(active.workspace);
     if (!tabs.some((t) => t.root.id === active!.tab)) {
-      const previous = tabsByWorkspaceSnapshot.get(active.workspace) ?? [];
-      const at = previous.findIndex((t) => t === active!.tab);
+      const before = tabsByWorkspaceSnapshot.get(active.workspace) ?? [];
+      const at = before.findIndex((t) => t === active!.tab);
       const neighbour = tabs[Math.min(Math.max(at, 0), tabs.length - 1)] ?? tabs[tabs.length - 1];
       if (neighbour) active = { workspace: active.workspace, tab: neighbour.root.id };
       else {
-        const other = order.find((n) => tabsOf(n).length > 0);
+        const other = order.find((n) => !hidden.includes(n) && tabsOf(n).length > 0);
         active = other ? { workspace: other, tab: lastTab[other] ?? tabsOf(other)[0].root.id } : null;
       }
     }
   }
   tabsByWorkspaceSnapshot = new Map(list.map((w) => [w.name, tabsOf(w.name).map((t) => t.root.id)]));
 
+  // The pane that held the keyboard keeps it in the tab its heir carries on.
+  if (heirs.size > 0) {
+    const kept = { ...focusedPane.value };
+    for (const [workspace, found] of heirs) {
+      for (const [root, heir] of found) {
+        const from = tabKey(workspace, root);
+        if (kept[from] === undefined) continue;
+        kept[tabKey(workspace, heir)] ??= kept[from];
+        delete kept[from];
+      }
+    }
+    focusedPane.value = kept;
+  }
+
   const changed =
-    JSON.stringify([order, tabNames, workspaceNames, folded, lastTab, restore, active]) !==
-    JSON.stringify([state.order, state.tabNames, state.workspaceNames, state.folded, state.lastTab, state.restore, state.active]);
+    JSON.stringify([order, tabNames, workspaceNames, folded, hidden, lastTab, tabOrder, restore, active]) !==
+    JSON.stringify([
+      state.order,
+      state.tabNames,
+      state.workspaceNames,
+      state.folded,
+      state.hidden,
+      state.lastTab,
+      state.tabOrder,
+      state.restore,
+      state.active,
+    ]);
   if (changed) {
-    gui.value = { ...state, order, tabNames, workspaceNames, folded, lastTab, restore, active };
+    gui.value = { ...state, order, tabNames, workspaceNames, folded, hidden, lastTab, tabOrder, restore, active };
   }
 }
 
@@ -363,12 +494,12 @@ let tabsByWorkspaceSnapshot = new Map<string, number[]>();
 /** The window has decided whether to restore; from here on the daemon's list rules. */
 let settled = false;
 
-/** The workspaces as they stand, to open again after a reboot. */
-function picture(list: WorkspaceInfo[], names: Record<string, string>): RestoreWorkspace[] {
+/** The workspaces as they stand, to open again after a reboot: tabs in the order they are listed in. */
+function picture(list: WorkspaceInfo[], names: Record<string, string>, orders: Record<string, number[]>): RestoreWorkspace[] {
   return list
     .map((w) => ({
       name: w.name,
-      tabs: rootTabs(w.tabs.filter((t) => !t.finished)).flatMap((tab) =>
+      tabs: orderedTabs(w.tabs, orders[w.name]).flatMap((tab) =>
         tab.panes.map((p) => ({
           id: p.id,
           cwd: p.cwd,
@@ -446,8 +577,38 @@ function guessSize(): { cols: number; rows: number } {
 
 // ------------------------------------------------------------------ reading Claude Code
 
-/** Read the screens of the panes running Claude Code or Codex. */
-function readScreens(): void {
+let readingScreens = false;
+
+/**
+ * Read the screens of the panes running Claude Code or Codex. A pane with no
+ * terminal — its tab is asleep (hibernation.ts) — is read off the daemon's
+ * own copy of its screen, so a conversation waiting on you is still seen
+ * waiting.
+ */
+async function readScreens(): Promise<void> {
+  if (readingScreens) return;
+  readingScreens = true;
+  try {
+    const unseen = new Map<string, string>();
+    await Promise.all(
+      workspaces.value.flatMap((w) =>
+        w.tabs
+          .filter((t) => !t.finished && isAiProgram(programOf(t.command, t.title)) && !terminals.existing(w.name, t.id))
+          .map((t) =>
+            api.preview(w.name, t.id).then(
+              (text) => void unseen.set(viewKey(w.name, t.id), text),
+              () => {},
+            ),
+          ),
+      ),
+    );
+    readScreensFrom(unseen);
+  } finally {
+    readingScreens = false;
+  }
+}
+
+function readScreensFrom(unseen: ReadonlyMap<string, string>): void {
   const nextActivities = new Map<string, ClaudeActivity>();
   const nextModes = new Map<string, ClaudeMode | null>();
   const forBar: BarInput[] = [];
@@ -460,7 +621,7 @@ function readScreens(): void {
       if (!isAiProgram(program)) continue;
       const key = viewKey(w.name, pane.id);
       const view = terminals.existing(w.name, pane.id);
-      const text = view?.screenText() ?? "";
+      const text = view ? view.screenText() : (unseen.get(key) ?? "");
       if (program === "codex") {
         const a = text ? readCodexActivity(text) : undefined;
         const kept = a ?? previousActivities.get(key);
@@ -702,6 +863,8 @@ export function select(workspace: string, tab?: number): void {
   const tabs = tabsByWorkspace.value.get(workspace) ?? [];
   const id = tab ?? gui.value.lastTab[workspace] ?? tabs[0]?.root.id;
   update((s) => {
+    // Going to a workspace puts it back in the sidebar if it was put away.
+    s.hidden = putAwayWithout(s.hidden, workspace);
     if (id === undefined) {
       s.active = { workspace, tab: -1 };
       return;
@@ -743,7 +906,7 @@ export function stepTab(direction: number): void {
 
 /** The next workspace in the sidebar's order, or the one before: its last tab in front. */
 export function stepWorkspace(direction: number): void {
-  const names = orderedWorkspaces.value.map((w) => w.name);
+  const names = shownWorkspaces.value.map((w) => w.name);
   if (names.length === 0) return;
   const at = Math.max(0, names.indexOf(activeWorkspace.value ?? ""));
   select(names[(at + direction + names.length) % names.length]);
@@ -980,6 +1143,191 @@ export function renameWorkspace(workspace: string, name: string): void {
   });
 }
 
+// ------------------------------------------------------------------ naming
+
+/** Where a name can be typed when nobody asked for a place: the row above the terminal, else the sidebar, else nowhere. */
+function defaultNameSurface(): NameSurface | null {
+  if (!gui.value.verticalTabs) return "strip";
+  return gui.value.sidebar.visible ? "sidebar" : null;
+}
+
+/** Whether a tab's name is being typed on this surface now. */
+export function editingTabOn(surface: NameSurface, workspace: string, tab: number): boolean {
+  const e = editing.value;
+  return e?.kind === "tab" && e.workspace === workspace && e.tab === tab && (e.surface ?? defaultNameSurface()) === surface;
+}
+
+/**
+ * Open a tab's name for typing, where the gesture was made or else where the
+ * window shows tabs. With neither the row nor the sidebar in sight — vertical
+ * tabs and the sidebar hidden — a question asks for it instead.
+ */
+export function startRename(workspace: string, tab: number, surface?: NameSurface): void {
+  const where = surface ?? defaultNameSurface();
+  if (where === null) {
+    void renameByQuestion(workspace, tab);
+    return;
+  }
+  // A name cannot be typed in a row folded out of sight.
+  if (where === "sidebar" && gui.value.folded.includes(workspace)) toggleFolded(workspace);
+  editing.value = { kind: "tab", workspace, tab, surface: where };
+}
+
+async function renameByQuestion(workspace: string, tab: number): Promise<void> {
+  const tabs = tabsByWorkspace.value.get(workspace) ?? [];
+  const at = tabs.findIndex((t) => t.root.id === tab);
+  if (at < 0) return;
+  const seed = gui.value.tabNames[tabKey(workspace, tab)] ?? tabLabel(workspace, tabs[at], at);
+  const result = await ask({
+    title: "Renomear a aba",
+    fields: [{ name: "name", label: "Nome", value: seed }],
+    buttons: [
+      { label: "Cancelar", value: "cancel" },
+      { label: "Renomear", value: "rename", primary: true },
+    ],
+  });
+  // A name that comes back as it went out is no new name (see `finishTabName`).
+  if (result?.button === "rename" && result.values.name.trim() !== seed.trim()) renameTab(workspace, tab, result.values.name);
+  requestAnimationFrame(() => focusActive());
+}
+
+/**
+ * A name typed over a tab's title is done: `value` is the name to keep, or
+ * null when there is nothing to keep — Esc, or the field left as it was
+ * opened, since a title kept by accident would stop following its program.
+ * The keyboard goes back to the work unless it already went somewhere else
+ * (`keyboard` says), as Finder leaves it where the click put it.
+ */
+export function finishTabName(workspace: string, tab: number, value: string | null, keyboard: "back" | "elsewhere"): void {
+  editing.value = null;
+  if (value !== null) renameTab(workspace, tab, value);
+  giveKeyboardBack(keyboard);
+}
+
+/** The same for a workspace's name. */
+export function finishWorkspaceName(workspace: string, value: string | null, keyboard: "back" | "elsewhere"): void {
+  editing.value = null;
+  if (value !== null) renameWorkspace(workspace, value);
+  giveKeyboardBack(keyboard);
+}
+
+/** A frame later, and not if another name was opened meanwhile: it has the keyboard now. */
+function giveKeyboardBack(keyboard: "back" | "elsewhere"): void {
+  if (keyboard === "back") requestAnimationFrame(() => editing.value === null && focusActive());
+}
+
+// ------------------------------------------------------------------ where tabs are
+
+export function toggleVerticalTabs(): void {
+  update((s) => void (s.verticalTabs = !s.verticalTabs));
+}
+
+/**
+ * Take a workspace out of the sidebar. It keeps running, and so do its tabs:
+ * what leaves is its place in the list, which Go To gives back, and which a
+ * relaunch leaves out as it was left.
+ */
+export function putAway(workspace: string): void {
+  const names = shownWorkspaces.value.map((w) => w.name);
+  if (!names.includes(workspace)) return;
+  // Standing in the one going out: step to a neighbour.
+  const next = activeWorkspace.value === workspace ? neighbour(names, workspace) : undefined;
+  update((s) => void (s.hidden = putAwayWith(s.hidden, workspace)));
+  if (next !== undefined) select(next);
+}
+
+/** Put the tabs of a workspace in this order (root ids). */
+export function reorderTabs(workspace: string, ids: number[]): void {
+  const now = (tabsByWorkspace.value.get(workspace) ?? []).map((t) => t.root.id);
+  if (ids.length === now.length && ids.every((id, i) => id === now[i])) return;
+  update((s) => void (s.tabOrder[workspace] = ids));
+}
+
+/** Keys of a map renamed as tabs were re-filed: what the window knew of a pane goes with it. */
+function refiled<V>(map: ReadonlyMap<string, V>, keys: ReadonlyMap<string, string>): Map<string, V> {
+  const out = new Map<string, V>();
+  for (const [key, value] of map) out.set(keys.get(key) ?? key, value);
+  return out;
+}
+
+/**
+ * Move a tab, its panes with it, to another workspace, to land before the tab
+ * `before` of that workspace or at the end. The shells carry on untouched —
+ * only the filing changes, and the daemon issues new ids — so the terminals
+ * are re-keyed rather than rebuilt, and what the window knew of the tab goes
+ * with it: its name, its place, which pane held the keyboard, what Claude Code
+ * was seen doing in it. If it was the tab in front, the window follows it.
+ */
+export async function moveTabTo(workspace: string, tab: RootTab, to: string, before: number | null): Promise<boolean> {
+  if (workspace === to) return false;
+  const root = tab.root.id;
+  const inFront = activeWorkspace.value === workspace && activeTab.value?.root.id === root;
+  const oldIds = memberIds(workspaces.value.find((w) => w.name === workspace)?.tabs ?? [], root);
+  moves += 1;
+  try {
+    let newRoot: number;
+    try {
+      newRoot = await api.moveTab(workspace, root, to);
+    } catch (error) {
+      void ask({
+        title: "Não deu para mover a aba",
+        message: String(error),
+        buttons: [{ label: "OK", value: "ok", primary: true }],
+      });
+      return false;
+    }
+    let list: WorkspaceInfo[];
+    try {
+      list = await api.list();
+    } catch {
+      // The tab is in its new place; the window learns it on its next look, without the terminal's scrollback.
+      return true;
+    }
+    const newIds = memberIds(list.find((w) => w.name === to)?.tabs ?? [], newRoot);
+    // The new ids are issued in the order the old ones were listed in.
+    const pairs = oldIds.length === newIds.length ? oldIds.map((id, i) => [id, newIds[i]] as const) : [];
+    terminals.rekey(pairs.map(([from, now]) => ({ from: [workspace, from], to: [to, now] })));
+    const keys = new Map(pairs.map(([from, now]) => [viewKey(workspace, from), viewKey(to, now)]));
+    refile(tabKey(workspace, root), tabKey(to, newRoot));
+    const panes = new Map(pairs);
+    batch(() => {
+      activities.value = refiled(activities.value, keys);
+      modes.value = refiled(modes.value, keys);
+      statuses.value = refiled(statuses.value, keys);
+      waitingSince.value = refiled(waitingSince.value, keys);
+      const held = focusedPane.value[tabKey(workspace, root)];
+      if (held !== undefined) {
+        const { [tabKey(workspace, root)]: _gone, ...rest } = focusedPane.value;
+        focusedPane.value = { ...rest, [tabKey(to, newRoot)]: panes.get(held) ?? newRoot };
+      }
+      update((s) => {
+        const was = tabKey(workspace, root);
+        if (s.tabNames[was] !== undefined) {
+          s.tabNames[tabKey(to, newRoot)] = s.tabNames[was];
+          delete s.tabNames[was];
+        }
+        const there = orderedTabs(list.find((w) => w.name === to)?.tabs ?? [], s.tabOrder[to]).map((t) => t.root.id);
+        s.tabOrder[to] = insertBefore(
+          there.filter((id) => id !== newRoot),
+          newRoot,
+          before,
+        );
+        if (s.lastTab[workspace] === root) delete s.lastTab[workspace];
+        if (inFront) {
+          s.active = { workspace: to, tab: newRoot };
+          s.lastTab[to] = newRoot;
+          s.hidden = putAwayWithout(s.hidden, to);
+        }
+      });
+      applyList(list);
+    });
+    if (inFront) requestAnimationFrame(() => focusActive());
+    return true;
+  } finally {
+    moves -= 1;
+  }
+}
+
 export function toggleFolded(workspace: string): void {
   update((s) => {
     s.folded = s.folded.includes(workspace) ? s.folded.filter((n) => n !== workspace) : [...s.folded, workspace];
@@ -1038,6 +1386,23 @@ export async function copySelection(): Promise<void> {
   const view = terminals.existing(ws, pane.id);
   const text = view?.term.getSelection() ?? "";
   if (text) await writeText(text).catch(() => navigator.clipboard?.writeText(text));
+}
+
+/**
+ * The terminal of a pane, once it has one: a pane of a tab that is asleep has
+ * none until the tab is shown (hibernation.ts), and a terminal built for it
+ * is empty until the daemon repaints. For what has to act on the screen of a
+ * tab it has just gone to — a search result, a line to scroll to.
+ */
+export async function viewWhenAwake(workspace: string, pane: number, timeoutMs = 3000): Promise<TermView | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const view = terminals.existing(workspace, pane);
+    // Attached: the daemon's repaint is on its way, or in.
+    if (view?.isAttached) return view;
+    if (Date.now() > deadline) return view;
+    await sleep(50);
+  }
 }
 
 export function activeView(): TermView | undefined {
@@ -1129,12 +1494,19 @@ export async function connect(): Promise<void> {
     const restored = await restoreFrom(lastSession);
     if (restored) say("Restaurado após reinício");
   }
-  if (identity !== null && identity !== gui.value.daemon) gui.value = { ...gui.value, daemon: identity };
+  if (identity !== null && identity !== gui.value.daemon) {
+    // The order is of ids, and ids are one daemon's: a different one counts from one again.
+    gui.value = { ...gui.value, daemon: identity, tabOrder: gui.value.daemon === "" ? gui.value.tabOrder : {} };
+  }
   settled = true;
   await refresh();
+  // Something must be on screen: a daemon with nothing in it and nothing to
+  // bring back starts with a workspace named after the person.
+  const user = info.value?.user || baseName(info.value?.home ?? "");
+  if (loaded.value && workspaces.value.length === 0 && user) await createWorkspace(user, null).catch(() => {});
   const active = activeWorkspace.value;
   if (active) select(active, activeTab.value?.root.id);
 
   setInterval(() => void refresh(), 1000);
-  setInterval(readScreens, 1000);
+  setInterval(() => void readScreens(), 1000);
 }
