@@ -5,6 +5,7 @@
 //! sidebar, tab strip, terminals — is in `../src`.
 
 mod claude_settings;
+mod confinement;
 mod daemon;
 mod ia;
 mod memory;
@@ -485,6 +486,8 @@ pub fn run() {
             write_claude_settings,
             codex_models,
             app_log,
+            confinement::confinement_all,
+            confinement::confinement_set,
             path_exists,
             e2e_shot,
             e2e_fake,
