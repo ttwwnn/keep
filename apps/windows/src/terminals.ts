@@ -5,6 +5,7 @@
 // place to sit (`mount`), and the same terminal moves when the layout around
 // it changes — a split made, a pane closed — instead of being rebuilt.
 
+import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -12,6 +13,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { SearchAddon } from "@xterm/addon-search";
 import * as api from "./api";
 import { activateAddress, installLinks, type LinkEnv, type Links } from "./links";
+import { installOsc52 } from "./osc52";
 import { isSafePaste, pasteQuestion, preparePaste, type Question } from "./paste";
 
 export interface TerminalLook {
@@ -50,6 +52,8 @@ export class TermView {
   readonly search: SearchAddon;
   /** The addresses and paths in its text that can be clicked. */
   readonly links: Links;
+  /** The last text a program put on the clipboard (OSC 52), and when. */
+  programCopied: { text: string; at: number } | null = null;
   private readonly fit: FitAddon;
   private webgl: WebglAddon | null = null;
   private attachment: api.Attachment | null = null;
@@ -102,6 +106,14 @@ export class TermView {
       linkHandler: { activate: (event, uri) => activateAddress(event, uri, linkEnv) },
     });
     this.links = installLinks(this.term, this.element, linkEnv);
+    // A program may write the clipboard, and read it once the person says so.
+    installOsc52(this.term, {
+      write: (text) => writeText(text).catch(() => navigator.clipboard.writeText(text)),
+      read: () => readText(),
+      confirm: (question) => hooks.confirm(question),
+      answer: (data) => this.term.input(data, false),
+      wrote: (text) => (this.programCopied = { text, at: Date.now() }),
+    });
     this.fit = new FitAddon();
     this.search = new SearchAddon({ highlightLimit: 2000 });
     this.term.loadAddon(this.fit);
