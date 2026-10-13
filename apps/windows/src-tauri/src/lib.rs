@@ -307,6 +307,8 @@ struct ClaudeSettings {
     folder: bool,
     /// The `keep-statusline.ps1` installed with the app, when it is there.
     script: Option<String>,
+    /// The core's command line (`keep.exe`), which the account hook runs.
+    keep: Option<String>,
 }
 
 #[tauri::command]
@@ -317,11 +319,12 @@ async fn claude_settings(app: AppHandle) -> Answer<ClaudeSettings> {
             .ok_or_else(|| "sem pasta do usuário".to_string())?;
         let path = dir.join("settings.json");
         let text = claude_settings::read(&path).map_err(crate::text)?;
+        let keep = ia::cli(resources.as_deref()).map(|p| claude_settings::plain(&p));
         let script = resources
             .map(|r| r.join("keep-statusline.ps1"))
             .filter(|p| p.is_file())
             .map(|p| claude_settings::plain(&p));
-        Ok(ClaudeSettings { path: claude_settings::plain(&path), text, folder: dir.is_dir(), script })
+        Ok(ClaudeSettings { path: claude_settings::plain(&path), text, folder: dir.is_dir(), script, keep })
     })
     .await
     .map_err(|e| e.to_string())?

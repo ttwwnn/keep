@@ -36,6 +36,7 @@ import {
   type TabAI,
   type UsageLine,
 } from "./ia";
+import { setUpAccountHook } from "./iaHooks";
 import type { RootTab } from "./layout";
 import {
   activeTab,
@@ -53,6 +54,7 @@ import {
   refresh,
   say,
   select,
+  statusLineSetup,
   workspaces,
 } from "./store";
 import { viewKey } from "./terminals";
@@ -593,6 +595,8 @@ export async function startIA(): Promise<void> {
       /* opens empty */
     }
   }
+  // After the status line, which writes the same file: one at a time.
+  void statusLineSetup.then(() => setUpAccountHook());
   // The accounts first, then a round over them.
   await look(true, false);
   void measure(false);

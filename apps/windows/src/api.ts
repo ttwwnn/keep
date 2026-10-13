@@ -143,6 +143,8 @@ export interface ClaudeSettings {
   folder: boolean;
   /** The `keep-statusline.ps1` installed with the app; null when it is not there. */
   script: string | null;
+  /** The core's command line (`keep.exe`), which the account hook runs; null when it is not there. */
+  keep: string | null;
 }
 export const claudeSettings = () => invoke<ClaudeSettings>("claude_settings");
 /** Write Claude Code's settings file if it still holds `expected` (null: no file); false when it changed meanwhile. */
