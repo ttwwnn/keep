@@ -49,6 +49,41 @@ repetido: a aba volta no shell, na pasta dele.
 `KEEP_RESTAURO_ESTADO` troca a pasta (o app passa a da pasta de estado dele:
 um app de testes, com daemon próprio, nunca lê o retrato da pessoa).
 
+## No Windows
+
+O app do Windows roda os mesmos comandos, nos mesmos relógios do Mac, e não recria aba nenhuma por conta
+própria (antes ele guardava um retrato no `state.json` e abria as abas em JavaScript, sem as conversas):
+
+- ao abrir, e quando o keepd volta depois de uma ausência (a janela espera até 1 min por um keepd lento,
+  em vez de tomar a lista vazia por verdade), um keepd sem abas é perguntado, uma vez por keepd, por
+  `restaurar --fase=abas`, antes de a janela mostrar o vazio ou podar a ordem da barra lateral e os nomes;
+  o aviso "Restaurado após reinício" fica;
+- logo ao abrir e a cada 30 s, `manter` (as conversas, uma de cada vez, e o retrato novo), e a cada 15 s
+  `continuar`; cada um roda sozinho, um de cada vez, enquanto o keepd responde;
+- o estado é `%APPDATA%\Keep\restauro` (ou `restauro` dentro de `KEEP_STATE_DIR`, num app de testes): o
+  app passa `KEEP_STATE_DIR` e `KEEP_RESTAURO_ESTADO` a cada chamada, e o keep que roda dentro de uma aba
+  chega ao mesmo lugar sem variável nenhuma;
+- a identidade do keepd, para o app saber que o daemon é outro, é `<pid>-<início em ms>` com o início que
+  ele mesmo diz (`List3`), e os nomes que a pessoa deu às abas valem para um keepd só, porque os números
+  das abas recomeçam em 1: ao mudar o keepd o app esquece os nomes do anterior, e os das abas que voltam
+  chegam de volta pelo `names.json`;
+- os nomes: o `names.json` é o do Mac (`{"daemonStart": <segundos>, "tabs": {"<workspace>␟<aba>": nome},
+  "workspaces": {…}}`), na pasta do Keep (`%APPDATA%\Keep`, ou `KEEP_STATE_DIR`). O app grava nele os nomes que a pessoa dá e adota os que o
+  núcleo põe (as abas que o restauro refez, `keep nova --nome`), a cada 2 s; no Windows, onde o pipe não
+  tem nascimento, o `daemonStart` é o início que o próprio keepd diz. A troca do nome pelo núcleo e a do
+  app passam pela mesma trava, `.state.lock` (`LockFileEx` no Windows, `flock` no Mac);
+- a trava entre processos do crate (`.restaurar.lock`, `.retrato.lock`, `.continuar.lock`) usa o
+  bloqueio de arquivo da biblioteca padrão nos dois sistemas; no Windows ela não travava nada;
+- o "pessoa longe do teclado" do `continuar` é o `GetLastInputInfo` (o `ioreg` do Mac), e sem leitura vale 0
+  (a pessoa está por perto);
+- depois da restauração a varredura de worktrees órfãs respeita o `restaurado.json` (a conversa devida
+  não é órfã) porque o app e o núcleo olham a mesma pasta.
+
+O que ainda depende do Windows de verdade: o `GetLastInputInfo`, o `LockFileEx` e a subida das conversas no
+PowerShell compilam (`cargo check --target x86_64-pc-windows-msvc`) mas só rodam no CI; o que foi visto
+rodando é o mesmo fluxo no app com um keepd de teste no Mac (keepd morto: as abas e o nome voltam com o
+aviso; app aberto sobre um keepd morto: o mesmo).
+
 ## Testes
 
 - `cargo test -p keep-restauro` — as regras (ordem da árvore, escolha da
@@ -82,6 +117,35 @@ desvio que o kit-mac montava (lançador em C + script).
 
 Testes: `cargo test -p keep-restauro` (o `tests/nova.rs` abre conversas de
 verdade num daemon do próprio teste, com a IA falsa como `claude`).
+
+## No Windows
+
+`keep nova` é o mesmo comando (`keep.exe`) e já mostra a aba no app:
+
+- a aba abre no keepd, na pasta pedida — sem o prefixo `\\?\` que o `canonicalize` do Windows poria na
+  pasta e no arquivo do texto digitado —, e a linha é escrita na sintaxe do PowerShell da aba;
+- `--nome` vale: o nome vai para o `names.json` (acima) e o app o adota em até 2 s;
+- o `keep` está no fim do PATH de toda aba que o keepd abre (e em `KEEP_IA_BIN`): uma sessão do Claude
+  numa aba chama `keep nova` sem caminho. Fora de uma aba o `keep` não está no PATH: o instalador não
+  mexe nele (editar o PATH do usuário num instalador NSIS é o tipo de coisa que não se prova daqui);
+- os links `claude-cli://` **não** abrem em aba do Keep no Windows. O que o Claude Code 2.1.296 faz
+  lá (lido no executável): registra o protocolo em `HKCU\Software\Classes\claude-cli`
+  (`shell\open\command` = `"<claude.exe>" --handle-uri "%1"`) e confere isso em toda sessão, refazendo
+  se for outro comando, a não ser que o `settings.json` tenha `disableDeepLinkRegistration:
+  "disable"`; o `claude --handle-uri <url>` acha a pasta (`cwd`, ou o clone local de `repo`) e abre um
+  terminal — o `wt.exe` do PATH (`wt.exe -d <pasta> -- <claude.exe> --deep-link-origin
+  [--deep-link-repo=…] [--deep-link-cwd-b64=…] [--prefill-b64=…]`, com `;` escapado), senão `pwsh.exe`,
+  senão `powershell.exe` (`-NoExit -Command & '<claude.exe>' …`), senão `cmd.exe /d /v:off /s /k`.
+  Ele não olha `TERM_PROGRAM` nem `deepLinkTerminal` no Windows, de modo que não há como fazê-lo
+  escolher o Keep pelo ambiente, como se faz no Mac com o `Ghostty.app`;
+- o desvio possível é o do Mac em outras peças: um `wt.exe` do Keep (cópia do `keep.exe` com esse nome,
+  que lê `-d <pasta> -- <claude> <args>` e chama `keep nova --argumentos`, e com o Keep fechado passa a
+  chamada ao `wt.exe` de verdade) na frente do PATH de um `claude --handle-uri` que um lançador do Keep
+  roda, o protocolo registrado para esse lançador e o `disableDeepLinkRegistration` no `settings.json`
+  para o Claude Code não refazer o registro. Não foi feito: mexe no registro, no PATH de um processo do
+  Claude e numa chave de configuração dele, o desinstalador teria de desfazer tudo, e nada disso se
+  prova fora do Windows; um erro troca links que abrem (numa janela do Windows Terminal) por links que
+  não abrem.
 
 # A conversa que parou numa queda continua sozinha
 
