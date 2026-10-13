@@ -119,6 +119,8 @@ while True:
                 for query in arg.split("|"):
                     answers.append(repr(ask(query.replace("\\e", "\x1b").replace("\\a", "\x07").encode())))
                 open(os.path.join(work, "answers-%d" % asked), "w").write("\n".join(answers))
+            elif op == "bigosc":
+                os.write(1, b"\x1b]52;c;" + b"A" * int(arg))
             elif op == "listen":
                 asked += 1
                 got = b""
@@ -142,23 +144,32 @@ os.chmod(program, 0o755)
 commands = 0
 
 
-def command(*lines):
-    """Have the program do these, and wait until it has."""
-    global commands
+def send(*lines):
+    """Have the program do these; `finished` waits until it has."""
     done = os.path.join(WORK, "done")
     if os.path.exists(done):
         os.unlink(done)
     with open(os.path.join(WORK, "cmd.tmp"), "w") as f:
         f.write("\n".join(lines) + "\n")
     os.rename(os.path.join(WORK, "cmd.tmp"), os.path.join(WORK, "cmd"))
-    if not wait_for(90, lambda: os.path.exists(done)):
+    return lines
+
+
+def finished(lines):
+    if not wait_for(90, lambda: os.path.exists(os.path.join(WORK, "done"))):
         print("the program did not do: %r" % (lines,))
         sys.exit(2)
 
 
+def command(*lines):
+    """Have the program do these, and wait until it has."""
+    finished(send(*lines))
+
+
 # --- the daemon -------------------------------------------------------------------
 
-env = dict(os.environ, KEEP_SOCKET=SOCK, KEEP_STATE_DIR=os.path.join(WORK, "state"), KEEPER_WORK=WORK)
+env = dict(os.environ, KEEP_SOCKET=SOCK, KEEP_STATE_DIR=os.path.join(WORK, "state"), KEEPER_WORK=WORK,
+           KEEP_WAKE_PATIENCE="5", KEEP_CONTINUATION_LIMIT="4096")
 os.makedirs(env["KEEP_STATE_DIR"])
 daemon = subprocess.Popen([KEEPD], env=dict(env, SHELL=program), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 wait_for(30, lambda: os.path.exists(SOCK))
@@ -419,6 +430,18 @@ try:
     check("goes with its surface, whatever the files beside it say", (False, False),
           (elsewhere.alive(), elsewhere.kept()))
 
+    print("a surface that finds a keeper that does not answer")
+    ghost = os.path.join(WORK, "keep-attach", "ghost")
+    os.makedirs(ghost)
+    with open(os.path.join(ghost, "hibernate"), "w") as f:
+        f.write("1")
+    lost = Surface(take=ghost)
+    wait_for(10, lambda: not os.path.exists(os.path.join(ghost, "hibernate")))
+    wait_for(30, lambda: lost.has("L0005500"))
+    check("gives up on it, tells it to go, and attaches the ordinary way", (False, True),
+          (os.path.exists(os.path.join(ghost, "hibernate")), lost.has("L0005500")))
+    lost.let_go()
+
     print("a program on the alternate screen, over the shell")
     command("raw \\e[?1049h\\e[H\\e[2JFULL SCREEN PROGRAM\\e[>1u")
     two.hibernate()
@@ -455,12 +478,19 @@ try:
     four = Surface(take=three.dir)
     time.sleep(0.8)
     check("the new client waits for the keeper", True, four.alive() and not os.path.exists(os.path.join(four.dir, "took")))
+    lflag = termios.tcgetattr(four.master)[3]
+    check("with its terminal raw already", (0, 0), (lflag & termios.ICANON, lflag & termios.ISIG))
+    os.write(four.master, b"\x03")
+    time.sleep(0.3)
+    check("a ctrl-c meanwhile is the program's, not a signal for the client", True, four.alive())
     three.let_go()
     wait_for(90, lambda: four.has("L0005600"))
     found = numbers(four.replay()[1])
     check("and takes the pane from it: every line, once and in order (5600)", True, in_order_once(found, 5600))
     wait_for(30, lambda: not three.alive())
     check("the keeper is gone", False, three.alive())
+    command("listen 0.5")
+    check("and the ctrl-c reached the program", "b'\\x03'", open(os.path.join(WORK, "answers-7")).read())
 
     print("a surface let go of while its client waits to take the pane")
     four.hibernate()
@@ -508,6 +538,19 @@ try:
     command("raw  over\\a", "print 1")
     wait_for(30, lambda: seven.has("L0005701"))
     check("a sequence the handover cut off is finished on the new surface", "handed over", seven.replay()[0].get("title"))
+    # One too long to say the start of (a clipboard of over a megabyte; a
+    # few kilobytes, as the tests have the limit): the keeper hands over
+    # once the program has ended it.
+    command("bigosc 20000")
+    seven.hibernate()
+    wait_for(30, seven.kept)
+    seven = Surface(take=seven.dir)
+    time.sleep(1.0)
+    check("the keeper waits for the end of a sequence too long to hand over", False,
+          os.path.exists(os.path.join(seven.dir, "took")))
+    command("raw \\a", "print 1")
+    wait_for(30, lambda: seven.has("L0005702"))
+    check("and hands over after it, none of it written as text", False, "AAAAAAAAAA" in seven.replay()[1])
 
     print("an image drawn while kept")
     # The one thing a handover cannot carry: the keeper holds what the
@@ -519,25 +562,46 @@ try:
     wait_for(10, lambda: os.path.exists(os.path.join(seven.dir, "wake")))
     check("the keeper asks the app for a surface", True, os.path.exists(os.path.join(seven.dir, "wake")))
     woken = Surface(take=seven.dir)
-    wait_for(30, lambda: woken.has("L0005702"))
+    wait_for(30, lambda: woken.has("L0005703"))
     check("the image reaches the surface made for it, with what came before and after it", True,
-          b"before the image\r\n\x1b_Ga=T,f=24,s=1,v=1;AAAA\x1b\\ after the image\r\nL0005702" in bytes(woken.received))
+          b"before the image\r\n\x1b_Ga=T,f=24,s=1,v=1;AAAA\x1b\\ after the image\r\nL0005703" in bytes(woken.received))
     found = numbers(woken.replay()[1])
-    check("and every line, once and in order (5702)", True, in_order_once(found, 5702))
+    check("and every line, once and in order (5703)", True, in_order_once(found, 5703))
     check("its client says the pane is not to be let go of again", True,
           wait_for(10, lambda: os.path.exists(os.path.join(woken.dir, "unkeepable"))))
+    took = os.path.join(woken.dir, "took")
+    wait_for(10, lambda: os.path.exists(took))
+    check("having said so before it says it took the pane", True,
+          os.stat(os.path.join(woken.dir, "unkeepable")).st_mtime_ns <= os.stat(took).st_mtime_ns)
 
-    print("the keeper goes when it should")
+    print("an image no surface comes for")
+    # The keeper holds the program's output for a while, then gives it to
+    # its mirror: the question asked after the image is answered then, and
+    # a second image asks for a surface anew.
     woken.hibernate()
     wait_for(30, woken.kept)
+    wake = os.path.join(woken.dir, "wake")
+    sent = send("raw \\e_Ga=T,f=24,s=1,v=1;AAAA\\e\\ \\e[6n", "listen 8")
+    wait_for(10, lambda: os.path.exists(wake))
+    first = open(wake).read() if os.path.exists(wake) else ""
+    finished(sent)
+    check("the program's question after it is answered once the keeper gives up waiting", True,
+          b"R" in eval(open(os.path.join(WORK, "answers-8")).read()))
+    command("raw \\e_Ga=T,f=24,s=1,v=1;AAAA\\e\\ ")
+    wait_for(10, lambda: os.path.exists(wake))
+    second = open(wake).read() if os.path.exists(wake) else ""
+    check("and a second image asks anew, in words the app has not heard", (True, True, True),
+          (first != "", second != "", second != first))
+
+    print("the keeper goes when it should")
     keeper_dir = woken.dir
     os.unlink(os.path.join(keeper_dir, "hibernate"))
     wait_for(30, lambda: not woken.alive())
     check("when the app says it will not come back", False, woken.alive())
     check("the tab is untouched", True, pid_alive(PROGRAM_PID))
     eight = Surface(take=keeper_dir)
-    wait_for(90, lambda: eight.has("L0005702"))
-    check("a surface that finds no keeper attaches the ordinary way", True, eight.has("L0005702"))
+    wait_for(90, lambda: eight.has("L0005703"))
+    check("a surface that finds no keeper attaches the ordinary way", True, eight.has("L0005703"))
     eight.hibernate()
     wait_for(30, eight.kept)
     app.kill()
@@ -546,7 +610,7 @@ try:
     check("when the app is gone", False, eight.alive())
     app2 = subprocess.Popen(["/bin/sleep", "3600"])
     nine = Surface(take=eight.dir, app_pid=app2.pid)
-    wait_for(90, lambda: nine.has("L0005702"))
+    wait_for(90, lambda: nine.has("L0005703"))
     nine.hibernate()
     wait_for(30, nine.kept)
     with open(os.path.join(nine.dir, "somebody's"), "w") as f:

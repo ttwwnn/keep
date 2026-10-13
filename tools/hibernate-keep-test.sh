@@ -316,18 +316,22 @@ if [ -n "$SABOTAGE" ]; then
     codesign --force --sign - "$APP/Contents/Resources/keep" >/dev/null 2>&1
     codesign --force --deep --sign - "$APP" >/dev/null 2>&1
 fi
-# Clients' directories as three Keeps left them: one that is gone, one that
-# runs (this script, as far as the sweep can tell), one too old to say.
+# Clients' directories as three Keeps left them once their clients had read
+# and taken away the attach file: one whose app is gone, one whose app runs
+# (this script, as far as the sweep can tell), one from a Keep too old to
+# say whose it is.
 ORPHANS=${TMPDIR:-/tmp}
 ORPHANS=${ORPHANS%/}/keep-attach
 mkdir -p "$ORPHANS"
 sleep 0 &
 GONE=$!
 wait "$GONE"
-for kind in gone alive unnamed; do mkdir -p "$ORPHANS/hk-$kind-$$"; done
-printf 'x\n1\n/dev/null\nmirror=1\napp=%s\n' "$GONE" >"$ORPHANS/hk-gone-$$/.keep-attach"
-printf 'x\n1\n/dev/null\nmirror=1\napp=%s\n' "$$" >"$ORPHANS/hk-alive-$$/.keep-attach"
-printf 'x\n1\n/dev/null\n' >"$ORPHANS/hk-unnamed-$$/.keep-attach"
+for kind in gone alive unnamed; do
+    mkdir -p "$ORPHANS/hk-$kind-$$"
+    echo 0 >"$ORPHANS/hk-$kind-$$/showing"
+done
+echo "$GONE" >"$ORPHANS/hk-gone-$$/app"
+echo "$$" >"$ORPHANS/hk-alive-$$/app"
 
 launch KEEP_HYDRATED_LIMIT=$LIMIT
 
@@ -562,6 +566,11 @@ if [ -z "$PIC" ]; then
     check "a tab is hibernated to draw in" "yes" "no"
 else
     MADE_PIC=$(made "$PIC")
+    # The text a size larger meanwhile: a surface out of sight keeps the grid
+    # its program draws for until it is shown, and so does one made for it.
+    RESTING=$(daemon_grid "$PIC")
+    "$AXPRESS" "$APP_NAME" menu View "Zoom In" >/dev/null 2>&1
+    sleep 2
     tell "$PIC" "image" "print 3"
     until_true 20 '[ "$(made "$PIC")" -gt "$MADE_PIC" ]'
     sleep 2
@@ -570,8 +579,10 @@ else
     WOKEN=$(grep -aE "handing over at .* held" "$WORK/client.log" | grep -vE " 0 held" | tail -1)
     check "the picture went to the surface as it came, with the rest" "yes" \
         "$([ -n "$WOKEN" ] && echo yes || echo no)"
-    check "at the grid the tab has, out of sight as it is" "$(daemon_grid "$PIC")" \
+    check "at the grid its program draws for, out of sight as it is, the text zoomed meanwhile" "$RESTING" \
         "$(printf '%s\n' "$WOKEN" | grep -oE 'at [0-9]+x[0-9]+' | head -1 | cut -c4-)"
+    "$AXPRESS" "$APP_NAME" menu View "Actual Size" >/dev/null 2>&1
+    sleep 2
     HIB_PIC=$(hibernated "$PIC")
     # A settle comes a second after a tab is shown, and every fifteen.
     show "$(( PIC == 1 ? 2 : 1 ))" || say "  (could not show another tab)"

@@ -72,7 +72,7 @@ impl Terminal {
 
         match self.alternate_screen() {
             None => {
-                let main = self.screen_handover();
+                let main = self.screen_handover(true);
                 let keys = self.keyboard_for(keyboard.map(|k| k.main.as_slice()));
                 let shape = self.cursor_shape();
                 let saved = self.saved_cursor();
@@ -83,13 +83,13 @@ impl Terminal {
                 out.extend_from_slice(&shape);
             }
             Some(mode) => {
-                let alternate = self.screen_handover();
+                let alternate = self.screen_handover(false);
                 let alternate_keys = self.keyboard_for(keyboard.map(|k| k.alternate.as_slice()));
                 let alternate_shape = self.cursor_shape();
                 // Out as the program would go: 1049 puts the cursor back where
                 // it was on the main screen, 47 and 1047 never moved it.
                 self.write(format!("\x1b[?{mode}l").as_bytes());
-                let under = self.screen_handover();
+                let under = self.screen_handover(true);
                 let main_keys = self.keyboard_for(keyboard.map(|k| k.main.as_slice()));
                 let main_shape = self.cursor_shape();
                 // What ESC 7 saved on the main screen: 1049 saved the cursor
@@ -151,8 +151,23 @@ impl Terminal {
     fn saved_cursor(&mut self) -> Vec<u8> {
         self.write(b"\x1b8");
         let origin = self.dec_mode(6);
-        let Some(cursor) = self.cursor_state() else { return Vec::new() };
-        let mut out = Vec::with_capacity(cursor.len() + 48);
+        let Some(mut cursor) = self.cursor_state() else { return Vec::new() };
+        // Saved waiting to wrap at the margin, over a cell since emptied: the
+        // formatter makes a cursor wait there by writing the cell again, and
+        // has nothing to write. A space is written there and saved with, and
+        // the cell emptied again after.
+        let (x, y) = self.cursor();
+        let cols = self.size().0;
+        let wrap_over_nothing = self.get_bool(ffi::DATA_CURSOR_PENDING_WRAP)
+            && x + 1 == cols
+            && !self.cell(x, y).map(|cell| Self::has_text(&cell)).unwrap_or(false);
+        if wrap_over_nothing {
+            let at = format!("\x1b[{};{}H", y + 1, x + 1);
+            let pen = cursor.strip_prefix(at.as_bytes()).map(<[u8]>::to_vec).unwrap_or_default();
+            cursor = format!("{at}\x1b[0m ").into_bytes();
+            cursor.extend_from_slice(&pen);
+        }
+        let mut out = Vec::with_capacity(cursor.len() + 64);
         // Said before the margins are, which leaves the whole screen the
         // region: from its top left, as from the screen's.
         if origin {
@@ -166,7 +181,20 @@ impl Terminal {
         // What the cursor in use says of itself leaves out whatever is off:
         // the protection and the character sets saved are taken off again.
         out.extend_from_slice(b"\x1b[0m\x1b[0\"q\x1b(B\x1b)B\x1b*B\x1b+B\x0f");
+        if wrap_over_nothing {
+            out.extend_from_slice(format!("\x1b[{};{}H\x1b[X", y + 1, x + 1).as_bytes());
+        }
         out
+    }
+
+    fn has_text(cell: &ffi::GridRef) -> bool {
+        let mut raw: ffi::Cell = 0;
+        if unsafe { ffi::ghostty_grid_ref_cell(cell, &mut raw) } != ffi::SUCCESS {
+            return false;
+        }
+        let mut text = false;
+        let rc = unsafe { ffi::ghostty_cell_get(raw, ffi::CELL_DATA_HAS_TEXT, &mut text as *mut bool as *mut c_void) };
+        rc == ffi::SUCCESS && text
     }
 
     /// The cursor in use as the formatter says it — its place, the pen it
@@ -226,7 +254,12 @@ impl Terminal {
     /// The rows come before the modes, unlike in a repaint: a program that
     /// turned autowrap off would otherwise have the replayed rows overwrite
     /// one another at the margin instead of wrapping where they wrapped.
-    fn screen_handover(&self) -> ScreenPart {
+    ///
+    /// `scratch`: whether the other screen's saved cursor may be used to put
+    /// this one's back outside the margins under origin mode — the main
+    /// screen's part may, written before the alternate screen is anything;
+    /// the alternate screen's may not, the main screen's being the program's.
+    fn screen_handover(&self, scratch: bool) -> ScreenPart {
         let extras = self.format_with(self.options(true)).unwrap_or_default();
         let rows = self.format_with(self.options(false)).unwrap_or_default();
         let lead = leading_modes(&extras);
@@ -236,7 +269,9 @@ impl Terminal {
         // its last line lands on the bottom row, where the cursor is put back
         // — on that line, for the next output to overwrite, rather than on
         // the blank row below it.
-        let trailing = self.total_rows().saturating_sub(split_rows(&rows).len());
+        // A screen with nothing on it is written as no rows, and its first
+        // row is there all the same.
+        let trailing = self.total_rows().saturating_sub(split_rows(&rows).len().max(1));
         let below = b"\r\n".repeat(trailing);
         let origin = self.dec_mode(6);
         if extras[lead..].starts_with(&rows) {
@@ -244,7 +279,13 @@ impl Terminal {
             written.extend_from_slice(&below);
             let mut rest = modes;
             let tail = &extras[lead + rows.len()..];
-            rest.extend_from_slice(&if origin { within_margins(tail) } else { tail.to_vec() });
+            let size = self.size();
+            match placement(tail, size) {
+                Some(place) if origin && scratch && place.outside(self.dec_mode(69)) => {
+                    rest = outside_margins(&rest, tail, &place);
+                }
+                _ => rest.extend_from_slice(&if origin { within_margins(tail) } else { tail.to_vec() }),
+            }
             ScreenPart { rows: written, rest }
         } else {
             // Not the shape this was written against: the rows as they come,
@@ -394,13 +435,18 @@ impl Terminal {
         Some((flag(ffi::ROW_DATA_WRAP), flag(ffi::ROW_DATA_HYPERLINK)))
     }
 
-    /// A row written run by run, each linked run inside its OSC 8, each run
-    /// at its own column (a gap between two links is cells the formatter has
-    /// nothing to say about). Starts and ends with the pen reset, as the
-    /// formatter's own rows do.
+    /// A row written run by run, each linked run inside its OSC 8, the cells
+    /// between runs that have no text written as spaces, as the formatter
+    /// writes them — never by moving the cursor along the row: after a soft
+    /// wrap, the cursor waits past the margin of the row before, and a move
+    /// would put this row over that one. Starts and ends with the pen reset,
+    /// as the formatter's own rows do.
     fn linked_row(&self, y: u32, cols: u16) -> Option<Vec<u8>> {
         let mut out = b"\x1b[0m".to_vec();
         let mut x: u16 = 0;
+        // Cells with nothing in them since the last run written: written
+        // as spaces once something follows them, left out at the end.
+        let mut blanks: usize = 0;
         while x < cols {
             let start = self.screen_cell(x, y)?;
             let uri = Self::uri(&start);
@@ -415,8 +461,12 @@ impl Terminal {
                 end_x += 1;
             }
             let text = self.formatted_run(start, end).ok()?;
-            if !text.is_empty() {
-                out.extend_from_slice(format!("\x1b[{}G\x1b[0m", x + 1).as_bytes());
+            if text.is_empty() {
+                blanks += usize::from(end_x - x + 1);
+            } else {
+                out.extend_from_slice(b"\x1b[0m");
+                out.extend(std::iter::repeat_n(b' ', blanks));
+                blanks = 0;
                 if uri.is_empty() {
                     out.extend_from_slice(&text);
                 } else {
@@ -641,6 +691,117 @@ fn first_cursor_position(bytes: &[u8]) -> Option<usize> {
         }
     }
     None
+}
+
+/// Where the formatter's last words put the margins and the cursor: the
+/// cursor's CUP (where it is in the words, and the row and column it names,
+/// from 1 and from the screen's top left), and the margins, from 1.
+struct Placement {
+    cup: std::ops::Range<usize>,
+    row: u16,
+    column: u16,
+    top: u16,
+    bottom: u16,
+    left: u16,
+    right: u16,
+}
+
+impl Placement {
+    /// Whether origin mode cannot say the cursor's place: it is above,
+    /// below, or — with left and right margins — beside the margins.
+    fn outside(&self, sideways: bool) -> bool {
+        self.row < self.top
+            || self.row > self.bottom
+            || (sideways && (self.column < self.left || self.column > self.right))
+    }
+}
+
+fn placement(tail: &[u8], (cols, rows): (u16, u16)) -> Option<Placement> {
+    let pair = |params: &[u8]| -> Option<(u16, u16)> {
+        let text = std::str::from_utf8(params).ok()?;
+        let (first, second) = text.split_once(';')?;
+        Some((first.parse().ok()?, second.parse().ok()?))
+    };
+    let mut place = Placement { cup: 0..0, row: 1, column: 1, top: 1, bottom: rows, left: 1, right: cols };
+    let mut at = 0;
+    while at + 1 < tail.len() {
+        if tail[at] != 0x1b {
+            at += 1;
+            continue;
+        }
+        match tail[at + 1] {
+            b'[' => {
+                let mut end = at + 2;
+                while end < tail.len() && (0x20..=0x3f).contains(&tail[end]) {
+                    end += 1;
+                }
+                let &last = tail.get(end)?;
+                let params = &tail[at + 2..end];
+                match last {
+                    b'r' => (place.top, place.bottom) = pair(params)?,
+                    b's' => (place.left, place.right) = pair(params)?,
+                    b'H' => {
+                        (place.row, place.column) = pair(params)?;
+                        place.cup = at..end + 1;
+                        return Some(place);
+                    }
+                    _ => {}
+                }
+                at = end + 1;
+            }
+            b']' => {
+                let mut end = at + 2;
+                while end < tail.len() {
+                    if tail[end] == 0x07 {
+                        end += 1;
+                        break;
+                    }
+                    if tail[end] == 0x1b && tail.get(end + 1) == Some(&b'\\') {
+                        end += 2;
+                        break;
+                    }
+                    end += 1;
+                }
+                at = end;
+            }
+            _ => at += 2,
+        }
+    }
+    None
+}
+
+/// The modes and last words of a screen whose program has origin mode on
+/// and the cursor outside the margins — which origin mode cannot move it
+/// to, and which only putting back a saved cursor can. The other screen's
+/// saved cursor is the one used: the cursor is saved there with origin mode
+/// on before the margins are set (`ESC [ ? 47 h` goes there and back without
+/// clearing it, carrying the cursor both ways), and put back after they are.
+/// Everything the cursor writes with is said after that.
+fn outside_margins(modes: &[u8], tail: &[u8], place: &Placement) -> Vec<u8> {
+    let mut out = Vec::with_capacity(modes.len() + tail.len() + 64);
+    out.extend_from_slice(&without_origin(modes));
+    out.extend_from_slice(
+        format!("\x1b[?47h\x1b[?6h\x1b[{};{}H\x1b7\x1b[?47l", place.row, place.column).as_bytes(),
+    );
+    out.extend_from_slice(&tail[..place.cup.start]);
+    out.extend_from_slice(b"\x1b[?47h\x1b8\x1b[?47l");
+    out.extend_from_slice(&tail[place.cup.end..]);
+    out
+}
+
+/// The modes less origin mode, which puts the cursor home as it goes on.
+fn without_origin(modes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(modes.len());
+    let mut at = 0;
+    while at < modes.len() {
+        if modes[at..].starts_with(b"\x1b[?6h") {
+            at += 5;
+            continue;
+        }
+        out.push(modes[at]);
+        at += 1;
+    }
+    out
 }
 
 /// The formatter's last words about a screen — the margins, then where the
@@ -938,7 +1099,7 @@ mod tests {
     /// not over the line above.
     #[test]
     fn the_blank_rows_at_the_bottom_come_back() {
-        for lines in [3, 50] {
+        for lines in [0, 1, 3, 50] {
             let mut t = mirror(20, 8);
             for n in 0..lines {
                 t.write(format!("line {n}\r\n").as_bytes());
@@ -1074,6 +1235,31 @@ mod tests {
         assert_eq!(plain(&fresh), plain(&t));
     }
 
+    /// Origin mode on and the cursor outside the margins — put back there
+    /// by ESC 8, moved past the left margin, or saved by 1049 before the
+    /// program set margins on the alternate screen: it is put back there,
+    /// not inside them.
+    #[test]
+    fn origin_mode_with_the_cursor_outside_the_margins() {
+        let cases: [(&[u8], &[u8]); 3] = [
+            (b"\x1b[?69h\x1b[5;13s\x1b[?6h\x1b[2D", b"X"),
+            (b"abc\r\n\x1b[?6h\x1b[1;1H\x1b7\x1b[3;5r\x1b8", b"X\x1b[1;1HY"),
+            (b"\x1b[?6h\x1b[?1049h\x1b[7;8r", b"\x1b[?1049lL"),
+        ];
+        for (before, after) in cases {
+            let mut t = mirror(14, 8);
+            t.write(before);
+            let mut fresh = handed(&t, None);
+            let what = String::from_utf8_lossy(before).into_owned();
+            assert_eq!(fresh.cursor(), t.cursor(), "{what:?}: the cursor");
+            assert_eq!(fresh.dec_mode(6), t.dec_mode(6), "{what:?}: origin mode");
+            t.write(after);
+            fresh.write(after);
+            assert_eq!(plain(&fresh), plain(&t), "{what:?}: what is written next");
+            assert_eq!(fresh.cursor(), t.cursor(), "{what:?}: and the cursor after");
+        }
+    }
+
     /// A row that wrapped, its continuation erased since: the next row
     /// stays where it is. And a wrapped row erased whole by a selective
     /// erase, which keeps the wrap: the next row's text does not move up
@@ -1098,6 +1284,31 @@ mod tests {
         }
     }
 
+    /// Links on a row a soft wrap carries on to, and a link the margin cuts
+    /// in two, and empty cells between two links: every row stays where it
+    /// was, every link where it was.
+    #[test]
+    fn links_after_a_wrap_keep_their_rows() {
+        let mut t = mirror(20, 6);
+        for n in 0..12 {
+            t.write(format!("src/file{n}.c:{n}:3: warning: unused [\x1b]8;;https://gcc.gnu.org/w{n}\x1b\\-Wunused\x1b]8;;\x1b\\]\r\n").as_bytes());
+        }
+        t.write(b"beta \x1b]8;;https://e.x/7\x1b\\a link the margin cuts in two\x1b]8;;\x1b\\ done\r\n");
+        t.write(b"\x1b]8;;file:///a\x1b\\a\x1b]8;;\x1b\\\x1b[6G\x1b]8;;file:///b\x1b\\b\x1b]8;;\x1b\\\r\n$ ");
+        let fresh = handed(&t, None);
+        assert_eq!(fresh.total_rows(), t.total_rows(), "as many rows");
+        assert_eq!(plain(&fresh), plain(&t), "every row where it was");
+        assert_eq!(wraps(&fresh), wraps(&t), "every wrap");
+        let links = |t: &Terminal| {
+            (0..t.total_rows() as u32)
+                .flat_map(|y| (0..20u16).map(move |x| (x, y)))
+                .map(|(x, y)| link_at(t, x, y))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(links(&fresh), links(&t), "every link where it was");
+        assert_eq!(fresh.cursor(), t.cursor());
+    }
+
     /// What ESC 7 saved comes back with ESC 8 after the handover: the place,
     /// the pen — on the main screen, on the alternate one, and on the main
     /// one under it when the program went there by 47.
@@ -1112,6 +1323,19 @@ mod tests {
         fresh.write(b"\x1b8X");
         assert_eq!(plain(&fresh), plain(&t), "ESC 8 goes back to where ESC 7 was");
         assert_eq!(vt(&fresh), vt(&t), "with the pen it had");
+
+        // Saved waiting to wrap at the margin, the row scrolled away under it
+        // since: ESC 8 waits there again, and the next character wraps.
+        for history in ["", "1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n"] {
+            let mut t = mirror(10, 4);
+            t.write(format!("{history}$ abcdefgh\x1b7\r\nnext").as_bytes());
+            let mut fresh = handed(&t, None);
+            assert_eq!(plain(&fresh), plain(&t), "{history:?}: the screen");
+            t.write(b"\x1b8X");
+            fresh.write(b"\x1b8X");
+            assert_eq!(plain(&fresh), plain(&t), "{history:?}: ESC 8 waits to wrap, as saved");
+            assert_eq!(fresh.cursor(), t.cursor(), "{history:?}");
+        }
 
         for (mode, leave) in [(1049u16, &b"\x1b[?1049l"[..]), (47, b"\x1b[?47l")] {
             let mut t = mirror(20, 6);

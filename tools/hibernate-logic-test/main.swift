@@ -127,15 +127,15 @@ func yes(_ name: String, _ got: Bool, _ want: Bool) {
         print("FAIL \(name): got \(got), wanted \(want)")
     }
 }
-let attach = "work\n3\n/tmp/keep-attach/X/showing\nmirror=10000000\ngrapheme=1\nblink=1\napp=4242\n"
+// The app file beside a client: the app's pid, a line.
 yes("a directory left by an app that is gone is swept",
-    KeeperProtocol.isOrphan(attachFile: attach, me: 1, alive: { _ in false }), true)
-yes("not one whose app runs", KeeperProtocol.isOrphan(attachFile: attach, me: 1, alive: { $0 == 4242 }), false)
-yes("nor this app's own", KeeperProtocol.isOrphan(attachFile: attach, me: 4242, alive: { _ in false }), false)
-yes("nor one that names no app: an older Keep, perhaps running",
-    KeeperProtocol.isOrphan(attachFile: "work\n3\n/tmp/showing\n", me: 1, alive: { _ in false }), false)
-yes("app= on the first three lines is not the app",
-    KeeperProtocol.isOrphan(attachFile: "app=9\n3\n/tmp/showing\n", me: 1, alive: { _ in false }), false)
+    KeeperProtocol.isOrphan(appFile: "4242\n", me: 1, alive: { _ in false }), true)
+yes("not one whose app runs", KeeperProtocol.isOrphan(appFile: "4242\n", me: 1, alive: { $0 == 4242 }), false)
+yes("nor this app's own", KeeperProtocol.isOrphan(appFile: "4242\n", me: 4242, alive: { _ in false }), false)
+yes("nor one whose file names nothing",
+    KeeperProtocol.isOrphan(appFile: "", me: 1, alive: { _ in false }), false)
+yes("nor one whose file says something else",
+    KeeperProtocol.isOrphan(appFile: "mirror=1\n", me: 1, alive: { _ in false }), false)
 yes("a program's clipboard write goes to the pasteboard", KeeperProtocol.relaysClipboardWrite(policy: "allow"), true)
 yes("as with a surface asked to ask", KeeperProtocol.relaysClipboardWrite(policy: "ask"), true)
 yes("and not when clipboard-write says deny", KeeperProtocol.relaysClipboardWrite(policy: "deny"), false)

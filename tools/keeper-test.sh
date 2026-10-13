@@ -108,6 +108,18 @@ sabotage "the handover leaves out the start of a sequence it cut" \
     crates/keep-vt/src/handover.rs 's/out.extend_from_slice(\&continuation);/let _ = continuation;/'
 sabotage "a keeper leaving takes the whole directory" \
     crates/keep/src/keeper.rs 's/let _ = std::fs::remove_dir(dir);/let _ = std::fs::remove_dir_all(dir);/'
+sabotage "the client is raw only once it has the pane" \
+    crates/keep/src/attach.rs 's/early_raw = RawGuard::enter(Arc::clone(\&alternate)).ok();/let _ = \&mut early_raw;/'
+sabotage "a keeper that cannot be had is not told to go" \
+    crates/keep/src/keeper.rs 's/    if taken.is_err() {/    if false \&\& taken.is_err() {/'
+sabotage "the client says it took the pane before its mirror has it" \
+    crates/keep/src/attach.rs 's/let taken = options.take.as_ref().map(|_| handed.is_some());/let taken = options.take.as_ref().map(|_| handed.is_some()); if keeping { if let Some(t) = taken { crate::keeper::tried_to_take(\&dir, t); } }/;s/        crate::keeper::tried_to_take(\&dir, taken);/        let _ = taken;/'
+sabotage "the keeper hands over inside a sequence it cannot say the start of" \
+    crates/keep/src/keeper.rs 's/if mirror.can_hand_over() || since.elapsed() >= Duration::from_secs(2) {/if true {/'
+sabotage "a keeper giving up on a surface sits on the program's answers" \
+    crates/keep/src/keeper.rs 's/^                pass_on(\&mut mirror, \&mut daemon, \&dir, \&mut background);/                let _ = \&background;/'
+sabotage "every request for a surface in the same words" \
+    crates/keep/src/keeper.rs 's/publish(\&dir, WAKE, format!("image {wakes}\\n").as_bytes());/publish(\&dir, WAKE, b"image\\n");/'
 sabotage "a client keeps wherever it was run" \
     crates/keep/src/keeper.rs 's/dir.parent().and_then(|p| p.file_name()).map(|n| n == "keep-attach").unwrap_or(false)/{ let _ = dir; true }/'
 
@@ -142,7 +154,7 @@ unit "a wrap kept over a row since erased whole" keep-vt crates/keep-vt/src/hand
 unit "the alternate screen's rows written inside the program's margins" keep-vt crates/keep-vt/src/handover.rs \
     's/out.extend_from_slice(Self::AS_IF_FRESH);/out.extend_from_slice(b"\\x1b[H");/'
 unit "the cursor counted from the screen's corner under origin mode" keep-vt crates/keep-vt/src/handover.rs \
-    's/rest.extend_from_slice(\&if origin { within_margins(tail) } else { tail.to_vec() });/rest.extend_from_slice(\&{ let _ = origin; tail.to_vec() });/'
+    's/_ => rest.extend_from_slice(\&if origin { within_margins(tail) } else { tail.to_vec() }),/_ => rest.extend_from_slice(\&{ let _ = origin; tail.to_vec() }),/'
 unit "the cursor ESC 7 saved left out" keep-vt crates/keep-vt/src/handover.rs \
     's/let saved = self.saved_cursor();/let saved: Vec<u8> = Vec::new();/'
 unit "the cursor ESC 7 saved on the alternate screen left out" keep-vt crates/keep-vt/src/handover.rs \
@@ -162,17 +174,33 @@ unit "CSI = c answered" keep-vt crates/keep-vt/src/effects.rs \
 unit "the modes before the rows" keep-vt crates/keep-vt/src/handover.rs \
     's/let mut written = self.rows_with_wraps_and_links(\&rows).unwrap_or(rows.clone());/let mut written = modes.clone(); written.extend_from_slice(\&self.rows_with_wraps_and_links(\&rows).unwrap_or(rows.clone()));/'
 unit "the blank rows at the bottom left out of the handover" keep-vt crates/keep-vt/src/handover.rs \
-    's/let trailing = self.total_rows().saturating_sub(split_rows(\&rows).len());/let trailing = 0usize;/'
+    's/let trailing = self.total_rows().saturating_sub(split_rows(\&rows).len().max(1));/let trailing = 0usize;/'
 unit "the blank rows at the bottom left out of the daemon's repaint" keep-vt crates/keep-vt/src/lib.rs \
     's/let below = b"\\r\\n".repeat(self.total_rows().saturating_sub(written));/let below: Vec<u8> = { let _ = written; Vec::new() };/'
 unit "an image split between two writes goes unseen" keep crates/keep/src/keeper.rs \
     's/\*carried = data\[data.len() - keep..\].to_vec();/let _ = keep;/'
+unit "a linked row moved along by the cursor after a wrap" keep-vt crates/keep-vt/src/handover.rs \
+    's/out.extend(std::iter::repeat_n(b. ., blanks));/out.extend_from_slice(format!("\\x1b[{}G", x + 1).as_bytes()); let _ = blanks;/'
+unit "a cursor saved waiting to wrap over an emptied cell put back not waiting" keep-vt crates/keep-vt/src/handover.rs \
+    's/let wrap_over_nothing = self.get_bool(ffi::DATA_CURSOR_PENDING_WRAP)/let wrap_over_nothing = false \&\& self.get_bool(ffi::DATA_CURSOR_PENDING_WRAP)/'
+unit "a cursor outside the margins under origin mode put inside them" keep-vt crates/keep-vt/src/handover.rs \
+    's/Some(place) if origin \&\& scratch \&\& place.outside(self.dec_mode(69)) => {/Some(place) if false \&\& origin \&\& scratch \&\& place.outside(self.dec_mode(69)) => {/'
+unit "an empty screen handed over a row too long" keep-vt crates/keep-vt/src/handover.rs \
+    's/split_rows(\&rows).len().max(1));/split_rows(\&rows).len());/'
+unit "OSC 52 naming another clipboard left unanswered" keep-vt crates/keep-vt/src/effects.rs \
+    's/        Some(reader) => reader(),/        Some(reader) if request.location == ffi::CLIPBOARD_LOCATION_STANDARD => reader(), Some(_) => ClipboardAnswer::Nothing,/'
+unit "a big clipboard read left unanswered" keep-vt crates/keep-vt/src/effects.rs \
+    's/if effects.events.replies.len() + len + 1 <= CLIPBOARD_REPLY_LIMIT {/if effects.events.replies.len() + len + 1 <= REPLY_LIMIT {/'
+unit "the Kitty clipboard protocol answered" keep-vt crates/keep-vt/src/effects.rs \
+    's/        if bytes.starts_with(b"\\x1b\]5522;") {/        if false \&\& bytes.starts_with(b"\\x1b]5522;") {/'
+unit "the Kitty and iTerm2 protocols putting text on the clipboard" keep-vt crates/keep-vt/src/effects.rs \
+    's/if write.location != ffi::CLIPBOARD_LOCATION_STANDARD || effects.osc != Some(52) {/if write.location != ffi::CLIPBOARD_LOCATION_STANDARD {/'
 unit "the Kitty clipboard protocol's paste events said spoken" keep-vt crates/keep-vt/src/effects.rs \
     's/effects.events.replies.extend_from_slice(b"\\x1b\[?5522;0$y");/effects.events.replies.extend_from_slice(bytes);/'
 unit "a read in the Kitty clipboard protocol given the clipboard" keep-vt crates/keep-vt/src/effects.rs \
     's/if effects.osc != Some(52) {/if false {/'
 unit "a clipboard read answered with BEL where a surface ends with ST" keep-vt crates/keep-vt/src/effects.rs \
-    's/if let Some(body) = bytes.strip_suffix(b"\\x07") {/if let Some(body) = None::<\&[u8]> {/'
+    's/let body = bytes.strip_suffix(b"\\x07");/let body: Option<\&[u8]> = None;/'
 unit "a program asking whether images are spoken taken for one showing one" keep crates/keep/src/keeper.rs \
     "s/!matches!(action, b'q' | b'd')/{ let _ = action; true }/"
 unit "the surface's word on dark and light not heard" keep crates/keep/src/keeper.rs \

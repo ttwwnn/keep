@@ -32,6 +32,9 @@ final class GhosttyApp {
 
     /// Posted when the resolved terminal background, opacity, or blur changes.
     static let backgroundDidChange = Notification.Name("keep.terminalBackgroundDidChange")
+    /// Something a kept pane's client answers with changed, beyond the
+    /// background (which says so itself): `clipboard-read`.
+    static let factsDidChange = Notification.Name("keep.keeperFactsDidChange")
 
     /// The colour libghostty fills a surface with, so the strip above the
     /// terminal can match it instead of showing the window's own grey.
@@ -775,9 +778,15 @@ final class GhosttyApp {
                 let clipboardWrite = GhosttyApp.enumValue("clipboard-write", of: config)
                 let clipboardRead = GhosttyApp.enumValue("clipboard-read", of: config)
                 DispatchQueue.main.async {
-                    GhosttyApp.shared.themeColours = theme
-                    GhosttyApp.shared.clipboardWritePolicy = clipboardWrite
-                    GhosttyApp.shared.clipboardReadPolicy = clipboardRead
+                    let app = GhosttyApp.shared
+                    let readChanged = app.clipboardReadPolicy != clipboardRead
+                    app.themeColours = theme
+                    app.clipboardWritePolicy = clipboardWrite
+                    app.clipboardReadPolicy = clipboardRead
+                    // A kept pane's client reads it from its facts.
+                    if readChanged {
+                        NotificationCenter.default.post(name: GhosttyApp.factsDidChange, object: nil)
+                    }
                     GhosttyApp.shared.adopt(background: color, opacity: opacity, blur: blur)
                     if wholeApp { GhosttyApp.shared.settleFont() }
                 }

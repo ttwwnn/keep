@@ -17,6 +17,7 @@ final class Hibernation {
     private var timer: Timer?
     private var backgroundObserver: NSObjectProtocol?
     private var appearanceObserver: NSKeyValueObservation?
+    private var factsObserver: NSObjectProtocol?
 
     private init() {}
 
@@ -41,6 +42,11 @@ final class Hibernation {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { self?.refreshFacts() }
             }
+        }
+        factsObserver = NotificationCenter.default.addObserver(
+            forName: GhosttyApp.factsDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshFacts() }
         }
     }
 

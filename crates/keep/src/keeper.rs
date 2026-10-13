@@ -60,9 +60,12 @@ pub const CLIPBOARD_ANSWER: &str = "clipboard-answer";
 /// The keeper asks the app for a surface now: the program is drawing an
 /// image, which only a surface can keep.
 pub const WAKE: &str = "wake";
-/// The app's own files beside the client.
+/// The app's own files beside the client: whether the surface is on screen,
+/// the attach file (read and taken away by the client), and the app's pid,
+/// for a later app to tell a directory left behind (`Keeper.sweepOrphans`).
 const SHOWING: &str = "showing";
 const ATTACH_FILE: &str = ".keep-attach";
+const APP_FILE: &str = "app";
 /// How much of a sequence cut off at the end of a write the mirror keeps,
 /// to hand over: an image's chunk, a clipboard's text.
 const CONTINUATION_LIMIT: usize = 1 << 20;
@@ -156,8 +159,10 @@ impl Mirror {
         let mut terminal = Terminal::new(cols.max(1), rows.max(1)).ok()?.with_default_cursor_unset();
         terminal.set_scrollback_limit(scrollback).ok()?;
         // A handover can fall between two writes that split a sequence; the
-        // start of it is handed over too (`Terminal::continuation`).
-        terminal.track_continuation(CONTINUATION_LIMIT).ok()?;
+        // start of it is handed over too (`Terminal::continuation`). Up to a
+        // megabyte, or what the tests say.
+        let limit = std::env::var("KEEP_CONTINUATION_LIMIT").ok().and_then(|s| s.parse().ok());
+        terminal.track_continuation(limit.unwrap_or(CONTINUATION_LIMIT)).ok()?;
         // The modes the surface starts with that this library does not.
         if options.grapheme {
             terminal.write(b"\x1b[?2027h");
@@ -602,6 +607,13 @@ pub fn keep(kept: Kept) -> ! {
     // stops where the image began. Given up on, if no surface comes, by
     // feeding the mirror all the same: the image lost, nothing else.
     let mut held: Option<(Vec<u8>, Instant)> = None;
+    let mut wakes: u32 = 0;
+    // How long a surface is waited for: a minute, or what the tests say.
+    let patience = std::env::var("KEEP_WAKE_PATIENCE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .map(Duration::from_secs_f64)
+        .unwrap_or(Duration::from_secs(60));
 
     loop {
         let listening = if waiting.is_none() { Some(listener.as_raw_fd()) } else { None };
@@ -623,8 +635,11 @@ pub fn keep(kept: Kept) -> ! {
                 Ok(None) | Err(_) => leave(&dir),
             };
             if held.is_none() && !bytes.is_empty() && mirror.would_place_image(&bytes) {
-                note(format_args!("an image while kept: asking the app for a surface"));
-                publish(&dir, WAKE, b"image\n");
+                // Each time said anew: the app hears a file change, not one
+                // that says what it said before.
+                wakes += 1;
+                note(format_args!("an image while kept: asking the app for a surface ({wakes})"));
+                publish(&dir, WAKE, format!("image {wakes}\n").as_bytes());
                 held = Some((Vec::new(), Instant::now()));
             }
             match held.as_mut() {
@@ -634,26 +649,7 @@ pub fn keep(kept: Kept) -> ! {
                     mirror.feed(&bytes);
                 }
             }
-            let events = mirror.terminal.take_events();
-            if !events.replies.is_empty() && ClientMsg::write_input(&mut daemon, &events.replies).is_err() {
-                leave(&dir);
-            }
-            if events.title {
-                publish(&dir, TITLE, mirror.terminal.title().as_bytes());
-            }
-            if events.pwd {
-                publish(&dir, PWD, mirror.terminal.pwd().as_bytes());
-            }
-            if let Some(text) = events.clipboard.last() {
-                publish(&dir, CLIPBOARD, text);
-            }
-            let now = mirror.terminal.background_colour();
-            if now != background {
-                background = now;
-                if let Some([r, g, b]) = now {
-                    publish(&dir, BACKGROUND, format!("{r:02x}{g:02x}{b:02x}\n").as_bytes());
-                }
-            }
+            pass_on(&mut mirror, &mut daemon, &dir, &mut background);
         }
         if ready.1 {
             if let Ok((conn, _)) = listener.accept() {
@@ -665,11 +661,14 @@ pub fn keep(kept: Kept) -> ! {
         // No surface came for the image, or what it held grew too big to
         // hold: the mirror takes it all the same.
         if let Some((kept, since)) = held.as_ref() {
-            if waiting.is_none() && (since.elapsed() >= Duration::from_secs(60) || kept.len() > HELD_LIMIT) {
+            if waiting.is_none() && (since.elapsed() >= patience || kept.len() > HELD_LIMIT) {
                 note(format_args!("no surface came for the image: {} bytes to the mirror", kept.len()));
                 let (kept, _) = held.take().expect("held");
                 flags.observe(&kept);
                 mirror.feed(&kept);
+                // What the program asked meanwhile is answered now, and what
+                // it said of itself told.
+                pass_on(&mut mirror, &mut daemon, &dir, &mut background);
                 let _ = std::fs::remove_file(dir.join(WAKE));
             }
         }
@@ -718,6 +717,32 @@ pub fn keep(kept: Kept) -> ! {
 }
 
 struct Failed(Option<Vec<u8>>);
+
+/// What the mirror's program did since last asked, carried out as its
+/// surface would: the answers to the program, through the daemon; what it
+/// says of itself, to the app.
+fn pass_on(mirror: &mut Mirror, daemon: &mut UnixStream, dir: &Path, background: &mut Option<[u8; 3]>) {
+    let events = mirror.terminal.take_events();
+    if !events.replies.is_empty() && ClientMsg::write_input(daemon, &events.replies).is_err() {
+        leave(dir);
+    }
+    if events.title {
+        publish(dir, TITLE, mirror.terminal.title().as_bytes());
+    }
+    if events.pwd {
+        publish(dir, PWD, mirror.terminal.pwd().as_bytes());
+    }
+    if let Some(text) = events.clipboard.last() {
+        publish(dir, CLIPBOARD, text);
+    }
+    let now = mirror.terminal.background_colour();
+    if now != *background {
+        *background = now;
+        if let Some([r, g, b]) = now {
+            publish(dir, BACKGROUND, format!("{r:02x}{g:02x}{b:02x}\n").as_bytes());
+        }
+    }
+}
 
 /// The grid a client come for the pane asks for, as its first words say.
 fn greet(mut conn: UnixStream) -> Option<(UnixStream, u16, u16)> {
@@ -768,7 +793,7 @@ fn leave(dir: &Path) -> ! {
 fn clear_out(dir: &Path) {
     for name in [
         SOCKET, FLAG, FACTS, TITLE, PWD, CLIPBOARD, BACKGROUND, KEPT, UNKEEPABLE, TOOK, CLIPBOARD_REQUEST,
-        CLIPBOARD_ANSWER, WAKE, SHOWING, ATTACH_FILE,
+        CLIPBOARD_ANSWER, WAKE, SHOWING, ATTACH_FILE, APP_FILE,
     ] {
         let _ = std::fs::remove_file(dir.join(name));
     }

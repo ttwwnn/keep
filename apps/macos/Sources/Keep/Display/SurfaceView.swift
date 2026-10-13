@@ -240,6 +240,11 @@ final class TerminalSurfaceView: NSView {
         do {
             try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
             try "1".write(to: watch, atomically: true, encoding: .utf8)
+            // Whose directory it is, for a Keep opened after this one has
+            // gone to tell it was left behind (`Keeper.sweepOrphans`): the
+            // attach file is the client's to take away.
+            try "\(getpid())\n".write(
+                to: base.appendingPathComponent(Keeper.appFile), atomically: true, encoding: .utf8)
             let lines = ["\(workspace)", "\(tab)", watch.path] + options
             try (lines.joined(separator: "\n") + "\n").write(
                 to: base.appendingPathComponent(".keep-attach"),
@@ -298,13 +303,18 @@ final class TerminalSurfaceView: NSView {
     func holdTextSize(at points: Double) {
         guard surface != nil, !holdingTextSize, !isShowing else { return }
         holdingTextSize = true
+        heldPoints = points
         textSizeAction("set_font_size:\(points)")
     }
+
+    /// The size held, while it is.
+    private var heldPoints: Double?
 
     /// The config's size again: the zoom's, wherever it has got to.
     private func releaseTextSize() {
         guard holdingTextSize else { return }
         holdingTextSize = false
+        heldPoints = nil
         textSizeAction("reset_font_size")
     }
 
@@ -706,12 +716,19 @@ final class TerminalSurfaceView: NSView {
     /// tab's — its client takes the pane over at the grid this gives. The
     /// grid is reported when the tab is shown.
     func takeSizeOutOfSight() {
+        // The layout's size waits to be shown, as for any surface out of
+        // sight; the one the pane rested at is taken now, the text at the
+        // size it rested at too — the grid its program draws for.
         updateSize()
-        guard let surface, let pending = pendingSize else { return }
-        pendingSize = nil
-        sentSize = pending
-        Trace.log("layout", "\(workspace)/\(tab) size \(Int(pending.width))x\(Int(pending.height)) (out of sight)")
-        ghostty_surface_set_size(surface, UInt32(max(1, pending.width)), UInt32(max(1, pending.height)))
+        guard let surface else { return }
+        if let points = restingPoints, points != GhosttyApp.shared.terminalFontSize {
+            holdTextSize(at: points)
+        }
+        guard let size = restingSize ?? pendingSize else { return }
+        if restingSize == nil || restingSize == pendingSize { pendingSize = nil }
+        sentSize = size
+        Trace.log("layout", "\(workspace)/\(tab) size \(Int(size.width))x\(Int(size.height)) (out of sight)")
+        ghostty_surface_set_size(surface, UInt32(max(1, size.width)), UInt32(max(1, size.height)))
     }
 
     private func flushPendingSize() {
@@ -1656,6 +1673,18 @@ final class TerminalSurfaceView: NSView {
 
     /// When this view was made, its client started with it.
     private let madeAt = Date()
+
+    /// The size in pixels, and of the text in points, that the surface let
+    /// go of for this pane had: a surface made for it out of sight takes
+    /// them (`takeSizeOutOfSight`), as that one would have kept them.
+    var restingSize: CGSize?
+    var restingPoints: Double?
+
+    /// What this surface was last sized to, in pixels.
+    var sentPixels: CGSize? { sentSize }
+
+    /// The size of its text: the zoom's, or what it holds while out of sight.
+    var textPoints: Double { heldPoints ?? GhosttyApp.shared.terminalFontSize }
 
     /// The private directory this surface's client runs in.
     var clientDirectory: URL? {

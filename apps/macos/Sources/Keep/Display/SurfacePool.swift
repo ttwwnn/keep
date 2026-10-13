@@ -47,6 +47,10 @@ final class SurfacePool {
         var watch: KeeperWatch?
         /// The size of a cell the surface had, for the facts.
         let cell: (width: UInt32, height: UInt32)?
+        /// Its size in pixels and its text's in points, for a surface made
+        /// for the pane out of sight (`TerminalSurfaceView.restingSize`).
+        var pixels: CGSize? = nil
+        var points: Double? = nil
     }
 
     /// The surfaces let go of by `hibernate`. Kept by window, as the
@@ -83,6 +87,8 @@ final class SurfacePool {
             // Its client takes the pane over from the one that kept it, which
             // then goes, its directory with it. One that is somehow still
             // there a while later is told to go.
+            surface.restingSize = sleeper.pixels
+            surface.restingPoints = sleeper.points
             if let keeper = sleeper.keeper {
                 surface.takeOver = keeper
                 DispatchQueue.main.asyncAfter(deadline: .now() + 30) { Keeper.release(keeper) }
@@ -148,7 +154,9 @@ final class SurfacePool {
                 keeper = directory
             }
         }
-        var sleeper = Sleeper(directory: surface.currentDirectory, keeper: keeper, watch: nil, cell: cell)
+        var sleeper = Sleeper(
+            directory: surface.currentDirectory, keeper: keeper, watch: nil, cell: cell,
+            pixels: surface.sentPixels, points: surface.textPoints)
         if let keeper {
             sleeper.watch = KeeperWatch(
                 directory: keeper,

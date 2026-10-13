@@ -203,6 +203,7 @@ pub mod ffi {
     pub const DATA_ROWS: c_int = 2;
     pub const DATA_CURSOR_X: c_int = 3;
     pub const DATA_CURSOR_Y: c_int = 4;
+    pub const DATA_CURSOR_PENDING_WRAP: c_int = 5;
     /// `GhosttyTerminalScreen`: 0 the main screen, 1 the alternate one.
     pub const DATA_ACTIVE_SCREEN: c_int = 6;
     pub const DATA_KITTY_KEYBOARD_FLAGS: c_int = 8;
@@ -527,7 +528,7 @@ impl Terminal {
         // the reader is asked from inside the write, and has to know which
         // of the two protocols that reach it is asking.
         let ends = match self.effects.as_mut() {
-            Some(effects) if effects.reads_clipboard() => effects.osc_ends(data),
+            Some(effects) if effects.follows_oscs() => effects.osc_ends(data),
             _ => Vec::new(),
         };
         let mut at = 0;
@@ -804,6 +805,12 @@ impl Terminal {
         }
         out.extend_from_slice(format!("\x1b[={};1u", self.kitty_keyboard_flags()).as_bytes());
         Ok(out)
+    }
+
+    fn get_bool(&self, data: c_int) -> bool {
+        let mut out = false;
+        let rc = unsafe { ffi::ghostty_terminal_get(self.raw, data, &mut out as *mut bool as *mut c_void) };
+        rc == ffi::SUCCESS && out
     }
 
     fn get_u16(&self, data: c_int) -> u16 {

@@ -18,6 +18,9 @@ use crate::{Error, Terminal, ffi};
 /// How much unanswered reply is kept. A program asking the same question in
 /// a loop with nobody collecting must not grow this without end.
 const REPLY_LIMIT: usize = 64 * 1024;
+/// The clipboard read for a program, as base64 — a reply a surface sends
+/// whatever its size, and that is read once.
+const CLIPBOARD_REPLY_LIMIT: usize = 64 << 20;
 
 /// What the terminal being stood in for would say about itself.
 ///
@@ -134,6 +137,12 @@ impl Effects {
 
     pub(crate) fn reads_clipboard(&self) -> bool {
         self.reader.is_some()
+    }
+
+    /// Whether writes go in OSC by OSC, for the clipboard's callbacks to
+    /// know which protocol is speaking: standing in, or reading for one.
+    pub(crate) fn follows_oscs(&self) -> bool {
+        self.standing_in || self.reader.is_some()
     }
 
     /// Where in `data` an OSC ends — the byte on which the terminal acts on
@@ -262,17 +271,25 @@ unsafe extern "C" fn on_write_pty(
         }
         return;
     }
-    if bytes.starts_with(b"\x1b]52;") && effects.standing_in {
-        if effects.unanswered {
-            effects.unanswered = false;
+    if effects.standing_in {
+        // The Kitty clipboard protocol, which a Ghostty surface leaves
+        // unanswered whatever is asked of it.
+        if bytes.starts_with(b"\x1b]5522;") {
             return;
         }
-        // A Ghostty surface ends its answer with ST whatever the question
-        // ended with; the library answers in kind.
-        if let Some(body) = bytes.strip_suffix(b"\x07") {
-            if effects.events.replies.len() + len + 1 <= REPLY_LIMIT {
-                effects.events.replies.extend_from_slice(body);
-                effects.events.replies.extend_from_slice(b"\x1b\\");
+        if bytes.starts_with(b"\x1b]52;") {
+            if effects.unanswered {
+                effects.unanswered = false;
+                return;
+            }
+            // A Ghostty surface ends its answer with ST whatever the
+            // question ended with; the library answers in kind.
+            let body = bytes.strip_suffix(b"\x07");
+            if effects.events.replies.len() + len + 1 <= CLIPBOARD_REPLY_LIMIT {
+                effects.events.replies.extend_from_slice(body.unwrap_or(bytes));
+                if body.is_some() {
+                    effects.events.replies.extend_from_slice(b"\x1b\\");
+                }
             }
             return;
         }
@@ -379,8 +396,10 @@ unsafe extern "C" fn on_clipboard(
         return;
     }
     let write = unsafe { &*write };
-    // The standard clipboard, as the app writes it: a Mac has no other.
-    if write.location != ffi::CLIPBOARD_LOCATION_STANDARD {
+    // The standard clipboard, as the app writes it: a Mac has no other. And
+    // by OSC 52, the one way a Ghostty surface takes a program's text: not
+    // iTerm2's OSC 1337 nor the Kitty protocol's OSC 5522.
+    if write.location != ffi::CLIPBOARD_LOCATION_STANDARD || effects.osc != Some(52) {
         return;
     }
     let contents: &[ffi::ClipboardContent] = if write.contents.is_null() || write.contents_len == 0 {
@@ -416,11 +435,10 @@ unsafe extern "C" fn on_clipboard_read(
     }
     let request = unsafe { &*read };
     let Some(reply) = request.reply else { return };
-    // OSC 52 only: the Kitty protocol's read (OSC 5522) is refused, as the
-    // library refuses it for a terminal that reads no clipboard and a
-    // surface does not speak it. The standard clipboard only, as the app
-    // reads it: a Mac has no other, and a surface asked for another answers
-    // nothing.
+    // OSC 52 only: the Kitty protocol's read (OSC 5522) is refused — and
+    // the refusal not written (`on_write_pty`), a surface leaving the
+    // protocol unanswered. Whichever clipboard OSC 52 names, the standard
+    // one is read, as a Ghostty surface reads it.
     if effects.osc != Some(52) {
         let refused = ffi::ClipboardReadReply {
             size: std::mem::size_of::<ffi::ClipboardReadReply>(),
@@ -435,8 +453,8 @@ unsafe extern "C" fn on_clipboard_read(
         return;
     }
     let answer = match effects.reader.as_mut() {
-        Some(reader) if request.location == ffi::CLIPBOARD_LOCATION_STANDARD => reader(),
-        _ => ClipboardAnswer::Nothing,
+        Some(reader) => reader(),
+        None => ClipboardAnswer::Nothing,
     };
     let mime = b"text/plain";
     match answer {
@@ -683,9 +701,43 @@ mod tests {
         assert!(answers.lock().unwrap().is_empty());
     }
 
+    /// OSC 52 naming another clipboard is read from the standard one, as a
+    /// Ghostty surface reads it, and answered under the name asked for; a
+    /// clipboard of any size is answered whole.
+    #[test]
+    fn every_osc_52_read_is_answered_whatever_its_size() {
+        let mut t = Terminal::new(80, 24).unwrap();
+        t.act_as_terminal(ghostty()).unwrap();
+        let big = vec![b'x'; 100_000];
+        let feed = big.clone();
+        t.read_clipboard_with(Box::new(move || ClipboardAnswer::Text(feed.clone()))).unwrap();
+        for kind in ["s", "p", "c"] {
+            let reply = answer(&mut t, format!("\x1b]52;{kind};?\x1b\\").as_bytes());
+            assert!(reply.starts_with(&format!("\x1b]52;{kind};eHh4")), "{kind}: {}", &reply[..reply.len().min(20)]);
+            assert!(reply.ends_with("\x1b\\"), "{kind}");
+            assert_eq!(reply.len(), 7 + 100_000 / 3 * 4 + 4 + 2, "{kind}: the whole clipboard");
+        }
+    }
+
+    /// The Kitty clipboard protocol and iTerm2's are not spoken: no answer
+    /// to either, nothing put on the clipboard by either; OSC 52 still is.
+    #[test]
+    fn only_osc_52_reaches_the_clipboard() {
+        let mut t = Terminal::new(80, 24).unwrap();
+        t.act_as_terminal(ghostty()).unwrap();
+        t.write(b"\x1b]5522;type=write\x1b\\\x1b]5522;type=wdata:mime=dGV4dC9wbGFpbg==;aGVsbG8=\x1b\\\x1b]5522;type=wdata\x1b\\");
+        t.write(b"\x1b]1337;Copy=:aGVsbG8=\x07");
+        let events = t.take_events();
+        assert_eq!(events.clipboard, Vec::<Vec<u8>>::new(), "nothing on the clipboard");
+        assert_eq!(String::from_utf8_lossy(&events.replies), "", "and no answer");
+        t.write(b"\x1b]52;c;aGVsbG8=\x07");
+        assert_eq!(t.take_events().clipboard, vec![b"hello".to_vec()]);
+        assert_eq!(answer(&mut t, b"\x1b]5522;type=read;dGV4dC9wbGFpbg==\x1b\\\x1b[5n"), "\x1b[0n");
+    }
+
     /// The Kitty clipboard protocol is no more spoken for reading the
     /// clipboard than a surface speaks it: its mode said unknown, its read
-    /// refused as without a reader, and the reader never asked.
+    /// left unanswered, and the reader never asked.
     #[test]
     fn reading_the_clipboard_speaks_no_more_than_a_surface() {
         let mut plain = Terminal::new(80, 24).unwrap();
@@ -704,10 +756,10 @@ mod tests {
         // A read in the Kitty protocol, also split in two, and one with text
         // around it.
         for query in [&b"\x1b]5522;type=read;dGV4dC9wbGFpbg==\x1b\\"[..], b"x\x1b]5522;type=read;dGV4dC9wbGFpbg==\x07y"] {
-            assert_eq!(answer(&mut t, query), answer(&mut plain, query), "{}", String::from_utf8_lossy(query));
+            assert_eq!(answer(&mut t, query), "", "{}", String::from_utf8_lossy(query));
         }
         t.write(b"\x1b]55");
-        assert_eq!(answer(&mut t, b"22;type=read;dGV4dC9wbGFpbg==\x1b\\"), answer(&mut plain, b"\x1b]5522;type=read;dGV4dC9wbGFpbg==\x1b\\"));
+        assert_eq!(answer(&mut t, b"22;type=read;dGV4dC9wbGFpbg==\x1b\\"), "");
         assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 0, "the reader was never asked");
         // While OSC 52, split in two, is read.
         t.write(b"\x1b]5");

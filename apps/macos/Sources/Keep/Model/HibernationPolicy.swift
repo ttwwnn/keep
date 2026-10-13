@@ -115,15 +115,12 @@ enum KeeperProtocol {
     }
 
     /// Whether a client's directory was left behind by an app that is gone:
-    /// its attach file names the app (`app=`) and no such process runs.
-    /// Never one of this app's own, nor one written by a Keep that names no
-    /// app, which may well be running still.
-    static func isOrphan(attachFile: String, me: Int32, alive: (Int32) -> Bool) -> Bool {
-        let named = attachFile.split(separator: "\n").dropFirst(3).compactMap { line -> Int32? in
-            guard line.hasPrefix("app=") else { return nil }
-            return Int32(line.dropFirst(4).trimmingCharacters(in: .whitespaces))
+    /// its `app` file names the app and no such process runs. Never one of
+    /// this app's own, nor one whose file names nothing.
+    static func isOrphan(appFile: String, me: Int32, alive: (Int32) -> Bool) -> Bool {
+        guard let app = Int32(appFile.trimmingCharacters(in: .whitespacesAndNewlines)), app > 0 else {
+            return false
         }
-        guard let app = named.first, app > 0 else { return false }
         return app != me && !alive(app)
     }
 

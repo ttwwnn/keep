@@ -31,6 +31,8 @@ enum Keeper {
     static let clipboardRequest = "clipboard-request"
     static let clipboardAnswer = "clipboard-answer"
     static let wake = "wake"
+    /// The app's pid, beside each client: see `sweepOrphans`.
+    static let appFile = "app"
 
     /// What a surface answers that libghostty-vt would answer otherwise:
     /// CSI c and CSI > c as Ghostty answers them (it leaves CSI = c
@@ -61,9 +63,10 @@ enum Keeper {
     }
 
     /// The directories left behind by a Keep that is gone — a client that
-    /// died keeping, or never started — whose attach file names an app no
+    /// died keeping, or never started — whose `app` file names an app no
     /// longer running. Their keepers, if any, are going by themselves.
-    /// Those of a Keep still running, this one or another, are left alone.
+    /// Those of a Keep still running, this one or another, are left alone,
+    /// and so are those of a Keep that writes no such file.
     static func sweepOrphans() {
         let base = FileManager.default.temporaryDirectory.appendingPathComponent("keep-attach", isDirectory: true)
         DispatchQueue.global(qos: .utility).async {
@@ -73,9 +76,9 @@ enum Keeper {
             var swept = 0
             for name in names {
                 let directory = base.appendingPathComponent(name, isDirectory: true)
-                guard let attach = try? String(
-                    contentsOf: directory.appendingPathComponent(".keep-attach"), encoding: .utf8),
-                    KeeperProtocol.isOrphan(attachFile: attach, me: me, alive: alive)
+                guard let app = try? String(
+                    contentsOf: directory.appendingPathComponent(Keeper.appFile), encoding: .utf8),
+                    KeeperProtocol.isOrphan(appFile: app, me: me, alive: alive)
                 else { continue }
                 if (try? FileManager.default.removeItem(at: directory)) != nil { swept += 1 }
             }
