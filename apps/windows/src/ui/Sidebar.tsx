@@ -155,6 +155,8 @@ function WorkspaceGroup(props: { name: string }) {
   const renaming = editing.value?.kind === "workspace" && editing.value.workspace === name;
   const startRename = () => (editing.value = { kind: "workspace", workspace: name });
   const selectedTab = activeTab.value;
+  const ordered = orderedWorkspaces.value.map((w) => w.name);
+  const position = ordered.indexOf(name);
   return (
     <section class={`workspace ${current ? "current" : ""}`} data-workspace={name}>
       <div
@@ -169,6 +171,13 @@ function WorkspaceGroup(props: { name: string }) {
             { label: "Nova aba aqui", action: () => void newTab(name) },
             { label: "Renomear", action: startRename },
             { label: folded ? "Mostrar as abas" : "Recolher as abas", action: () => toggleFolded(name) },
+            "separator",
+            { label: "Mover para cima", disabled: position === 0, action: () => moveWorkspace(name, ordered[position - 1]) },
+            {
+              label: "Mover para baixo",
+              disabled: position === ordered.length - 1,
+              action: () => moveWorkspace(name, ordered[position + 2] ?? null),
+            },
             "separator",
             { label: "Fechar o workspace…", danger: true, action: () => void closeWorkspace(name) },
           ])
@@ -230,16 +239,19 @@ function WorkspaceGroup(props: { name: string }) {
           <span class="hdr-gap" />
         )}
       </div>
-      {!folded &&
-        tabs.map((tab, i) => (
-          <TabRow
-            key={tabKey(name, tab.root.id)}
-            workspace={name}
-            tab={tab}
-            index={i}
-            selected={current && tab === selectedTab}
-          />
-        ))}
+      <div class={`tabs ${folded ? "folded" : ""}`} aria-hidden={folded}>
+        <div class="tabs-inner">
+          {tabs.map((tab, i) => (
+            <TabRow
+              key={tabKey(name, tab.root.id)}
+              workspace={name}
+              tab={tab}
+              index={i}
+              selected={current && tab === selectedTab}
+            />
+          ))}
+        </div>
+      </div>
     </section>
   );
 }

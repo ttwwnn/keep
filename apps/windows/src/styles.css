@@ -265,6 +265,27 @@ button {
   height: calc(9px * var(--zoom));
 }
 
+/* The tabs slide under the header when it folds, and are out of reach once
+   they have. */
+.tabs {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition: grid-template-rows 180ms ease-out, opacity 180ms ease-out, visibility 0s;
+}
+
+.tabs.folded {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+  transition: grid-template-rows 180ms ease-out, opacity 180ms ease-out, visibility 0s 180ms;
+}
+
+.tabs-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
 /* A tab of the workspace: a capsule inset from the list, its text a header's
    width in from the edge. */
 .tab-row {
