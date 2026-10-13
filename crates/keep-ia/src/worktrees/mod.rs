@@ -23,7 +23,15 @@
 //!     menos em repositório com submódulos; uma linha JSON em <estado>/lixeira.log
 //! keep worktrees indexar [--json]
 //!     (o app chama a cada minuto) nascimentos -> dono, histórico aba -> conversas, o índice dos
-//!     transcritos e o git de cada worktree candidata (no máximo GIT_ORCAMENTO s por rodada)
+//!     transcritos e o git de cada worktree candidata (no máximo GIT_ORCAMENTO s por rodada); as
+//!     conversas cujas abas fecharam vão para `encerradas`
+//! keep worktrees orfas [--json] [--so-ler]
+//!     (o app chama depois de cada indexar) as worktrees cuja aba fechou sem o diálogo: {"versao":1,
+//!     "lixeira":[…como no listar], "registros":[…pasta já sumida], "aguardando":[{caminho,motivo}],
+//!     "mantidas":[{caminho,motivo}], "avisos":[…]}; grava desde quando cada uma é órfã. O app move
+//!     a "lixeira" como no diálogo (preparar, mover, concluir) e chama `esquecer` para os "registros"
+//! keep worktrees esquecer CAMINHO [--nasceu NS]
+//!     o registro de uma worktree cuja pasta sumiu sai do repositório (só ele), com a HEAD guardada
 //! ```
 //!
 //! Dono (algoritmo A4 do kit): a worktree nasce no instante T; dona é a
@@ -32,9 +40,11 @@
 //! ambígua, só "fala de worktree" (C) é indecidida. Nunca: `git worktree
 //! prune`, apagar pasta, mexer em worktree travada ou na principal.
 //!
-//! O app do macOS chama a linha de comando (o `keep` que vai dentro dele);
-//! o do Windows chama `listar`, `preparar`, `mover_para_lixeira` e
-//! `concluir` direto.
+//! A aba que fecha sem o diálogo (o shell saiu, o workspace acabou de outro
+//! jeito, o computador reiniciou e ela não voltou) é a varredura (`orfas`):
+//! a mesma regra, com carência e mais desconfiança. Ver `orfas.rs`.
+//!
+//! Os dois apps chamam a linha de comando (o `keep` que vai dentro deles).
 
 use std::path::{Path, PathBuf};
 
@@ -61,6 +71,8 @@ pub mod indice;
 pub mod listar;
 #[doc(hidden)]
 pub mod lixeira;
+#[doc(hidden)]
+pub mod orfas;
 #[doc(hidden)]
 pub mod pastas;
 #[doc(hidden)]
@@ -96,6 +108,11 @@ pub const GIT_IDADE: f64 = 60.0;
 pub const GIT_ORCAMENTO: f64 = 1.0;
 /// Registro do git mais velho que isso não substitui o git ao vivo.
 pub const GIT_VALIDADE: f64 = 900.0;
+/// A varredura das órfãs espera isso: o keepd de pé, a conversa dona sem
+/// mexer no transcrito e a worktree órfã sem parar.
+pub const CARENCIA: f64 = 20.0 * 60.0;
+/// Uma conversa de aba fechada fica em `encerradas` por isso.
+pub const RETENCAO_ENCERRADAS: f64 = 30.0 * 86400.0;
 /// Reservado, no prazo, para montar e escrever o JSON.
 pub const MARGEM: f64 = 0.35;
 /// Antes do prazo, o JSON sai de qualquer jeito.
@@ -184,6 +201,26 @@ pub struct Mantida {
 
 fn nada<T>(v: &Option<T>) -> bool {
     v.is_none()
+}
+
+/// A resposta da varredura (`orfas`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Orfas {
+    pub versao: u32,
+    /// Outra rodada estava em curso: esta não fez nada.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ocupado: bool,
+    /// Vão para a Lixeira agora (o app: preparar, mover, concluir).
+    pub lixeira: Vec<ItemDaLixeira>,
+    /// A pasta já sumiu: só o registro sai (`esquecer`).
+    #[serde(default)]
+    pub registros: Vec<ItemDaLixeira>,
+    /// Órfãs na carência, com quanto falta.
+    #[serde(default)]
+    pub aguardando: Vec<Mantida>,
+    /// As que ficam, com o motivo.
+    pub mantidas: Vec<Mantida>,
+    pub avisos: Vec<String>,
 }
 
 /// A resposta do `preparar`.
@@ -308,6 +345,24 @@ pub fn indexar_em(amb: &Ambiente, agora: Option<f64>) -> Indexacao {
     indexar::indexar(amb, agora)
 }
 
+/// A varredura das worktrees de abas que fecharam sem o diálogo.
+pub fn orfas(so_ler: bool) -> Orfas {
+    orfas_em(&Ambiente::do_sistema(), None, so_ler)
+}
+
+pub fn orfas_em(amb: &Ambiente, agora: Option<f64>, so_ler: bool) -> Orfas {
+    orfas::orfas(amb, agora, so_ler)
+}
+
+/// O registro de uma worktree cuja pasta sumiu sai do repositório.
+pub fn esquecer(caminho: &Path, nasceu_ns: Option<i64>) -> Conclusao {
+    esquecer_em(&Ambiente::do_sistema(), caminho, nasceu_ns)
+}
+
+pub fn esquecer_em(amb: &Ambiente, caminho: &Path, nasceu_ns: Option<i64>) -> Conclusao {
+    orfas::esquecer(amb, &caminho.to_string_lossy(), nasceu_ns)
+}
+
 /// Move a pasta para a Lixeira do sistema; devolve onde ela ficou (vazio se
 /// o sistema não diz).
 pub fn mover_para_lixeira(caminho: &Path) -> anyhow::Result<PathBuf> {
@@ -325,6 +380,8 @@ keep worktrees — as worktrees que a conversa de uma aba criou, para irem à Li
   keep worktrees preparar CAMINHO [--nasceu NS]
   keep worktrees concluir CAMINHO DESTINO
   keep worktrees indexar [--json]
+  keep worktrees orfas [--json] [--so-ler]
+  keep worktrees esquecer CAMINHO [--nasceu NS]
 
 Respostas em JSON (\"versao\": 1). Ver docs/ia.md.";
 
@@ -361,6 +418,17 @@ pub fn executar(amb: &Ambiente, args: &[String], decorrido: f64) -> (i32, String
         "listar" => cmd_listar(amb, resto, decorrido),
         "preparar" => cmd_preparar(amb, resto),
         "concluir" => cmd_concluir(amb, resto),
+        "orfas" => {
+            let so_ler = resto.iter().any(|a| a == "--so-ler");
+            if let Some(outro) = resto.iter().find(|a| *a != "--json" && *a != "--so-ler") {
+                return (
+                    2,
+                    em_json(&json!({"versao": crate::VERSAO, "erro": format!("uso: keep worktrees orfas [--json] [--so-ler] ({outro:?})")})),
+                );
+            }
+            (0, em_json(&orfas_em(amb, None, so_ler)))
+        }
+        "esquecer" => cmd_esquecer(amb, resto),
         "indexar" => {
             let r = indexar_em(amb, None);
             if resto.iter().any(|a| a == "--json") {
@@ -434,6 +502,34 @@ fn cmd_preparar(amb: &Ambiente, args: &[String]) -> (i32, String) {
         return uso();
     }
     (0, em_json(&preparar_em(amb, Path::new(caminhos[0]), nasceu)))
+}
+
+fn cmd_esquecer(amb: &Ambiente, args: &[String]) -> (i32, String) {
+    let uso = || {
+        (
+            2,
+            em_json(&json!({"versao": crate::VERSAO, "ok": false, "motivo": "uso: keep worktrees esquecer CAMINHO [--nasceu NS]"})),
+        )
+    };
+    let mut nasceu = None;
+    let mut caminhos = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--nasceu" {
+            match args.get(i + 1).filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())) {
+                Some(v) => nasceu = v.parse::<i64>().ok(),
+                None => return uso(),
+            }
+            i += 2;
+            continue;
+        }
+        caminhos.push(&args[i]);
+        i += 1;
+    }
+    if caminhos.len() != 1 {
+        return uso();
+    }
+    (0, em_json(&esquecer_em(amb, Path::new(caminhos[0]), nasceu)))
 }
 
 fn cmd_concluir(amb: &Ambiente, args: &[String]) -> (i32, String) {

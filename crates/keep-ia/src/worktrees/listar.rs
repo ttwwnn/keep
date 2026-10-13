@@ -194,10 +194,11 @@ impl Pedidos {
 }
 
 /// Uma worktree candidata e o que já se sabe dela.
-struct Candidata<'a> {
-    w: &'a Worktree,
-    d: Decisao,
-    procs: Vec<ProcessoDentro>,
+pub(super) struct Candidata<'a> {
+    pub(super) w: &'a Worktree,
+    pub(super) d: Decisao,
+    /// Processos de fora de qualquer aba com a pasta atual dentro.
+    pub(super) procs: Vec<ProcessoDentro>,
 }
 
 fn rotulo_de_concha(ctx: &Contexto, concha: u32) -> String {
@@ -213,7 +214,7 @@ fn fora_do_keep(id: &str) -> String {
 
 /// Separa o que outra aba viva usa (→ mantidas) e anexa os processos
 /// órfãos com a pasta atual dentro.
-fn em_uso<'a>(
+pub(super) fn em_uso<'a>(
     amb: &Ambiente,
     ficam: Vec<(&'a Worktree, Decisao)>,
     sess_aba: &HashSet<String>,

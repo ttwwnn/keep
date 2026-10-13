@@ -70,6 +70,10 @@ pub fn indexar(amb: &Ambiente, agora_dado: Option<f64>) -> Indexacao {
     let t0 = Instant::now();
     let agora = agora_dado.unwrap_or_else(agora);
     let mut est = estado::carrega(amb).unwrap_or_else(Estado::vazio);
+    let recanonizadas = estado::recanoniza(&mut est);
+    if recanonizadas > 0 {
+        estado::registra(amb, &format!("indexar: {recanonizadas} decisão(ões) com o repositório num caminho novo (mesma pasta)"));
+    }
     let vivas = sessoes_vivas(amb);
     let ids_vivos: HashSet<String> = vivas.iter().map(|s| s.id.clone()).collect();
     let mut extras: Vec<String> = vivas.iter().map(|s| s.cwd.clone()).collect();
@@ -77,7 +81,7 @@ pub fn indexar(amb: &Ambiente, agora_dado: Option<f64>) -> Indexacao {
     if let Ok(r) = crate::daemon::listar_em(&amb.socket, Some(Duration::from_secs(2))) {
         if r.exato {
             adota_historico_do_kit(&mut est, &r.daemon, nascimento_do_socket(amb));
-            novos_hist = atualizar_historico(amb, &mut est, &r, &vivas);
+            novos_hist = atualizar_historico(amb, &mut est, &r, &vivas, agora);
         }
         // O que veio do kit e não é do daemon que respondeu não vale mais.
         est.historico_do_kit = None;
@@ -130,6 +134,7 @@ pub fn indexar(amb: &Ambiente, agora_dado: Option<f64>) -> Indexacao {
     let atuais: HashSet<String> = wts.iter().map(chave).collect();
     // Worktree removida (ou nome reaproveitado: outro nascimento).
     est.nascimentos.retain(|k, _| atuais.contains(k));
+    est.orfas.retain(|k, _| atuais.contains(k));
     est.repos = comuns.iter().cloned().collect();
     let t_git = Instant::now();
     let git_feitos = atualizar_git(amb, &mut est, &wts, agora, GIT_ORCAMENTO);

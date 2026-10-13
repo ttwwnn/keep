@@ -1502,19 +1502,25 @@ fn t21_prazo_duro_json_sai_antes() {
 /// (com `List3`, ou como o daemon antigo, sem ele).
 struct Keepd {
     workspaces: Arc<Mutex<Vec<WorkspaceInfo>>>,
+    /// O nascimento que o `List3` diz (ms).
+    inicio_ms: Arc<AtomicU64>,
+    /// Responde o `List3` (sem ele, é o daemon antigo).
+    novo: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Keepd {
     fn sobe(sock: &Path, novo: bool) -> Keepd {
         let workspaces: Arc<Mutex<Vec<WorkspaceInfo>>> = Arc::new(Mutex::new(Vec::new()));
+        let inicio_ms = Arc::new(AtomicU64::new(1_791_000_000_000));
+        let novo = Arc::new(std::sync::atomic::AtomicBool::new(novo));
         let l = Listener::bind(sock).expect("o socket do keepd de mentira");
-        let ws = workspaces.clone();
+        let (ws, inicio, e_novo) = (workspaces.clone(), inicio_ms.clone(), novo.clone());
         std::thread::spawn(move || {
             while let Ok((mut s, _)) = l.accept() {
                 let lista = ws.lock().unwrap().clone();
                 match ClientMsg::read(&mut s) {
-                    Ok(Some(ClientMsg::List3)) if novo => {
-                        let d = DaemonInfo { pid: std::process::id(), started_ms: 1_791_000_000_000 };
+                    Ok(Some(ClientMsg::List3)) if e_novo.load(Ordering::SeqCst) => {
+                        let d = DaemonInfo { pid: std::process::id(), started_ms: inicio.load(Ordering::SeqCst) };
                         ServerMsg::Workspaces3(d, lista).write(&mut s).ok();
                     }
                     Ok(Some(ClientMsg::List2)) => {
@@ -1524,7 +1530,25 @@ impl Keepd {
                 }
             }
         });
-        Keepd { workspaces }
+        Keepd { workspaces, inicio_ms, novo }
+    }
+
+    /// Outro keepd no mesmo socket (o computador reiniciou): outro nascimento.
+    fn nasceu_em(&self, ms: u64) {
+        self.inicio_ms.store(ms, Ordering::SeqCst);
+    }
+
+    /// Passa a responder como o daemon de antes do `List3`.
+    fn antigo(&self) {
+        self.novo.store(false, Ordering::SeqCst);
+    }
+
+    /// A aba fechou.
+    fn tira(&self, ws: &str, id: u32) {
+        let mut g = self.workspaces.lock().unwrap();
+        for w in g.iter_mut().filter(|w| w.name == ws) {
+            w.tabs.retain(|t| t.id != id);
+        }
     }
 
     fn aba(&self, ws: &str, info: TabInfo) {
@@ -2025,4 +2049,442 @@ fn mover_para_a_lixeira_e_concluir() {
     let c = worktrees::concluir_em(&amb, Path::new(&w), &destino);
     assert!(c.ok && c.registro_removido == Some(true), "{c:?}");
     g(&m.repo, &["branch", "-D", "ramo-vai"]);
+}
+
+// ---------------------------------------------------------------- a varredura: abas que fecharam sem a pergunta
+
+/// Uma aba com o Claude cuja conversa criou as worktrees dadas `(caminho,
+/// nascimento)` e que fecha sem a pergunta (o shell sai): o `indexar` vê o
+/// shell morto e põe a conversa em `encerradas`. Devolve o keepd (a aba já
+/// fora dele) e a conversa.
+fn fecha_aba_com(m: &Mundo, wts: &[(String, f64)]) -> (Keepd, Conversa) {
+    let k = Keepd::sobe(&m.amb.socket, true);
+    let (c, _agente, mut conversa) = aba_com_claude(m, &k, 1, "✳ Conversa que fecha");
+    let mut ultimo = 0.0f64;
+    for (w, t) in wts {
+        conversa.chamada(t - 0.3, Some(t + 0.3), &format!("git worktree add {w} HEAD"));
+        ultimo = ultimo.max(*t);
+    }
+    m.indexar_de_verdade(ultimo + 60.0);
+    for (w, _) in wts {
+        assert_eq!(m.decisao_de(w).dono.as_deref(), Some(conversa.sid.as_str()), "{w}");
+    }
+    let concha = c.pid();
+    c.fim();
+    assert!(espera(10.0, || !processos::vivo(concha)));
+    k.tira("W", 1);
+    m.indexar_de_verdade(ultimo + 120.0);
+    (k, conversa)
+}
+
+fn varre(m: &Mundo, agora: f64) -> worktrees::Orfas {
+    worktrees::orfas_em(&m.amb, Some(agora), false)
+}
+
+fn itens(v: &[worktrees::ItemDaLixeira]) -> Vec<String> {
+    let mut c: Vec<String> = v.iter().map(|x| x.caminho.clone()).collect();
+    c.sort();
+    c
+}
+
+fn de(v: &[Mantida]) -> Vec<String> {
+    let mut c: Vec<String> = v.iter().map(|x| x.caminho.clone()).collect();
+    c.sort();
+    c
+}
+
+fn motivo_de(o: &worktrees::Orfas, cam: &str) -> Option<String> {
+    o.mantidas.iter().find(|x| x.caminho == cam).map(|x| x.motivo.clone())
+}
+
+/// Nada desta worktree vai, nem espera para ir.
+fn nao_vai(o: &worktrees::Orfas, cam: &str) -> bool {
+    !itens(&o.lixeira).contains(&cam.to_string())
+        && !itens(&o.registros).contains(&cam.to_string())
+        && !de(&o.aguardando).contains(&cam.to_string())
+}
+
+const CARENCIA: f64 = worktrees::CARENCIA;
+
+#[test]
+fn t42_aba_fechada_sem_a_pergunta_vai_depois_da_carencia() {
+    let m = Mundo::novo();
+    let (w, t) = m.wt("wt-orfa");
+    let (_k, conversa) = fecha_aba_com(&m, &[(w.clone(), t)]);
+    let est = estado::carrega(&m.amb).unwrap();
+    assert!(est.encerradas.contains_key(&conversa.sid), "{:?}", est.encerradas);
+    let t0 = t + 3600.0;
+    let a = varre(&m, t0);
+    assert!(a.lixeira.is_empty() && de(&a.aguardando) == vec![w.clone()], "{a:?}");
+    let b = varre(&m, t0 + CARENCIA - 1.0);
+    assert!(b.lixeira.is_empty() && de(&b.aguardando) == vec![w.clone()], "{b:?}");
+    let c = varre(&m, t0 + CARENCIA + 1.0);
+    assert_eq!(itens(&c.lixeira), vec![w.clone()], "{c:?}");
+    let i = &c.lixeira[0];
+    assert!(i.sessao == conversa.sid && i.nasceu_ns == pastas::nascimento_ns(t) && i.processos.is_empty(), "{i:?}");
+    // O app move pelos três passos do diálogo.
+    let mut amb = m.amb.clone();
+    amb.ganchos.lixeira_falsa = Some(m.lixeira.clone());
+    let p = worktrees::preparar_em(&amb, Path::new(&w), Some(i.nasceu_ns));
+    assert!(p.ok, "{p:?}");
+    let destino = worktrees::mover_para_lixeira_em(&amb, Path::new(&w)).unwrap();
+    let cc = worktrees::concluir_em(&amb, Path::new(&w), &destino);
+    assert!(cc.ok && cc.registro_removido == Some(true), "{cc:?}");
+    m.indexar_de_verdade(t0 + CARENCIA + 60.0);
+    let d = varre(&m, t0 + 3.0 * CARENCIA);
+    assert!(d.lixeira.is_empty() && d.aguardando.is_empty() && d.registros.is_empty(), "{d:?}");
+}
+
+#[test]
+fn t43_conversa_que_nunca_teve_aba_nao_e_varrida() {
+    // A conversa do Terminal, de um editor, de um `claude -p` agendado: nunca
+    // passou por uma aba do Keep.
+    let m = Mundo::novo();
+    let _k = Keepd::sobe(&m.amb.socket, true);
+    let (w, t) = m.wt("wt-do-terminal");
+    let mut c = Conversa::nova(&m);
+    c.chamada(t - 0.3, Some(t + 0.3), &format!("git worktree add {w} HEAD"));
+    m.indexar(t + 60.0);
+    assert_eq!(m.decisao_de(&w).dono.as_deref(), Some(c.sid.as_str()));
+    for k in 0..3 {
+        let o = varre(&m, t + 3600.0 + f64::from(k) * CARENCIA);
+        assert!(nao_vai(&o, &w), "{o:?}");
+        assert_eq!(motivo_de(&o, &w).as_deref(), Some("a conversa dona não foi vista fechar numa aba do Keep"));
+    }
+}
+
+#[test]
+fn t44_aba_aberta_tem_a_conversa_mesmo_encerrada() {
+    // A conversa acabou (/exit) e a aba segue aberta no shell: o histórico do
+    // shell a guarda. Mesmo que o registro diga, por engano, que ela fechou.
+    let m = Mundo::novo();
+    let k = Keepd::sobe(&m.amb.socket, true);
+    let (mut c, _agente, mut conversa) = aba_com_claude(&m, &k, 1, "✳ Conversa");
+    let (w, t) = m.wt("wt-da-aba-aberta");
+    conversa.chamada(t - 0.3, Some(t + 0.3), &format!("git worktree add {w} HEAD"));
+    m.indexar_de_verdade(t + 60.0);
+    c.mata_agente();
+    k.aba("W", aba(1, "zsh", c.pid(), c.pid()));
+    m.indexar_de_verdade(t + 120.0);
+    let mut est = estado::carrega(&m.amb).unwrap();
+    assert!(!est.encerradas.contains_key(&conversa.sid), "{:?}", est.encerradas);
+    estado::encerra(&mut est, &conversa.sid, false, t + 120.0);
+    estado::grava(&m.amb, &mut est).unwrap();
+    for k in 0..3 {
+        let o = varre(&m, t + 3600.0 + f64::from(k) * CARENCIA);
+        assert!(nao_vai(&o, &w) && motivo_de(&o, &w).is_none(), "{o:?}");
+    }
+    c.fim();
+}
+
+#[test]
+fn t45_conversa_retomada_fora_do_keep_ainda_roda() {
+    let m = Mundo::novo();
+    let (w, t) = m.wt("wt-retomada");
+    let (_k, conversa) = fecha_aba_com(&m, &[(w.clone(), t)]);
+    // `claude --resume` no Terminal: um Claude vivo, fora de qualquer aba.
+    let fora = sobe_processo("dorme", None, Some("claude"), &[], &[]);
+    assert!(espera(10.0, || processos::um(fora.id()).is_some()));
+    sessao_claude(&m, fora.id(), &conversa.sid);
+    for k in 0..2 {
+        let o = varre(&m, t + 3600.0 + f64::from(k) * 2.0 * CARENCIA);
+        assert!(nao_vai(&o, &w), "{o:?}");
+        assert_eq!(motivo_de(&o, &w).as_deref(), Some("a conversa dona ainda roda, fora de uma aba aberta"));
+    }
+    mata(fora);
+}
+
+#[test]
+fn t46_cartao_com_o_id_na_linha_de_comando_ainda_roda() {
+    // O cartão de retomada (cc-window <id> …) espera o ENTER numa aba: o id
+    // só aparece na linha de comando dele.
+    let m = Mundo::novo();
+    let (w, t) = m.wt("wt-do-cartao");
+    let (_k, conversa) = fecha_aba_com(&m, &[(w.clone(), t)]);
+    let cartao = sobe_processo("dorme", None, Some("cc-window"), &[&conversa.sid, "/tmp", "rotulo"], &[]);
+    assert!(espera(10.0, || processos::argv(cartao.id()).is_some_and(|a| a.iter().any(|x| x == &conversa.sid))));
+    let o = varre(&m, t + 3600.0);
+    assert!(nao_vai(&o, &w), "{o:?}");
+    assert_eq!(motivo_de(&o, &w).as_deref(), Some("a conversa dona ainda roda, fora de uma aba aberta"));
+    mata(cartao);
+    let o = varre(&m, t + 3600.0 + 1.0);
+    assert_eq!(de(&o.aguardando), vec![w.clone()], "{o:?}");
+}
+
+#[test]
+fn t47_transcrito_mexido_ha_pouco_espera() {
+    let m = Mundo::novo();
+    let (w, t) = m.wt("wt-mexida");
+    let (_k, conversa) = fecha_aba_com(&m, &[(w.clone(), t)]);
+    let mexeu = pastas::mtime(&std::fs::metadata(&conversa.arq).unwrap());
+    let o = varre(&m, mexeu + 120.0);
+    assert!(nao_vai(&o, &w), "{o:?}");
+    assert_eq!(motivo_de(&o, &w).as_deref(), Some("a conversa dona mexeu no transcrito há 2 min"));
+    // A conversa em que ela seguiu (segundo plano) também conta.
+    let seguinte = Conversa::nova(&m);
+    seguinte.texto(t, None);
+    conversa.linha(json!({"type": "system", "continuedInSessionId": seguinte.sid, "sessionId": conversa.sid}));
+    let antes = std::time::SystemTime::now() - Duration::from_secs(7200);
+    std::fs::File::options().write(true).open(&conversa.arq).unwrap().set_modified(antes).unwrap();
+    let o = varre(&m, agora() + 60.0);
+    assert!(nao_vai(&o, &w), "a continuação mexeu agora: {o:?}");
+    let o = varre(&m, agora() + 3600.0);
+    assert_eq!(de(&o.aguardando), vec![w.clone()], "{o:?}");
+}
+
+#[test]
+fn t48_a_carencia_recomeca_quando_a_conversa_volta() {
+    let m = Mundo::novo();
+    let (w, t) = m.wt("wt-volta");
+    let (_k, conversa) = fecha_aba_com(&m, &[(w.clone(), t)]);
+    let t0 = t + 3600.0;
+    assert_eq!(de(&varre(&m, t0).aguardando), vec![w.clone()]);
+    // A conversa voltou a rodar por um tempo (a sessão do Claude dela, viva).
+    let viva_de_novo = m.com_vivas(vec![viva(&conversa.sid)]);
+    let o = worktrees::orfas_em(&viva_de_novo, Some(t0 + 600.0), false);
+    assert!(nao_vai(&o, &w) && motivo_de(&o, &w).is_some(), "{o:?}");
+    // Parou de novo: a carência recomeça daqui.
+    let o = varre(&m, t0 + CARENCIA + 1.0);
+    assert!(o.lixeira.is_empty() && de(&o.aguardando) == vec![w.clone()], "{o:?}");
+    let o = varre(&m, t0 + 2.0 * CARENCIA + 2.0);
+    assert_eq!(itens(&o.lixeira), vec![w.clone()], "{o:?}");
+}
+
+#[test]
+fn t49_keepd_antigo_ou_recem_subido_nao_varre() {
+    let m = Mundo::novo();
+    let (w, t) = m.wt("wt-espera-o-keepd");
+    let (k, _conversa) = fecha_aba_com(&m, &[(w.clone(), t)]);
+    let t0 = t + 3600.0;
+    // Outro keepd, que subiu há 5 min: as abas de antes podem estar voltando.
+    k.nasceu_em(((t0 - 300.0) * 1000.0) as u64);
+    let o = varre(&m, t0);
+    assert!(nao_vai(&o, &w) && o.avisos.iter().any(|a| a.contains("subiu há 5 min")), "{o:?}");
+    let o = varre(&m, t0 + CARENCIA);
+    assert_eq!(de(&o.aguardando), vec![w.clone()], "{o:?}");
+    // O daemon sem `List3`: nada se varre.
+    k.antigo();
+    let o = varre(&m, t0 + 3.0 * CARENCIA);
+    assert!(nao_vai(&o, &w) && o.avisos.iter().any(|a| a.contains("anterior a esta versão")), "{o:?}");
+}
+
+#[test]
+fn t50_conversa_devida_pela_restauracao_conta_como_viva() {
+    let m = Mundo::novo();
+    let (w, t) = m.wt("wt-restaurada");
+    let (k, conversa) = fecha_aba_com(&m, &[(w.clone(), t)]);
+    let t0 = t + 3600.0;
+    let pasta = m.base.join("restauro");
+    std::fs::create_dir_all(&pasta).unwrap();
+    let atual = json!({"pid": std::process::id(), "inicio_ms": 1_791_000_000_000u64});
+    let origem = json!({"pid": 4242, "inicio_ms": 1_790_000_000_000u64});
+    std::fs::write(
+        pasta.join("anterior.json"),
+        json!({"versao": 1, "gravado_ms": 1, "keepd": origem, "workspaces": ["W"],
+               "abas": [{"workspace": "W", "aba": 3, "cwd": m.raiz, "cols": 80, "rows": 24,
+                         "ia": {"agente": "claude", "conversa": conversa.sid}}]})
+        .to_string(),
+    )
+    .unwrap();
+    // A restauração deste keepd ainda não acabou: a conversa ainda vai subir.
+    let reg = |feito: bool, criadas: Value| {
+        std::fs::write(
+            pasta.join("restaurado.json"),
+            json!({"keepd": atual, "origem": origem, "abas_feitas": true, "feito": feito, "criadas": criadas, "ias": []})
+                .to_string(),
+        )
+        .unwrap();
+    };
+    reg(false, json!([]));
+    for k in 0..2 {
+        let o = varre(&m, t0 + f64::from(k) * 2.0 * CARENCIA);
+        assert!(nao_vai(&o, &w) && motivo_de(&o, &w).is_none(), "{o:?}");
+    }
+    // Acabou, e a aba recriada para ela segue aberta (só o shell: a conversa não voltou).
+    let mut c = Concha::nova(&m, Path::new(&m.raiz));
+    k.aba("W", aba(7, "zsh", c.pid(), c.pid()));
+    reg(true, json!([{"workspace": "W", "origem": 3, "aba": 7}]));
+    let o = varre(&m, t0 + 5.0 * CARENCIA);
+    assert!(nao_vai(&o, &w) && motivo_de(&o, &w).is_none(), "{o:?}");
+    // A pessoa fechou a aba recriada: agora sim.
+    k.tira("W", 7);
+    c.mata_agente();
+    let o = varre(&m, t0 + 6.0 * CARENCIA);
+    assert_eq!(de(&o.aguardando), vec![w.clone()], "{o:?}");
+    c.fim();
+}
+
+#[test]
+fn t51_travada_submodulos_lixeira_e_processo_dentro_ficam() {
+    let m = Mundo::novo();
+    let (travada, t1) = m.wt("wt-travada");
+    g(&m.repo, &["worktree", "lock", "--reason", "kit-mac: permanente", &travada]);
+    let sub = m.novo_repo("comsub", true);
+    let (com_sub, t2) = m.wt_em("wt-com-sub", Some(&sub), None, None);
+    let (na_lixeira, t3) = m.wt_em("wt-na-lixeira", None, None, Some(&m.lixeira.join("wt-na-lixeira")));
+    let (ocupada, t4) = m.wt("wt-ocupada");
+    let (livre, t5) = m.wt("wt-livre");
+    let todas = [(travada.clone(), t1), (com_sub.clone(), t2), (na_lixeira.clone(), t3), (ocupada.clone(), t4), (livre.clone(), t5)];
+    let (_k, _c) = fecha_aba_com(&m, &todas);
+    let dentro = dorme(Some(Path::new(&ocupada)));
+    assert!(espera(10.0, || processos::cwd(dentro.id()).is_some()));
+    let t0 = t5 + 3600.0;
+    let o = varre(&m, t0);
+    let o2 = varre(&m, t0 + CARENCIA + 1.0);
+    mata(dentro);
+    assert_eq!(itens(&o2.lixeira), vec![livre.clone()], "{o2:?}");
+    for x in [&o, &o2] {
+        assert_eq!(motivo_de(x, &travada).as_deref(), Some("travada: kit-mac: permanente"), "{x:?}");
+        assert_eq!(
+            motivo_de(x, &com_sub).as_deref(),
+            Some("repositório com submódulos: o registro levaria os repositórios deles"),
+            "{x:?}"
+        );
+        assert_eq!(motivo_de(x, &na_lixeira).as_deref(), Some("já está na Lixeira"), "{x:?}");
+        assert!(motivo_de(x, &ocupada).is_some_and(|m| m.starts_with("processo com a pasta atual dentro")), "{x:?}");
+        for w in [&travada, &com_sub, &na_lixeira, &ocupada] {
+            assert!(nao_vai(x, w), "{w}: {x:?}");
+        }
+    }
+}
+
+#[test]
+fn t52_em_uso_por_outra_aba_ou_outra_conversa_viva_fica() {
+    let m = Mundo::novo();
+    let (na_aba, t1) = m.wt("wt-na-outra-aba");
+    let (na_conversa, t2) = m.wt("wt-na-outra-conversa");
+    let (k, _c) = fecha_aba_com(&m, &[(na_aba.clone(), t1), (na_conversa.clone(), t2)]);
+    // Outra aba com o shell dentro de uma; outra conversa viva trabalhando na outra.
+    let outra = Concha::nova(&m, Path::new(&na_aba));
+    k.aba("W", aba(2, "Outra aba", outra.pid(), outra.pid()));
+    let trabalha = Conversa::com(&m, None, Some(&na_conversa));
+    trabalha.texto(t2 + 30.0, Some(&na_conversa));
+    let amb = m.com_vivas(vec![viva_em(&trabalha.sid, 1)]);
+    let o = worktrees::orfas_em(&amb, Some(t2 + 3600.0), false);
+    outra.fim();
+    assert_eq!(motivo_de(&o, &na_aba).as_deref(), Some("em uso pela aba “Outra aba” (W)"), "{o:?}");
+    assert!(motivo_de(&o, &na_conversa).is_some_and(|x| x.contains("fora do Keep")), "{o:?}");
+    assert!(nao_vai(&o, &na_aba) && nao_vai(&o, &na_conversa), "{o:?}");
+}
+
+#[test]
+fn t53_registro_sem_pasta_sai_so_ele() {
+    let m = Mundo::novo();
+    let (sumiu, t1) = m.wt("wt-sumiu");
+    let (sumiu_de_outra, t2) = m.wt("wt-sumiu-de-outra");
+    let mut outra = Conversa::nova(&m);
+    outra.chamada(t2 - 0.3, Some(t2 + 0.3), &format!("git worktree add {sumiu_de_outra} HEAD"));
+    let (_k, _c) = fecha_aba_com(&m, &[(sumiu.clone(), t1)]);
+    assert_eq!(m.decisao_de(&sumiu_de_outra).dono.as_deref(), Some(outra.sid.as_str()));
+    std::fs::remove_dir_all(&sumiu).unwrap();
+    std::fs::remove_dir_all(&sumiu_de_outra).unwrap();
+    let t0 = t1.max(t2) + 3600.0;
+    let o = varre(&m, t0);
+    assert!(o.registros.is_empty() && de(&o.aguardando) == vec![sumiu.clone()], "{o:?}");
+    let o = varre(&m, t0 + CARENCIA + 1.0);
+    assert!(o.lixeira.is_empty() && itens(&o.registros) == vec![sumiu.clone()], "{o:?}");
+    assert!(nao_vai(&o, &sumiu_de_outra), "{o:?}");
+    // Pasta que existe não se esquece.
+    let (existe, _) = m.wt("wt-existe");
+    let r = worktrees::esquecer_em(&m.amb, Path::new(&existe), None);
+    assert!(!r.ok && r.motivo.as_deref().is_some_and(|x| x.contains("a pasta existe")), "{r:?}");
+    let r = worktrees::esquecer_em(&m.amb, Path::new(&sumiu), Some(o.registros[0].nasceu_ns + 1));
+    assert!(!r.ok && r.motivo.as_deref() == Some("o registro neste caminho não é o que foi listado"), "{r:?}");
+    let r = worktrees::esquecer_em(&m.amb, Path::new(&sumiu), Some(o.registros[0].nasceu_ns));
+    assert!(r.ok && r.registro_removido == Some(true), "{r:?}");
+    let lista = g(&m.repo, &["worktree", "list", "--porcelain"]);
+    let tem = |cam: &str| lista.lines().any(|l| l == format!("worktree {cam}"));
+    assert!(!tem(&sumiu) && tem(&sumiu_de_outra) && tem(&existe), "{lista}");
+    g(&m.repo, &["show-ref", "--verify", "refs/keep-lixeira/wt-sumiu"]);
+    let log = std::fs::read_to_string(m.base.join("estado").join("lixeira.log")).unwrap();
+    assert!(log.contains("só o registro saiu") && log.contains("wt-sumiu"), "{log}");
+}
+
+#[test]
+fn t54_conversas_do_keepd_de_antes_vao_para_encerradas_e_saem_ao_voltar() {
+    let m = Mundo::novo();
+    let k = Keepd::sobe(&m.amb.socket, true);
+    let (c, agente, conversa) = aba_com_claude(&m, &k, 1, "✳ Antes do reinício");
+    m.indexar_de_verdade(agora() + 1.0);
+    // O computador reiniciou: outro keepd, e a aba ainda não voltou.
+    k.nasceu_em(1_791_500_000_000);
+    k.tira("W", 1);
+    m.indexar_de_verdade(agora() + 2.0);
+    let est = estado::carrega(&m.amb).unwrap();
+    let novo = format!("{}:1791500000000", std::process::id());
+    assert!(est.encerradas.contains_key(&conversa.sid), "{:?}", est.encerradas);
+    assert!(est.historico.keys().all(|x| *x == novo), "{:?}", est.historico);
+    // A aba voltou com a mesma conversa.
+    k.aba("W", aba(1, "✳ Antes do reinício", c.pid(), agente));
+    m.indexar_de_verdade(agora() + 3.0);
+    let est = estado::carrega(&m.amb).unwrap();
+    assert!(!est.encerradas.contains_key(&conversa.sid), "{:?}", est.encerradas);
+    c.fim();
+}
+
+#[test]
+fn t55_decisoes_sobrevivem_a_pasta_renomeada_so_na_caixa() {
+    let m = Mundo::novo();
+    let repo = m.novo_repo("caixa", false);
+    let (w, t) = m.wt_em("wt-caixa", Some(&repo), None, None);
+    let mut c = Conversa::nova(&m);
+    c.chamada(t - 0.3, Some(t + 0.3), &format!("git worktree add {w} HEAD"));
+    m.indexar(t + 60.0);
+    let antes = m.decisao_de(&w);
+    assert_eq!(antes.dono.as_deref(), Some(c.sid.as_str()));
+    std::fs::rename(&repo, Path::new(&m.raiz).join("Caixa")).unwrap();
+    if !Path::new(&repo).exists() {
+        return; // sistema de arquivos que diferencia a caixa: não há o que provar
+    }
+    // Sem o transcrito, uma decisão perdida não teria como ser refeita.
+    std::fs::remove_file(&c.arq).unwrap();
+    m.indexar(t + 120.0);
+    let depois = m.decisao_de(&w);
+    assert_eq!((depois.dono.as_deref(), depois.decidido_em.as_deref()), (antes.dono.as_deref(), antes.decidido_em.as_deref()));
+    assert!(depois.comum.as_deref().is_some_and(|x| x.contains("Caixa")), "{depois:?}");
+}
+
+#[test]
+fn t56_linha_de_comando_da_varredura() {
+    let m = Mundo::novo();
+    let (w, t) = m.wt("wt-cli");
+    let (_k, c) = fecha_aba_com(&m, &[(w.clone(), t)]);
+    // A linha de comando roda na hora de verdade: o transcrito parado há 2 h.
+    let antes = std::time::SystemTime::now() - Duration::from_secs(7200);
+    std::fs::File::options().write(true).open(&c.arq).unwrap().set_modified(antes).unwrap();
+    // --so-ler não grava desde quando ela é órfã.
+    let (cod, saida) = worktrees::executar(&m.amb, &["orfas".into(), "--json".into(), "--so-ler".into()], 0.0);
+    let v: Value = serde_json::from_str(&saida).unwrap();
+    assert!(cod == 0 && v["versao"] == 1 && v["aguardando"][0]["caminho"] == json!(w), "{saida}");
+    assert!(estado::carrega(&m.amb).unwrap().orfas.is_empty());
+    let (cod, _) = worktrees::executar(&m.amb, &["orfas".into()], 0.0);
+    assert_eq!(cod, 0);
+    assert_eq!(estado::carrega(&m.amb).unwrap().orfas.len(), 1);
+    assert_eq!(worktrees::executar(&m.amb, &["orfas".into(), "--tudo".into()], 0.0).0, 2);
+    assert_eq!(worktrees::executar(&m.amb, &["esquecer".into()], 0.0).0, 2);
+    assert_eq!(worktrees::executar(&m.amb, &["esquecer".into(), "a".into(), "--nasceu".into(), "x".into()], 0.0).0, 2);
+}
+
+#[test]
+fn t57_decisao_provisoria_nao_e_varrida() {
+    // A aba fechou segundos depois de criar a worktree: a decisão ainda é
+    // provisória (a linha pode não ter chegado ao transcrito) e nada vai.
+    let m = Mundo::novo();
+    let k = Keepd::sobe(&m.amb.socket, true);
+    let (c, _agente, mut conversa) = aba_com_claude(&m, &k, 1, "✳ Rápida");
+    let (w, t) = m.wt("wt-provisoria");
+    conversa.chamada(t - 0.3, Some(t + 0.3), &format!("git worktree add {w} HEAD"));
+    m.indexar_de_verdade(t + 5.0);
+    let concha = c.pid();
+    c.fim();
+    assert!(espera(10.0, || !processos::vivo(concha)));
+    k.tira("W", 1);
+    m.indexar_de_verdade(t + 6.0);
+    let d = m.decisao_de(&w);
+    assert!(d.provisorio && d.dono.as_deref() == Some(conversa.sid.as_str()), "{d:?}");
+    assert!(estado::carrega(&m.amb).unwrap().encerradas.contains_key(&conversa.sid));
+    for k in 0..3 {
+        let o = varre(&m, t + 3600.0 + f64::from(k) * CARENCIA);
+        assert!(nao_vai(&o, &w), "{o:?}");
+    }
 }
