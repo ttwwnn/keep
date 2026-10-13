@@ -9,3 +9,5 @@
 apps/macos/build/
 apps/macos/build-dev/
 *.swp
+apps/macos/.build/
+apps/macos/build-pr/
