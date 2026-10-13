@@ -3,9 +3,13 @@
 //! escolhida na mesma conversa — ou, mudando de motor, numa conversa nova
 //! com o contexto da anterior num arquivo privado.
 //!
+//! De uma conta do Claude para outra com o Claude aberto, nada sai: o
+//! armazém de login da aba é regravado com o acesso da conta nova
+//! (`quente.rs`), e o mesmo Claude passa a falar por ela.
+//!
 //! Porte do `keep-ia trocar` do kit. A aba é digitada pelo daemon (como a
-//! pessoa digitaria); a conta vai no ambiente da linha que sobe a IA, nunca
-//! num login copiado.
+//! pessoa digitaria); a conta vai no ambiente da linha que sobe a IA — o
+//! armazém da aba, só com o acesso da conta —, nunca num login copiado.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -19,7 +23,7 @@ use crate::historico::{self, Origem};
 use crate::linha::{self, Subida};
 use crate::sessoes::{self, SessaoClaude};
 use crate::tela::{self, Estado, Programa};
-use crate::{caminhos, codex_daemon, contexto, processos, programas, uso};
+use crate::{caminhos, codex_daemon, contexto, processos, programas, quente, uso};
 
 /// Por que não trocou: o motivo (para o app decidir) e o que dizer.
 #[derive(Clone, Debug, PartialEq)]
@@ -531,6 +535,30 @@ fn devolve_ao_codex(
 
 // ---------------------------------------------------------------- trocar
 
+/// Claude → Claude com o Claude aberto: o armazém dele é regravado com o
+/// acesso da conta nova (`quente.rs`); a conversa segue no mesmo processo.
+fn troca_a_quente(p: &Pedido, r: &Retrato, contas: &[Conta]) -> Result<String, Recusa> {
+    let v = crate::vinculo::vincular(r).get(&(p.ws.clone(), p.aba)).copied().ok_or_else(|| {
+        Recusa::nova("tela-inesperada", "Não deu para saber que processo roda nesta aba; tente de novo em instantes.")
+    })?;
+    // `claude attach <job>`: a conta é a do processo do job.
+    let pid = job_anexado(v.frente).map(|j| j.pid).unwrap_or(v.frente);
+    match quente::trocar_processo(pid, v.shell, &p.ws, p.aba, &p.para, p.conta.as_deref(), contas) {
+        Ok(quente::Feito::Ja(conta)) => Ok(format!("a aba já está em {}", rotulo(&conta))),
+        Ok(quente::Feito::Trocou(conta)) => {
+            let mut feito = format!("passou para {} sem sair do Claude", rotulo(&conta));
+            if p.para == SEGUIR_ORDEM {
+                feito.push_str(" (seguindo a ordem)");
+            }
+            Ok(feito)
+        }
+        // A conta sem login próprio: a aba do login dela, como na troca de
+        // sempre (a troca acontece sozinha quando ele termina).
+        Err(e) if e.motivo == "precisa-login" => Err(destino(p, contas).err().unwrap_or(e)),
+        Err(e) => Err(e),
+    }
+}
+
 /// Uma troca por aba de cada vez, entre todos os processos.
 struct TravaDaAba(std::fs::File);
 
@@ -566,8 +594,6 @@ pub fn trocar(p: &Pedido) -> Result<String, Recusa> {
     }
     let _trava = trava_da_aba(&p.ws, p.aba)?;
     let contas = contas::listar(true);
-    let destino = destino(p, &contas)?;
-    let agente_alvo = destino.motor().programa();
     let (r, a) = aba_viva(&p.ws, p.aba)?;
     let prog = tela::programa(&a.info.command);
     match &prog {
@@ -579,6 +605,14 @@ pub fn trocar(p: &Pedido) -> Result<String, Recusa> {
         }
         _ => {}
     }
+    // De uma conta do Claude para outra com o Claude aberto: a quente, sem
+    // sair dele e sem digitar nada na aba (pedido de 12/10/2026: "pra trocar
+    // entre contas do claude não é pra colocar exit, é só trocar").
+    if prog == Programa::Claude && p.para.starts_with("claude:") {
+        return troca_a_quente(p, &r, &contas);
+    }
+    let destino = destino(p, &contas)?;
+    let agente_alvo = destino.motor().programa();
     let vinc = crate::vinculo::vincular(&r).get(&(p.ws.clone(), p.aba)).copied();
     let frente = vinc.map(|v| v.frente);
     let sintaxe = sintaxe_da_aba(&a, vinc.map(|v| v.shell));
@@ -601,24 +635,6 @@ pub fn trocar(p: &Pedido) -> Result<String, Recusa> {
         && atual_agora.as_deref() == Some(destino.conta.order_key.as_str())
     {
         return Ok(format!("a aba já está em {}", rotulo(&destino.conta.order_key)));
-    }
-    // De uma conta do Claude para outra com o Claude aberto: nunca. A conta
-    // vem do ambiente do processo (CLAUDE_SECURESTORAGE_CONFIG_DIR), que não
-    // muda com ele vivo; só /exit e --resume a mudariam, e a pessoa não quer
-    // isso (12/10/2026: "pra trocar entre contas do claude não é pra colocar
-    // exit"). Gravar a credencial da outra conta no armazenamento dele
-    // duplicaria o refresh token, e uma das cópias morreria na renovação.
-    // Nem com --interromper: a recusa não é "ocupada", e o app só a mostra.
-    if prog == Programa::Claude && agente_alvo == "claude" {
-        return Err(Recusa::nova(
-            "claude-aberto",
-            format!(
-                "O Claude desta aba está aberto em {}. Trocar para {} exigiria fechá-lo (/exit) e reabri-lo, o que não é feito. Abra uma aba nova em {} ou feche o Claude desta aba e escolha a conta.",
-                rotulo(atual_agora.as_deref().or(escolha_agora.as_deref()).unwrap_or("outra conta")),
-                rotulo(&destino.escolha),
-                rotulo(&destino.escolha)
-            ),
-        ));
     }
     let sessao = if prog == Programa::Claude && anexo.is_none() { frente.and_then(sessoes::sessao_claude) } else { None };
 
@@ -882,6 +898,16 @@ pub fn trocar(p: &Pedido) -> Result<String, Recusa> {
         .unwrap_or_default();
     let mut s = subida(&p.ws, &destino, ident.as_deref(), &parametros, contexto_arq.as_deref());
     s.pasta = pasta_de_partida(&a, anterior_claude.as_deref());
+    // O Claude sobe no armazém da aba (só o acesso da conta): a próxima troca
+    // de conta nele é a quente. Sem como prepará-lo, sobe como antes.
+    if destino.motor() == Motor::Claude {
+        if let Some(v) = vinc {
+            if let Ok(pr) = quente::preparar(&p.ws, v.shell, Some(&destino.escolha), Some(&destino.conta)) {
+                s.definir.retain(|(n, _)| n != quente::VAR);
+                s.definir.insert(0, (quente::VAR.into(), pr.pasta.to_string_lossy().into_owned()));
+            }
+        }
+    }
     let texto = linha::linha(sintaxe, &s);
     if !digita(&p.ws, p.aba, &texto, true)? {
         return Err(Recusa::nova("tela-inesperada", "O comando não apareceu inteiro na aba; nada foi executado."));
@@ -994,21 +1020,22 @@ mod ponta_a_ponta {
         let tab = daemon::nova_aba("T", Some(&c.raiz.to_string_lossy()), 160, 40).unwrap();
         assert!(tela_tem("T", tab, "$"), "o prompt do shell");
 
-        // A pessoa sobe o Claude à mão, com os parâmetros dela.
+        // A pessoa sobe o Claude à mão, com os parâmetros dela, sem o armazém
+        // da aba (como as abas de antes da troca a quente): o login global.
         let mao = format!("{} --effort max", bin.join("claude").display());
         assert!(digita("T", tab, &mao, true).unwrap());
         assert!(tela_tem("T", tab, "FALSO claude"));
+        assert!(tela_tem("T", tab, "fixa= home="), "sem armazém de aba");
         let antes = ia_da_aba(tab);
         assert_eq!((antes.conta.as_str(), antes.atual.as_deref()), ("claude:ordem", Some("claude:ana")));
         let _id = antes.conversa.clone().expect("a conversa da sessão anotada");
 
-        // Claude → Claude noutra conta: a MESMA conversa, com os parâmetros.
         let p = |para: &str, interromper: bool| Pedido { ws: "T".into(), aba: tab, para: para.into(), interromper, ..Default::default() };
-        // Sem a pessoa dizer que pode, o Claude aberto nunca sai: nada é
-        // digitado na aba (pedido de 12/10/2026).
+        // No login global, a troca individual é recusada — e o Claude aberto
+        // nunca sai: nada é digitado na aba (pedido de 12/10/2026).
         for interromper in [false, true] {
             let recusa = trocar(&p("claude:bia", interromper)).unwrap_err();
-            assert_eq!(recusa.motivo, "claude-aberto", "{recusa:?}");
+            assert_eq!(recusa.motivo, "claude-global", "{recusa:?}");
             assert!(!daemon::tela("T", tab).unwrap_or_default().contains("/exit"), "digitou /exit");
             assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:ana"));
         }
@@ -1027,30 +1054,65 @@ mod ponta_a_ponta {
         assert_eq!((codex.agente.as_str(), codex.conta.as_str(), codex.atual.as_deref()), ("codex", "gpt:principal", Some("gpt:principal")));
 
         // Codex → seguir a ordem: volta ao Claude da frente da fila, mesmo
-        // com o GPT no topo dela (o GPT nunca entra sozinho).
+        // com o GPT no topo dela (o GPT nunca entra sozinho) — e sobe no
+        // armazém da aba, só com o acesso da conta.
         std::fs::write(c.raiz.join(".claude/contas/.ordem"), "gpt:principal\nclaude:ana\nclaude:bia\n").unwrap();
         let feito = trocar(&p("claude:ordem", false)).unwrap();
         assert_eq!(feito, "abriu conversa nova em Claude · ana (seguindo a ordem) com o contexto da tarefa anterior");
-        assert!(tela_tem("T", tab, "escolha=claude:ordem fixa= home="));
+        let abas_dir = caminhos::abas().to_string_lossy().into_owned();
+        assert!(tela_tem("T", tab, &format!("escolha=claude:ordem fixa={abas_dir}/")), "{}", daemon::tela("T", tab).unwrap_or_default());
+        assert!(tela_tem("T", tab, "conta=G"), "o Claude lê o acesso da Ana no armazém da aba");
         assert_eq!(trocar(&p("claude:ordem", false)).unwrap(), "a aba já está em Claude · ana");
+        let claude = ia_da_aba(tab);
+        assert_eq!((claude.conta.as_str(), claude.atual.as_deref()), ("claude:ordem", Some("claude:ana")));
+
+        // Claude → Claude noutra conta, com o Claude aberto: a quente. O mesmo
+        // processo (a mesma conversa) passa a falar pela Bia; nada é digitado.
+        let tela_antes = daemon::tela("T", tab).unwrap_or_default();
+        assert_eq!(trocar(&p("claude:bia", false)).unwrap(), "passou para Claude · bia sem sair do Claude");
+        assert_eq!(daemon::tela("T", tab).unwrap_or_default(), tela_antes, "a troca a quente digitou na aba");
+        let bia = ia_da_aba(tab);
+        assert_eq!((bia.pid, bia.conta.as_str(), bia.atual.as_deref()), (claude.pid, "claude:bia", Some("claude:bia")));
+        assert!(digita("T", tab, "um", true).unwrap());
+        assert!(tela_tem("T", tab, "Feito: um, conta=F"), "{}", daemon::tela("T", tab).unwrap_or_default());
+        assert_eq!(trocar(&p("claude:bia", false)).unwrap(), "a aba já está em Claude · bia");
+        assert_eq!(trocar(&p("claude:ordem", false)).unwrap(), "passou para Claude · ana sem sair do Claude (seguindo a ordem)");
+        assert!(digita("T", tab, "dois", true).unwrap());
+        assert!(tela_tem("T", tab, "Feito: dois, conta=G"));
+        assert_eq!(ia_da_aba(tab).pid, claude.pid, "o mesmo Claude");
 
         // Seguir a ordem sozinho: a conta da aba chega ao limite (semanal a
-        // 100%) e a sincronização a leva para a próxima disponível da fila.
+        // 100%) e a sincronização a leva para a próxima disponível da fila —
+        // a quente, sem digitar nada, mesmo com a aba trabalhando.
         let _uso = crate::uso::testes::servidor(|p| match p.token.as_str() {
             "G" => (200, vec![], r#"{"five_hour":{"utilization":10},"seven_day":{"utilization":100}}"#.into()),
             _ => (200, vec![], r#"{"five_hour":{"utilization":1},"seven_day":{"utilization":2}}"#.into()),
         });
-        // Com o Claude aberto a rodada nunca o tira (seria /exit): a aba fica
-        // pendente e só a pessoa a troca, pelo menu.
+        assert!(digita("T", tab, "/trabalhar", true).unwrap());
+        assert!(tela_tem("T", tab, "esc to interrupt"));
         let tela_antes = daemon::tela("T", tab).unwrap_or_default();
         let r = crate::sincronizar::rodada();
         assert_eq!(r["alvo"], "claude:bia", "{r}");
-        assert_eq!(r["alteradas"].as_array().map(Vec::len), Some(0), "{r}");
-        assert_eq!(r["pendentes"][0]["motivo"], "claude-aberto", "{r}");
-        assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:ana"));
+        assert_eq!(r["alteradas"].as_array().map(Vec::len), Some(1), "{r}");
+        assert_eq!(r["alteradas"][0]["feito"], "passou para Claude · bia sem sair do Claude (seguindo a ordem)", "{r}");
         assert_eq!(daemon::tela("T", tab).unwrap_or_default(), tela_antes, "a rodada digitou na aba");
+        let seguindo = ia_da_aba(tab);
+        assert_eq!(
+            (seguindo.pid, seguindo.conta.as_str(), seguindo.atual.as_deref()),
+            (claude.pid, "claude:ordem", Some("claude:bia"))
+        );
         let r = crate::sincronizar::rodada();
         assert_eq!(r["alteradas"].as_array().map(Vec::len), Some(0), "{r}");
+
+        // A renovação espalha o acesso novo do dono da Bia pelo armazém da aba.
+        tecla("T", tab, b"\x1b").unwrap();
+        let k2 = c.fixa("k-2", Some(("F2", "r2")), None);
+        assert!(k2.ends_with("k-2"));
+        let r = crate::renovar::rodada(false);
+        assert_eq!(r.abas.atualizadas, 1, "{r:?}");
+        assert!(digita("T", tab, "tres", true).unwrap());
+        assert!(tela_tem("T", tab, "Feito: tres, conta=F2"), "{}", daemon::tela("T", tab).unwrap_or_default());
+        assert_eq!(ia_da_aba(tab).pid, claude.pid, "sempre o mesmo Claude");
 
         // SAFETY: a casa (e a trava) está de pé.
         unsafe {
@@ -1140,3 +1202,4 @@ mod pasta_de_partida {
         assert_eq!(pasta_de_partida(&aba(&worktree), Some("c-1")), Some(casa));
     }
 }
+

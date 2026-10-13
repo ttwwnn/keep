@@ -369,7 +369,14 @@ fn login_claude(conta: Option<&str>, email_dado: Option<&str>, apelido_dado: Opt
     };
     contas::gravar_metadados(
         &pasta,
-        &Metadados { versao: 1, apelido: apelido.clone(), email: dono.email.clone(), uuid: dono.uuid.clone(), criada_em: donos::agora_ms() },
+        &Metadados {
+            versao: 1,
+            apelido: apelido.clone(),
+            email: dono.email.clone(),
+            uuid: dono.uuid.clone(),
+            criada_em: donos::agora_ms(),
+            aba: false,
+        },
     )
     .map_err(|e| e.to_string())?;
     let chave = Motor::Claude.chave(&apelido);

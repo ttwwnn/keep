@@ -108,11 +108,14 @@ pub fn ia(args: &[String]) -> i32 {
             Err(e) => responde(recusa("sem-keepd", &e)),
         },
         "trocar" => crate::trocar::cli(&a),
+        "preparar" => crate::quente::cli_preparar(&a),
         "entrar" => crate::login::cli_entrar(&a),
         "login" => crate::login::cli_login(&a),
         "sincronizar" => crate::sincronizar::cli(),
         "renovar" => crate::renovar::cli(&a),
-        _ => uso_errado("keep ia contas | uso | jev | ordem [mover] | abas | trocar | entrar | login | sincronizar | renovar"),
+        _ => uso_errado(
+            "keep ia contas | uso | jev | ordem [mover] | abas | trocar | preparar | entrar | login | sincronizar | renovar",
+        ),
     }
 }
 

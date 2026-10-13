@@ -18,7 +18,7 @@ type NoMeio = Arc<Mutex<Option<Box<dyn Fn() + Send>>>>;
 /// O servidor de tokens: refresh → (status, corpo); conta os pedidos e
 /// guarda o último `User-Agent` e o último corpo.
 #[derive(Clone, Default)]
-struct Servidor {
+pub(crate) struct Servidor {
     respostas: Arc<Mutex<HashMap<String, (u16, String)>>>,
     pedidos: Arc<Mutex<Vec<(String, Value)>>>,
     /// Roda ao chegar um pedido, antes da resposta (o "CLI" mexendo no meio).
@@ -26,7 +26,7 @@ struct Servidor {
 }
 
 impl Servidor {
-    fn sobe() -> Servidor {
+    pub(crate) fn sobe() -> Servidor {
         let s = Servidor::default();
         let ouvinte = TcpListener::bind("127.0.0.1:0").unwrap();
         let porta = ouvinte.local_addr().unwrap().port();
@@ -91,11 +91,11 @@ impl Servidor {
         s
     }
 
-    fn responde(&self, refresh: &str, status: u16, corpo: &str) {
+    pub(crate) fn responde(&self, refresh: &str, status: u16, corpo: &str) {
         self.respostas.lock().unwrap().insert(refresh.into(), (status, corpo.into()));
     }
 
-    fn gira(&self, refresh: &str, acesso_novo: &str, refresh_novo: &str) {
+    pub(crate) fn gira(&self, refresh: &str, acesso_novo: &str, refresh_novo: &str) {
         self.responde(
             refresh,
             200,
@@ -105,7 +105,7 @@ impl Servidor {
         );
     }
 
-    fn quantos(&self) -> usize {
+    pub(crate) fn quantos(&self) -> usize {
         self.pedidos.lock().unwrap().len()
     }
 }
@@ -172,9 +172,10 @@ fn renova_o_que_vence_em_menos_de_uma_hora_e_mantem_o_resto() {
     assert_eq!(corpo["grant_type"], "refresh_token");
     assert_eq!(corpo["client_id"], CLIENT_ID);
     assert_eq!(corpo["scope"], "user:inference", "pede os escopos que o login tem");
-    // As travas do CLI foram devolvidas.
-    assert!(!caminhos::claude().join(".oauth_refresh.lock").exists());
-    assert!(!caminhos::claude().join(".storage-write.lock").exists());
+    // As travas do CLI (na pasta do armazém, como o CLI as põe) foram devolvidas.
+    let pasta = caminhos::fixas().join("k-1");
+    assert!(!pasta.join(".oauth_refresh.lock").exists());
+    assert!(!pasta.join(".storage-write.lock").exists());
     // A rodada seguinte não renova de novo.
     assert!(rodada(false).renovados.is_empty());
     assert_eq!(s.quantos(), 1);
@@ -206,13 +207,28 @@ fn renova_a_conta_parada_ha_mais_de_sete_dias_e_deixa_a_recente() {
     let agora = donos::agora_ms();
     // Venceu há 7 dias: girou há 7 dias e 8 h.
     let velha = poe(&c, Some("k-velha"), &login("AV", "RV", agora - 7 * 24 * HORA));
-    // Venceu há 2 dias: girou há 2 dias e 8 h.
-    let nova = poe(&c, Some("k-nova"), &login("AN", "RN", agora - 2 * 24 * HORA));
+    // Vence em 3 h: girou há 5 h.
+    let nova = poe(&c, Some("k-nova"), &login("AN", "RN", agora + 3 * HORA));
     let r = rodada(false);
     assert_eq!(r.renovados.len(), 1, "{r:?}");
     assert_eq!(r.renovados[0].2, Motivo::Parada);
     assert_eq!(oauth(&velha).refresh.as_deref(), Some("RV2"));
-    assert_eq!(oauth(&nova).refresh.as_deref(), Some("RN"), "a parada há 2 dias espera");
+    assert_eq!(oauth(&nova).refresh.as_deref(), Some("RN"), "a que girou há 5 h espera");
+}
+
+#[test]
+fn renova_o_acesso_vencido_porque_nenhuma_aba_renova_o_dono() {
+    let c = casa("renova-vencido");
+    perfis(&[]);
+    let s = Servidor::sobe();
+    s.gira("R1", "A2", "R2");
+    // Venceu há 1 h (o app esteve fechado): as abas da conta, só com o
+    // acesso, estariam paradas.
+    let local = poe(&c, Some("k-1"), &login("A1", "R1", donos::agora_ms() - HORA));
+    let r = rodada(false);
+    assert_eq!(r.renovados.len(), 1, "{r:?}");
+    assert_eq!(r.renovados[0].2, Motivo::Vencido);
+    assert_eq!(oauth(&local).acesso.as_deref(), Some("A2"));
 }
 
 #[test]
@@ -335,7 +351,11 @@ fn espera_a_trava_do_cli_e_desiste_se_ele_esta_renovando() {
     let s = Servidor::sobe();
     s.gira("R1", "A2", "R2");
     let local = poe(&c, Some("k-1"), &login("A1", "R1", donos::agora_ms() + 10 * 60_000));
-    let trava = caminhos::claude().join(".oauth_refresh.lock");
+    // A trava do CLI mora na pasta do armazém (`Lw()`): a de ~/.claude é a
+    // do login global, e não segura esta pasta.
+    let do_global = caminhos::claude().join(".oauth_refresh.lock");
+    std::fs::create_dir(&do_global).unwrap();
+    let trava = caminhos::fixas().join("k-1").join(".oauth_refresh.lock");
     std::fs::create_dir(&trava).unwrap();
     let r = rodada(false);
     assert!(r.falhas[0].2.contains("renovando"), "{r:?}");
@@ -344,6 +364,7 @@ fn espera_a_trava_do_cli_e_desiste_se_ele_esta_renovando() {
     std::fs::remove_dir(&trava).unwrap();
     assert_eq!(rodada(false).renovados.len(), 1);
     assert_eq!(oauth(&local).refresh.as_deref(), Some("R2"));
+    assert!(do_global.exists(), "nem a do global");
 }
 
 #[test]
@@ -375,7 +396,11 @@ fn a_decisao_usa_o_nascimento_do_acesso() {
     let mut m = Marca::default();
     assert_eq!(decide(&o(agora - 7 * 24 * HORA), &mut m, agora, false), Some(Motivo::Parada));
     let mut m = Marca::default();
-    assert_eq!(decide(&o(agora - HORA), &mut m, agora, false), None, "venceu há pouco: o CLI renova ao usar");
+    assert_eq!(
+        decide(&o(agora - HORA), &mut m, agora, false),
+        Some(Motivo::Vencido),
+        "venceu há pouco: nenhuma aba renova o dono, o Keep renova"
+    );
     // Sem refresh (o CLI zerou): nada a fazer, só um login.
     let mut m = Marca::default();
     assert_eq!(decide(&Oauth::default(), &mut m, agora, true), None);

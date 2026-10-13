@@ -17,16 +17,21 @@ os mesmos logins; quem não tem começa do zero.
 
 Uma conta do Claude é um **armazém de credenciais** do Claude Code:
 
-| Armazém | Onde o Claude Code guarda o login | Como uma aba usa |
+| Armazém | Onde o Claude Code guarda o login | Quem usa |
 |---|---|---|
 | global | macOS: item do Chaveiro `Claude Code-credentials` (conta `$USER`); demais: `~/.claude/.credentials.json` | sem variável |
-| fixa | pasta `~/.claude/contas/fixas/<id>`; macOS: item `Claude Code-credentials-<sha256(pasta NFC)[:8]>`; demais: `<pasta>/.credentials.json` | `CLAUDE_SECURESTORAGE_CONFIG_DIR=<pasta>` |
+| fixa | pasta `~/.claude/contas/fixas/<id>`; macOS: item `Claude Code-credentials-<sha256(pasta NFC)[:8]>`; demais: `<pasta>/.credentials.json` | o dono da conta: só a renovação do Keep |
+| aba | pasta `~/.claude/contas/abas/<shell>-<nascimento do shell>`, guardada como a fixa | o Claude de uma aba: `CLAUDE_SECURESTORAGE_CONFIG_DIR=<pasta>` |
 
 - A variável `CLAUDE_SECURESTORAGE_CONFIG_DIR` muda **só** onde fica o login (lido no binário
-  2.1.289, funções `Nb()`/`x$()`): histórico, memória e configurações continuam em `~/.claude`.
-- Cada armazém tem o seu próprio login (aprovação no navegador). O Keep **nunca copia** token de um
-  armazém para outro: o refresh token gira a cada renovação, e duas cópias da mesma família
-  terminam com uma delas morta e a aba em "Not logged in".
+  2.1.296, funções `Lw()`/`j$()`): histórico, memória e configurações continuam em `~/.claude`. As
+  travas do CLI para um armazém moram na pasta dele (`<pasta>/.oauth_refresh.lock` ao renovar,
+  `<pasta>/.storage-write.lock` ao gravar; `~/.claude` para o global).
+- Um dono por conta: o armazém que guarda a credencial inteira dela (a pasta fixa; sem o kit, o
+  global quando é dela). Cada dono tem o seu próprio login (aprovação no navegador). O Keep **nunca
+  copia refresh token** de um armazém para outro: ele gira a cada renovação, e duas cópias da mesma
+  família terminam com uma delas morta e a aba em "Not logged in". O que vai para os armazéns das
+  abas é só o token de ACESSO (ver "Troca a quente").
 - O Keep **renova** o login de cada armazém que cuida, no próprio armazém, antes de ele vencer e
   também na conta parada (ver "Renovação"): é o que deixa uma aba passar para qualquer conta sem
   login novo. O gerente externo (kit) renova o global; o Keep então renova só as pastas fixas.
@@ -35,7 +40,8 @@ Uma conta do Claude é um **armazém de credenciais** do Claude Code:
   `~/.claude.json`, que o CLI regrava com a conta do próprio token de qualquer aba.
 - Metadados de uma pasta fixa criada pelo Keep: `<pasta>/keep.json`
   `{"versao":1,"apelido","email","uuid","criadaEm"}`. Pastas criadas pelo kit (`fixas/<uuid8>`)
-  valem do mesmo jeito.
+  valem do mesmo jeito. `"aba": true` marca uma pasta fixa que virou o armazém de uma aba: ela deixa
+  de ser conta e de ser renovada.
 - Cofre do kit (`~/.claude/contas/<apelido>.json`): lido, nunca escrito — dá o apelido de cada
   dono e um token para medir o consumo de conta que não tenha armazém legível.
 - Contas com o mesmo dono (global e fixa da mesma pessoa, ou dois apelidos do cofre) são uma conta só.
@@ -60,9 +66,11 @@ Uma conta do Claude é um **armazém de credenciais** do Claude Code:
 ### Gerente externo
 
 Se o kit do autor estiver instalado (`~/.claude/contas/.ativa` e `~/.local/bin/claude-melhor-conta`),
-quem troca a conta do armazém global é ele: no Keep, `claude:ordem` passa a ser "o global", uma aba
-presa numa conta roda sempre na pasta própria dela (nunca no global, que muda de dono), e
-`sincronizar` não faz nada (o kit tem a própria). Sem o kit, o Keep faz tudo.
+quem troca a conta do armazém global é ele: no Keep, `claude:ordem` passa a ser a conta que ele pôs
+no global (`.ativa`) — as abas de armazém próprio que seguem a ordem vão para ela na renovação
+seguinte, a quente —, o dono de uma conta é a pasta fixa dela (o global só por último: ele muda de
+dono), o global não é renovado pelo Keep, e `sincronizar` não faz nada (o kit tem a própria). Sem o
+kit, o Keep faz tudo.
 
 ## Renovação
 
@@ -70,20 +78,24 @@ Nenhuma conta cai, nem a parada: o que a Clínica faz com as contas dela (`renov
 `ia:healthcheck`) e o kit faz com o global (`claude-conectado`), para todo armazém do Keep.
 `keep ia renovar [--agora] --json`; o app chama a cada 60 s, e logo ao abrir.
 
-- Armazéns: as pastas fixas, sempre; o global só sem gerente externo. Nunca o cofre do kit, nunca
-  cópia de um armazém para outro: o login renovado volta para o mesmo lugar de onde saiu.
+- Armazéns: as pastas fixas (menos as que viraram armazém de aba), sempre; o global só sem gerente
+  externo. Nunca o cofre do kit, nunca cópia de um armazém para outro: o login renovado volta para o
+  mesmo lugar de onde saiu.
 - Quando: o acesso vence em menos de 60 min (o Claude Code só tenta nos 5 min finais, quando várias
-  abas cruzam o limiar juntas e uma derruba a outra); ou o refresh não gira há mais de 7 dias (a
-  conta parada: o refresh vive umas quatro semanas e morreria em silêncio). O nascimento de um
-  refresh é o do acesso que veio com ele (`expiresAt` − 8 h). Acesso já vencido de conta em uso não
-  é com o Keep: o Claude Code renova ao usar. `--agora` renova todos.
+  abas cruzam o limiar juntas e uma derruba a outra); o acesso já venceu (nenhuma aba renova um
+  dono: cada uma tem só o acesso); ou o refresh não gira há mais de 7 dias (a conta parada: o
+  refresh vive umas quatro semanas e morreria em silêncio). O nascimento de um refresh é o do acesso
+  que veio com ele (`expiresAt` − 8 h). `--agora` renova todos.
+- Depois de renovar, a rodada espalha o acesso de cada dono pelos armazéns das abas da conta dele e
+  apaga os das abas que acabaram (ver "Troca a quente"). O dono do acesso novo é o do antigo: ele
+  fica sabido sem perguntar à rede.
 - Como: `POST https://platform.claude.com/v1/oauth/token` com `grant_type=refresh_token`, o
   `client_id` do Claude Code, os escopos do login e `User-Agent: claude-cli/<versão> (external,
   cli)` (sem ele, o Cloudflare responde 403/1010). Sob a trava de renovação do próprio Claude Code
-  (`~/.claude/.oauth_refresh.lock`, um diretório, velha após 60 s, tocada a cada 2 s enquanto o
-  Keep a segura): nenhuma renovação nossa corre junto com a de uma aba. A credencial é relida sob a
-  trava; se o CLI já renovou, nada a fazer.
-- Gravação: compare-and-swap sob a trava de escrita do CLI (`~/.claude/.storage-write.lock`, velha
+  para aquele armazém (`<pasta>/.oauth_refresh.lock`, um diretório, velha após 60 s, tocada a cada
+  2 s enquanto o Keep a segura): nenhuma renovação nossa corre junto com a de um Claude que use o
+  mesmo armazém. A credencial é relida sob a trava; se o CLI já renovou, nada a fazer.
+- Gravação: compare-and-swap sob a trava de escrita do CLI (`<pasta>/.storage-write.lock`, velha
   após 15 s): relê, e desiste se o refresh do armazém mudou enquanto o pedido estava no ar. Só a
   chave `claudeAiOauth` muda (acesso, refresh, `expiresAt`, `refreshTokenExpiresAt`, `scopes`); o
   resto do JSON fica (`mcpOAuth`…). No macOS, `security -i` com `add-generic-password -U … -X <hex>`
@@ -96,7 +108,55 @@ Nenhuma conta cai, nem a parada: o que a Clínica faz com as contas dela (`renov
   quando girou, a marca de morto e a espera); registro em `<estado>/renovar.log`. Uma rodada por
   vez (`<estado>/renovar.trava`).
 - Resposta: `{"estado": "feito"|"em-andamento", "renovados": [{"conta", "armazem"}], "falhas":
-  [{"conta", "armazem", "motivo"}]}`. `armazem` é `global` ou `fixa`; `conta`, a chave dela.
+  [{"conta", "armazem", "motivo"}], "abas": {"trocadas": [{"chave", "conta"}], "atualizadas": n,
+  "apagadas": [chave], "falhas": [{"chave", "motivo"}]}}`. `armazem` é `global` ou `fixa`; `conta`,
+  a chave dela. Em `abas`, um problema aparece uma vez, quando surge (fica no registro do armazém até
+  passar).
+
+## Troca a quente
+
+Pedido de 12/10/2026: "pra trocar entre contas do claude não é pra colocar exit, é só trocar". Trocar
+a conta do Claude de uma aba é regravar o armazém de login dele; o mesmo processo, na mesma conversa,
+passa a falar pela conta nova. Nada é digitado na aba.
+
+- Cada Claude que o Keep abre roda no armazém da aba (`CLAUDE_SECURESTORAGE_CONFIG_DIR=
+  ~/.claude/contas/abas/<shell>-<nascimento>`), que tem o `claudeAiOauth` da conta da aba com
+  `refreshToken: null` (e sem `refreshTokenExpiresAt`): só o acesso. O Claude Code relê o armazém a
+  cada uso (no macOS, o item do Chaveiro com cache de 30 s, `j0t`; no Windows, o `.credentials.json`
+  da pasta, relido quando muda) e, sem refresh, nunca tenta renovar nem grava o login. Provado em
+  12/10/2026 com o Claude Code 2.1.296: a conta mudou em até 30 s, sem /exit, e um acesso inválido no
+  armazém, regravado com um válido, deixou a mesma sessão voltar.
+- `keep ia preparar --ws=<W> --shell=<pid> [--escolha=<chave>]` cria (ou atualiza) o armazém da aba
+  do shell e devolve a pasta. O shell é o dado ou o ancestral dele cujo pai é o keepd (um script na
+  aba acha a aba). Sem escolha, fica a que a aba já tinha, senão seguir a ordem. Quem chama: a função
+  `claude()` do shell do autor (numa aba do Keep, sem a variável já posta) e a troca que sobe o
+  Claude numa aba (`trocar`, linha com `CLAUDE_SECURESTORAGE_CONFIG_DIR=<pasta>`).
+- Estado: `~/.claude/contas/abas/estado.json` (`{"versao":1,"abas":{<chave>:{"pasta","conta","dono",
+  "escolha","ws","aba","shell","nascimento","legada","em","falha"}}}`), sob a trava
+  `estado.trava`. A conta e a escolha de uma aba de armazém próprio vêm daqui (o ambiente do
+  processo diz só as de quando ele subiu).
+- De onde vem o acesso: o dono da conta, com o acesso em dia (sem o kit, o global quando é dela; as
+  pastas fixas dela; com o kit, o global por último). Dono com o acesso vencido: uma rodada da
+  renovação antes. Seguir a ordem = com o kit, a conta que ele pôs no login global (`.ativa`); sem
+  ele, a primeira do Claude disponível da fila (pela última medição), ou a primeira que roda.
+- A gravação num armazém de aba muda só a chave `claudeAiOauth` (os `mcpOAuth` que o Claude da aba
+  guardou ficam), sob as duas travas do CLI daquela pasta.
+- Renovação (`renovar`, a cada minuto): cada armazém de aba recebe o acesso atual do dono da conta
+  dele; com o kit, quem segue a ordem passa para a conta da `.ativa`. Sem o kit, a conta de quem segue
+  a ordem só muda pela sincronização (as regras dela). O armazém de uma aba cujo shell acabou (pid e
+  nascimento) e em que nenhum processo roda mais (uma conversa em segundo plano segura o dela) é
+  apagado: o item e a pasta; pastas soltas em `abas/` também.
+- Login feito dentro de uma aba (`/login`): cai no armazém dela, com refresh. Ele é a escolha da aba;
+  a credencial inteira MUDA para uma pasta fixa nova quando a conta não tem outro dono (conta nova
+  entra no fim da ordem), e o refresh a mais é descartado quando tem. O armazém fica só com o acesso.
+- Abas de antes: um Claude numa pasta fixa só dele (nenhum outro processo raiz com a mesma variável)
+  tem a pasta convertida na troca: marcada `"aba": true`, registrada como `fixa-<nome>` (legada), e
+  o login inteiro sai dela — muda para uma pasta fixa nova se ela era a única dona da conta. Pasta
+  fixa usada por mais de um Claude: `pasta-compartilhada`. Claude no login global (sem variável):
+  `claude-global` — a conta dele muda com a ordem global, junto com as outras abas no global; o
+  próximo Claude aberto na aba já vem no armazém dela.
+- Quem desligar o app por mais de umas 8 h deixa as abas sem acesso válido: a primeira rodada da
+  renovação ao abrir renova os donos e espalha, e cada aba volta no pedido seguinte.
 
 ## Consumo
 
@@ -165,7 +225,8 @@ perguntas de decisão, no Claude Code e no Codex) gasta crédito do OpenRouter a
   `CLAUDE_SECURESTORAGE_CONFIG_DIR`; `CODEX_HOME`). O Keep põe `KEEP_IA_ESCOLHA=<chave>` na linha que
   sobe a IA, para lembrar a escolha ("seguir a ordem" ou uma conta) em qualquer conta e motor. Sem
   marca: Claude no global = seguir a ordem; numa pasta própria = presa nessa conta; Codex = preso na
-  conta dele.
+  conta dele. Claude no armazém de uma aba: a escolha e a conta são as do estado dele (mudam com o
+  processo vivo).
 - Conversa da aba: Claude por `~/.claude/sessions/<pid>.json` (conferido pelo `procStart`, que diz
   também se ele está `busy`/`waiting`); Codex pela linha de comando (`resume <id>`) e pelo daemon dele
   (`app-server-control.sock`, só leitura e `turn/interrupt`; no Windows, só a tela).
@@ -174,9 +235,11 @@ perguntas de decisão, no Claude Code e no Codex) gasta crédito do OpenRouter a
 
 ### Trocar
 
-`trocar` (aba, para): confere a tela (trabalhando, diálogo, trabalho em segundo plano = `ocupada`, a
-não ser com `--interromper`), sai do programa (`/exit` ou `/quit`), espera o shell, e digita a linha
-do shell da aba (zsh/bash/fish, PowerShell, cmd) com o ambiente da conta e a retomada
+`trocar` (aba, para): de uma conta do Claude para outra com o Claude aberto, a troca a quente (acima):
+nada sai, nada é digitado, vale com a aba trabalhando. Nos outros casos, confere a tela (trabalhando,
+diálogo, trabalho em segundo plano = `ocupada`, a não ser com `--interromper`), sai do programa
+(`/exit` ou `/quit`), espera o shell, e digita a linha do shell da aba (zsh/bash/fish, PowerShell, cmd)
+com o ambiente da conta (para o Claude, o armazém da aba) e a retomada
 (`claude --resume <id>` / `codex resume <id>`). Se a pasta da aba sumiu (uma worktree apagada), a
 linha entra antes na pasta em que a conversa do Claude começou (ou na casa): a IA não sobe numa pasta
 que não existe. Mudar de motor abre conversa nova no outro, com o
@@ -198,8 +261,10 @@ do Claude disponível da fila em que uma aba pode rodar, e a aba leva a marca de
 GPT nunca entra sozinho: só quando a pessoa o escolhe no menu da aba. Sem nenhuma conta do Claude
 disponível, a aba fica onde está e aparece como pendente (`todas-no-limite`). `sincronizar` (o app chama a cada 30 s): a aba que segue a ordem e está numa conta que não pode
 trabalhar (no limite, login recusado, parada na tela de limite) vai para a primeira do Claude disponível da
-fila, quando está livre; a que está numa conta abaixo dela sobe para ela depois de 2 min
-sem uso. No máximo 3 abas por rodada; uma aba que recusou espera 30 s (5 min se for trabalho em
+fila — com o Claude aberto num armazém de aba, a quente e mesmo trabalhando; sem ele, quando está livre;
+com o Claude aberto no login global, nunca (`claude-global`) —; a que está numa conta abaixo dela sobe
+para ela depois de 2 min sem uso. Com o kit, a sincronização não faz nada, e a renovação leva as abas
+de armazém próprio que seguem a ordem para a conta da `.ativa`. No máximo 3 abas por rodada; uma aba que recusou espera 30 s (5 min se for trabalho em
 segundo plano). Uma janela cheia cujo recomeço já passou não conta.
 
 ## Lixeira de worktrees
@@ -218,6 +283,7 @@ keep ia uso [--agora] [--conta=<chave>] --json
 keep ia ordem [mover <chave> cima|baixo] --json
 keep ia abas --json
 keep ia trocar --ws=<W> --aba=<N> --para=<chave> [--interromper] --json
+keep ia preparar --ws=<W> --shell=<pid> [--escolha=claude:ordem|claude:<apelido>] --json
 keep ia entrar claude|gpt --ws=<W> --json
 keep ia login claude|gpt [--apelido=<A>] [--depois=<W>:<N>:<chave>]     (interativo, roda na aba)
 keep ia sincronizar --json
@@ -246,15 +312,19 @@ Toda resposta é um objeto JSON numa linha, com `"versao": 1` e `"ok"`. Recusa: 
   (`claude`|`codex`), "conta" (a escolha: `claude:ordem` ou a chave da conta), "atual" (a chave da
   conta em que ela roda agora, ou `null`), "vinculo" (`exato`), "pid", "conversa" (id ou `null`)}]}`.
   `keepd.inicioMs` é o `started_ms` do `List3`: o app ignora a resposta de outro daemon.
-- `trocar` → `{"feito": texto}`. Recusas: `ocupada` (o app pergunta "Interromper e trocar agora" e
-  repete com `--interromper`), `precisa-login` (com `ws_login` e `aba_login`: a aba do login, aberta
-  pelo Keep; a troca acontece sozinha quando ele termina), `em-uso`, `segundo-plano`,
-  `outro-programa`, `tela-inesperada`, `sem-conta`, `contexto-indisponivel`, `inicio-falhou`, `erro`.
+- `trocar` → `{"feito": texto}` (a quente: "passou para Claude · <ap> sem sair do Claude"). Recusas:
+  `ocupada` (o app pergunta "Interromper e trocar agora" e repete com `--interromper`),
+  `precisa-login` (com `ws_login` e `aba_login`: a aba do login, aberta pelo Keep; a troca acontece
+  sozinha quando ele termina), `claude-global`, `pasta-compartilhada`, `armazem-desconhecido`,
+  `em-uso`, `segundo-plano`, `outro-programa`, `tela-inesperada`, `sem-conta`,
+  `contexto-indisponivel`, `inicio-falhou`, `erro`.
+- `preparar` → `{"chave", "pasta", "conta", "escolha"}`. Recusas: `uso`, `sem-conta`,
+  `precisa-login`, `ocupada`, `erro` — quem chama sobe o Claude como antes, sem a variável.
 - `entrar` → `{"ws", "aba"}`: a aba nova, rodando `keep ia login …`.
 - `sincronizar` → `{"estado": "feito"|"gerente-externo"|"em-andamento"|"sem-keepd", "alvo": chave|null,
   "alteradas": [{"ws", "aba", "feito"}], "pendentes": [{"ws", "aba", "motivo", "detalhe"?}]}`.
 - `renovar` → `{"estado": "feito"|"em-andamento", "renovados": [{"conta", "armazem"}], "falhas":
-  [{"conta", "armazem", "motivo"}]}` (ver "Renovação").
+  [{"conta", "armazem", "motivo"}], "abas": {…}}` (ver "Renovação").
 
 ### Quem chama o quê
 
@@ -273,7 +343,10 @@ O app passa `KEEP_SOCKET` (o daemon dele). Um app de teste que lê uma casa fals
 `KEEP_IA_HOME` e `KEEP_IA_ESTADO` apontando para ela: o núcleo nunca toca na casa real nesse caso.
 
 Variáveis para teste: `KEEP_IA_HOME` (casa falsa), `KEEP_IA_ESTADO` (estado), `KEEP_IA_SECURITY`
-(o `security` do macOS), `KEEP_IA_CLAUDE_URL`/`KEEP_IA_CODEX_URL`/`KEEP_IA_PERFIL_URL`/`KEEP_IA_TOKEN_URL` (só
+(o `security` do macOS), `KEEP_IA_TESTE_ARMAZEM=arquivo` (no macOS, os logins em arquivo, como no
+Windows), `KEEP_IA_CLAUDE_URL`/`KEEP_IA_CODEX_URL`/`KEEP_IA_PERFIL_URL`/`KEEP_IA_TOKEN_URL` (só
 `http://127.0.0.1`), `KEEP_IA_CLAUDE_BIN`, `KEEP_IA_CODEX_BIN`, `KEEP_IA_KEEP_BIN` (o `keep` que uma aba nova roda), `KEEP_SOCKET`.
 Teste de ponta a ponta: `trocar::ponta_a_ponta`, com um daemon do próprio teste e a IA falsa de
-`examples/ia_falsa.rs` (`cargo build -p keep-ia --examples`).
+`examples/ia_falsa.rs` (`cargo build -p keep-ia --examples`); o Claude falso relê o armazém a cada
+pedido e responde `Feito: <pedido>, conta=<token>`, que é como a troca a quente aparece na tela. Os
+armazéns das abas: `quente::testes`, no Chaveiro de mentira e no arquivo.

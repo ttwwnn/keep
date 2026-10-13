@@ -5,13 +5,26 @@
 //! outro. O refresh token gira a cada renovação; duas cópias da mesma família
 //! terminam com uma delas morta.
 //!
-//! Como o Claude Code guarda (binário 2.1.289, funções `Nb()` e `x$()`):
+//! A exceção é o armazém de cada aba (`crate::quente`): ele recebe só o
+//! token de ACESSO do dono da conta, com o refresh nulo — acesso se copia à
+//! vontade; refresh, nunca.
+//!
+//! Como o Claude Code guarda (binário 2.1.296, funções `Lw()`, `j$()` e o
+//! armazém `keychain` com o `plaintext` de reserva):
 //! - macOS: item genérico do Chaveiro, conta `$USER` (ou `claude-code-user`),
 //!   serviço `Claude Code-credentials`, com `-<sha256(pasta)[:8]>` quando a
 //!   pasta vem de `CLAUDE_SECURESTORAGE_CONFIG_DIR` (ou de `CLAUDE_CONFIG_DIR`);
 //!   lido com `security find-generic-password -w`, como o próprio CLI faz —
-//!   e por isso sem pedir senha: o item confia no `security`.
-//! - demais sistemas: `<pasta>/.credentials.json`, a pasta sendo a mesma.
+//!   e por isso sem pedir senha: o item confia no `security`. O CLI guarda o
+//!   que leu por 30 s (`j0t`) e relê depois: regravar o item troca a conta
+//!   de um Claude aberto.
+//! - demais sistemas (Windows): `<pasta>/.credentials.json`, a pasta sendo a
+//!   mesma; o CLI relê o arquivo quando ele muda.
+//! - as travas do CLI moram na mesma pasta (`Lw()`): `.oauth_refresh.lock`
+//!   para renovar e `.storage-write.lock` para gravar.
+//!
+//! Um teste no macOS pede o arquivo com `KEEP_IA_TESTE_ARMAZEM=arquivo`, para
+//! o caminho do Windows rodar aqui também.
 
 use std::path::Path;
 
@@ -165,32 +178,60 @@ pub enum Local {
     Arquivo(std::path::PathBuf),
 }
 
+/// Se os logins moram no Chaveiro (macOS) ou em arquivo (os demais, e um
+/// teste do macOS que pede o caminho do Windows).
+pub fn usa_chaveiro() -> bool {
+    cfg!(target_os = "macos") && std::env::var("KEEP_IA_TESTE_ARMAZEM").as_deref() != Ok("arquivo")
+}
+
 /// Onde está o login global agora: no macOS, o Chaveiro, ou o arquivo quando
 /// o Chaveiro não tem o item e o arquivo existe (é a cópia que o CLI lê).
 pub fn local_global() -> Local {
+    let arq = crate::caminhos::claude().join(".credentials.json");
     #[cfg(target_os = "macos")]
-    {
-        let arq = crate::caminhos::claude().join(".credentials.json");
+    if usa_chaveiro() {
         if matches!(chaveiro(SERVICO_GLOBAL), Lido::Ausente) && arq.is_file() {
             return Local::Arquivo(arq);
         }
-        Local::Chaveiro(SERVICO_GLOBAL.into())
+        return Local::Chaveiro(SERVICO_GLOBAL.into());
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Local::Arquivo(crate::caminhos::claude().join(".credentials.json"))
+    Local::Arquivo(arq)
+}
+
+/// Onde está o login de uma pasta (`CLAUDE_SECURESTORAGE_CONFIG_DIR`): uma
+/// pasta fixa, ou o armazém de uma aba.
+pub fn local_fixa(pasta: &Path) -> Local {
+    if usa_chaveiro() {
+        Local::Chaveiro(servico_de(&pasta.to_string_lossy()))
+    } else {
+        Local::Arquivo(pasta.join(".credentials.json"))
     }
 }
 
-/// Onde está o login de uma pasta fixa.
-pub fn local_fixa(pasta: &Path) -> Local {
-    #[cfg(target_os = "macos")]
-    {
-        Local::Chaveiro(servico_de(&pasta.to_string_lossy()))
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Local::Arquivo(pasta.join(".credentials.json"))
+/// Apaga o login de um local (o armazém de uma aba que acabou). Já ausente
+/// conta como apagado.
+pub fn apagar(local: &Local) -> Result<(), String> {
+    match local {
+        Local::Chaveiro(servico) => {
+            let security = std::env::var("KEEP_IA_SECURITY").unwrap_or_else(|_| "/usr/bin/security".into());
+            let st = std::process::Command::new(security)
+                .args(["delete-generic-password", "-a", &conta_do_item(), "-s", servico])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map_err(|e| format!("security: {e}"))?;
+            // 44 = errSecItemNotFound.
+            match st.code() {
+                Some(0 | 44) => Ok(()),
+                c => Err(format!("security saiu {c:?}")),
+            }
+        }
+        Local::Arquivo(arq) => match std::fs::remove_file(arq) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.to_string()),
+        },
     }
 }
 
@@ -286,31 +327,21 @@ fn grava_arquivo(arq: &Path, texto: &str) -> Result<(), String> {
 /// O login global: o que uma aba usa sem variável nenhuma.
 pub fn global() -> Lido {
     #[cfg(target_os = "macos")]
-    {
+    if usa_chaveiro() {
         // Um `.credentials.json` no macOS vira a cópia que o CLI lê quando o
         // Chaveiro está vazio; o Chaveiro vem primeiro.
-        match chaveiro(SERVICO_GLOBAL) {
+        return match chaveiro(SERVICO_GLOBAL) {
             Lido::Ausente => arquivo(&crate::caminhos::claude()),
             outro => outro,
-        }
+        };
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        arquivo(&crate::caminhos::claude())
-    }
+    arquivo(&crate::caminhos::claude())
 }
 
-/// O login de uma pasta fixa: o que uma aba usa com
+/// O login de uma pasta: o que uma aba usa com
 /// `CLAUDE_SECURESTORAGE_CONFIG_DIR=<pasta>`.
 pub fn fixa(pasta: &Path) -> Lido {
-    #[cfg(target_os = "macos")]
-    {
-        chaveiro(&servico_de(&pasta.to_string_lossy()))
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        arquivo(pasta)
-    }
+    ler(&local_fixa(pasta))
 }
 
 #[cfg(test)]

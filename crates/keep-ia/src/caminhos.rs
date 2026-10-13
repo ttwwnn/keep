@@ -25,9 +25,16 @@ pub fn contas() -> PathBuf {
     claude().join("contas")
 }
 
-/// `~/.claude/contas/fixas`: um armazém de login do Claude por pasta.
+/// `~/.claude/contas/fixas`: um armazém de login do Claude por pasta — o
+/// dono de cada conta, com a credencial inteira.
 pub fn fixas() -> PathBuf {
     contas().join("fixas")
+}
+
+/// `~/.claude/contas/abas`: o armazém de cada Claude aberto pelo Keep, só
+/// com o token de acesso da conta da aba (`quente.rs`), e o `estado.json`.
+pub fn abas() -> PathBuf {
+    contas().join("abas")
 }
 
 /// `~/.claude/contas/.ordem`.
