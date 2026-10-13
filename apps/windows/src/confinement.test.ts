@@ -7,6 +7,9 @@ import {
   LATER_SESSIONS,
   chosen,
   confineLook,
+  contextChoices,
+  elide,
+  heldChoices,
   normalizeConfinements,
   refusal,
   sameConfinements,
@@ -35,15 +38,44 @@ describe("the button", () => {
   it("is open and offers the choice for a workspace that is free", () => {
     const look = confineLook("projeto", null);
     expect(look.held).toBe(false);
-    expect(look.info).toBeNull();
     expect(look.title.split("\n")[0]).toBe("Restringir a IA de projeto a uma pasta");
   });
 
   it("is shut and says where the AI is held when it is", () => {
     const look = confineLook("projeto", "D:\\work\\app");
     expect(look.held).toBe(true);
-    expect(look.info).toBe("A IA só acessa D:\\work\\app");
     expect(look.title.split("\n")[0]).toBe("A IA de projeto só acessa D:\\work\\app");
+  });
+
+  it("opens, when held, where the AI is held and the two ways out", () => {
+    expect(heldChoices("D:\\work\\app")).toEqual([
+      { id: "info", label: "A IA só acessa D:\\work\\app", disabled: true, help: "D:\\work\\app" },
+      "separator",
+      { id: "choose", label: "Trocar a pasta…" },
+      { id: "release", label: "Liberar a IA" },
+    ]);
+  });
+
+  it("has in the header's menu the choice, and the way out only when there is one", () => {
+    expect(contextChoices(null)).toEqual(["separator", { id: "choose", label: "Restringir a IA a uma pasta…" }]);
+    expect(contextChoices("D:\\work\\app")).toEqual([
+      "separator",
+      { id: "choose", label: "Restringir a IA a uma pasta…" },
+      { id: "release", label: "Liberar a IA (hoje: D:\\work\\app)", help: "D:\\work\\app" },
+    ]);
+  });
+
+  it("shortens a long path in the middle and keeps a short one", () => {
+    expect(elide("D:\\work\\app")).toBe("D:\\work\\app");
+    const long = "C:\\Users\\Ana\\Projetos\\clientes\\empresa-grande\\sistema-financeiro\\backend\\api";
+    const short = elide(long);
+    expect(short.length).toBe(48);
+    expect(short.startsWith("C:\\Users\\Ana\\")).toBe(true);
+    expect(short.endsWith("backend\\api")).toBe(true);
+    expect(short).toContain("…");
+    expect(heldChoices(long)[0]).toMatchObject({ help: long });
+    expect(contextChoices(long)[2]).toMatchObject({ help: long });
+    expect((contextChoices(long)[2] as { label: string }).label.length).toBeLessThan(80);
   });
 
   it("says in both states that a session already open keeps the access it had", () => {

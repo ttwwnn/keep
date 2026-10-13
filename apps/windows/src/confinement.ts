@@ -46,19 +46,45 @@ export interface ConfineLook {
   held: boolean;
   /** Said under the pointer, and read out. */
   title: string;
-  /** The first line of the menu a held workspace opens; null for one that is free. */
-  info: string | null;
 }
 
 export function confineLook(label: string, folder: string | null): ConfineLook {
   if (folder === null) {
-    return { held: false, title: `Restringir a IA de ${label} a uma pasta\n${LATER_SESSIONS}`, info: null };
+    return { held: false, title: `Restringir a IA de ${label} a uma pasta\n${LATER_SESSIONS}` };
   }
-  return {
-    held: true,
-    title: `A IA de ${label} só acessa ${folder}\n${LATER_SESSIONS}`,
-    info: `A IA só acessa ${folder}`,
-  };
+  return { held: true, title: `A IA de ${label} só acessa ${folder}\n${LATER_SESSIONS}` };
+}
+
+/**
+ * A long path shortened in the middle, for a menu: where it starts and where
+ * it ends are what tell folders apart. The whole path is under the pointer.
+ */
+export function elide(path: string, max = 48): string {
+  if (path.length <= max) return path;
+  const head = Math.ceil((max - 1) * 0.4);
+  return `${path.slice(0, head)}…${path.slice(path.length - (max - 1 - head))}`;
+}
+
+/** One line of a menu, by what it does; the window gives each its action. */
+export type Choice =
+  | "separator"
+  | { id: "info" | "choose" | "release"; label: string; disabled?: boolean; help?: string };
+
+/** What the folder button opens when the AI is held to a folder: where, and the two ways out. */
+export function heldChoices(folder: string): Choice[] {
+  return [
+    { id: "info", label: `A IA só acessa ${elide(folder)}`, disabled: true, help: folder },
+    "separator",
+    { id: "choose", label: LABELS.change },
+    { id: "release", label: LABELS.release },
+  ];
+}
+
+/** What the workspace header's context menu has for the AI's folder, after a separator. */
+export function contextChoices(folder: string | null): Choice[] {
+  const choices: Choice[] = ["separator", { id: "choose", label: LABELS.restrict }];
+  if (folder !== null) choices.push({ id: "release", label: LABELS.releaseToday(elide(folder, 40)), help: folder });
+  return choices;
 }
 
 /** The labels of the choices, as the macOS app words them. */
