@@ -423,11 +423,17 @@ pub fn tela_segura(t: &Tela, erro: &Erro) -> (bool, String, bool) {
     (true, "ociosa, caixa vazia, erro à vista".into(), false)
 }
 
-/// Segundos sem teclado nem mouse no Mac (HIDIdleTime). Sem leitura, 0: na dúvida, a pessoa está por perto.
+/// Segundos sem teclado nem mouse (no Mac, o HIDIdleTime; no Windows, o `GetLastInputInfo`). Sem leitura, 0: na
+/// dúvida, a pessoa está por perto.
 pub fn ocioso_ha() -> f64 {
     if let Some(v) = std::env::var("KEEP_CONTINUAR_OCIOSO_S").ok().and_then(|v| v.parse().ok()) {
         return v;
     }
+    ocioso_do_sistema()
+}
+
+#[cfg(target_os = "macos")]
+fn ocioso_do_sistema() -> f64 {
     let Ok(saida) = std::process::Command::new("/usr/sbin/ioreg").args(["-c", "IOHIDSystem", "-d", "4", "-r", "-k", "HIDIdleTime"]).output()
     else {
         return 0.0;
@@ -438,6 +444,34 @@ pub fn ocioso_ha() -> f64 {
         .and_then(|c| c[1].parse::<f64>().ok())
         .map(|ns| ns / 1e9)
         .unwrap_or(0.0)
+}
+
+/// O Windows guarda quando foi a última entrada da sessão da pessoa (teclado, mouse) no mesmo relógio de `GetTickCount`.
+#[cfg(windows)]
+fn ocioso_do_sistema() -> f64 {
+    use windows_sys::Win32::System::SystemInformation::GetTickCount;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
+    let mut info = LASTINPUTINFO { cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32, dwTime: 0 };
+    // SAFETY: `info` tem o tamanho dito em `cbSize`, como a chamada pede; `GetTickCount` não recebe nada.
+    unsafe {
+        if GetLastInputInfo(&mut info) == 0 {
+            return 0.0;
+        }
+        ocioso_de_ticks(GetTickCount(), info.dwTime)
+    }
+}
+
+/// Sem leitura do sistema (Linux): na dúvida, a pessoa está por perto.
+#[cfg(not(any(target_os = "macos", windows)))]
+fn ocioso_do_sistema() -> f64 {
+    0.0
+}
+
+/// Os segundos entre a última entrada e agora, dados os dois relógios do Windows (ms desde que ele ligou, em 32
+/// bits: voltam a zero a cada 49,7 dias, e a subtração em ciclo acerta a conta nessa virada).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn ocioso_de_ticks(agora: u32, ultimo: u32) -> f64 {
+    f64::from(agora.wrapping_sub(ultimo)) / 1000.0
 }
 
 // ------------------------------------------------------------------ portas
@@ -877,6 +911,15 @@ mod testes {
         assert_eq!(tela_segura(&com_a_nossa, &e), (true, "a mensagem já está na caixa, falta o Enter".into(), true));
         let sem_erro = ler_tela(&TELA_PARADA.replace("Not logged in · Please run /login", "tudo certo"));
         assert!(!tela_segura(&sem_erro, &e).0);
+    }
+
+    #[test]
+    fn o_ocioso_do_windows_sai_dos_dois_relogios_mesmo_na_virada() {
+        assert_eq!(ocioso_de_ticks(10_000, 7_500), 2.5);
+        assert_eq!(ocioso_de_ticks(5_000, 5_000), 0.0);
+        // O relógio de 32 bits deu a volta entre a última entrada e agora.
+        assert_eq!(ocioso_de_ticks(1_000, u32::MAX - 999), 2.0);
+        assert_eq!(ocioso_de_ticks(0, u32::MAX), 0.001);
     }
 
     #[test]

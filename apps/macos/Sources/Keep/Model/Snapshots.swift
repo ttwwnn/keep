@@ -78,6 +78,26 @@ struct SidebarState: Hashable, Codable {
         self.isCollapsed = isCollapsed
         self.width = width
     }
+
+    /// Whether the split view would look the same: collapsed and width, the
+    /// only two fields the window can measure. Everything else is chosen in
+    /// the sidebar itself and never comes back from a measurement.
+    func hasGeometry(of other: SidebarState?) -> Bool {
+        guard let other else { return false }
+        return isCollapsed == other.isCollapsed && width == other.width
+    }
+
+    /// This state with the split view's measured geometry put in, and what
+    /// the measurement cannot know kept. The window reports geometry on every
+    /// relayout — coming back from another app is one — and taking the
+    /// report whole folded every workspace open again and turned vertical
+    /// tabs off, since a measured state starts with neither.
+    func withGeometry(of measured: SidebarState) -> SidebarState {
+        var state = self
+        state.isCollapsed = measured.isCollapsed
+        state.width = measured.width
+        return state
+    }
 }
 
 /// One pane beyond a tab's root, in daemon (creation) order.

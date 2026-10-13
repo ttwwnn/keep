@@ -41,35 +41,47 @@ pub fn binary(resources: Option<&Path>) -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.is_file())
 }
 
-/// Which daemon answers: its process and when that process started. A daemon
-/// that is not the one the window last saw — after a reboot, or after it was
+/// Which daemon answers: its process and when it started, as `"<pid>-<ms>"`
+/// — the start the daemon itself reports (`List3`), the one the core stamps
+/// what is only true for one daemon with (docs/restauro.md). A daemon that is
+/// not the one the window last saw — after a reboot, or after it was
 /// restarted — has none of the workspaces the window remembers, whoever
-/// started it. `None` where the platform cannot say (unix: the app there is
-/// for development).
+/// started it, and its tab numbers start again from one.
+///
+/// A daemon from before `List3` cannot say; on Windows its process and the
+/// time the system created it stand in (`"<pid>-<FILETIME>"`), enough to tell
+/// it from another but not to stamp anything with. `None` where nothing can be
+/// said.
 pub fn identity() -> Option<String> {
-    #[cfg(windows)]
-    {
-        use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
-        use windows_sys::Win32::System::Threading::{
-            GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-        };
-        let sock = Stream::connect(address()).ok()?;
-        let pid = sock.server_process_id().ok()?;
-        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-        if process.is_null() {
-            return None;
-        }
-        let zero = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
-        let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
-        let ok = unsafe { GetProcessTimes(process, &mut created, &mut exited, &mut kernel, &mut user) };
-        unsafe { CloseHandle(process) };
-        if ok == 0 {
-            return None;
-        }
-        let started = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
-        Some(format!("{pid}-{started}"))
+    if let Ok(ServerMsg::Workspaces3(info, _)) = ask(ClientMsg::List3) {
+        return Some(format!("{}-{}", info.pid, info.started_ms));
     }
-    #[cfg(not(windows))]
+    older_identity()
+}
+
+#[cfg(windows)]
+fn older_identity() -> Option<String> {
+    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
+    use windows_sys::Win32::System::Threading::{GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    let sock = Stream::connect(address()).ok()?;
+    let pid = sock.server_process_id().ok()?;
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if process.is_null() {
+        return None;
+    }
+    let zero = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+    let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
+    let ok = unsafe { GetProcessTimes(process, &mut created, &mut exited, &mut kernel, &mut user) };
+    unsafe { CloseHandle(process) };
+    if ok == 0 {
+        return None;
+    }
+    let started = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
+    Some(format!("{pid}-{started}"))
+}
+
+#[cfg(not(windows))]
+fn older_identity() -> Option<String> {
     None
 }
 
@@ -274,6 +286,36 @@ pub fn rearrange(workspace: &str, moves: Vec<PaneMove>) -> Result<()> {
 pub fn preview(workspace: &str, tab: u32) -> Result<String> {
     match ask(ClientMsg::Preview { workspace: workspace.into(), tab })? {
         ServerMsg::PreviewText(text) => Ok(text),
+        ServerMsg::Error(e) => bail!(e),
+        other => bail!("resposta inesperada: {other:?}"),
+    }
+}
+
+/// A tab's screen with its colours, and the grid it is held on. The sequences
+/// say where everything goes by rows and columns of that grid — a picture of
+/// the screen drawn on another one is a picture of something else — so the size
+/// comes with them, asked for in the same breath, rather than from a listing
+/// that may be a second old and a window resize behind.
+#[derive(Serialize, Clone, Debug)]
+pub struct Screen {
+    pub cols: u16,
+    pub rows: u16,
+    pub text: String,
+}
+
+/// The same screen as `preview`, with its colours still on it: the sequences
+/// the daemon repaints an attaching client with. A daemon that predates the
+/// question closes the connection, which the page takes as its cue to ask
+/// `preview`.
+pub fn preview_vt(workspace: &str, tab: u32) -> Result<Screen> {
+    let size = list()?
+        .into_iter()
+        .find(|w| w.name == workspace)
+        .and_then(|w| w.tabs.into_iter().find(|t| t.id == tab))
+        .map(|t| (t.cols, t.rows))
+        .unwrap_or((80, 24));
+    match ask(ClientMsg::PreviewVt { workspace: workspace.into(), tab })? {
+        ServerMsg::PreviewText(text) => Ok(Screen { cols: size.0, rows: size.1, text }),
         ServerMsg::Error(e) => bail!(e),
         other => bail!("resposta inesperada: {other:?}"),
     }
