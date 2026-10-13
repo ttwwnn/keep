@@ -887,6 +887,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     func windowWillExitFullScreen(_ notification: Notification) {
         inFullScreen = false
         layOutChrome()
+        Trace.log("window", "leaving full screen")
+    }
+
+    func windowDidEnterFullScreen(_ notification: Notification) {
+        Trace.log("window", "in full screen")
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        Trace.log("window", "out of full screen")
+    }
+
+    func windowDidFailToEnterFullScreen(_ window: NSWindow) {
+        inFullScreen = false
+        layOutChrome()
+        Trace.log("window", "full screen failed")
     }
 
     /// AppKit's own toolbar row — empty but for the sidebar toggle — slides

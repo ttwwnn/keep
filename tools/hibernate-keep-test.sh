@@ -606,24 +606,33 @@ else
         sleep 0.5
     done
     say "  (full screen entered: ${WAY:-by no way}; held: $HELD)"
-    FULL=$(grep -aoE "layout +$WS/[0-9]+ grid [0-9]+x[0-9]+" "$WORK/app.log" | tail -1 | awk '{print $NF}')
-    check "the window is in full screen" "1" "$("$FULLSCREEN" "$APP_NAME" state 2>/dev/null)"
-    check "with a bigger grid" "yes" "$([ "$FULL" != "$WINDOWED" ] && echo yes || echo no)"
-    # Hibernated now, among others: 1. Shown in full screen:
-    HIB_BEFORE=$(trace_count "pool +hibernating w[0-9]+ $WS/")
-    show 1 || say "  (tab 1 would not come up)"
-    sleep 4
-    check "a hibernated tab comes back at the full-screen grid" "$FULL" "$(grid 1)"
-    check "and so does its shell" "$FULL" "$(daemon_grid 1)"
-    check "with all its history" "yes" "$(lines_whole 1 5000)"
-    for n in 3 4 5; do
-        show "$n" || say "  (tab $n would not come up)"
-        sleep 1
-    done
-    sleep 3
-    check "tabs are let go of in full screen too" "yes" \
-        "$([ "$(trace_count "pool +hibernating w[0-9]+ $WS/")" -gt "$HIB_BEFORE" ] && echo yes || echo no)"
-    check "still $LIMIT clients under the app" "$LIMIT" "$(clients)"
+    if [ "${HELD: -1}" != 1 ]; then
+        # Measured on this machine: the system takes any window out of full
+        # screen again two seconds after it entered — TextEdit's as well as
+        # Keep's, with AppKit saying so (windowWillExitFullScreen) and the
+        # Dock moving it back to the desktop. Nothing to measure in it then.
+        say "  skip  full screen: the system took the window out of it again, as it does any app's here"
+        SKIPPED=$((SKIPPED + 1))
+    else
+        FULL=$(grep -aoE "layout +$WS/[0-9]+ grid [0-9]+x[0-9]+" "$WORK/app.log" | tail -1 | awk '{print $NF}')
+        check "the window is in full screen" "1" "$("$FULLSCREEN" "$APP_NAME" state 2>/dev/null)"
+        check "with a bigger grid" "yes" "$([ "$FULL" != "$WINDOWED" ] && echo yes || echo no)"
+        # Hibernated now, among others: 1. Shown in full screen:
+        HIB_BEFORE=$(trace_count "pool +hibernating w[0-9]+ $WS/")
+        show 1 || say "  (tab 1 would not come up)"
+        sleep 4
+        check "a hibernated tab comes back at the full-screen grid" "$FULL" "$(grid 1)"
+        check "and so does its shell" "$FULL" "$(daemon_grid 1)"
+        check "with all its history" "yes" "$(lines_whole 1 5000)"
+        for n in 3 4 5; do
+            show "$n" || say "  (tab $n would not come up)"
+            sleep 1
+        done
+        sleep 3
+        check "tabs are let go of in full screen too" "yes" \
+            "$([ "$(trace_count "pool +hibernating w[0-9]+ $WS/")" -gt "$HIB_BEFORE" ] && echo yes || echo no)"
+        check "still $LIMIT clients under the app" "$LIMIT" "$(clients)"
+    fi
     case $WAY in
         menu) "$AXPRESS" "$APP_NAME" menu View "Exit Full Screen" >/dev/null 2>&1 ;;
         keys) "$SENDKEY" "$APP_PID" key 3 cmd ctrl >/dev/null 2>&1 ;;
