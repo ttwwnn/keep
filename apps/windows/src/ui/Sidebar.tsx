@@ -52,6 +52,7 @@ import { workspaceState, workspaceTooltip } from "../tooltips";
 import { zoomPercent } from "../zoom";
 import { Battery } from "./Battery";
 import { AccountChevron } from "./AccountMenu";
+import { ConfineButton, confineContextItems } from "./ConfineButton";
 import { InlineEditor, openMenu } from "./common";
 import * as icon from "./icons";
 import { PaneMark } from "./paneIcons";
@@ -227,6 +228,7 @@ function WorkspaceGroup(props: { name: string }) {
             { label: "Nova aba aqui", action: () => void newTab(name) },
             { label: "Renomear", action: rename },
             { label: folded ? "Mostrar as abas" : "Recolher as abas", action: () => toggleFolded(name) },
+            ...confineContextItems(name),
             "separator",
             { label: "Mover para cima", disabled: position === 0, action: () => moveWorkspace(name, ordered[position - 1]) },
             {
@@ -270,6 +272,7 @@ function WorkspaceGroup(props: { name: string }) {
           </span>
         )}
         <span class="header-spacer" />
+        <ConfineButton name={name} />
         <button
           class="hdr-btn plus"
           title={`Nova aba em ${workspaceLabel(name)}`}

@@ -673,6 +673,17 @@ pub fn programa_de_argv(argv: &[String]) -> Option<String> {
             return Some(lancado);
         }
     }
+    // `keep ia confinar -- <programa> …`: o `keep` que segura a IA de um
+    // workspace com pasta no Windows (lá não há `exec`). A aba roda o programa.
+    if minusculo == "keep" {
+        if let Some(i) = programa_depois_do_confinar(argv) {
+            // Um atalho do npm (`claude.cmd`) é o programa que ele lança.
+            return programa_de_argv(&argv[i..]).map(|n| {
+                let n = n.to_ascii_lowercase();
+                n.strip_suffix(".cmd").or_else(|| n.strip_suffix(".bat")).unwrap_or(&n).to_string()
+            });
+        }
+    }
     if minusculo == "cmd" {
         let pos = argv.iter().position(|a| a.eq_ignore_ascii_case("/c") || a.eq_ignore_ascii_case("/k"));
         if let Some(script) = pos.and_then(|i| argv.get(i + 1)) {
@@ -684,6 +695,16 @@ pub fn programa_de_argv(argv: &[String]) -> Option<String> {
         }
     }
     Some(if cfg!(windows) { minusculo } else { base.to_string() })
+}
+
+/// Onde, em `keep ia confinar [--] <programa> …`, o programa começa.
+pub fn programa_depois_do_confinar(argv: &[String]) -> Option<usize> {
+    let p = argv.iter().position(|a| a == "confinar")?;
+    if p == 0 || argv[p - 1] != "ia" {
+        return None;
+    }
+    let inicio = if argv.get(p + 1).map(String::as_str) == Some("--") { p + 2 } else { p + 1 };
+    (inicio < argv.len()).then_some(inicio)
 }
 
 /// O pacote ou o arquivo que um runtime de JavaScript recebeu.
@@ -914,6 +935,19 @@ mod testes_extra {
             Some("claude")
         );
         assert_eq!(programa_de_argv(&v(&[r"C:\Program Files\Claude\claude.exe"])).as_deref(), Some("claude"));
+        // O `keep` que segura a IA presa a uma pasta (Windows) dá lugar a ela.
+        assert_eq!(
+            programa_de_argv(&v(&[r"C:\K\bin\keep.exe", "ia", "confinar", "--", r"C:\u\.local\bin\claude.exe", "--effort", "max"]))
+                .as_deref(),
+            Some("claude")
+        );
+        assert_eq!(programa_de_argv(&v(&["keep", "ia", "confinar", "codex", "resume"])).as_deref(), Some("codex"));
+        assert_eq!(programa_de_argv(&v(&["keep", "ia", "confinar"])).as_deref(), Some("keep"));
+        assert_eq!(programa_de_argv(&v(&["keep", "ls"])).as_deref(), Some("keep"));
+        assert_eq!(
+            programa_de_argv(&v(&["keep", "ia", "confinar", "--", r"C:\npm\claude.cmd"])).as_deref(),
+            Some("claude")
+        );
         assert_eq!(programa_de_argv(&v(&[""])), None);
         assert_eq!(programa_de_argv(&[]), None);
     }
