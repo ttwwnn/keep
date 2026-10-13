@@ -360,6 +360,56 @@ pub fn identidade(m: &Metadata) -> u64 {
     }
 }
 
+/// O número do arquivo no volume: o inode; no Windows, o índice do NTFS.
+/// Mudar de lugar no mesmo volume não o troca; outro arquivo no mesmo
+/// caminho tem outro.
+pub fn id_do_arquivo(p: &Path) -> Option<u64> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::symlink_metadata(p).ok().map(|m| m.ino())
+    }
+    #[cfg(windows)]
+    {
+        indice_ntfs(p)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = p;
+        None
+    }
+}
+
+#[cfg(windows)]
+fn indice_ntfs(p: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GetFileInformationByHandle, OPEN_EXISTING,
+    };
+    let nome: Vec<u16> = p.as_os_str().encode_wide().chain([0]).collect();
+    // SAFETY: um handle aberto aqui só para ler a informação dele, fechado aqui.
+    unsafe {
+        let h = CreateFileW(
+            nome.as_ptr(),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            std::ptr::null_mut(),
+        );
+        if h == INVALID_HANDLE_VALUE {
+            return None;
+        }
+        let mut info: BY_HANDLE_FILE_INFORMATION = std::mem::zeroed();
+        let ok = GetFileInformationByHandle(h, &mut info);
+        CloseHandle(h);
+        (ok != 0).then(|| (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow))
+    }
+}
+
 pub fn e_pasta(p: &str) -> bool {
     Path::new(p).is_dir()
 }

@@ -32,6 +32,11 @@
 //!     a "lixeira" como no diálogo (preparar, mover, concluir) e chama `esquecer` para os "registros"
 //! keep worktrees esquecer CAMINHO [--nasceu NS]
 //!     o registro de uma worktree cuja pasta sumiu sai do repositório (só ele), com a HEAD guardada
+//! keep worktrees purgar [--json]
+//!     (o app chama depois da varredura) apaga de vez da Lixeira o que o próprio Keep mandou para lá
+//!     há mais de PURGA_APOS (3 dias) e ainda é ele (o destino, o número da pasta no volume e o
+//!     nascimento gravados no lixeira.log, e o `.git` de worktree): {"versao":1,"purgadas":[…],
+//!     "ignoradas":[{destino,motivo}],"avisos":[…]}. Ver `purga.rs`
 //! ```
 //!
 //! Dono (algoritmo A4 do kit): a worktree nasce no instante T; dona é a
@@ -78,6 +83,8 @@ pub mod pastas;
 #[doc(hidden)]
 pub mod prazo;
 #[doc(hidden)]
+pub mod purga;
+#[doc(hidden)]
 pub mod repos;
 #[doc(hidden)]
 pub mod sessoes;
@@ -113,6 +120,9 @@ pub const GIT_VALIDADE: f64 = 900.0;
 pub const CARENCIA: f64 = 20.0 * 60.0;
 /// Uma conversa de aba fechada fica em `encerradas` por isso.
 pub const RETENCAO_ENCERRADAS: f64 = 30.0 * 86400.0;
+/// A Lixeira guarda a worktree que o Keep mandou para lá por isso; depois a
+/// purga a apaga de vez (o que vale são os `refs/keep-lixeira`).
+pub const PURGA_APOS: f64 = 3.0 * 86400.0;
 /// Reservado, no prazo, para montar e escrever o JSON.
 pub const MARGEM: f64 = 0.35;
 /// Antes do prazo, o JSON sai de qualquer jeito.
@@ -363,6 +373,15 @@ pub fn esquecer_em(amb: &Ambiente, caminho: &Path, nasceu_ns: Option<i64>) -> Co
     orfas::esquecer(amb, &caminho.to_string_lossy(), nasceu_ns)
 }
 
+/// Apaga de vez da Lixeira o que o Keep mandou para lá há mais de 3 dias.
+pub fn purgar() -> purga::Purga {
+    purgar_em(&Ambiente::do_sistema(), None)
+}
+
+pub fn purgar_em(amb: &Ambiente, agora: Option<f64>) -> purga::Purga {
+    purga::purgar(amb, agora)
+}
+
 /// Move a pasta para a Lixeira do sistema; devolve onde ela ficou (vazio se
 /// o sistema não diz).
 pub fn mover_para_lixeira(caminho: &Path) -> anyhow::Result<PathBuf> {
@@ -382,6 +401,7 @@ keep worktrees — as worktrees que a conversa de uma aba criou, para irem à Li
   keep worktrees indexar [--json]
   keep worktrees orfas [--json] [--so-ler]
   keep worktrees esquecer CAMINHO [--nasceu NS]
+  keep worktrees purgar [--json]
 
 Respostas em JSON (\"versao\": 1). Ver docs/ia.md.";
 
@@ -429,6 +449,15 @@ pub fn executar(amb: &Ambiente, args: &[String], decorrido: f64) -> (i32, String
             (0, em_json(&orfas_em(amb, None, so_ler)))
         }
         "esquecer" => cmd_esquecer(amb, resto),
+        "purgar" => {
+            if let Some(outro) = resto.iter().find(|a| *a != "--json") {
+                return (
+                    2,
+                    em_json(&json!({"versao": crate::VERSAO, "erro": format!("uso: keep worktrees purgar [--json] ({outro:?})")})),
+                );
+            }
+            (0, em_json(&purgar_em(amb, None)))
+        }
         "indexar" => {
             let r = indexar_em(amb, None);
             if resto.iter().any(|a| a == "--json") {

@@ -73,9 +73,14 @@ impl Saida {
 /// Roda `git <args>` e espera no máximo `prazo` segundos (passado disso, o
 /// git morre e a resposta é `Estourou`). Git que nem sobe responde 127.
 pub fn git(bin: &Path, args: &[&str], prazo: f64) -> Result<Saida, Estourou> {
+    git_com(bin, args, &[], prazo)
+}
+
+/// `git`, com variáveis a mais no ambiente dele (`GIT_INDEX_FILE`…).
+pub fn git_com(bin: &Path, args: &[&str], vars: &[(&str, &str)], prazo: f64) -> Result<Saida, Estourou> {
     let mut cmd = Command::new(bin);
-    cmd.args(args)
-        .env("LC_ALL", "C")
+    cmd.args(args).envs(vars.iter().copied());
+    cmd.env("LC_ALL", "C")
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null())

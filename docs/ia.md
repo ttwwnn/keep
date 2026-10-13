@@ -205,7 +205,16 @@ segundo plano). Uma janela cheia cujo recomeço já passou não conta.
 ## Lixeira de worktrees
 
 Ao fechar uma aba, as worktrees git que a conversa dela criou vão para a Lixeira (Lixeira do Windows),
-com os commits guardados em `refs/keep-lixeira/<id>`. Dono de uma worktree = a única sessão (Claude
+com os commits guardados em `refs/keep-lixeira/<id>` e a pasta inteira como o git a guardaria
+(alterações rastreadas, apagados e arquivos novos não ignorados, num índice à parte, sem mexer na pasta
+nem no índice dela) em `refs/keep-lixeira/<id>-sujo`. A Lixeira guarda a pasta por 3 dias; depois o
+próprio Keep a apaga de vez (`keep worktrees purgar`, logo depois da varredura), e o que vale são os
+`refs/keep-lixeira`. A purga só apaga o que o Keep mandou e ainda é ele: o destino exato no
+`lixeira.log`, o número da pasta no volume (`ino`; no Windows, o índice do NTFS) e o nascimento dela,
+gravados na hora da ida, e o `.git` de worktree (`gitdir:`). Item que voltou ("Colocar de volta"), item
+da pessoa com o mesmo nome, pasta mexida, linha de antes desta versão ou fora da Lixeira: fica. Cada
+purga é uma linha no `lixeira.log` (`"evento": "purga"`); nenhuma configuração do Finder é tocada.
+Dono de uma worktree = a única sessão (Claude
 ou Codex) que tinha, no nascimento dela, uma chamada executora em andamento que cita o nome dela.
 Nunca: a principal, travada, em uso por outra aba viva, dono duvidoso. O app pergunta antes, lista no
 diálogo e move (macOS: `FileManager.trashItem`, que grava o "Colocar de volta").
@@ -245,6 +254,7 @@ keep worktrees concluir <caminho> <destino>
 keep worktrees indexar [--json]
 keep worktrees orfas [--json] [--so-ler]
 keep worktrees esquecer <caminho> [--nasceu NS]
+keep worktrees purgar [--json]
 ```
 
 ### Respostas
@@ -279,6 +289,8 @@ Toda resposta é um objeto JSON numa linha, com `"versao": 1` e `"ok"`. Recusa: 
   desde quando cada uma é órfã (`--so-ler`: não grava nada). `ocupado`: outra rodada em curso.
 - `worktrees esquecer` → como o `concluir` (`ok`, `registro_removido`, `ref`, `motivo`), para um
   registro cuja pasta já não existe.
+- `worktrees purgar` → `{"purgadas": [{"destino", "caminho", "id", "ref", "ref_sujo"}], "ignoradas":
+  [{"destino", "motivo"}], "avisos": [texto], "ocupado"?}`.
 
 ### Quem chama o quê
 
@@ -290,7 +302,7 @@ Toda resposta é um objeto JSON numa linha, com `"versao": 1` e `"ok"`. Recusa: 
 | a cada 5 s com a janela à frente, e ao abrir o menu de uma aba | `keep ia abas --json` |
 | a cada 30 s | `keep ia sincronizar --json` |
 | a cada 60 s, e ao abrir (mesmo sem o daemon) | `keep ia renovar --json` |
-| a cada 2 min | `keep worktrees indexar --json` e, logo depois, `keep worktrees orfas --json` (com `preparar`/`concluir` ou `esquecer` para o que vier) |
+| a cada 2 min | `keep worktrees indexar --json` e, logo depois, `keep worktrees orfas --json` (com `preparar`/`concluir` ou `esquecer` para o que vier) e `keep worktrees purgar --json` |
 | setas, "+", menu da aba, fechar aba | `ordem mover`, `entrar`, `trocar`, `worktrees listar/preparar/concluir` |
 
 O app passa `KEEP_SOCKET` (o daemon dele). Um app de teste que lê uma casa falsa passa
