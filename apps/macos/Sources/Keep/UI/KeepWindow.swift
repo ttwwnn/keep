@@ -24,6 +24,7 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
     /// Kept so the toggle can be re-tinted when the terminal's colours move
     /// under it, the same as everything else in this row.
     private weak var sidebarToggleHost: CenteringHost?
+    private var sidebarToggleZoomObserver: NSObjectProtocol?
     private weak var sidebarBackdropView: NSView?
     private var terminalBackgroundObserver: NSObjectProtocol?
 
@@ -251,7 +252,16 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
         button.isBordered = false
         button.controlSize = .small
         button.imagePosition = .imageOnly
-        button.imageScaling = .scaleProportionallyDown
+        button.imageScaling = .scaleNone
+        // Larger than the system's small control draws it, and moving with the zoom.
+        let setGlyph = {
+            button.image = button.image?.withSymbolConfiguration(NSImage.SymbolConfiguration(
+                pointSize: 15 * GhosttyApp.shared.zoomLevel, weight: .regular))
+        }
+        setGlyph()
+        sidebarToggleZoomObserver = NotificationCenter.default.addObserver(
+            forName: GhosttyApp.textSizeDidChange, object: nil, queue: .main
+        ) { _ in MainActor.assumeIsolated { setGlyph() } }
         button.toolTip = "Toggle Sidebar (⌘B)"
         // The height of a tab's capsule, so the controls in the chrome are one
         // family. It used to be 28 because that is where the titlebar centred

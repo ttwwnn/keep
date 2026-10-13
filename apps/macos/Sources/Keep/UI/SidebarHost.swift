@@ -27,6 +27,9 @@ final class SeamlessSplitView: NSSplitView {
 @MainActor
 final class SidebarRows: ObservableObject {
     @Published var rows: [SessionSnapshot.SidebarRow] = []
+    /// Moves when the footer's account list does: the tabs' "(IA·n)" is read
+    /// from it, so the list is drawn again.
+    @Published var accountListRevision = 0
 }
 
 /// The flat, full-height sidebar host.
@@ -55,7 +58,8 @@ final class SidebarHost: NSViewController {
     required init?(coder: NSCoder) { fatalError("not supported") }
 
     /// Equality-guarded: a quiet poll re-renders nothing.
-    func render(_ newRows: [SessionSnapshot.SidebarRow]) {
+    func render(_ newRows: [SessionSnapshot.SidebarRow], accountListRevision: Int) {
+        if accountListRevision != model.accountListRevision { model.accountListRevision = accountListRevision }
         guard newRows != model.rows else { return }
         model.rows = newRows
     }

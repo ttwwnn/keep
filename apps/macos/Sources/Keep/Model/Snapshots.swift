@@ -891,4 +891,8 @@ struct SessionSnapshot: Hashable {
     /// Every live tab across all workspaces. The UI unmounts hosts whose id
     /// left this set; it never decides on its own that a tab is gone.
     var universe: Set<TabID>
+    /// Counts the changes of the footer's account list (its order, the Claude
+    /// account the order is on): the tabs are named by their account's place
+    /// in it, so a new count makes the snapshot differ and the sidebar redraw.
+    var accountListRevision = 0
 }

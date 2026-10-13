@@ -1940,8 +1940,11 @@ final class Session {
     /// which Claude account the tabs following it share. The tabs are named
     /// by their account's place in that list ("(IA·2)").
     func noteAccountListChanged() {
+        accountListRevision += 1
         publish()
     }
+
+    private var accountListRevision = 0
 
     private func publish() {
         for id in windowOrder {
@@ -2044,6 +2047,7 @@ final class Session {
         let universe = Set(workspaces.flatMap { $0.tabs.map(\.id) })
         return SessionSnapshot(
             sidebar: sidebar, picker: view.picker,
-            rows: rows, strip: strip, active: active, universe: universe)
+            rows: rows, strip: strip, active: active, universe: universe,
+            accountListRevision: accountListRevision)
     }
 }

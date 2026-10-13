@@ -29,9 +29,9 @@ final class BatteryIndicator: NSView {
     private static let boltWidth: CGFloat = 8
     private static let boltGap: CGFloat = 3
     /// Room round the figure inside the cell.
-    private static let padding: CGFloat = 4
-    /// Smaller than a tab's name: the figure has to fit inside the cell.
-    private static var font: NSFont { GhosttyApp.shared.terminalFont(size: 10 * GhosttyApp.shared.zoomLevel) }
+    private static let padding: CGFloat = 2.5
+    /// The size of the zoom control's percentage (11 at 100%), moving with the zoom.
+    private static var font: NSFont { GhosttyApp.shared.terminalFont(size: 11 * GhosttyApp.shared.zoomLevel) }
 
     init() {
         super.init(frame: .zero)
@@ -155,7 +155,7 @@ final class BatteryIndicator: NSView {
     /// The cell: as wide as "100%" with room round it, as tall as the text.
     private var bodySize: NSSize {
         let widest = NSAttributedString(string: "100%", attributes: [.font: Self.font]).size().width
-        let height = ceil(Self.font.ascender - Self.font.descender) + 3
+        let height = ceil(Self.font.ascender - Self.font.descender) + 1
         return NSSize(width: ceil(widest) + 2 * Self.padding, height: height)
     }
 
@@ -191,12 +191,12 @@ final class BatteryIndicator: NSView {
         tip.fill()
 
         // The charge, in its colour.
-        let inner = body.insetBy(dx: 2, dy: 2)
+        let inner = body.insetBy(dx: 1.5, dy: 1.5)
         let charge = NSRect(
             x: inner.minX, y: inner.minY,
             width: max(2, inner.width * CGFloat(reading.percent) / 100), height: inner.height)
         Self.fill(reading).setFill()
-        NSBezierPath(roundedRect: charge, xRadius: radius - 2, yRadius: radius - 2).fill()
+        NSBezierPath(roundedRect: charge, xRadius: radius - 1.5, yRadius: radius - 1.5).fill()
 
         // The percentage inside the cell: dark ink over the charge, the
         // terminal's own over the empty part, so it reads at any level.

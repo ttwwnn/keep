@@ -303,7 +303,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             container.unmount(id)
         }
 
-        sidebarHost.render(snapshot.rows)
+        sidebarHost.render(snapshot.rows, accountListRevision: snapshot.accountListRevision)
         tabStrip.apply(snapshot.strip)
         renderPicker(snapshot.picker)
         // The sidebar is one state for the whole app: applied here, once,
