@@ -133,9 +133,15 @@ pub fn perfil(pasta: &Path) -> String {
     linhas.join("\n") + "\n"
 }
 
-/// O nome do programa, sem a pasta.
-fn nome(programa: &str) -> &str {
-    programa.rsplit('/').next().unwrap_or(programa)
+/// O nome do programa, sem a pasta (de `/` ou de `\`) e, no Windows, sem a
+/// extensão (`claude.exe`, `codex.cmd`), em minúsculas.
+fn nome(programa: &str) -> String {
+    let base = programa.rsplit(['/', '\\']).next().unwrap_or(programa);
+    let base = match base.rsplit_once('.') {
+        Some((tronco, ext)) if matches!(ext.to_ascii_lowercase().as_str(), "exe" | "cmd" | "bat" | "com") => tronco,
+        _ => base,
+    };
+    base.to_ascii_lowercase()
 }
 
 /// O primeiro argumento que não é opção: o subcomando, se houver.
@@ -148,7 +154,7 @@ fn subcomando(args: &[String]) -> Option<&str> {
 /// `--no-daemon` (o servidor dele dentro do processo).
 pub fn linha_presa(programa: &str, args: &[String]) -> Result<Vec<String>, String> {
     let sub = subcomando(args);
-    match nome(programa) {
+    match nome(programa).as_str() {
         "claude" if matches!(sub, Some("agents" | "attach")) => Err(format!(
             "`claude {}` roda as sessões no servidor de fundo do Claude Code, fora da pasta permitida.",
             sub.unwrap_or_default()
@@ -278,6 +284,20 @@ mod testes {
         assert_eq!(linha_presa("/b/codex", &v(&["resume", "id"])).unwrap(), v(&["--no-daemon", "resume", "id"]));
         assert_eq!(linha_presa("codex", &v(&["--no-daemon"])).unwrap(), v(&["--no-daemon"]));
         assert_eq!(linha_presa("codex", &v(&["login"])).unwrap(), v(&["login"]));
+    }
+
+    #[test]
+    fn o_programa_do_windows_tem_pasta_com_barra_invertida_e_extensao() {
+        let v = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert!(linha_presa(r"C:\Users\a\.local\bin\claude.exe", &v(&["agents"])).is_err());
+        assert!(linha_presa(r"C:\Users\a\.local\bin\Claude.EXE", &v(&["attach", "x"])).is_err());
+        assert!(linha_presa(r"C:\npm\codex.cmd", &v(&["queue"])).is_err());
+        assert_eq!(linha_presa(r"C:\npm\codex.cmd", &v(&["resume", "id"])).unwrap(), v(&["--no-daemon", "resume", "id"]));
+        assert_eq!(linha_presa(r"C:\u\codex.exe", &v(&["--no-daemon"])).unwrap(), v(&["--no-daemon"]));
+        assert_eq!(linha_presa(r"C:\u\claude.exe", &v(&["--effort", "max"])).unwrap(), v(&["--effort", "max"]));
+        // O que só parece com o nome não é o programa.
+        assert_eq!(linha_presa(r"C:\u\claude-code.exe", &v(&["agents"])).unwrap(), v(&["agents"]));
+        assert_eq!(linha_presa(r"C:\u\claude.exe.bak", &v(&["agents"])).unwrap(), v(&["agents"]));
     }
 
     #[test]

@@ -225,10 +225,10 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
             tentativas.push(format!("{nivel:?}: o programa morreu ao partir (0x{c:08X})"));
             continue;
         }
-        // Vivo depois do olhar: se há console aqui, ele tem de estar ligado
-        // ao daqui. Um programa que subiu sem o console da aba ficaria mudo e
+        // Vivo depois do olhar: se há console aqui, ele tem de se ligar ao
+        // daqui. Um programa que subiu sem o console da aba ficaria mudo e
         // parado; dito agora, o usuário sabe por quê.
-        if cedo.is_none() && !sem_janela && sistema::no_console(filho.pid) == Some(false) {
+        if cedo.is_none() && !sem_janela && !ligou_ao_console(&filho) {
             sistema::matar(&filho);
             tentativas.push(format!("{nivel:?}: o console da aba não chegou ao programa"));
             continue;
@@ -241,6 +241,21 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
         return Ok(codigo as i32);
     }
     Err(format!("o Windows não deixou o programa partir com o token restrito ({})", tentativas.join("; ")))
+}
+
+/// Espera, por uns segundos, o programa se ligar ao console daqui. Quem saiu
+/// ou quem o sistema não deixa conferir passa.
+fn ligou_ao_console(filho: &sistema::Filho) -> bool {
+    for _ in 0..25 {
+        match sistema::no_console(filho.pid) {
+            Some(false) => {}
+            _ => return true,
+        }
+        if matches!(sistema::esperar(&filho.processo, 200), Ok(Some(_))) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Sem pasta para o workspace: o programa roda como sempre.
