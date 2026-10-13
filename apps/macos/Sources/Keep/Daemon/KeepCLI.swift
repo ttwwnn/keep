@@ -438,3 +438,54 @@ enum AIHelper {
         }
     }
 }
+
+/// The tabs back after the computer restarts, from the core (`keep restauro`):
+/// it keeps a picture of every tab while the daemon lives and, in the next
+/// daemon, brings back the workspaces, each tab in its folder, panes beside
+/// the tab they were split from, the names given here and, in a tab that had
+/// Claude or Codex, the same conversation, resumed straight away.
+enum TabRestore {
+    private static var helper: String? {
+        let path = KeepCLI.bundledPath
+        guard FileManager.default.isExecutableFile(atPath: path) else { return nil }
+        isolate()
+        return path
+    }
+
+    /// The pictures live in this build's own state folder (`restauro` inside
+    /// it): a test build, with a daemon of its own, must never bring the
+    /// person's tabs — or start their conversations — into its daemon.
+    private static func isolate() {
+        let folder = stateDirectory().appendingPathComponent("restauro", isDirectory: true).path
+        setenv("KEEP_RESTAURO_ESTADO", folder, 1)
+    }
+
+    /// The tabs of the last daemon, without the conversations: quick, so the
+    /// app waits for it before putting anything on screen of a fresh daemon.
+    /// Blocking.
+    static func tabs() {
+        guard let helper else { return }
+        let answer = KeepCLI.run(helper, ["restauro", "restaurar", "--fase=abas"], within: 30, name: "keep restauro")
+        log(answer)
+    }
+
+    /// The conversations still to come back, and a new picture of the tabs.
+    /// Blocking, and slow when conversations come back (one at a time).
+    static func keep() {
+        guard let helper else { return }
+        log(KeepCLI.run(helper, ["restauro", "manter"], within: 900, name: "keep restauro"))
+    }
+
+    private static func log(_ answer: Result<KeepCLI.Output, KeepCLI.Failure>) {
+        switch answer {
+        case .success(let output):
+            let text = String(decoding: output.data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.contains("\"abas\":0,\"conversas\":0") || text.contains("já restaurado") || text.contains("nada a restaurar") {
+                return
+            }
+            Trace.log("restore", text)
+        case .failure(let problem):
+            Trace.log("restore", problem.description)
+        }
+    }
+}

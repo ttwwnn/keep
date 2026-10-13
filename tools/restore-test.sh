@@ -175,7 +175,7 @@ kill_app
 say ""
 say "the app dies while the tabs are being put back, and they are made while it is down"
 start_daemon
-rm -f "$KEEP_STATE_DIR"/*.json
+rm -f "$KEEP_STATE_DIR"/*.json; rm -rf "$KEEP_STATE_DIR/restauro"   # nothing for the app to bring back itself (keep restauro)
 cat >"$KEEP_STATE_DIR/windows.json" <<'JSON'
 {"0":{"x":200,"y":200,"width":1000,"height":640,"workspaces":["Delta","Echo"]}}
 JSON
@@ -208,7 +208,7 @@ kill_app
 say ""
 say "a reboot with a window remembered, workspaces put away, and names from the last daemon"
 start_daemon
-rm -f "$KEEP_STATE_DIR"/*.json
+rm -f "$KEEP_STATE_DIR"/*.json; rm -rf "$KEEP_STATE_DIR/restauro"   # nothing for the app to bring back itself (keep restauro)
 # Kept is where the window was left. Hidden was put away and must stay away,
 # and so must Hidden2 when the restore makes it again. Stray is in no window
 # and was put away by nobody: made by some script while the app was down.
@@ -279,7 +279,7 @@ say ""
 say "two windows, each with its own workspaces"
 kill_app
 start_daemon
-rm -f "$KEEP_STATE_DIR"/*.json
+rm -f "$KEEP_STATE_DIR"/*.json; rm -rf "$KEEP_STATE_DIR/restauro"   # nothing for the app to bring back itself (keep restauro)
 "$KEEP" new One >/dev/null 2>&1
 "$KEEP" new Two >/dev/null 2>&1
 cat >"$KEEP_STATE_DIR/windows.json" <<'JSON'
@@ -294,7 +294,7 @@ kill_app
 say ""
 say "a workspace that was in two windows comes back to both"
 start_daemon
-rm -f "$KEEP_STATE_DIR"/*.json
+rm -f "$KEEP_STATE_DIR"/*.json; rm -rf "$KEEP_STATE_DIR/restauro"   # nothing for the app to bring back itself (keep restauro)
 cat >"$KEEP_STATE_DIR/windows.json" <<'JSON'
 {"0":{"x":60,"y":200,"width":620,"height":520,"workspaces":["Both","One"]},
  "1":{"x":720,"y":200,"width":620,"height":520,"workspaces":["Both","Two"]}}
@@ -314,7 +314,7 @@ kill_app
 say ""
 say "no window written down, as when the app was closed by its window's button"
 start_daemon
-rm -f "$KEEP_STATE_DIR"/*.json
+rm -f "$KEEP_STATE_DIR"/*.json; rm -rf "$KEEP_STATE_DIR/restauro"   # nothing for the app to bring back itself (keep restauro)
 "$KEEP" new Kept >/dev/null 2>&1
 "$KEEP" new Hidden >/dev/null 2>&1
 "$KEEP" new quick >/dev/null 2>&1
@@ -330,7 +330,7 @@ kill_app
 say ""
 say "a put-away workspace that did not run under the last daemon is forgotten"
 start_daemon
-rm -f "$KEEP_STATE_DIR"/*.json
+rm -f "$KEEP_STATE_DIR"/*.json; rm -rf "$KEEP_STATE_DIR/restauro"   # nothing for the app to bring back itself (keep restauro)
 "$KEEP" new Recent >/dev/null 2>&1
 # Recent ran under the last daemon (started at 1000) and comes back put away;
 # Gone had not run since the one before, and a new Gone is a new workspace.
@@ -346,7 +346,7 @@ kill_app
 say ""
 say "a reboot that brings back the same arrangement"
 start_daemon
-rm -f "$KEEP_STATE_DIR"/*.json
+rm -f "$KEEP_STATE_DIR"/*.json; rm -rf "$KEEP_STATE_DIR/restauro"   # nothing for the app to bring back itself (keep restauro)
 "$KEEP" new Solo >/dev/null 2>&1
 cat >"$KEEP_STATE_DIR/windows.json" <<'JSON'
 {"0":{"x":200,"y":200,"width":1000,"height":640,"workspaces":["Solo"],"showing":["Solo"],"tab":{"workspace":"Solo","root":1}}}

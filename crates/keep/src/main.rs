@@ -93,6 +93,7 @@ fn run() -> Result<()> {
         // conversation left: see docs/ia.md. Answered in JSON, for the apps.
         Some("ia") => std::process::exit(keep_ia::cli::ia(&args[1..])),
         Some("worktrees") => std::process::exit(keep_ia::cli::worktrees(&args[1..])),
+        Some("restauro") => std::process::exit(keep_restauro::cli::main(&args[1..])),
         Some("-h" | "--help" | "help") => {
             print_help();
             Ok(())
@@ -327,6 +328,7 @@ USAGE
   keep new <name>      open a tab in <name>, without attaching
   keep ls              list workspaces and their tabs
   keep kill <name>     end a workspace
+  keep restauro …      the tabs back after a restart (the app runs it)
 
 IN A TAB
   ctrl-\\               detach, leaving everything running
