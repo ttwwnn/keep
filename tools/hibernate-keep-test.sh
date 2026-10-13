@@ -96,6 +96,17 @@ swiftc -O tools/axfullscreen.swift -o "$FULLSCREEN" 2>/dev/null || { say "could 
 swiftc -O tools/mousedrag.swift -o "$WORK/mousedrag" 2>/dev/null || { say "could not build mousedrag"; exit 1; }
 # The app's windows on screen, as the window server counts them.
 window_count() { "$WORK/mousedrag" windows 2>/dev/null | wc -l | tr -d ' '; }
+AXPRESS_TOOL=$AXPRESS
+# The window in front closed as a person closes it, with a click: its
+# close button, or File > Close Window where none is found. No chord closes
+# anything in Keep (`swallowUnwantedKeys`).
+close_front_window() {
+    osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" \
+        >/dev/null 2>&1
+    sleep 1
+    osascript -e "tell application \"System Events\" to tell process \"$APP_NAME\" to click (first button of window 1 whose subrole is \"AXCloseButton\")" \
+        >/dev/null 2>&1 || "$AXPRESS_TOOL" "$APP_NAME" menu File "Close Window" >/dev/null 2>&1
+}
 # A locked screen hides every window from the accessibility tree and keeps a
 # window from going full screen: nothing here can be asked or done then.
 cat >"$WORK/locked.swift" <<'SWIFT'
@@ -546,15 +557,11 @@ check "neither window let go of tab 2 while the first shows it" "$HIB2" \
     "$(trace_count "pool +hibernating w[0-9]+ $WS/2 ")"
 check "while tabs out of sight in the second window were let go of" "yes" \
     "$([ -n "$SECOND" ] && grep -aqE "pool +hibernating $SECOND $WS/[56] " "$WORK/app.log" && echo yes || echo no)"
-# Closed as a person closes it, with a click — no chord closes anything in
-# Keep: File > Close Window, which closes the window in front, the second,
-# put there again first.
+# Closed as a person closes it, with a click on the window in front: the
+# second, put there again first.
 for attempt in 1 2 3; do
     [ "$(window_count)" -le 1 ] && break
-    osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" \
-        >/dev/null 2>&1
-    sleep 1
-    "$AXPRESS" "$APP_NAME" menu File "Close Window" >/dev/null 2>&1
+    close_front_window
     until_true 10 '[ "$(window_count)" -le 1 ]'
 done
 check "the second window is closed, the first left" "1 $FIRST_WINDOW" \

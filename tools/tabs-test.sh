@@ -106,6 +106,17 @@ shape() { trace | grep "row " | tail -1; }
 # A click on a window that is not key spends itself activating that window, so
 # a probe that assumed focus from a `frontmost` issued half a minute and a
 # keystroke ago reports "nothing reached a tab" about an aim that was exact.
+AXPRESS_TOOL=$WORK/axpress
+# The window in front closed as a person closes it, with a click: its
+# close button, or File > Close Window where none is found. No chord closes
+# anything in Keep (`swallowUnwantedKeys`).
+close_front_window() {
+    osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" \
+        >/dev/null 2>&1
+    sleep 1
+    osascript -e "tell application \"System Events\" to tell process \"$APP_NAME\" to click (first button of window 1 whose subrole is \"AXCloseButton\")" \
+        >/dev/null 2>&1 || "$AXPRESS_TOOL" "$APP_NAME" menu File "Close Window" >/dev/null 2>&1
+}
 focus_app() {
     osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" \
         >/dev/null 2>&1
@@ -303,10 +314,8 @@ check "and the row it came from moved on" yes "$(switched_away_from "$TORN")"
 
 # Closed again, so the rest of the run has one window to talk about: every
 # probe below asks for "the Keep window" and gets whichever is in front.
-# With a click, File > Close Window, on the window the tab was pulled into,
-# in front: no chord closes anything in Keep (`swallowUnwantedKeys`).
-focus_app
-"$WORK/axpress" "$APP_NAME" menu File "Close Window" >/dev/null 2>&1; sleep 3
+# With a click, on the window the tab was pulled into, in front.
+close_front_window; sleep 3
 check "and closing it leaves the one we started with" \
     "$WINDOWS_BEFORE" "$(window_count)"
 

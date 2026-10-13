@@ -93,6 +93,17 @@ focus_app() {
         >/dev/null 2>&1
     sleep 1
 }
+AXPRESS_TOOL=$WORK/axpress
+# The window in front closed as a person closes it, with a click: its
+# close button, or File > Close Window where none is found. No chord closes
+# anything in Keep (`swallowUnwantedKeys`).
+close_front_window() {
+    osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" \
+        >/dev/null 2>&1
+    sleep 1
+    osascript -e "tell application \"System Events\" to tell process \"$APP_NAME\" to click (first button of window 1 whose subrole is \"AXCloseButton\")" \
+        >/dev/null 2>&1 || "$AXPRESS_TOOL" "$APP_NAME" menu File "Close Window" >/dev/null 2>&1
+}
 windows() { "$MOUSE" windows | sort -n; }
 window_count() { windows | wc -l | tr -d ' '; }
 # One window's geometry, by its place in the list rather than its id: a
@@ -172,10 +183,7 @@ check "and both are watching that shell again" 2 "$(viewers_settle 2)"
 # ---------------------------------------------- closing a window kills nothing
 say ""
 say "closing one of them"
-# With a click, File > Close Window: no chord closes anything in Keep
-# (⌘W and ⌥⌘W are swallowed, `swallowUnwantedKeys`).
-focus_app
-"$WORK/axpress" "$APP_NAME" menu File "Close Window" >/dev/null 2>&1; sleep 3
+close_front_window; sleep 3
 check "one window is left" 1 "$(window_count)"
 check "every shell is still running" "$TABS_BEFORE" "$(tab_count)"
 check "with one window watching, not two" 1 "$(viewers_settle 1)"
