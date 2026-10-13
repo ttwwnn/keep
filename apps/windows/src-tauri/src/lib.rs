@@ -7,6 +7,7 @@
 mod claude_settings;
 mod daemon;
 mod ia;
+mod memory;
 mod sessions;
 mod settings;
 mod status;
@@ -228,6 +229,17 @@ fn choose_shell(command: String) -> Answer<()> {
 }
 
 /// Whether the core is here to ask about AI accounts and worktrees.
+/// The computer's memory in use; none where it cannot be read.
+#[tauri::command]
+fn memory_now() -> Option<memory::Memory> {
+    memory::now()
+}
+
+#[tauri::command]
+fn memory_monitor() {
+    memory::open_monitor();
+}
+
 #[tauri::command]
 fn ia_info(app: AppHandle) -> ia::Info {
     ia::info(resources(&app).as_deref())
@@ -462,6 +474,8 @@ pub fn run() {
             shells,
             choose_shell,
             ia_info,
+            memory_now,
+            memory_monitor,
             ia,
             ia_signature,
             ia_trash,

@@ -45,8 +45,8 @@ export interface GuiState {
   daemon: string;
 }
 
-export const SIDEBAR_MIN = 170;
-export const SIDEBAR_MAX = 480;
+export const SIDEBAR_MIN = 200;
+export const SIDEBAR_MAX = 320;
 
 export function defaultState(): GuiState {
   return {
@@ -59,7 +59,7 @@ export function defaultState(): GuiState {
     lastTab: {},
     zoom: 1,
     appearance: "auto",
-    sidebar: { visible: true, width: 240 },
+    sidebar: { visible: true, width: 250 },
     font: { family: "", size: 0 },
     restore: [],
     daemon: "",

@@ -162,7 +162,7 @@ function Compact(props: { line: UsageLine; index: number; count: number }) {
   return (
     <div class="usage-compact" data-account={orderKeyOf(line.account)}>
       <span class="usage-compact-name" title={help}>
-        <Heading text={line.account.email ?? name} index={index} used={used} />
+        <Heading text={line.account.email?.split("@")[0] ?? name} index={index} used={used} />
       </span>
       <span class="usage-compact-figures" aria-label={`${numbered} ${windows.map((w) => percentText(w.percent)).join(" · ")}`}>
         {windows.length === 0 ? (
@@ -256,7 +256,7 @@ export function UsageFooter() {
   const folded = footerFolded.value;
   const nowMs = usageClock.value;
   return (
-    <section class="usage-footer" aria-label="Consumo de IA">
+    <section class={`usage-footer ${folded ? "folded" : ""}`} aria-label="Consumo de IA">
       <div class="usage-head">
         <button
           class="usage-fold"
@@ -289,9 +289,6 @@ export function UsageFooter() {
       </div>
       {usageNotice.value && <div class="usage-notice">{usageNotice.value}</div>}
       <div class={`usage-lines ${folded ? "folded" : ""}`}>
-        {lines.length === 0 && !jev.value && (
-          <div class="usage-empty">Nenhuma conta de IA ainda: entre numa pelo +.</div>
-        )}
         {lines.map((line, i) =>
           folded ? (
             <Compact key={lineId(line)} line={line} index={i} count={lines.length} />

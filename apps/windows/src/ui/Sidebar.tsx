@@ -43,10 +43,12 @@ import { tabAccount, usageLines } from "../iaStore";
 import { homeRelative } from "../text";
 import { info } from "../store";
 import { zoomPercent } from "../zoom";
+import { Battery } from "./Battery";
 import { AccountChevron } from "./AccountMenu";
 import { InlineEditor, openMenu } from "./common";
 import * as icon from "./icons";
 import { tabLook, useBreath } from "./tabLook";
+import { MemoryMeter } from "./MemoryMeter";
 import { UsageFooter } from "./UsageFooter";
 
 function TabRow(props: { workspace: string; tab: RootTab; index: number; selected: boolean }) {
@@ -344,7 +346,7 @@ function Resizer() {
         setSidebarWidth(Math.round(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, width))));
       }}
       onPointerUp={() => (start.current = null)}
-      onDblClick={() => setSidebarWidth(240)}
+      onDblClick={() => setSidebarWidth(250)}
     />
   );
 }
@@ -354,6 +356,7 @@ export function Sidebar() {
   return (
     <aside class="sidebar" style={{ width: `${width}px` }}>
       <div class={`sidebar-head ${isMac.value ? "inset" : ""}`} data-tauri-drag-region>
+        <Battery />
         <ZoomControl />
         <button class="round-button" title="Esconder a barra lateral" aria-label="Esconder a barra lateral" onClick={toggleSidebar}>
           <icon.Sidebar />
@@ -365,6 +368,7 @@ export function Sidebar() {
         ))}
         <NewWorkspaceField />
       </div>
+      <MemoryMeter />
       <UsageFooter />
       {notice.value && (
         <div class="sidebar-foot">

@@ -465,6 +465,123 @@ button {
   color: var(--ink-faint);
 }
 
+/* ------------------------------------------------------------ battery */
+
+.battery {
+  --h: calc(12px * var(--icon));
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  margin-right: 4px;
+  font: 500 calc(11px * var(--icon)) var(--ui-font);
+  font-variant-numeric: tabular-nums;
+}
+
+.battery.live {
+  --charge: var(--live);
+}
+
+.battery.attention {
+  --charge: var(--attention);
+}
+
+.battery.critical {
+  --charge: var(--critical);
+}
+
+.battery-bolt {
+  width: calc(8px * var(--icon));
+  height: calc(12px * var(--icon));
+  margin-right: 3px;
+  color: var(--charge);
+}
+
+.battery-body {
+  position: relative;
+  height: var(--h);
+  padding: 0 2px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(var(--ink-rgb), 0.32);
+  border-radius: min(4px, calc(var(--h) / 3));
+  overflow: hidden;
+}
+
+.battery-charge {
+  position: absolute;
+  top: 1.5px;
+  bottom: 1.5px;
+  left: 1.5px;
+  width: max(2px, calc((100% - 3px) * var(--p)));
+  border-radius: calc(min(4px, var(--h) / 3) - 1.5px);
+  background: var(--charge);
+}
+
+/* Gives the cell the width of its widest figure. */
+.battery-size {
+  grid-area: 1 / 1;
+  line-height: 1;
+  visibility: hidden;
+}
+
+.battery-text {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  line-height: 1;
+  color: var(--chrome-text);
+}
+
+/* The figure again, dark, over the charge alone. */
+.battery-text.over {
+  color: rgba(0, 0, 0, 0.85);
+  clip-path: inset(0 calc(100% - 1.5px - (100% - 3px) * var(--p)) 0 0);
+}
+
+.battery-tip {
+  width: 1.5px;
+  height: 5px;
+  border-radius: 0 0.75px 0.75px 0;
+  background: rgba(var(--ink-rgb), 0.32);
+}
+
+/* ------------------------------------------------------------ memory meter */
+
+.memory-meter {
+  flex: none;
+  padding: 0 17px 8px;
+  border-top: 1px solid var(--rule);
+  font: calc(12.5px * var(--t)) var(--mono);
+  cursor: default;
+}
+
+.memory-title {
+  padding: 7px 0 5px;
+  color: var(--ink-faint);
+}
+
+.memory-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: calc(16px * var(--s));
+}
+
+.memory-figures {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-resting);
+}
+
+.memory-figures.attention {
+  color: var(--attention);
+}
+
+.memory-figures.critical {
+  color: var(--critical);
+}
+
 /* ------------------------------------------------------------ usage footer */
 
 .usage-footer {
@@ -1174,13 +1291,13 @@ button {
 /* The bar: the model and the effort (click to change), the agents. Never
    smaller than 13px; it keeps up with the zoom and does not fall under it. */
 .ai-status-bar {
-  --bar-text: max(13px, calc(13px * var(--zoom)));
+  --bar-text: calc(12.5px * var(--t));
   flex: none;
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
-  height: max(28px, calc(28px * var(--zoom)));
+  height: round(calc(var(--bar-text) + 13px), 1px);
   padding: 0 12px;
   border-top: 1px solid var(--rule);
   background: var(--ground);
@@ -1197,17 +1314,11 @@ button {
   max-width: 60%;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding: 3px 6px;
+  padding: 0;
   border: 0;
-  border-radius: 5px;
   background: transparent;
   color: var(--ink);
   font: inherit;
-  transition: background-color 150ms var(--ease);
-}
-
-.ai-chip:hover {
-  background: var(--wash);
 }
 
 .ai-dot {
@@ -1221,18 +1332,18 @@ button {
 
 /* In a split, the panes not holding the keyboard step back a little. */
 .split .pane:not(.focused) .term-root {
-  opacity: 0.78;
+  opacity: 0.5;
 }
 
 .term-root {
   position: absolute;
   inset: 0;
-  transition: opacity 150ms var(--ease);
+  transition: opacity 120ms ease-out;
 }
 
 .term-root .xterm {
   height: 100%;
-  padding: 6px 0 2px 10px;
+  padding: 0 2px;
   user-select: text;
 }
 
@@ -1325,32 +1436,47 @@ button {
   z-index: 50;
   display: flex;
   flex-direction: column;
-  border-radius: 12px;
+  border-radius: 24px;
   background: var(--overlay);
-  border: 1px solid var(--rule);
+  -webkit-backdrop-filter: blur(30px);
+  backdrop-filter: blur(30px);
   box-shadow: var(--shadow);
   color: var(--ink);
   user-select: none;
 }
 
+/* The rim: a white line, brighter at the top, as the macOS card has it. */
+.card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.12) 45%, rgba(255, 255, 255, 0.17));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  pointer-events: none;
+}
+
 .picker,
 .search-all {
-  top: 64px;
+  top: 90px;
   left: 50%;
   transform: translateX(-50%);
-  width: min(680px, calc(100vw - 80px));
-  max-height: min(70vh, 640px);
+  width: min(860px, 66vw);
+  max-height: min(560px, 62vh);
 }
 
 .card-input {
-  height: 44px;
+  height: 24px;
   flex: none;
-  padding: 0 16px;
+  margin: 20px 20px 18px;
+  padding: 0;
   border: 0;
-  border-bottom: 1px solid var(--rule);
   background: transparent;
   color: var(--ink);
-  font: 15px var(--ui-font);
+  font: 16px var(--ui-font);
   outline: none;
   user-select: text;
 }
@@ -1367,25 +1493,33 @@ button {
 }
 
 .card-row {
-  width: 100%;
+  width: calc(100% - 12px);
   min-height: 30px;
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 10px;
+  margin: 2px 6px;
+  padding: 0 12px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 12px;
   background: none;
   color: var(--ink-resting);
   text-align: left;
 }
 
+.card-row:hover:not(.selected) {
+  background: rgba(var(--ink-rgb), 0.06);
+}
+
 .card-row.selected {
-  background: var(--wash-strong);
+  background: var(--card-select);
   color: var(--ink);
 }
 
 .card-row .row-title {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--ink);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1403,7 +1537,7 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--ink-faint);
 }
 
@@ -1411,13 +1545,15 @@ button {
   color: var(--ink);
 }
 
-.card-row mark,
-.hit-line mark {
+.card-row mark {
   background: none;
   color: var(--ink);
   font-weight: 700;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+}
+
+.hit-line mark {
+  background: rgba(255, 214, 10, 0.35);
+  color: var(--ink);
 }
 
 .card-row.hit {
@@ -1634,15 +1770,17 @@ button.danger.primary {
   z-index: 70;
   min-width: 210px;
   padding: 4px;
-  border-radius: 9px;
+  border-radius: 10px;
   background: var(--overlay);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
   border: 1px solid var(--rule);
-  box-shadow: var(--shadow);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
 }
 
 .menu-item {
   width: 100%;
-  height: 28px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1661,6 +1799,11 @@ button.danger.primary {
 
 .menu-item.danger {
   color: var(--danger);
+}
+
+.menu-item.danger:hover:not(:disabled) {
+  background: var(--danger);
+  color: #ffffff;
 }
 
 .menu-item:disabled {

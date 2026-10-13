@@ -153,6 +153,14 @@ export const codexModels = (known: string | null) =>
   invoke<{ stamp: string | null; text: string | null }>("codex_models", { known });
 /** A line for the app's log. */
 export const appLog = (line: string) => invoke<void>("app_log", { line });
+export interface Memory {
+  used: number;
+  total: number;
+}
+
+/** The computer's memory in use, in bytes; null where it cannot be read. */
+export const memoryNow = () => invoke<Memory | null>("memory_now");
+export const memoryMonitor = () => invoke<void>("memory_monitor");
 export const pathExists = (path: string) => invoke<boolean>("path_exists", { path });
 export const e2eShot = (name: string) => invoke<void>("e2e_shot", { name });
 export const e2eFake = (state: unknown) => invoke<void>("e2e_fake", { state });

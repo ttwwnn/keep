@@ -130,7 +130,10 @@ export function applyPalette(palette: Palette): void {
     "--wash": `rgba(${ink}, ${palette.dark ? 0.09 : 0.07})`,
     "--wash-strong": `rgba(${ink}, ${palette.dark ? 0.14 : 0.11})`,
     "--rule": `rgba(${ink}, 0.08)`,
-    "--overlay": palette.dark ? "rgba(36, 40, 47, 0.97)" : "rgba(252, 252, 252, 0.98)",
+    // The card of the picker: the terminal's ground, a step further back (x0.78
+    // dark, x0.94 light), a little translucent over the blur.
+    "--overlay": palette.dark ? "rgba(31, 34, 41, 0.86)" : "rgba(240, 240, 240, 0.9)",
+    "--card-select": palette.dark ? "rgba(255, 255, 255, 0.2)" : "rgba(0, 0, 0, 0.1)",
     "--shadow": "0 18px 48px rgba(0, 0, 0, 0.62)",
     // DESIGN.md's state dots, in OKLCH: attached, busy, idle.
     // A step darker on a light ground, as the macOS app lowers them.
@@ -140,7 +143,7 @@ export function applyPalette(palette: Palette): void {
     // The mark of a tab at work: Claude Code's orange, Codex's blue-green.
     "--mark-claude": palette.dark ? "oklch(0.72 0.15 48)" : "oklch(0.50 0.15 48)",
     "--mark-codex": palette.dark ? "oklch(0.78 0.11 200)" : "oklch(0.56 0.11 200)",
-    "--danger": palette.dark ? "#ff6b6b" : "#c42b1c",
+    "--danger": palette.dark ? "#ff453a" : "#ff3b30",
     // The usage footer's: amber from 75%, red from 90% (the Clínica panel's
     // thresholds), and the attached green for the account a tab is on — a
     // step darker on a light ground, as the macOS footer's are.
