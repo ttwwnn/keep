@@ -989,6 +989,7 @@ final class GhosttyApp {
         let body = """
             command = \(clientBinary)
             window-padding-y = 0
+            cursor-style = bar
             \(chosen)
             keybind = alt+backspace=text:\\x1b\\x7f
             keybind = shift+tab=text:\\x1b[Z

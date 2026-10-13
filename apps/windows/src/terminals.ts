@@ -76,6 +76,9 @@ export class TermView {
       scrollback: 10000,
       allowProposedApi: true,
       cursorBlink: false,
+      // A bar, as in a word processor, not a block.
+      cursorStyle: "bar",
+      cursorInactiveStyle: "bar",
       // ConPTY reflows lines itself on a resize; told which build it is,
       // xterm.js leaves the reflowing to it rather than doing it twice.
       windowsPty:
