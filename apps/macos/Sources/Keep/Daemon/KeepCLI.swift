@@ -476,6 +476,23 @@ enum TabRestore {
         log(KeepCLI.run(helper, ["restauro", "manter"], within: 900, name: "keep restauro"))
     }
 
+    /// The conversations that stopped on a dropped login, network or usage
+    /// limit, told to continue once it is back. Blocking: a round that types
+    /// waits up to 8 s for the message to reach the transcript. Its log and
+    /// state live beside the pictures (`continuar.log`).
+    static func resume() {
+        guard let helper else { return }
+        let answer = KeepCLI.run(helper, ["continuar"], within: 120, name: "keep continuar")
+        switch answer {
+        case .success(let output):
+            let text = String(decoding: output.data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.contains("\"enviadas\":0") || text.contains("outra rodada") { return }
+            Trace.log("continuar", text)
+        case .failure(let problem):
+            Trace.log("continuar", problem.description)
+        }
+    }
+
     /// `~/Applications/Ghostty.app`, the stand-in through which Claude Code
     /// opens its `claude-cli://` links in a Keep tab (`keep links`): made, or
     /// brought up to this app's `keep`, once per launch. Blocking.

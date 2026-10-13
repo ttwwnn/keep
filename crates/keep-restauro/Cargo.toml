@@ -1,6 +1,6 @@
 [package]
 name = "keep-restauro"
-description = "As abas do Keep de volta depois de reiniciar o computador: workspaces, pastas, painéis, nomes e as conversas do Claude e do Codex"
+description = "As abas do Keep: de volta depois de reiniciar (com as conversas), a conversa nova numa aba, os links claude-cli:// e a conversa que parou numa queda de login, de rede ou de limite"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,6 +9,8 @@ repository.workspace = true
 [dependencies]
 keep-ia = { version = "0.0.1", path = "../keep-ia" }
 keep-proto = { version = "0.0.1", path = "../keep-proto" }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

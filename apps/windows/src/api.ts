@@ -130,6 +130,8 @@ export const iaSignature = () => invoke<string>("ia_signature");
 /** Send listed worktrees to the Recycle Bin, once these processes are gone; what did not go. */
 export const iaTrash = (items: { caminho: string; nasceu_ns: string | null }[], pids: number[]) =>
   invoke<string[]>("ia_trash", { items, pids });
+/** The worktrees of tabs that closed without the question, to the Recycle Bin by the core's say; what did not go. */
+export const iaSweep = () => invoke<string[]>("ia_sweep");
 /** What Claude Code's status line saved for each of these shells: its JSON text, by shell pid. */
 export const claudeStatuses = (shells: number[]) => invoke<Record<string, string>>("claude_statuses", { shells });
 /** Claude Code's settings file as it stands, and the status line script installed with the app. */

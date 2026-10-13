@@ -26,6 +26,14 @@ import Foundation
 /// is written down asynchronously by the process that trashes, and a helper
 /// that exited straight after would lose it.
 ///
+/// A tab can also end without the question: its shell exits, its workspace
+/// ends another way, the computer restarts and the tab does not come back.
+/// The person's rule is the same — the tab closed, its worktrees go — so the
+/// core keeps a list of the conversations whose tabs closed and, after each
+/// `indexar`, says which worktrees they left (`keep worktrees orfas`), with
+/// more suspicion than the question and twenty minutes of grace; `sweep`
+/// moves them by the same steps.
+///
 /// Blocking throughout; call it off the main thread.
 enum Worktrees {
     /// What to ask about: a daemon workspace and the daemon tabs in it that
@@ -73,6 +81,9 @@ enum Worktrees {
         let lixeira: [Item]?
         let mantidas: [Kept]?
         let avisos: [String]?
+        /// The sweep's (`orfas`): registrations whose folder is already
+        /// gone, which leave the repository on their own (`esquecer`).
+        var registros: [Item]? = nil
 
         /// The processes that end with the tabs, to be waited for before
         /// anything moves: a folder still being written to follows nobody to
@@ -313,6 +324,102 @@ enum Worktrees {
             Thread.sleep(forTimeInterval: 0.1)
         }
         return pids.filter(alive)
+    }
+
+    // MARK: - tabs that closed without the question
+
+    /// Sweeps under way. The app waits for them before quitting, as for the
+    /// question's own moves; once it is quitting, no new one starts and one
+    /// under way stops between folders.
+    private static let sweepLock = NSLock()
+    private static var sweeps = 0
+    private static var stopping = false
+    private static var afterSweeps: [() -> Void] = []
+
+    private static func locked<T>(_ body: () -> T) -> T {
+        sweepLock.lock()
+        defer { sweepLock.unlock() }
+        return body()
+    }
+
+    private static var shouldStop: Bool { locked { stopping } }
+
+    /// The app is quitting: no sweep starts from now on. True when one is
+    /// under way — `done` runs when it ends (off the main thread).
+    static func stopSweeping(then done: @escaping () -> Void) -> Bool {
+        locked {
+            stopping = true
+            guard sweeps > 0 else { return false }
+            afterSweeps.append(done)
+            return true
+        }
+    }
+
+    /// The worktrees of tabs that closed without the question, sent where the
+    /// question would have sent them: the core says which (`orfas`) and this
+    /// moves them by `trash`'s steps — prepared, trashed, concluded — without
+    /// asking, the person's standing rule being the consent; the care is the
+    /// core's (an orphan waits twenty minutes, and anything in doubt stays).
+    /// A registration whose folder is already gone leaves the repository on
+    /// its own (`esquecer`). Nothing when there is no `keep`, or one from
+    /// before the sweep. What did not go, one line each.
+    static func sweep() -> [String] {
+        guard let helper else { return [] }
+        let started: Bool = locked {
+            guard !stopping else { return false }
+            sweeps += 1
+            return true
+        }
+        guard started else { return [] }
+        defer {
+            let waiting: [() -> Void] = locked {
+                sweeps -= 1
+                guard sweeps == 0 else { return [] }
+                let all = afterSweeps
+                afterSweeps = []
+                return all
+            }
+            waiting.forEach { $0() }
+        }
+        let found: Listing
+        switch run(helper, ["orfas", "--json"], within: 120) {
+        case .failure(let why) where why.status == 2:
+            // A core from before the sweep does not know the question.
+            return []
+        case .failure(let why):
+            return ["o keep worktrees orfas falhou: \(why.description)"]
+        case .success(let data):
+            let answer = object(data)
+            if answer["ocupado"] as? Bool == true { return [] }
+            guard let read = try? JSONDecoder().decode(Listing.self, from: data), read.versao == 1 else {
+                return ["resposta ilegível do keep worktrees orfas"]
+            }
+            found = read
+        }
+        var problems: [String] = []
+        let going = found.lixeira ?? []
+        if !going.isEmpty, !shouldStop {
+            for item in going { Trace.log("worktree", "aba fechada sem a pergunta: \(tilde(item.caminho)) vai para a lixeira") }
+            problems += trash(Listing(versao: 1, abas: [], lixeira: going, mantidas: [], avisos: []))
+            // "Put Back" is written down a moment after the move (see `trash`).
+            Thread.sleep(forTimeInterval: 2)
+        }
+        for item in found.registros ?? [] {
+            if shouldStop { break }
+            let identity = item.nasceu_ns.map { ["--nasceu", String($0)] } ?? []
+            switch run(helper, ["esquecer", item.caminho] + identity, within: 30) {
+            case .failure(let why):
+                problems.append("\(tilde(item.caminho)): \(why.description)")
+            case .success(let data):
+                let answer = object(data)
+                if answer["ok"] as? Bool == true {
+                    Trace.log("worktree", "registro sem pasta esquecido: \(tilde(item.caminho))")
+                } else {
+                    problems.append("\(tilde(item.caminho)): \(answer["motivo"] as? String ?? "registro mantido")")
+                }
+            }
+        }
+        return problems
     }
 
     // MARK: - running the helper

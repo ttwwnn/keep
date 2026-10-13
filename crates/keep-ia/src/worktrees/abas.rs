@@ -383,20 +383,77 @@ pub fn resolver(
     (saida, ctx)
 }
 
+/// Todas as abas vivas de um daemon que diz os processos (`List3`): o
+/// contexto do `em_uso` sem nenhuma aba fechando, e as conversas que têm
+/// aba aberta — a que roda em cada shell agora e as que já rodaram nele (o
+/// histórico do `indexar`), do Claude e do Codex.
+pub fn abas_vivas(
+    amb: &Ambiente,
+    r: &crate::daemon::Retrato,
+    est: Option<&Estado>,
+    vivas: &[SessaoViva],
+) -> (Contexto, HashSet<String>) {
+    let mut ctx = Contexto::default();
+    let mut ids: HashSet<String> = HashSet::new();
+    if !r.exato {
+        return (ctx, ids);
+    }
+    ctx.daemon = Some(chave_keepd(&r.daemon));
+    let abas: HashMap<(String, u32), TabInfo> =
+        r.abas.iter().filter(|a| !a.info.finished).map(|a| ((a.ws.clone(), a.info.id), a.info.clone())).collect();
+    let nomes = nomes_do_app(amb, nascimento_do_socket(amb));
+    let lista = processos::todos();
+    for ((ws, id), v) in crate::vinculo::vincular(r).iter().filter(|(_, v)| v.exato) {
+        ctx.conchas_keepd.insert(v.shell);
+        ctx.rotulos.insert(v.shell, (rotulo_da_aba(ws, *id, &abas, &nomes), ws.clone()));
+        if let Some(info) = abas.get(&(ws.clone(), *id)) {
+            ctx.extras.push(info.cwd.clone());
+        }
+        ids.extend(identifica(amb, v.shell, v.frente, &lista, vivas).ids);
+        ids.extend(historico_da_concha(est, ctx.daemon.as_deref(), v.shell, false));
+        ids.extend(historico_da_concha(est, ctx.daemon.as_deref(), v.shell, true));
+    }
+    (ctx, ids)
+}
+
 /// O `indexar` acumula as conversas de cada shell do daemon que está
 /// rodando (só o que diz os processos): `{pid do shell: {ids, nasceu}}`. Os
-/// de outro daemon e os shells que morreram saem. Devolve quantas conversas
-/// novas entraram.
-pub fn atualizar_historico(amb: &Ambiente, est: &mut Estado, r: &crate::daemon::Retrato, vivas: &[SessaoViva]) -> usize {
+/// de outro daemon e os shells que morreram saem — e as conversas deles vão
+/// para `encerradas` (a aba delas fechou), de onde sai a que volta a rodar
+/// numa aba. Devolve quantas conversas novas entraram.
+pub fn atualizar_historico(
+    amb: &Ambiente,
+    est: &mut Estado,
+    r: &crate::daemon::Retrato,
+    vivas: &[SessaoViva],
+    agora: f64,
+) -> usize {
     if !r.exato {
         return 0;
     }
     let k = chave_keepd(&r.daemon);
+    // (id, é do Codex) das abas que fecharam.
+    let mut fechadas: Vec<(String, bool)> = Vec::new();
+    let das = |h: &Historia, fechadas: &mut Vec<(String, bool)>| {
+        for id in &h.ids {
+            fechadas.push((id.clone(), h.codex.contains(id)));
+        }
+        for id in h.codex.iter().filter(|id| !h.ids.contains(id)) {
+            fechadas.push((id.clone(), true));
+        }
+    };
+    // O daemon é outro (o computador reiniciou): as abas do de antes fecharam com ele.
+    for (_, cur) in est.historico.iter().filter(|(x, _)| **x != k) {
+        for h in cur.values() {
+            das(h, &mut fechadas);
+        }
+    }
     est.historico.retain(|x, _| *x == k);
     let lista = processos::todos();
     let vinc = crate::vinculo::vincular(r);
     let cur = est.historico.entry(k).or_default();
     let mut novos = 0;
+    let mut agora_vivas: Vec<String> = Vec::new();
     for v in vinc.values().filter(|v| v.exato) {
         let p = identifica(amb, v.shell, v.frente, &lista, vivas);
         if p.ids.is_empty() {
@@ -405,9 +462,12 @@ pub fn atualizar_historico(amb: &Ambiente, est: &mut Estado, r: &crate::daemon::
         let Some(nasceu) = nascimento_do_processo(v.shell) else { continue };
         let ent = cur.entry(v.shell.to_string()).or_default();
         if (ent.nasceu - nasceu).abs() > 0.01 {
+            // O pid é de outro shell: o de antes fechou.
+            das(ent, &mut fechadas);
             *ent = Historia { ids: Vec::new(), nasceu, codex: Vec::new() };
         }
         for id in &p.ids {
+            agora_vivas.push(id.clone());
             if !ent.ids.contains(id) {
                 ent.ids.push(id.clone());
                 novos += 1;
@@ -417,8 +477,24 @@ pub fn atualizar_historico(amb: &Ambiente, est: &mut Estado, r: &crate::daemon::
             }
         }
     }
-    cur.retain(|pid, h| {
+    let vivo = |pid: &String, h: &Historia| {
         pid.parse::<u32>().ok().and_then(nascimento_do_processo).is_some_and(|n| (h.nasceu - n).abs() <= 0.01)
-    });
+    };
+    for (pid, h) in cur.iter() {
+        if !vivo(pid, h) {
+            das(h, &mut fechadas);
+        }
+    }
+    cur.retain(|pid, h| vivo(pid, h));
+    // A conversa que segue numa aba aberta (rodando ou já rodou no shell
+    // dela) não fechou, mesmo que outra aba com ela tenha fechado.
+    let abertas: std::collections::HashSet<String> =
+        cur.values().flat_map(|h| h.ids.iter().chain(h.codex.iter()).cloned()).chain(agora_vivas).collect();
+    for (id, codex) in fechadas {
+        if !abertas.contains(&id) {
+            super::estado::encerra(est, &id, codex, agora);
+        }
+    }
+    est.encerradas.retain(|id, e| !abertas.contains(id) && agora - e.saiu_em <= super::RETENCAO_ENCERRADAS);
     novos
 }

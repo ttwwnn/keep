@@ -623,10 +623,12 @@ dependencies = [
 name = "keep-restauro"
 version = "0.0.1"
 dependencies = [
+ "chrono",
  "keep-ia",
  "keep-proto",
  "keepd",
  "libc",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

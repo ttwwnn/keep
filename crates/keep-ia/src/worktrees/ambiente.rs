@@ -53,6 +53,10 @@ pub struct Ambiente {
     pub app: Option<PathBuf>,
     /// O git (`KEEP_GIT`).
     pub git: PathBuf,
+    /// O estado da restauração das abas depois de um reinício
+    /// (`KEEP_RESTAURO_ESTADO`, senão `restauro` ao lado do estado da IA):
+    /// enquanto ela não acaba, nada é varrido.
+    pub restauro: Option<PathBuf>,
     #[doc(hidden)]
     pub ganchos: Ganchos,
 }
@@ -79,6 +83,8 @@ impl Ambiente {
             socket: keep_proto::socket_path(),
             app: var("KEEP_STATE_DIR").or_else(|| app_padrao(&casa)),
             git: var("KEEP_GIT").unwrap_or_else(super::git::padrao),
+            restauro: var("KEEP_RESTAURO_ESTADO")
+                .or_else(|| crate::caminhos::estado().parent().map(|p| p.join("restauro"))),
             casa,
             ganchos: Ganchos::default(),
         }
@@ -101,6 +107,7 @@ impl Ambiente {
             socket,
             app: Some(p("app")),
             git: super::git::padrao(),
+            restauro: Some(p("restauro")),
             ganchos: Ganchos::default(),
         }
     }

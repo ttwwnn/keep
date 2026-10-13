@@ -11,10 +11,13 @@
 //! novo, para as abas (`--fase abas`), e depois a cada 30 s, para as conversas e
 //! o retrato (`manter`).
 //!
-//! Aqui mora também `keep nova`: uma conversa nova do Claude numa aba nova (o
-//! caminho para uma sessão abrir outra, e o dos links `claude-cli://`).
+//! Aqui moram também `keep nova` (uma conversa nova do Claude numa aba nova, o
+//! caminho para uma sessão abrir outra e o dos links `claude-cli://`) e `keep
+//! continuar` (a conversa que parou numa queda de login, de rede ou de limite
+//! recebe "continue" quando a causa passa).
 
 pub mod cli;
+pub mod continuar;
 pub mod daemon;
 pub mod links;
 pub mod nova;
