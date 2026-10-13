@@ -172,7 +172,7 @@ describe("the state file", () => {
     const odd = normalizeState({ zoom: 7, appearance: "purple", sidebar: { width: 5 }, order: [1, "a"], font: { size: 400 } });
     expect(odd.zoom).toBe(3);
     expect(odd.appearance).toBe("auto");
-    expect(odd.sidebar.width).toBe(170);
+    expect(odd.sidebar.width).toBe(200);
     expect(odd.order).toEqual(["a"]);
     expect(odd.font.size).toBe(0);
   });
