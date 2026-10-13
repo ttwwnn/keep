@@ -2491,3 +2491,140 @@ fn t57_decisao_provisoria_nao_e_varrida() {
         assert!(nao_vai(&o, &w), "{o:?}");
     }
 }
+
+// ---------------------------------------------------------------- o -sujo e a purga da Lixeira
+
+/// `git <args>` que pode falhar: (deu certo, saída).
+fn tenta(args: &[&str]) -> (bool, String) {
+    let o = Command::new(worktrees::git::padrao()).args(args).env("LC_ALL", "C").output().expect("git");
+    (o.status.success(), String::from_utf8_lossy(&o.stdout).into_owned())
+}
+
+#[test]
+fn t58_preparar_guarda_os_nao_rastreados_no_sujo() {
+    let m = Mundo::novo();
+    std::fs::write(Path::new(&m.repo).join(".gitignore"), "*.log\n").unwrap();
+    g(&m.repo, &["add", ".gitignore"]);
+    g(&m.repo, &["commit", "-q", "-m", "ignora log"]);
+    let (w, _) = m.wt_em("wt-suja", None, Some("ramo-suja"), None);
+    let pasta = Path::new(&w);
+    std::fs::write(pasta.join("a.txt"), "a mudado\n").unwrap();
+    std::fs::write(pasta.join("novo.txt"), "novo\n").unwrap();
+    std::fs::create_dir_all(pasta.join("pasta")).unwrap();
+    std::fs::write(pasta.join("pasta").join("fundo.txt"), "fundo\n").unwrap();
+    std::fs::write(pasta.join("lixo.log"), "ignorado\n").unwrap();
+    let antes = g(&w, &["status", "--porcelain"]);
+    let head = g(&w, &["rev-parse", "HEAD"]);
+    let p = worktrees::preparar_em(&m.amb, pasta, None);
+    assert!(p.ok, "{p:?}");
+    let sujo = p.ref_sujo.clone().flatten().expect("o -sujo");
+    // Tudo o que o git guardaria, inclusive os arquivos novos…
+    assert_eq!(g(&m.repo, &["show", &format!("{sujo}:a.txt")]), "a mudado\n");
+    assert_eq!(g(&m.repo, &["show", &format!("{sujo}:novo.txt")]), "novo\n");
+    assert_eq!(g(&m.repo, &["show", &format!("{sujo}:pasta/fundo.txt")]), "fundo\n");
+    // …e só isso: o ignorado fica de fora.
+    assert!(!tenta(&["-C", &m.repo, "cat-file", "-e", &format!("{sujo}:lixo.log")]).0);
+    assert_eq!(g(&m.repo, &["rev-parse", &format!("{sujo}^")]), head, "o -sujo é filho da HEAD");
+    // Nem a pasta nem o índice dela mudaram, e o índice temporário não ficou.
+    assert_eq!(g(&w, &["status", "--porcelain"]), antes);
+    let adm = g(&w, &["rev-parse", "--path-format=absolute", "--git-dir"]);
+    let sobras: Vec<String> = std::fs::read_dir(adm.trim())
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with("keep-lixeira-index"))
+        .collect();
+    assert!(sobras.is_empty(), "{sobras:?}");
+    // Só arquivos novos, sem nada rastreado mudado: também vão.
+    let (w2, _) = m.wt("wt-so-novos");
+    std::fs::write(Path::new(&w2).join("so-novo.txt"), "x\n").unwrap();
+    let p2 = worktrees::preparar_em(&m.amb, Path::new(&w2), None);
+    let sujo2 = p2.ref_sujo.clone().flatten().expect("o -sujo de quem só tem arquivo novo");
+    assert_eq!(g(&m.repo, &["show", &format!("{sujo2}:so-novo.txt")]), "x\n");
+    // Limpa: sem -sujo.
+    let (w3, _) = m.wt("wt-limpa");
+    let p3 = worktrees::preparar_em(&m.amb, Path::new(&w3), None);
+    assert!(p3.ok && p3.ref_sujo == Some(None), "{p3:?}");
+}
+
+/// Manda a worktree para a Lixeira como o app manda: preparar, mover, concluir.
+fn manda_para_a_lixeira(m: &Mundo, w: &str) -> PathBuf {
+    let mut amb = m.amb.clone();
+    amb.ganchos.lixeira_falsa = Some(m.lixeira.clone());
+    let p = worktrees::preparar_em(&amb, Path::new(w), None);
+    assert!(p.ok, "{p:?}");
+    let destino = worktrees::mover_para_lixeira_em(&amb, Path::new(w)).unwrap();
+    let c = worktrees::concluir_em(&amb, Path::new(w), &destino);
+    assert!(c.ok, "{c:?}");
+    destino
+}
+
+#[test]
+fn t59_a_purga_apaga_de_vez_so_o_que_o_keep_mandou_ha_mais_de_3_dias() {
+    let m = Mundo::novo();
+    let (a, _) = m.wt("wt-vai-de-vez");
+    let (b, _) = m.wt("wt-voltou");
+    let (c, _) = m.wt("wt-mexida");
+    let (da, db, dc) = (manda_para_a_lixeira(&m, &a), manda_para_a_lixeira(&m, &b), manda_para_a_lixeira(&m, &c));
+    let log = || std::fs::read_to_string(m.base.join("estado").join("lixeira.log")).unwrap();
+    let linhas: Vec<Value> = log().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert!(
+        linhas.iter().all(|l| l["ino"].as_u64().is_some() && l["pasta_nasceu"].as_f64().is_some()),
+        "a ida para a Lixeira grava quem é a pasta: {linhas:?}"
+    );
+    // Uma linha de antes desta versão (sem quem é a pasta) nunca vale.
+    let velha = m.lixeira.join("wt-de-antes");
+    std::fs::create_dir_all(&velha).unwrap();
+    std::fs::write(velha.join(".git"), "gitdir: /x/.git/worktrees/wt-de-antes\n").unwrap();
+    let linha_velha = json!({"ts": iso(agora() - 30.0 * 86400.0), "caminho": "/x/wt-de-antes", "destino": texto(&velha),
+        "repo": m.repo, "id": "wt-de-antes", "registro_removido": true});
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(m.base.join("estado").join("lixeira.log"))
+        .unwrap()
+        .write_all(format!("{linha_velha}\n").as_bytes())
+        .unwrap();
+    let t = agora();
+    // Menos de 3 dias: tudo fica.
+    let p = worktrees::purgar_em(&m.amb, Some(t + 2.0 * 86400.0));
+    assert!(p.purgadas.is_empty() && da.exists() && db.exists() && dc.exists(), "{p:?}");
+    // A pessoa pôs a b de volta e mandou para a Lixeira uma pasta dela com o
+    // mesmo nome (até com um .git igual); alguém tirou o .git da c.
+    std::fs::rename(&db, &b).unwrap();
+    std::fs::create_dir_all(&db).unwrap();
+    std::fs::copy(Path::new(&b).join(".git"), db.join(".git")).unwrap();
+    std::fs::write(db.join("da-pessoa.txt"), "meu\n").unwrap();
+    std::fs::remove_file(dc.join(".git")).unwrap();
+    let p = worktrees::purgar_em(&m.amb, Some(t + 3.0 * 86400.0 + 60.0));
+    let destinos: Vec<String> = p.purgadas.iter().map(|x| x.destino.clone()).collect();
+    assert_eq!(destinos, vec![texto(&da)], "{p:?}");
+    assert!(!da.exists(), "a que o Keep mandou saiu de vez");
+    assert!(db.join("da-pessoa.txt").exists() && dc.exists() && velha.exists(), "{p:?}");
+    let motivo = |d: &Path| p.ignoradas.iter().find(|i| i.destino == texto(d)).map(|i| i.motivo.clone());
+    assert_eq!(motivo(&db).as_deref(), Some("outro item no mesmo lugar: não é a pasta que o Keep mandou"));
+    assert_eq!(motivo(&dc).as_deref(), Some("sem o .git de worktree: não é a pasta que o Keep mandou"));
+    assert_eq!(motivo(&velha), None, "linha velha: nem é considerada");
+    assert_eq!(p.purgadas[0].r#ref.as_deref(), Some("refs/keep-lixeira/wt-vai-de-vez"));
+    // A purga fica no log e não se repete; os commits seguem no repositório.
+    assert!(log().lines().any(|l| l.contains("\"evento\":\"purga\"") && l.contains("wt-vai-de-vez")), "{}", log());
+    let p = worktrees::purgar_em(&m.amb, Some(t + 4.0 * 86400.0));
+    assert!(p.purgadas.is_empty(), "{p:?}");
+    g(&m.repo, &["show-ref", "--verify", "refs/keep-lixeira/wt-vai-de-vez"]);
+    // Uma linha que apontasse para fora da Lixeira (a b, de volta ao lugar
+    // dela, com a identidade certa) não apaga nada.
+    let (ino, nasceu) = worktrees::lixeira::identidade_da_pasta(Path::new(&b)).unwrap();
+    let forjada = json!({"ts": iso(t - 10.0 * 86400.0), "caminho": b, "destino": b, "repo": m.repo, "id": "wt-voltou",
+        "ino": ino, "pasta_nasceu": nasceu, "registro_removido": true});
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(m.base.join("estado").join("lixeira.log"))
+        .unwrap()
+        .write_all(format!("{forjada}\n").as_bytes())
+        .unwrap();
+    let p = worktrees::purgar_em(&m.amb, Some(t + 5.0 * 86400.0));
+    assert!(p.purgadas.is_empty() && Path::new(&b).join("a.txt").exists(), "{p:?}");
+    assert!(p.ignoradas.iter().any(|i| i.destino == b && i.motivo == "fora da Lixeira"), "{p:?}");
+    assert_eq!(worktrees::executar(&m.amb, &["purgar".into(), "--tudo".into()], 0.0).0, 2);
+    let (cod, saida) = worktrees::executar(&m.amb, &["purgar".into(), "--json".into()], 0.0);
+    assert!(cod == 0 && saida.contains("\"versao\":1"), "{saida}");
+}

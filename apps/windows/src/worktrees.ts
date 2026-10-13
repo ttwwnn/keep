@@ -96,8 +96,8 @@ export function worktreeNote(answer: WorktreeAnswer, subject: string, home: stri
     // Restoring brings the files back, not the worktree: its entry in the
     // repository is dropped so the branch is free again.
     text +=
-      "\nOs arquivos voltam pelo “Restaurar” da Lixeira, já fora do git; " +
-      "o ramo continua no repositório e os commits e alterações ficam guardados em refs/keep-lixeira.";
+      "\nOs arquivos voltam pelo “Restaurar” da Lixeira por 3 dias, já fora do git; depois a pasta sai de vez. " +
+      "O ramo continua no repositório, e os commits e as alterações, inclusive os arquivos novos, ficam guardados em refs/keep-lixeira.";
     parts.push(text);
   }
   const kept = answer.listing.mantidas ?? [];

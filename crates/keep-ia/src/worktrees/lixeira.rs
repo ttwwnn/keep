@@ -3,13 +3,17 @@
 //!
 //! Preparar confere (worktree ligada, destravada, ninguém com a pasta atual
 //! lá dentro) e guarda os commits: `refs/keep-lixeira/<id>` = HEAD, e
-//! `refs/keep-lixeira/<id>-sujo` = `git stash create` quando há alteração
-//! rastreada. Depois o app move a pasta para a Lixeira (o macOS pelo
+//! `refs/keep-lixeira/<id>-sujo` = a pasta inteira como o git a guardaria
+//! (alterações rastreadas, apagados e arquivos novos não ignorados, num
+//! índice à parte: nem a pasta nem o índice dela mudam), filho da HEAD,
+//! quando ela difere da HEAD. Depois o app move a pasta para a Lixeira (o macOS pelo
 //! `FileManager.trashItem`, que grava o "Colocar de volta"; o Windows por
 //! `mover_para_lixeira`). Concluir tira o registro da worktree do repositório
 //! (`git worktree remove` só daquela; nunca `prune`), para o ramo e o nome
 //! ficarem livres — menos em repositório com submódulos, cujo registro guarda
-//! os repositórios deles.
+//! os repositórios deles. A linha do `lixeira.log` leva o número da pasta no
+//! volume (`ino`) e o nascimento dela (`pasta_nasceu`): é por eles que a
+//! purga (`purga.rs`) reconhece, dias depois, o que o Keep mandou.
 
 use std::path::{Path, PathBuf};
 
@@ -18,7 +22,7 @@ use sha2::{Digest, Sha256};
 
 use super::ambiente::Ambiente;
 use super::estado::{self, grava_json};
-use super::git::git;
+use super::git::{git, git_com};
 use super::listar::na_lixeira;
 use super::pastas::{absoluto, base, canon, e_pasta, junta, mesmo, nascimento_ns, normaliza, outra_maquina, pai};
 use super::prazo::Estourou;
@@ -29,6 +33,8 @@ use super::{DIR_PENDENTES, LOG_LIXEIRA, Conclusao, Preparo, ProcessoDentro};
 
 /// O tempo de cada git daqui (o `preparar` e o `concluir` não têm pressa).
 const PRAZO_GIT: f64 = 20.0;
+/// O `git add -A` do retrato da pasta anda por ela inteira.
+const PRAZO_RETRATO: f64 = 90.0;
 
 fn corta(s: &str, n: usize) -> String {
     s.trim().chars().take(n).collect()
@@ -142,13 +148,11 @@ fn preparar_(amb: &Ambiente, caminho: &str, nasceu: Option<i64>) -> Result<Prepa
         return Ok(recusa(format!("não consegui gravar {r} ({})", corta(&s.erro, 200))));
     }
     let mut ref_sujo = None;
-    let s = git(&amb.git, &["-C", &cam, "status", "--porcelain", "--untracked-files=no"], PRAZO_GIT)?;
-    if s.ok() && !s.saida.trim().is_empty() {
-        let st = git(&amb.git, &["-C", &cam, "stash", "create", &msg], PRAZO_GIT)?;
-        let sha = st.saida.trim().to_string();
-        if !st.ok() || sha.is_empty() {
-            return Ok(recusa(format!("não consegui guardar as alterações (git stash create: {})", corta(&st.erro, 200))));
-        }
+    let retrato = match retrato_da_pasta(amb, &cam, &gd, &head, &msg)? {
+        Ok(r) => r,
+        Err(e) => return Ok(recusa(format!("não consegui guardar as alterações ({e})"))),
+    };
+    if let Some(sha) = retrato {
         let sujo = format!("{r}-sujo");
         let s = git(&amb.git, &["-C", &cam, "update-ref", "--create-reflog", "-m", &msg, &sujo, &sha, ""], PRAZO_GIT)?;
         if !s.ok() {
@@ -180,6 +184,61 @@ fn preparar_(amb: &Ambiente, caminho: &str, nasceu: Option<i64>) -> Result<Prepa
         ramo: Some(ramo),
         head: Some(curto),
     })
+}
+
+/// A pasta inteira como o git a guardaria, num commit filho de `head`:
+/// `git add -A` num índice temporário (`GIT_INDEX_FILE`, começado da HEAD)
+/// pega as alterações rastreadas, os apagados e os arquivos novos não
+/// ignorados — o que a `git stash create` deixava de fora —, sem mexer na
+/// pasta nem no índice dela. `None`: a pasta é a própria HEAD.
+fn retrato_da_pasta(
+    amb: &Ambiente,
+    cam: &str,
+    gd: &str,
+    head: &str,
+    msg: &str,
+) -> Result<Result<Option<String>, String>, Estourou> {
+    let indice = junta(gd, &format!("keep-lixeira-index.{}", std::process::id()));
+    let limpa = |i: &str| {
+        std::fs::remove_file(i).ok();
+        std::fs::remove_file(format!("{i}.lock")).ok();
+    };
+    limpa(&indice);
+    // Quem assina é o Keep: o retrato não depende de a pessoa ter nome e e-mail no git.
+    let vars = [
+        ("GIT_INDEX_FILE", indice.as_str()),
+        ("GIT_AUTHOR_NAME", "Keep"),
+        ("GIT_AUTHOR_EMAIL", "keep@localhost"),
+        ("GIT_COMMITTER_NAME", "Keep"),
+        ("GIT_COMMITTER_EMAIL", "keep@localhost"),
+    ];
+    let passos = (|| -> Result<Result<Option<String>, String>, Estourou> {
+        let s = git_com(&amb.git, &["-C", cam, "read-tree", head], &vars, PRAZO_GIT)?;
+        if !s.ok() {
+            return Ok(Err(format!("git read-tree: {}", corta(&s.erro, 200))));
+        }
+        let s = git_com(&amb.git, &["-C", cam, "add", "-A", "--", "."], &vars, PRAZO_RETRATO)?;
+        if !s.ok() {
+            return Ok(Err(format!("git add -A: {}", corta(&s.erro, 200))));
+        }
+        let s = git_com(&amb.git, &["-C", cam, "write-tree"], &vars, PRAZO_GIT)?;
+        let arvore = s.saida.trim().to_string();
+        if !s.ok() || arvore.is_empty() {
+            return Ok(Err(format!("git write-tree: {}", corta(&s.erro, 200))));
+        }
+        let s = git(&amb.git, &["-C", cam, "rev-parse", &format!("{head}^{{tree}}")], PRAZO_GIT)?;
+        if s.ok() && s.saida.trim() == arvore {
+            return Ok(Ok(None));
+        }
+        let s = git_com(&amb.git, &["-C", cam, "commit-tree", &arvore, "-p", head, "-m", msg], &vars, PRAZO_GIT)?;
+        let sha = s.saida.trim().to_string();
+        if !s.ok() || sha.is_empty() {
+            return Ok(Err(format!("git commit-tree: {}", corta(&s.erro, 200))));
+        }
+        Ok(Ok(Some(sha)))
+    })();
+    limpa(&indice);
+    passos
 }
 
 /// O registro em `<comum>/worktrees/<id>` ainda aponta para `cam` (ou para
@@ -276,6 +335,13 @@ fn concluir_(amb: &Ambiente, cam: &str, destino: &str) -> Result<Conclusao, Esto
     if let Some(n) = &nota {
         linha["nota"] = json!(n);
     }
+    // Quem é a pasta que foi para a Lixeira: o número dela no volume e o
+    // nascimento, que mudar de lugar no mesmo volume não troca. A purga só
+    // apaga o que bate com os dois.
+    if let Some((ino, nasceu)) = identidade_da_pasta(Path::new(destino)) {
+        linha["ino"] = json!(ino);
+        linha["pasta_nasceu"] = json!(nasceu);
+    }
     estado::acrescenta(amb, LOG_LIXEIRA, &linha).ok();
     if ok {
         std::fs::remove_file(arquivo_pendente(amb, cam)).ok();
@@ -296,6 +362,16 @@ fn concluir_(amb: &Ambiente, cam: &str, destino: &str) -> Result<Conclusao, Esto
         motivo: if ok { None } else { nota.clone() },
         nota,
     })
+}
+
+/// O número da pasta no volume e o nascimento dela; `None` se ela não é uma
+/// pasta de verdade (não existe, é um link).
+pub fn identidade_da_pasta(p: &Path) -> Option<(u64, f64)> {
+    if p.as_os_str().is_empty() {
+        return None;
+    }
+    let m = std::fs::symlink_metadata(p).ok().filter(|m| m.is_dir())?;
+    Some((super::pastas::id_do_arquivo(p)?, super::pastas::nascimento(&m)))
 }
 
 /// Move a pasta para a Lixeira do sistema e diz onde ela ficou (vazio se o
