@@ -93,8 +93,8 @@ describe("the button", () => {
     expect(LABELS.dialogTitle("projeto")).toBe("Pasta que a IA de projeto pode acessar");
   });
 
-  it("is on: the held AI is proved by the core before it starts", () => {
-    expect(CONFINEMENT_ENFORCED).toBe(true);
+  it("is off until the Windows CI proves the mechanism (KEEP_CONFINE_PROVA)", () => {
+    expect(CONFINEMENT_ENFORCED).toBe(false);
   });
 });
 

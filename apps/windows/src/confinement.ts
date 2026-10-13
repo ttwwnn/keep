@@ -18,7 +18,7 @@
  * Turn this off if the mechanism has to be pulled back: the choice already
  * made stays in the file and the button and the menu items go.
  */
-export const CONFINEMENT_ENFORCED = true;
+export const CONFINEMENT_ENFORCED = false;
 
 /** The folder of each workspace that has one, by workspace name. */
 export type Confinements = Readonly<Record<string, string>>;
