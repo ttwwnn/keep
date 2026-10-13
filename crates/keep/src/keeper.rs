@@ -22,10 +22,12 @@
 //! and the client's very connection to the daemon, so that nothing written in
 //! between is missed or repeated. Then the keeper is gone.
 
+use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use keep_proto::{ClientMsg, ServerMsg};
@@ -143,6 +145,10 @@ pub struct Mirror {
     pub terminal: Terminal,
     size: (u16, u16),
     images: bool,
+    /// How much of the images programs send a terminal keeps, as the
+    /// library has it: a mirror keeps none while its surface draws them,
+    /// a keeper as much as a surface — answering the protocol as it does.
+    image_limit: Option<u64>,
     /// What a write ended with that may be the start of an image: the
     /// introducer, or a command whose action is still to come.
     tail: Vec<u8>,
@@ -170,10 +176,14 @@ impl Mirror {
         if options.blink {
             terminal.write(b"\x1b[?12h");
         }
+        // The surface keeps the images; a handover could not carry them.
+        let image_limit = terminal.image_storage_limit();
+        let _ = terminal.set_image_storage_limit(0);
         Some(Self {
             terminal,
             size: (cols.max(1), rows.max(1)),
             images: false,
+            image_limit,
             tail: Vec::new(),
             dir: dir.to_path_buf(),
             options: options.clone(),
@@ -353,7 +363,8 @@ pub fn read_facts(dir: &Path) -> Facts {
 }
 
 pub fn parse_facts(body: &str) -> Facts {
-    let mut facts = Facts::default();
+    // What a surface runs as unless its config says otherwise (`term`).
+    let mut facts = Facts { terminfo: Some("xterm-ghostty".to_string()), ..Facts::default() };
     for line in body.lines() {
         let Some((key, value)) = line.split_once('=') else { continue };
         match key {
@@ -369,6 +380,7 @@ pub fn parse_facts(body: &str) -> Facts {
                 facts.cell = value.split_once(',').and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))
             }
             "xtversion" => facts.xtversion = Some(value.to_string()).filter(|v| !v.is_empty()),
+            "terminfo" => facts.terminfo = Some(value.to_string()).filter(|v| !v.is_empty()),
             "da" => {
                 // conformance;features…/type;firmware;rom[/unit]
                 let parts: Vec<&str> = value.split('/').collect();
@@ -410,46 +422,129 @@ fn fact(dir: &Path, key: &str) -> Option<String> {
     body.lines().find_map(|line| line.strip_prefix(key)?.strip_prefix('=').map(str::to_string))
 }
 
-/// Who answers the kept program reading the clipboard (OSC 52): the app,
-/// which reads the pasteboard as for a surface — asking the person first
-/// where `clipboard-read` says to — and leaves the answer here. The program
-/// waits for it, as it would for a surface's. Where the config denies it,
-/// nobody is asked and the question goes unanswered, as a surface leaves it.
-fn clipboard_reader(dir: PathBuf, app: Option<i32>) -> ClipboardReader {
-    let mut asked: u64 = 0;
-    Box::new(move || {
+/// The kept program's reads of the clipboard (OSC 52) the app has yet to
+/// answer, oldest first: the first is the app's to answer — asked in the
+/// request file —, the others wait their turn, as one question at a time is
+/// put to the person.
+///
+/// The keeper does not wait for an answer: a surface asking the person goes
+/// on reading the program meanwhile, and so does the keeper — the daemon
+/// throws away what a client does not read in time, and a client come for
+/// the pane would find nobody to give it. The answer goes to the program
+/// when the app gives it (`answer_reads`), or, the pane taken before, the
+/// question to the surface that took it (`unanswered`).
+#[derive(Default)]
+struct Reads {
+    queue: VecDeque<Read52>,
+    asked: u64,
+}
+
+/// One read: the words the app answers it by, and the clipboard the
+/// program named, as the answer names it.
+struct Read52 {
+    id: String,
+    kind: u8,
+}
+
+impl Reads {
+    /// The questions still unanswered, as the program asked them, for the
+    /// surface taking the pane to answer.
+    fn unanswered(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        for read in &self.queue {
+            out.extend_from_slice(b"\x1b]52;");
+            out.push(read.kind);
+            out.extend_from_slice(b";?\x1b\\");
+        }
+        out
+    }
+}
+
+/// Who answers the kept program reading the clipboard: the app, which reads
+/// the pasteboard as for a surface — asking the person first where
+/// `clipboard-read` says to. Where the config denies it, nobody is asked and
+/// the question goes unanswered, as a surface leaves it.
+fn clipboard_reader(dir: PathBuf, reads: Arc<Mutex<Reads>>) -> ClipboardReader {
+    Box::new(move |kind| {
         if fact(&dir, "clipboard-read").as_deref() == Some("deny") {
             return ClipboardAnswer::Nothing;
         }
-        asked += 1;
-        let id = format!("{}-{asked}", std::process::id());
-        let _ = std::fs::remove_file(dir.join(CLIPBOARD_ANSWER));
-        publish(&dir, CLIPBOARD_REQUEST, format!("{id}\n").as_bytes());
-        note(format_args!("asked the app for the clipboard: {id}"));
-        let deadline = Instant::now() + Duration::from_secs(300);
-        let mine = format!("{id}\n");
-        while Instant::now() < deadline {
-            if let Ok(body) = std::fs::read(dir.join(CLIPBOARD_ANSWER)) {
-                if let Some(text) = body.strip_prefix(mine.as_bytes()) {
-                    let _ = std::fs::remove_file(dir.join(CLIPBOARD_ANSWER));
-                    return ClipboardAnswer::Text(text.to_vec());
-                }
-            }
-            // Nobody left to answer: as the person saying no.
-            if !dir.join(FLAG).exists() || app.map(|pid| !alive(pid)).unwrap_or(false) {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(20));
+        let Ok(mut reads) = reads.lock() else { return ClipboardAnswer::Nothing };
+        reads.asked += 1;
+        let id = format!("{}-{}", std::process::id(), reads.asked);
+        reads.queue.push_back(Read52 { id: id.clone(), kind });
+        if reads.queue.len() == 1 {
+            ask_the_app(&dir, &id);
         }
-        ClipboardAnswer::Text(Vec::new())
+        // Answered later, by `answer_reads`.
+        ClipboardAnswer::Nothing
     })
+}
+
+fn ask_the_app(dir: &Path, id: &str) {
+    let _ = std::fs::remove_file(dir.join(CLIPBOARD_ANSWER));
+    publish(dir, CLIPBOARD_REQUEST, format!("{id}\n").as_bytes());
+    note(format_args!("asked the app for the clipboard: {id}"));
+}
+
+/// The app's answer to the read it was asked, if it has given it: to the
+/// program, as a surface answers — the clipboard named, the text in base64,
+/// ended with ST —, and the next read put to the app.
+fn answer_reads(reads: &Mutex<Reads>, dir: &Path, daemon: &mut UnixStream) {
+    let Ok(mut reads) = reads.lock() else { return };
+    let Some(first) = reads.queue.front() else { return };
+    let Ok(body) = std::fs::read(dir.join(CLIPBOARD_ANSWER)) else { return };
+    let mine = format!("{}\n", first.id);
+    let Some(text) = body.strip_prefix(mine.as_bytes()) else { return };
+    let _ = std::fs::remove_file(dir.join(CLIPBOARD_ANSWER));
+    let mut reply = b"\x1b]52;".to_vec();
+    reply.push(first.kind);
+    reply.push(b';');
+    reply.extend_from_slice(&base64(text));
+    reply.extend_from_slice(b"\x1b\\");
+    note(format_args!("the app answered {}: {} bytes", first.id, text.len()));
+    if send_input(daemon, &reply).is_err() {
+        leave(dir);
+    }
+    reads.queue.pop_front();
+    if let Some(next) = reads.queue.front() {
+        ask_the_app(dir, &next.id);
+    }
+}
+
+/// Bytes in base64, padded, as OSC 52 carries them.
+fn base64(bytes: &[u8]) -> Vec<u8> {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = Vec::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [chunk[0], chunk.get(1).copied().unwrap_or(0), chunk.get(2).copied().unwrap_or(0)];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        out.push(ALPHABET[(n >> 18) as usize & 63]);
+        out.push(ALPHABET[(n >> 12) as usize & 63]);
+        out.push(if chunk.len() > 1 { ALPHABET[(n >> 6) as usize & 63] } else { b'=' });
+        out.push(if chunk.len() > 2 { ALPHABET[n as usize & 63] } else { b'=' });
+    }
+    out
+}
+
+/// Input for the program, in frames the daemon takes: a surface's client
+/// sends what it reads from the surface a buffer at a time, and an answer
+/// can be bigger than the biggest frame.
+fn send_input(daemon: &mut UnixStream, bytes: &[u8]) -> io::Result<()> {
+    for chunk in bytes.chunks(1 << 16) {
+        ClientMsg::write_input(daemon, chunk)?;
+    }
+    Ok(())
 }
 
 /// Stand in for the surface: answer as the facts say it would, and read the
 /// clipboard through the app.
-fn stand_in(mirror: &mut Mirror, facts: Facts, dir: &Path, app: Option<i32>) {
+fn stand_in(mirror: &mut Mirror, facts: Facts, dir: &Path, reads: &Arc<Mutex<Reads>>) {
+    if let Some(limit) = mirror.image_limit {
+        let _ = mirror.terminal.set_image_storage_limit(limit);
+    }
     let _ = mirror.terminal.act_as_terminal(facts);
-    let _ = mirror.terminal.read_clipboard_with(clipboard_reader(dir.to_path_buf(), app));
+    let _ = mirror.terminal.read_clipboard_with(clipboard_reader(dir.to_path_buf(), Arc::clone(reads)));
 }
 
 /// Write a file the app reads, whole or not at all.
@@ -576,7 +671,8 @@ pub fn keep(kept: Kept) -> ! {
     }
     let mut shade = Shade { heard: dark, told: read_facts(&dir).dark };
     let mut facts_seen = modified(&dir.join(FACTS));
-    stand_in(&mut mirror, shade.facts(&dir), &dir, app);
+    let reads = Arc::new(Mutex::new(Reads::default()));
+    stand_in(&mut mirror, shade.facts(&dir), &dir, &reads);
     // Nobody is looking: the app hid the surface before letting it go, and
     // its last word to the daemon said so. Said again, in case it did not.
     let _ = ClientMsg::Resize { cols: 0, rows: 0 }.write(&mut daemon);
@@ -615,9 +711,17 @@ pub fn keep(kept: Kept) -> ! {
         .map(Duration::from_secs_f64)
         .unwrap_or(Duration::from_secs(60));
 
+    let mut answers_checked = Instant::now();
     loop {
         let listening = if waiting.is_none() { Some(listener.as_raw_fd()) } else { None };
-        let ready = readable(daemon.as_raw_fd(), listening, 250);
+        // A read of the clipboard the app has yet to answer is looked for
+        // more often than the rest.
+        let reading = reads.lock().map(|r| !r.queue.is_empty()).unwrap_or(false);
+        let ready = readable(daemon.as_raw_fd(), listening, if reading { 50 } else { 250 });
+        if reading && answers_checked.elapsed() >= Duration::from_millis(50) {
+            answers_checked = Instant::now();
+            answer_reads(&reads, &dir, &mut daemon);
+        }
         if ready.0 {
             let bytes = match ServerMsg::read(&mut daemon) {
                 Ok(Some(ServerMsg::Output(data))) => data,
@@ -676,13 +780,20 @@ pub fn keep(kept: Kept) -> ! {
             if mirror.can_hand_over() || since.elapsed() >= Duration::from_secs(2) {
                 let keyboard = Keyboard { main: flags.pushed(false), alternate: flags.pushed(true) };
                 let after = held.as_ref().map(|(kept, _)| kept.as_slice()).unwrap_or_default();
-                match hand_over(conn, cols, rows, &daemon, &mut mirror, &keyboard, after) {
+                // An answer the app has just given goes to the program; a
+                // read still unanswered, to the surface taking the pane, as
+                // if the program asked it now.
+                answer_reads(&reads, &dir, &mut daemon);
+                let unanswered = reads.lock().map(|r| r.unanswered()).unwrap_or_default();
+                match hand_over(conn, cols, rows, &daemon, &mut mirror, &keyboard, &unanswered, after) {
                     Ok(()) => leave(&dir),
                     // The terminal was read for the handover, which leaves it
-                    // changed: made again from what was to be handed over.
+                    // changed: made again from what was to be handed over —
+                    // the questions said after it, which the mirror made
+                    // again does not stand in to hear, still the app's.
                     Err(Failed(Some(snapshot))) => {
                         if let Some(mut again) = mirror.remade(&snapshot) {
-                            stand_in(&mut again, shade.facts(&dir), &dir, app);
+                            stand_in(&mut again, shade.facts(&dir), &dir, &reads);
                             mirror = again;
                         }
                     }
@@ -707,7 +818,7 @@ pub fn keep(kept: Kept) -> ! {
                 if let Some(dark) = shade.now().filter(|&d| Some(d) != before) {
                     if mirror.terminal.dec_mode(2031) {
                         let report = format!("\x1b[?997;{}n", if dark { 1 } else { 2 });
-                        let _ = ClientMsg::write_input(&mut daemon, report.as_bytes());
+                        let _ = send_input(&mut daemon, report.as_bytes());
                     }
                 }
                 let _ = mirror.terminal.act_as_terminal(facts);
@@ -723,7 +834,7 @@ struct Failed(Option<Vec<u8>>);
 /// says of itself, to the app.
 fn pass_on(mirror: &mut Mirror, daemon: &mut UnixStream, dir: &Path, background: &mut Option<[u8; 3]>) {
     let events = mirror.terminal.take_events();
-    if !events.replies.is_empty() && ClientMsg::write_input(daemon, &events.replies).is_err() {
+    if !events.replies.is_empty() && send_input(daemon, &events.replies).is_err() {
         leave(dir);
     }
     if events.title {
@@ -760,11 +871,11 @@ fn greet(mut conn: UnixStream) -> Option<(UnixStream, u16, u16)> {
 /// here.
 fn hand_over(
     mut conn: UnixStream, cols: u16, rows: u16, daemon: &UnixStream, mirror: &mut Mirror, keyboard: &Keyboard,
-    after: &[u8],
+    then: &[u8], after: &[u8],
 ) -> Result<(), Failed> {
     let before = mirror.size;
     mirror.follow((cols, rows));
-    let snapshot = mirror.terminal.handover(Some(keyboard));
+    let snapshot = mirror.terminal.handover_then(Some(keyboard), then);
     note(format_args!(
         "handing over at {cols}x{rows} (kept at {}x{}): {} bytes, {} rows, {} held",
         before.0, before.1, snapshot.len(), mirror.terminal.total_rows(), after.len()
@@ -1048,6 +1159,97 @@ mod tests {
         assert_eq!(scheme.dark(), Some(false));
         assert_eq!(scheme.filter(&mut held, b"\x1b"), b"\x1b", "an escape key is never held");
         assert_eq!(scheme.filter(&mut held, b"[A"), b"[A");
+    }
+
+    /// A program reading the clipboard is not waited on: each read is put
+    /// to the app in turn, and answered as the app answers it, in the words
+    /// a surface answers with; one left when the pane is taken is asked of
+    /// the surface that takes it.
+    #[test]
+    fn reads_of_the_clipboard_are_answered_as_the_app_answers_them() {
+        let dir = attach_dir("reads");
+        let reads = Arc::new(Mutex::new(Reads::default()));
+        let mut reader = clipboard_reader(dir.clone(), Arc::clone(&reads));
+        assert!(matches!(reader(b'c'), ClipboardAnswer::Nothing), "not waited on");
+        assert!(matches!(reader(b's'), ClipboardAnswer::Nothing));
+        let first = std::fs::read_to_string(dir.join(CLIPBOARD_REQUEST)).unwrap();
+        let (mut daemon, mut program) = UnixStream::pair().unwrap();
+        program.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        // An answer to another read is not this one's.
+        std::fs::write(dir.join(CLIPBOARD_ANSWER), "someone-else\nnot this").unwrap();
+        answer_reads(&reads, &dir, &mut daemon);
+        assert_eq!(reads.lock().unwrap().queue.len(), 2, "unanswered yet");
+        std::fs::write(dir.join(CLIPBOARD_ANSWER), format!("{first}pasted")).unwrap();
+        answer_reads(&reads, &dir, &mut daemon);
+        let answer = ClientMsg::read(&mut program).unwrap();
+        assert_eq!(answer, Some(ClientMsg::Input(b"\x1b]52;c;cGFzdGVk\x1b\\".to_vec())));
+        let second = std::fs::read_to_string(dir.join(CLIPBOARD_REQUEST)).unwrap();
+        assert_ne!(second, first, "the next read put to the app");
+        assert!(!dir.join(CLIPBOARD_ANSWER).exists(), "the answer taken");
+        assert_eq!(reads.lock().unwrap().unanswered(), b"\x1b]52;s;?\x1b\\");
+        // The person said no: answered empty, as a surface answers.
+        std::fs::write(dir.join(CLIPBOARD_ANSWER), &second).unwrap();
+        answer_reads(&reads, &dir, &mut daemon);
+        assert_eq!(ClientMsg::read(&mut program).unwrap(), Some(ClientMsg::Input(b"\x1b]52;s;\x1b\\".to_vec())));
+        assert!(reads.lock().unwrap().unanswered().is_empty());
+        // Where the config denies it, nobody is asked.
+        std::fs::remove_file(dir.join(CLIPBOARD_REQUEST)).unwrap();
+        std::fs::write(dir.join(FACTS), "clipboard-read=deny\n").unwrap();
+        assert!(matches!(reader(b'c'), ClipboardAnswer::Nothing));
+        assert!(!dir.join(CLIPBOARD_REQUEST).exists());
+        assert!(reads.lock().unwrap().queue.is_empty());
+        done_with(&dir);
+    }
+
+    /// A mirror keeps none of the images its surface draws; standing in for
+    /// the surface, it keeps them as the surface does, and answers a program
+    /// asking whether they are spoken as the surface answers.
+    #[test]
+    fn a_mirror_keeps_images_only_once_it_stands_in() {
+        let dir = attach_dir("images-kept");
+        let options = Options { mirror: Some(1 << 20), ..Options::default() };
+        let mut mirror = Mirror::new(80, 24, &options, &dir).expect("a mirror");
+        let surface = Terminal::new(80, 24).unwrap().image_storage_limit();
+        assert!(surface.unwrap_or(0) > 0, "a terminal keeps images: {surface:?}");
+        assert_eq!(mirror.terminal.image_storage_limit(), Some(0), "the mirror of a surface keeps none");
+        stand_in(&mut mirror, parse_facts(""), &dir, &Arc::new(Mutex::new(Reads::default())));
+        assert_eq!(mirror.terminal.image_storage_limit(), surface, "standing in, as many as a terminal");
+        mirror.feed(b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\");
+        assert_eq!(mirror.terminal.take_events().replies, b"\x1b_Gi=31;OK\x1b\\");
+        done_with(&dir);
+    }
+
+    /// What a surface runs as, unless the app says otherwise.
+    #[test]
+    fn the_terminfo_entry_is_ghosttys_unless_said() {
+        assert_eq!(parse_facts("").terminfo.as_deref(), Some("xterm-ghostty"));
+        assert_eq!(parse_facts("terminfo=xterm-256color\n").terminfo.as_deref(), Some("xterm-256color"));
+    }
+
+    #[test]
+    fn base64_as_osc_52_carries_it() {
+        for (plain, coded) in [("", ""), ("f", "Zg=="), ("fo", "Zm8="), ("foo", "Zm9v"), ("foob", "Zm9vYg=="), ("fooba", "Zm9vYmE=")] {
+            assert_eq!(base64(plain.as_bytes()), coded.as_bytes(), "{plain:?}");
+        }
+        assert_eq!(base64(&[0xfb, 0xff, 0xbf]), b"+/+/");
+    }
+
+    /// An answer bigger than the biggest frame the daemon takes goes in
+    /// several.
+    #[test]
+    fn input_goes_in_frames_the_daemon_takes() {
+        let (mut daemon, mut program) = UnixStream::pair().unwrap();
+        let big = vec![b'x'; keep_proto::MAX_FRAME + 10];
+        let writer = std::thread::spawn(move || send_input(&mut daemon, &big).unwrap());
+        let mut got = 0;
+        while got < keep_proto::MAX_FRAME + 10 {
+            match ClientMsg::read(&mut program).unwrap() {
+                Some(ClientMsg::Input(data)) => got += data.len(),
+                other => panic!("{other:?}"),
+            }
+        }
+        writer.join().unwrap();
+        assert_eq!(got, keep_proto::MAX_FRAME + 10);
     }
 
     /// The connection goes across with the bytes, still connected.

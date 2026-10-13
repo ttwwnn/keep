@@ -44,6 +44,9 @@ pub struct Facts {
     pub xtversion: Option<String>,
     /// The device attributes (CSI c, CSI > c, CSI = c).
     pub device: Option<Device>,
+    /// The terminfo entry the terminal says it runs as, to XTGETTCAP `TN`:
+    /// "xterm-ghostty", say. Unanswered where unknown.
+    pub terminfo: Option<String>,
 }
 
 /// The answers to CSI c, CSI > c and CSI = c.
@@ -82,9 +85,12 @@ pub enum ClipboardAnswer {
     Nothing,
 }
 
-/// Asked for the answer each time a program reads the clipboard; may take
-/// its time (asking the person), the stream waiting meanwhile.
-pub type ClipboardReader = Box<dyn FnMut() -> ClipboardAnswer + Send>;
+/// Asked for the answer each time a program reads the clipboard, with the
+/// clipboard it named as the answer names it — `c`, `s` or `p`. May take its
+/// time (asking the person), the stream waiting meanwhile; or answer
+/// `Nothing` and have the answer written by whoever asked for it later, in
+/// those words (`\e]52;c;<base64>\e\\`).
+pub type ClipboardReader = Box<dyn FnMut(u8) -> ClipboardAnswer + Send>;
 
 pub(crate) struct Effects {
     events: Events,
@@ -452,8 +458,13 @@ unsafe extern "C" fn on_clipboard_read(
         unsafe { reply(read, &refused) };
         return;
     }
+    let kind = match request.location {
+        ffi::CLIPBOARD_LOCATION_SELECTION => b's',
+        ffi::CLIPBOARD_LOCATION_PRIMARY => b'p',
+        _ => b'c',
+    };
     let answer = match effects.reader.as_mut() {
-        Some(reader) => reader(),
+        Some(reader) => reader(kind),
         None => ClipboardAnswer::Nothing,
     };
     let mime = b"text/plain";
@@ -562,6 +573,10 @@ impl Terminal {
             self.set(ffi::OPT_DEVICE_ATTRIBUTES, device as *const c_void)?;
         }
         self.set(ffi::OPT_CLIPBOARD_WRITE, clipboard as *const c_void)?;
+        // The library copies the name; none clears it.
+        let name = facts.terminfo.as_deref().unwrap_or_default().as_bytes();
+        let name = ffi::GhosttyString { ptr: name.as_ptr(), len: name.len() };
+        self.set(ffi::OPT_TERMINFO_NAME, &name as *const ffi::GhosttyString as *const c_void)?;
         self.set_default_colors(&facts)
     }
 
@@ -626,12 +641,24 @@ mod tests {
                 rom: 0,
                 tertiary: None,
             }),
+            terminfo: Some("xterm-ghostty".into()),
         }
     }
 
     fn answer(t: &mut Terminal, query: &[u8]) -> String {
         t.write(query);
         String::from_utf8_lossy(&t.take_events().replies).into_owned()
+    }
+
+    /// XTGETTCAP `TN`: the terminfo entry it runs as, in hex, as a Ghostty
+    /// surface answers; nothing where it is not known.
+    #[test]
+    fn it_names_the_terminfo_entry_it_runs_as() {
+        let mut t = Terminal::new(80, 24).unwrap();
+        t.act_as_terminal(ghostty()).unwrap();
+        assert_eq!(answer(&mut t, b"\x1bP+q544E\x1b\\"), "\x1bP1+r544E=787465726D2D67686F73747479\x1b\\");
+        t.act_as_terminal(Facts { terminfo: None, ..ghostty() }).unwrap();
+        assert_eq!(answer(&mut t, b"\x1bP+q544E\x1b\\\x1b[5n"), "\x1b[0n");
     }
 
     #[test]
@@ -693,7 +720,7 @@ mod tests {
             ClipboardAnswer::Nothing,
         ]));
         let feed = std::sync::Arc::clone(&answers);
-        t.read_clipboard_with(Box::new(move || feed.lock().unwrap().remove(0))).unwrap();
+        t.read_clipboard_with(Box::new(move |_| feed.lock().unwrap().remove(0))).unwrap();
         assert_eq!(answer(&mut t, b"\x1b]52;c;?\x1b\\"), "\x1b]52;c;cGFzdGVk\x1b\\");
         assert_eq!(answer(&mut t, b"\x1b]52;c;?\x07"), "\x1b]52;c;\x1b\\", "the person said no");
         assert_eq!(answer(&mut t, b"\x1b]52;c;?\x1b\\\x1b[5n"), "\x1b[0n", "unanswered, the rest answered");
@@ -710,13 +737,24 @@ mod tests {
         t.act_as_terminal(ghostty()).unwrap();
         let big = vec![b'x'; 100_000];
         let feed = big.clone();
-        t.read_clipboard_with(Box::new(move || ClipboardAnswer::Text(feed.clone()))).unwrap();
+        let named = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let told = std::sync::Arc::clone(&named);
+        t.read_clipboard_with(Box::new(move |kind| {
+            told.lock().unwrap().push(kind);
+            ClipboardAnswer::Text(feed.clone())
+        }))
+        .unwrap();
         for kind in ["s", "p", "c"] {
             let reply = answer(&mut t, format!("\x1b]52;{kind};?\x1b\\").as_bytes());
             assert!(reply.starts_with(&format!("\x1b]52;{kind};eHh4")), "{kind}: {}", &reply[..reply.len().min(20)]);
             assert!(reply.ends_with("\x1b\\"), "{kind}");
             assert_eq!(reply.len(), 7 + 100_000 / 3 * 4 + 4 + 2, "{kind}: the whole clipboard");
         }
+        // And the reader told which, as the answer names it: one it does
+        // not know is the standard one.
+        answer(&mut t, b"\x1b]52;;?\x1b\\");
+        answer(&mut t, b"\x1b]52;0;?\x07");
+        assert_eq!(*named.lock().unwrap(), b"spccc".to_vec());
     }
 
     /// The Kitty clipboard protocol and iTerm2's are not spoken: no answer
@@ -746,7 +784,7 @@ mod tests {
         t.act_as_terminal(ghostty()).unwrap();
         let asked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let count = std::sync::Arc::clone(&asked);
-        t.read_clipboard_with(Box::new(move || {
+        t.read_clipboard_with(Box::new(move |_| {
             count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             ClipboardAnswer::Text(b"secret".to_vec())
         }))

@@ -121,15 +121,17 @@ while True:
                 open(os.path.join(work, "answers-%d" % asked), "w").write("\n".join(answers))
             elif op == "bigosc":
                 os.write(1, b"\x1b]52;c;" + b"A" * int(arg))
-            elif op == "listen":
+            elif op in ("listen", "measure"):
                 asked += 1
-                got = b""
+                got = bytearray()
                 end = time.time() + float(arg or "1.5")
                 while time.time() < end:
                     r, _, _ = select.select([0], [], [], 0.05)
                     if r:
-                        got += os.read(0, 4096)
-                open(os.path.join(work, "answers-%d" % asked), "w").write(repr(got))
+                        got += os.read(0, 65536)
+                got = bytes(got)
+                heard = repr(got) if op == "listen" else "%d %r %r" % (len(got), got[:8], got[-2:])
+                open(os.path.join(work, "answers-%d" % asked), "w").write(heard)
             elif op == "exit":
                 sys.exit(0)
         open(os.path.join(work, "done"), "w").write(str(n))
@@ -205,6 +207,9 @@ class Surface:
         if take:
             lines.append("take=" + take)
         lines.append("app=%d" % (app_pid or app.pid))
+        # Whose directory it is, as the app says it beside each client.
+        with open(os.path.join(self.dir, "app"), "w") as f:
+            f.write("%d\n" % (app_pid or app.pid))
         with open(os.path.join(self.dir, ".keep-attach"), "w") as f:
             f.write("\n".join(lines) + "\n")
         self.received = bytearray()
@@ -341,7 +346,8 @@ try:
     command(
         "print 2000",
         "raw \\e]2;second title\\a\\e]7;file://host/tmp/elsewhere\\a\\e]52;c;aGVsbG8=\\a\\e]11;rgb:01/02/03\\a",
-        "ask \\e[c|\\e[>c|\\e[=c|\\e[>q|\\e]11;?\\e\\\\|\\e[?996n|\\e[14t|\\e[18t|\\e[?u",
+        "ask \\e[c|\\e[>c|\\e[=c|\\e[>q|\\e]11;?\\e\\\\|\\e[?996n|\\e[14t|\\e[18t|\\e[?u"
+        "|\\eP+q544E\\e\\\\|\\e_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\\e\\\\",
     )
     answers = open(os.path.join(WORK, "answers-1")).read().splitlines()
     check("CSI c is answered as the surface answers it", repr(b"\x1b[?62;22;52c"), answers[0])
@@ -353,6 +359,10 @@ try:
     check("the text area in pixels", repr(b"\x1b[4;1292;1680t"), answers[6])
     check("and in cells", repr(b"\x1b[8;38;105t"), answers[7])
     check("the keyboard protocol", repr(b"\x1b[?0u"), answers[8])
+    check("the terminfo entry it runs as (XTGETTCAP TN)", repr(b"\x1bP1+r544E=787465726D2D67686F73747479\x1b\\"),
+          answers[9])
+    check("and pictures spoken, as a surface answers asked (the Kitty graphics query)",
+          repr(b"\x1b_Gi=31;OK\x1b\\"), answers[10])
     read = lambda name: open(os.path.join(one.dir, name), "rb").read() if os.path.exists(os.path.join(one.dir, name)) else b""
     check("the title is left for the app", b"second title", read("title"))
     check("and the directory", b"file://host/tmp/elsewhere", read("pwd"))
@@ -377,11 +387,12 @@ try:
     # The program reads the clipboard (OSC 52): its keeper asks the app,
     # played here, which answers with the pasteboard; where the config
     # denies it, nobody is asked and nothing is answered.
-    def play_the_app(directory, text, seen):
+    def play_the_app(directory, text, seen, taking=0.0):
         request = os.path.join(directory, "clipboard-request")
         if wait_for(5, lambda: os.path.exists(request)):
             ident = open(request).read().split("\n")[0]
             seen.append(ident)
+            time.sleep(taking)
             with open(os.path.join(directory, ".answer"), "w") as f:
                 f.write(ident + "\n" + text)
             os.rename(os.path.join(directory, ".answer"), os.path.join(directory, "clipboard-answer"))
@@ -593,6 +604,49 @@ try:
     check("and a second image asks anew, in words the app has not heard", (True, True, True),
           (first != "", second != "", second != first))
 
+    print("a program reading the clipboard while the app takes its time")
+    # The keeper does not wait for the app's answer: it goes on reading
+    # the program, which goes on writing; the answer reaches the program
+    # when the app gives it. One still unanswered when a surface takes the
+    # pane is that surface's to answer, and one bigger than the daemon's
+    # biggest frame goes to the program all the same.
+    ten = Surface(take=woken.dir)
+    wait_for(90, lambda: ten.has("L0005703"))
+    ten.hibernate()
+    wait_for(30, ten.kept)
+    seen = []
+    slow = threading.Thread(target=play_the_app, args=(ten.dir, "later", seen, 3.0), daemon=True)
+    slow.start()
+    command("raw \\e]52;c;?\\a", "print 40000", "listen 8")
+    slow.join(10)
+    check("a program reading the clipboard is answered once the app answers, however long that takes",
+          repr(b"\x1b]52;c;bGF0ZXI=\x1b\\"), open(os.path.join(WORK, "answers-9")).read())
+    eleven = Surface(take=ten.dir)
+    wait_for(90, lambda: eleven.has("L0045703"))
+    found = numbers(eleven.replay()[1])
+    whole = len(found) > 5000 and found == list(range(found[0], 45704))
+    if not whole:
+        print("        lines: %d, first %s, last %s, gaps %s" % (
+            len(found), found[:3], found[-3:], [(a, b) for a, b in zip(found, found[1:]) if b != a + 1][:5]))
+    check("and its keeper read the program meanwhile: no line lost (to 45703)", True, whole)
+    eleven.hibernate()
+    wait_for(30, eleven.kept)
+    command("raw \\e]52;c;?\\a", "print 1")
+    wait_for(10, lambda: os.path.exists(os.path.join(eleven.dir, "clipboard-request")))
+    twelve = Surface(take=eleven.dir)
+    wait_for(90, lambda: twelve.has("L0045704"))
+    check("a read unanswered when the pane is taken is asked of the surface that takes it", True,
+          wait_for(10, lambda: b"\x1b]52;c;?\x1b\\" in bytes(twelve.received)))
+    twelve.hibernate()
+    wait_for(30, twelve.kept)
+    big = threading.Thread(target=play_the_app, args=(twelve.dir, "x" * (13 << 20), [], 0.5), daemon=True)
+    big.start()
+    command("raw \\e]52;c;?\\a", "measure 15")
+    big.join(10)
+    check("an answer bigger than the daemon's biggest frame reaches the program whole",
+          "18175329 b'\\x1b]52;c;e' b'\\x1b\\\\'", open(os.path.join(WORK, "answers-10")).read())
+    woken = twelve
+
     print("the keeper goes when it should")
     keeper_dir = woken.dir
     os.unlink(os.path.join(keeper_dir, "hibernate"))
@@ -600,8 +654,8 @@ try:
     check("when the app says it will not come back", False, woken.alive())
     check("the tab is untouched", True, pid_alive(PROGRAM_PID))
     eight = Surface(take=keeper_dir)
-    wait_for(90, lambda: eight.has("L0005703"))
-    check("a surface that finds no keeper attaches the ordinary way", True, eight.has("L0005703"))
+    wait_for(90, lambda: eight.has("L0045704"))
+    check("a surface that finds no keeper attaches the ordinary way", True, eight.has("L0045704"))
     eight.hibernate()
     wait_for(30, eight.kept)
     app.kill()
@@ -610,7 +664,7 @@ try:
     check("when the app is gone", False, eight.alive())
     app2 = subprocess.Popen(["/bin/sleep", "3600"])
     nine = Surface(take=eight.dir, app_pid=app2.pid)
-    wait_for(90, lambda: nine.has("L0005703"))
+    wait_for(90, lambda: nine.has("L0045704"))
     nine.hibernate()
     wait_for(30, nine.kept)
     with open(os.path.join(nine.dir, "somebody's"), "w") as f:

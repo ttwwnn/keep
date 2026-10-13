@@ -96,7 +96,7 @@ final class SurfacePool {
         }
         surfaces[key] = surface
         Trace.log("pool", "made \(window) \(workspace)/\(tab) total=\(surfaces.count)")
-        traceScreen(of: surface)
+        traceScreen(of: surface, in: window)
         return surface
     }
 
@@ -238,7 +238,7 @@ final class SurfacePool {
     /// surface shows a few seconds after it was made — after a hibernation,
     /// the screen the daemon repainted. Terminal content is not something a
     /// trace records, so it takes `KEEP_TRACE_SCREEN` as well as the trace.
-    private func traceScreen(of surface: TerminalSurfaceView) {
+    private func traceScreen(of surface: TerminalSurfaceView, in window: WindowID) {
         guard Trace.enabled, ProcessInfo.processInfo.environment["KEEP_TRACE_SCREEN"] != nil
         else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak surface] in
@@ -249,10 +249,11 @@ final class SurfacePool {
             Trace.log("screen", "\(surface.workspace)/\(surface.tab) \(rows.joined(separator: "|"))")
         }
         // The whole screen, history first, a second at a time, into a file
-        // the test reads: `KEEP_SCREEN_DUMP=<directory>`.
+        // the test reads: `KEEP_SCREEN_DUMP=<directory>`. One a window: two
+        // windows showing a tab are two surfaces, each with its own screen.
         guard let dump = ProcessInfo.processInfo.environment["KEEP_SCREEN_DUMP"] else { return }
         let file = URL(fileURLWithPath: dump)
-            .appendingPathComponent("\(surface.workspace)-\(surface.tab).txt")
+            .appendingPathComponent("\(window)-\(surface.workspace)-\(surface.tab).txt")
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak surface] timer in
             guard let surface, surface.window != nil else {
                 timer.invalidate()

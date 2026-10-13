@@ -28,6 +28,9 @@ QUERIES = [
     b"\x1b[c", b"\x1b[>c", b"\x1b[=c", b"\x1b[>q", b"\x1b[?u",
     b"\x1b]10;?\x1b\\", b"\x1b]11;?\x1b\\", b"\x1b]12;?\x1b\\", b"\x1b]4;1;?\x1b\\", b"\x1b]4;200;?\x1b\\",
     b"\x1b[?996n", b"\x1b[14t", b"\x1b[16t", b"\x1b[18t", b"\x1b[5n", b"\x1b[6n",
+    # The terminfo entry it runs as, the cursor's shape, whether pictures
+    # are spoken (the Kitty graphics protocol's own question).
+    b"\x1bP+q544E\x1b\\", b"\x1bP$q q\x1b\\", b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\",
 ] + [b"\x1b[?%d$p" % m for m in (
     1, 3, 4, 5, 6, 7, 8, 9, 12, 25, 40, 45, 47, 66, 67, 69, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007,
     1015, 1016, 1034, 1035, 1036, 1039, 1042, 1047, 1048, 1049, 2004, 2026, 2027, 2031, 2048, 5522, 9001,

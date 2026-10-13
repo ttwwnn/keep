@@ -65,6 +65,11 @@ pub mod ffi {
     /// A program reading the clipboard (OSC 52 `?`); see
     /// `Terminal::read_clipboard_with`.
     pub const OPT_CLIPBOARD_READ: c_int = 38;
+    /// The name of the terminfo entry XTGETTCAP `TN` reports.
+    pub const OPT_TERMINFO_NAME: c_int = 37;
+    /// How much the Kitty graphics protocol may store; zero turns it off.
+    pub const OPT_KITTY_IMAGE_STORAGE_LIMIT: c_int = 15;
+    pub const DATA_KITTY_IMAGE_STORAGE_LIMIT: c_int = 26;
 
     pub type TitleChangedFn = unsafe extern "C" fn(terminal: Terminal, userdata: *mut c_void);
     pub type PwdChangedFn = unsafe extern "C" fn(terminal: Terminal, userdata: *mut c_void);
@@ -144,7 +149,11 @@ pub mod ffi {
         pub remember: bool,
     }
     pub const CLIPBOARD_WRITE_SUCCESS: c_int = 0;
+    /// `GhosttyClipboardLocation`: the clipboard OSC 52 names — `c` (and
+    /// whatever it does not know), `s` and `p`.
     pub const CLIPBOARD_LOCATION_STANDARD: c_int = 0;
+    pub const CLIPBOARD_LOCATION_SELECTION: c_int = 1;
+    pub const CLIPBOARD_LOCATION_PRIMARY: c_int = 2;
 
     pub type ClipboardWriteReplyFn =
         unsafe extern "C" fn(write: *const ClipboardWrite, reply: *const ClipboardWriteReply);
@@ -276,6 +285,8 @@ pub mod ffi {
     /// `GhosttyRowData`: whether the row's line goes on in the next row, the
     /// right margin having broken it rather than a line feed.
     pub const ROW_DATA_WRAP: c_int = 1;
+    /// `GhosttyRowData`: whether any cell of the row may be styled.
+    pub const ROW_DATA_STYLED: c_int = 4;
     /// `GhosttyRowData`: whether any cell of the row may have a hyperlink.
     pub const ROW_DATA_HYPERLINK: c_int = 5;
     pub const OUT_OF_SPACE: c_int = -3;
@@ -291,6 +302,47 @@ pub mod ffi {
     /// `GhosttyCellWide`: an ordinary cell, as against either half of a wide
     /// character or the space a wide one left at the margin.
     pub const CELL_WIDE_NARROW: c_int = 0;
+    pub const CELL_WIDE_WIDE: c_int = 1;
+    pub const CELL_WIDE_SPACER_HEAD: c_int = 3;
+    /// A cell of background colour only: its palette index, or its colour.
+    pub const CELL_DATA_COLOR_PALETTE: c_int = 10;
+    pub const CELL_DATA_COLOR_RGB: c_int = 11;
+
+    /// `GhosttyStyleColor`: none (0), a palette index (1), or RGB (2).
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub union StyleColorValue {
+        pub palette: u8,
+        pub rgb: ColorRgb,
+        pub padding: u64,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct StyleColor {
+        pub tag: c_int,
+        pub value: StyleColorValue,
+    }
+    pub const STYLE_COLOR_PALETTE: c_int = 1;
+    pub const STYLE_COLOR_RGB: c_int = 2;
+
+    /// `GhosttyStyle`: what a cell is drawn with.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct Style {
+        pub size: usize,
+        pub fg: StyleColor,
+        pub bg: StyleColor,
+        pub underline_color: StyleColor,
+        pub bold: bool,
+        pub italic: bool,
+        pub faint: bool,
+        pub blink: bool,
+        pub inverse: bool,
+        pub invisible: bool,
+        pub strikethrough: bool,
+        pub overline: bool,
+        pub underline: c_int,
+    }
 
     /// `GhosttyTerminalModeConfig`: a mode to ask about, and its answer.
     /// `mode` is a `GhosttyMode` — the number, with bit 15 set for ANSI
@@ -390,6 +442,7 @@ pub mod ffi {
         pub fn ghostty_terminal_grid_ref(terminal: Terminal, point: Point, out: *mut GridRef) -> c_int;
         pub fn ghostty_grid_ref_row(grid_ref: *const GridRef, out: *mut Row) -> c_int;
         pub fn ghostty_grid_ref_cell(grid_ref: *const GridRef, out: *mut Cell) -> c_int;
+        pub fn ghostty_grid_ref_style(grid_ref: *const GridRef, out: *mut Style) -> c_int;
         pub fn ghostty_cell_get(cell: Cell, data: c_int, out: *mut c_void) -> c_int;
         pub fn ghostty_terminal_continuation_buf(
             terminal: Terminal,
@@ -567,6 +620,28 @@ impl Terminal {
                 ffi::OPT_SCROLLBACK_MAX_BYTES,
                 &bytes as *const usize as *const c_void,
             )
+        };
+        if rc != ffi::SUCCESS {
+            return Err(Error(rc));
+        }
+        Ok(())
+    }
+
+    /// How much of the images programs send (the Kitty graphics protocol)
+    /// is kept, in bytes; None where the library has no graphics.
+    pub fn image_storage_limit(&self) -> Option<u64> {
+        let mut out: u64 = 0;
+        let rc = unsafe {
+            ffi::ghostty_terminal_get(self.raw, ffi::DATA_KITTY_IMAGE_STORAGE_LIMIT, &mut out as *mut u64 as *mut c_void)
+        };
+        (rc == ffi::SUCCESS).then_some(out)
+    }
+
+    /// Keep at most this much of the images programs send; zero keeps none,
+    /// lets go of those kept, and has the protocol go unanswered.
+    pub fn set_image_storage_limit(&mut self, bytes: u64) -> Result<(), Error> {
+        let rc = unsafe {
+            ffi::ghostty_terminal_set(self.raw, ffi::OPT_KITTY_IMAGE_STORAGE_LIMIT, &bytes as *const u64 as *const c_void)
         };
         if rc != ffi::SUCCESS {
             return Err(Error(rc));
@@ -1257,6 +1332,8 @@ mod abi {
         assert_eq!(std::mem::size_of::<ffi::ClipboardContent>(), 32, "ClipboardContent");
         assert_eq!(std::mem::size_of::<ffi::ClipboardWrite>(), 72, "ClipboardWrite");
         assert_eq!(std::mem::size_of::<ffi::ClipboardRead>(), 80, "ClipboardRead");
+        assert_eq!(std::mem::size_of::<ffi::StyleColor>(), 16, "StyleColor");
+        assert_eq!(std::mem::size_of::<ffi::Style>(), 72, "Style");
         assert_eq!(std::mem::size_of::<ffi::ClipboardReadReply>(), 56, "ClipboardReadReply");
         assert_eq!(std::mem::size_of::<ffi::ClipboardWriteReply>(), 16, "ClipboardWriteReply");
     }

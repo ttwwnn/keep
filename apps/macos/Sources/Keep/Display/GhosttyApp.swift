@@ -901,6 +901,11 @@ final class GhosttyApp {
         // Honour the user's own Ghostty config: same fonts and theme they
         // already tuned, with no separate settings file to maintain.
         ghostty_config_load_default_files(config)
+        // And, for the tests, a file of their own over it: a reload reads it
+        // again, as it does the user's.
+        if let extra = ProcessInfo.processInfo.environment["KEEP_GHOSTTY_CONFIG"], !extra.isEmpty {
+            extra.withCString { ghostty_config_load_file(config, $0) }
+        }
 
         // Every surface runs the keep client. The per-surface `command` field
         // is ignored by this build of libghostty, so the command is fixed here

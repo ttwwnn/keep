@@ -21,9 +21,14 @@
 #   - a tab on screen in another window is never let go of;
 #   - full screen: tabs are let go of and come back at the full-screen grid;
 #   - a picture drawn in a hibernated tab: its client asks for a surface,
-#     the tab is woken out of sight, and is not let go of again;
+#     the tab is woken out of sight at the grid its program draws for —
+#     the window made smaller and the text larger meanwhile —, and is not
+#     let go of again;
+#   - the config's clipboard-read changed while tabs are hibernated: their
+#     clients are told;
 #   - what a Keep that is gone left beside its clients is swept at launch,
-#     and nothing of a Keep still running.
+#     and nothing of a Keep still running: the directories of a Keep killed
+#     here, which says beside each client whose it is, at the next launch.
 #
 # Seven tabs, three kept (KEEP_HYDRATED_LIMIT=3). Each runs a stand-in for
 # Claude Code (tools/hibernate-keep-test/program.py), told what to do through
@@ -88,6 +93,9 @@ fi
 swiftc -O tools/axpress.swift -o "$AXPRESS" 2>/dev/null || { say "could not build axpress"; exit 1; }
 swiftc -O tools/sendkey.swift -o "$SENDKEY" 2>/dev/null || { say "could not build sendkey"; exit 1; }
 swiftc -O tools/axfullscreen.swift -o "$FULLSCREEN" 2>/dev/null || { say "could not build axfullscreen"; exit 1; }
+swiftc -O tools/mousedrag.swift -o "$WORK/mousedrag" 2>/dev/null || { say "could not build mousedrag"; exit 1; }
+# The app's windows on screen, as the window server counts them.
+window_count() { "$WORK/mousedrag" windows 2>/dev/null | wc -l | tr -d ' '; }
 # A locked screen hides every window from the accessibility tree and keeps a
 # window from going full screen: nothing here can be asked or done then.
 cat >"$WORK/locked.swift" <<'SWIFT'
@@ -109,6 +117,9 @@ SKIPPED=0
 
 export KEEP_SOCKET=$SOCKET
 export KEEP_STATE_DIR=$WORK/state
+# A Ghostty config of the test's own, read over the person's at each reload.
+export KEEP_GHOSTTY_CONFIG=$WORK/ghostty.conf
+: >"$KEEP_GHOSTTY_CONFIG"
 export KEEP_STATUS_DIR=$WORK/status
 export KEEP_HIB_WORK=$WORK
 export KEEP_TRACE_SCREEN=1
@@ -254,7 +265,8 @@ watched() {  # watched <tab>: what the daemon says of it (attached, attached ×2
     "$KEEP" ls 2>/dev/null | awk -v t="$1" '$1 == "tab" && $2 == t {
         if ($NF ~ /^\xc3\x97/ || $NF ~ /^×/) print $(NF-1) " " $NF; else print $NF; exit }'
 }
-dump() { cat "$WORK/dump/$WS-$1.txt" 2>/dev/null; }
+# What the first window's surface for tab <n> holds (each window writes its own).
+dump() { cat "$WORK/dump/w0-$WS-$1.txt" 2>/dev/null; }
 dump_has() { dump "$1" | grep -qF -- "$2"; }
 # The numbered lines of tab <n>'s program in what its surface holds: "yes"
 # when they are 1 to <count>, each once and in order.
@@ -262,6 +274,24 @@ lines_whole() {  # lines_whole <tab> <count>
     dump "$1" | grep -aoE "P${PID[$1]}-L[0-9]{7}" | sed 's/.*-L//' | awk -v want="$2" '
         { n++; if ($1 + 0 != n) bad = 1 }
         END { print (!bad && n == want) ? "yes" : "no (" n " lines)" }'
+}
+# The directories of this run's clients keeping a tab now, as they said
+# they began to (KEEP_CLIENT_LOG): each says whose it is (`app`), and what
+# the surface would answer (`facts`).
+kept_dirs() {
+    local dir
+    for dir in $(grep -aoE ' keeping [^ ]+ at ' "$WORK/client.log" 2>/dev/null | awk '{print $2}' | sort -u); do
+        [ -f "$dir/kept" ] && printf '%s\n' "$dir"
+    done
+}
+# "all" when every one of them has this line in its facts (and there is one).
+facts_say() {  # facts_say <line>
+    local dir n=0 of=0
+    for dir in $(kept_dirs); do
+        of=$((of + 1))
+        grep -qx -- "$1" "$dir/facts" 2>/dev/null && n=$((n + 1))
+    done
+    [ "$of" -gt 0 ] && [ "$n" -eq "$of" ] && echo all || echo "$n of $of"
 }
 under_app() {  # under_app <command name>: processes of that name under the app
     local pid command n=0
@@ -349,7 +379,7 @@ say ""
 say "a tab's history and its program's answers, through hibernation"
 until_true 30 '[ "$(watched 1)" = attached ]'
 tell 1 "title tab-1"
-wait_for 30 test -s "$WORK/dump/$WS-1.txt"
+wait_for 30 test -s "$WORK/dump/w0-$WS-1.txt"
 print_seen 1 3000 1
 check "tab 1 shows the 3000 lines it printed" "yes" "$(lines_whole 1 3000)"
 # A tab shown for the first time is told what to print once its client is
@@ -430,20 +460,29 @@ say ""
 say "the zoom, changed while tabs are hibernated"
 # Kept now: 3, 1, 7. Hibernated: 2, 4, 5, 6. The tab on screen takes the
 # zoom at once, and its client tells the daemon: the grid read there.
+# Each step of the zoom reloads the config, read again: clipboard-read is
+# changed with it, which a hibernated tab's client reads from its facts.
 BEFORE=$(daemon_grid 3)
+printf 'clipboard-read = deny\n' >"$KEEP_GHOSTTY_CONFIG"
 "$AXPRESS" "$APP_NAME" menu View "Zoom In" >/dev/null 2>&1
 until_true 20 '[ "$(daemon_grid 3)" != "$BEFORE" ]'
 sleep 2
 ZOOMED=$(daemon_grid 3)
 check "the zoom changed the grid of the tab on screen" "yes" "$([ "$ZOOMED" != "$BEFORE" ] && echo yes || echo no)"
+until_true 10 '[ "$(facts_say clipboard-read=deny)" = all ]'
+check "the config read again tells the hibernated tabs' clients of clipboard-read" "all" \
+    "$(facts_say clipboard-read=deny)"
 show 2 || say "  (tab 2 would not come up)"
 wait_for 30 dump_has 2 "P${PID[2]}-L0000050"
 sleep 3
 check "a hibernated tab shown after it has the zoom's grid" "$ZOOMED" "$(grid 2)"
 check "and so does its shell" "$ZOOMED" "$(daemon_grid 2)"
 check "with its lines" "yes" "$(lines_whole 2 50)"
+printf 'clipboard-read = ask\n' >"$KEEP_GHOSTTY_CONFIG"
 "$AXPRESS" "$APP_NAME" menu View "Actual Size" >/dev/null 2>&1
 sleep 3
+until_true 10 '[ "$(facts_say clipboard-read=ask)" = all ]'
+check "and of it changed back" "all" "$(facts_say clipboard-read=ask)"
 
 # --- ⌘P ---------------------------------------------------------------------------
 
@@ -506,8 +545,16 @@ check "neither window let go of tab 2 while the first shows it" "$HIB2" \
     "$(trace_count "pool +hibernating w[0-9]+ $WS/2 ")"
 check "while tabs out of sight in the second window were let go of" "yes" \
     "$([ -n "$SECOND" ] && grep -aqE "pool +hibernating $SECOND $WS/[56] " "$WORK/app.log" && echo yes || echo no)"
-"$SENDKEY" "$APP_PID" key 13 cmd alt >/dev/null 2>&1          # ⌥⌘W
-sleep 3
+# ⌥⌘W closes the window in front: the second, put there again first.
+for attempt in 1 2 3; do
+    [ "$(window_count)" -le 1 ] && break
+    osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" \
+        >/dev/null 2>&1
+    sleep 1
+    "$SENDKEY" "$APP_PID" key 13 cmd alt >/dev/null 2>&1      # ⌥⌘W
+    until_true 10 '[ "$(window_count)" -le 1 ]'
+done
+check "the second window is closed, the first left" "1" "$(window_count)"
 give_back_front
 fi
 
@@ -566,9 +613,20 @@ if [ -z "$PIC" ]; then
     check "a tab is hibernated to draw in" "yes" "no"
 else
     MADE_PIC=$(made "$PIC")
-    # The text a size larger meanwhile: a surface out of sight keeps the grid
-    # its program draws for until it is shown, and so does one made for it.
+    # The window smaller and the text a size larger meanwhile: a surface out
+    # of sight keeps the grid its program draws for until it is shown, and
+    # so does one made for it — the size in pixels the pane rested at, and
+    # its text's.
     RESTING=$(daemon_grid "$PIC")
+    if [ -z "$LOCKED" ]; then
+        ON_SCREEN=$(grep -aoE "switch +→ $WS/[0-9]+" "$WORK/app.log" | tail -1 | sed 's/.*\///')
+        LARGE=$(daemon_grid "$ON_SCREEN")
+        osascript -e "tell application \"System Events\" to tell process \"$APP_NAME\" to set size of window 1 to {900, 560}" \
+            >/dev/null 2>&1
+        until_true 10 '[ "$(daemon_grid "$ON_SCREEN")" != "$LARGE" ]'
+        check "the window made smaller meanwhile (the tab on screen's grid)" "yes" \
+            "$([ "$(daemon_grid "$ON_SCREEN")" != "$LARGE" ] && echo yes || echo no)"
+    fi
     "$AXPRESS" "$APP_NAME" menu View "Zoom In" >/dev/null 2>&1
     sleep 2
     tell "$PIC" "image" "print 3"
@@ -576,12 +634,18 @@ else
     sleep 2
     check "its client asks for a surface, and the tab is woken out of sight" "yes yes $((MADE_PIC + 1))" \
         "$(grep -aqE "keeper .* asks for a surface: image" "$WORK/app.log" && echo yes || echo no) $(grep -aqE "hibernate +$WS/$PIC woken" "$WORK/app.log" && echo yes || echo no) $(made "$PIC")"
+    # Its client waits to be shown for a while before it takes the pane over.
+    until_true 30 'grep -aE "handing over at .* held" "$WORK/client.log" | grep -qvE " 0 held"'
     WOKEN=$(grep -aE "handing over at .* held" "$WORK/client.log" | grep -vE " 0 held" | tail -1)
     check "the picture went to the surface as it came, with the rest" "yes" \
         "$([ -n "$WOKEN" ] && echo yes || echo no)"
-    check "at the grid its program draws for, out of sight as it is, the text zoomed meanwhile" "$RESTING" \
-        "$(printf '%s\n' "$WOKEN" | grep -oE 'at [0-9]+x[0-9]+' | head -1 | cut -c4-)"
+    check "at the grid its program draws for, out of sight as it is, the window and the text changed meanwhile" \
+        "$RESTING" "$(printf '%s\n' "$WOKEN" | grep -oE 'at [0-9]+x[0-9]+' | head -1 | cut -c4-)"
     "$AXPRESS" "$APP_NAME" menu View "Actual Size" >/dev/null 2>&1
+    if [ -z "$LOCKED" ]; then
+        osascript -e "tell application \"System Events\" to tell process \"$APP_NAME\" to set size of window 1 to {1100, 700}" \
+            >/dev/null 2>&1
+    fi
     sleep 2
     HIB_PIC=$(hibernated "$PIC")
     # A settle comes a second after a tab is shown, and every fifteen.
@@ -598,12 +662,28 @@ LIVE=0
 for n in $(seq "$TABS"); do kill -0 "${PID[$n]}" 2>/dev/null && LIVE=$((LIVE + 1)); done
 check "every tab's program is still running" "$TABS" "$LIVE"
 
+say ""
+say "a Keep killed, and opened again"
+# Each client's directory says whose it is, written by the app as it makes
+# it: the keepers' checked here, found where their clients said they keep.
+UNSAID=0
+for dir in $(kept_dirs); do [ "$(cat "$dir/app" 2>/dev/null)" = "$APP_PID" ] || UNSAID=$((UNSAID + 1)); done
+check "the app says whose its clients' directories are" "yes 0" \
+    "$([ -n "$(kept_dirs)" ] && echo yes || echo no) $UNSAID"
+GONE_APP=$APP_PID
 kill "$APP_PID" 2>/dev/null
 wait_for 10 sh -c "! kill -0 $APP_PID"
 APP_PID=
 sleep 2
 KEEPERS=$("$KEEP" ls 2>/dev/null | grep -cE '^ +tab .* attached')
 check "with the app gone, its clients let go of every tab" "0" "$KEEPERS"
+left_by() { grep -lx "$1" "$ORPHANS"/*/app 2>/dev/null | wc -l | tr -d ' '; }
+LEFT=$(left_by "$GONE_APP")
+check "the clients it showed left their directories, saying whose they were" "yes" \
+    "$([ "$LEFT" -gt 0 ] && echo yes || echo no)"
+launch KEEP_HYDRATED_LIMIT=$LIMIT
+until_true 20 '[ "$(left_by "$GONE_APP")" = 0 ]'
+check "the next Keep sweeps them ($LEFT) at launch" "0" "$(left_by "$GONE_APP")"
 
 if [ "$FAILED" -gt 0 ] && [ -z "$SABOTAGE" ]; then
     say ""
