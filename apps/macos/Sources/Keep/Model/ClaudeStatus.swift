@@ -106,6 +106,96 @@ enum ClaudeStatusReader {
     ]
 }
 
+/// Claude Code's own pickers, which `/model` and `/effort` open with no
+/// argument. Both take "s" for this session only, so a pick in the bar is
+/// this conversation's and no other's: `/model <id>` and `/effort <level>`
+/// save the default for new sessions, which the sessions opened without
+/// --model follow live (seen 12/10 on Claude Code 2.1.296).
+enum ClaudePicker {
+    static let modelTitle = "Select model"
+    static let modelSessionOnly = "use this session only"
+    static let effortSessionOnly = "s for this session only"
+
+    /// The picker's item for a model id, or nil when it has none: the
+    /// 1M-context Opus is not listed (its "Opus 5.5" is the 200k one).
+    static func label(forModel id: String) -> String? {
+        switch id {
+        case "claude-fable-5-1": return "Fable 5.1"
+        case "claude-opus-5-5": return "Opus 5.5"
+        case "claude-sonnet-5-5": return "Sonnet 5.5"
+        case "claude-haiku-5-5": return "Haiku 5.5"
+        default: return nil
+        }
+    }
+
+    /// The items of `/model`'s list, in order, and which one the pointer is
+    /// on: `   ❯ 4.  Sonnet 5.5 ✔           Most efficient…` is "Sonnet 5.5",
+    /// pointed. The label is what comes before the first double blank.
+    static func items(onScreen text: String) -> [(label: String, pointed: Bool)] {
+        guard let regex = try? NSRegularExpression(pattern: #"^\s*(❯)?\s*[↑↓]?\s*\d+\.\s+(\S.*)$"#) else { return [] }
+        var out: [(String, Bool)] = []
+        for raw in text.split(separator: "\n") {
+            let line = String(raw)
+            guard let m = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+                let rest = Range(m.range(at: 2), in: line)
+            else { continue }
+            let label = line[rest].trimmingCharacters(in: .whitespaces)
+                .components(separatedBy: "  ").first?
+                .replacingOccurrences(of: "✔", with: "").trimmingCharacters(in: .whitespaces) ?? ""
+            out.append((label, m.range(at: 1).location != NSNotFound))
+        }
+        return out
+    }
+
+    /// Arrow presses from the pointer to `label` (+ down, − up), or nil when
+    /// the list does not show it or shows no pointer.
+    static func steps(to label: String, onScreen text: String) -> Int? {
+        let list = items(onScreen: text)
+        guard let from = list.firstIndex(where: \.pointed),
+            let to = list.firstIndex(where: { $0.label == label })
+        else { return nil }
+        return to - from
+    }
+
+    /// Arrow presses (+ right, − left) that take `/effort`'s marker (▲) to
+    /// `level`, read off the levels written under the marker's rule.
+    static func effortSteps(to level: String, onScreen text: String) -> Int? {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map { Array($0) }
+        guard let markerRow = lines.firstIndex(where: { $0.contains("▲") }),
+            markerRow + 1 < lines.count,
+            let marker = lines[markerRow].firstIndex(of: "▲")
+        else { return nil }
+        let names = lines[markerRow + 1]
+        var spans: [(name: String, start: Int, end: Int)] = []
+        var i = 0
+        while i < names.count {
+            if names[i].isLetter {
+                let start = i
+                while i < names.count, names[i].isLetter { i += 1 }
+                spans.append((String(names[start..<i]), start, i))
+            } else {
+                i += 1
+            }
+        }
+        let levels = spans.filter { ClaudeStatusReader.efforts.contains($0.name) }
+        guard let target = levels.firstIndex(where: { $0.name == level }),
+            let current = levels.indices.min(by: {
+                abs((levels[$0].start + levels[$0].end) / 2 - marker)
+                    < abs((levels[$1].start + levels[$1].end) / 2 - marker)
+            })
+        else { return nil }
+        return target - current
+    }
+
+    /// The question Claude Code asks before switching models in a
+    /// conversation with a cache ("Switch model? … the full history gets
+    /// re-read"), the pointer on "1. Yes, switch to …".
+    static func asksToSwitch(onScreen text: String) -> Bool {
+        text.contains("Switch model?")
+            && text.range(of: #"❯\s*1\.\s*Yes, switch to"#, options: .regularExpression) != nil
+    }
+}
+
 /// One of the models Codex offers, as its cache lists them
 /// (`~/.codex/models_cache.json`): the slug it goes by, the name on screen,
 /// the efforts it takes and the one it starts with.

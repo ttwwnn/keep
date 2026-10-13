@@ -15,6 +15,7 @@ anyhow = "1.0.104"
 crossterm = "0.29.0"
 keep-ia = { version = "0.0.1", path = "../keep-ia" }
 keep-proto = { version = "0.0.1", path = "../keep-proto" }
+keep-restauro = { version = "0.0.1", path = "../keep-restauro" }
 
 # The mirror a tab is kept in when the app lets go of its surface
 # (src/keeper.rs), and the system calls that hand a kept tab over.

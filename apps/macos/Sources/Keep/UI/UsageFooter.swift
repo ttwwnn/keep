@@ -472,7 +472,8 @@ struct UsageFooter: View {
         }
     }
 
-    private var numbers: Font { Font(GhosttyApp.shared.terminalFont(size: 11 * scale)) }
+    /// A tab's name's face and size: the footer writes in the sidebar's own text.
+    private var numbers: Font { Font(GhosttyApp.shared.tabNameFont) }
 
     private func footer(now: Date) -> some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -485,7 +486,7 @@ struct UsageFooter: View {
                 .padding(.bottom, folded ? 4 : 5)
             if let notice = monitor.notice {
                 Text(notice)
-                    .font(.system(size: 10 * scale))
+                    .font(numbers)
                     .foregroundStyle(UsageInk.attention)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -527,7 +528,7 @@ struct UsageFooter: View {
                         .font(.system(size: 8 * scale, weight: .semibold))
                         .rotationEffect(.degrees(folded ? 0 : 90))
                     Text("Consumo de IA")
-                        .font(.system(size: 11 * scale, weight: .semibold))
+                        .font(numbers)
                 }
                 .contentShape(Rectangle())
             }
@@ -551,14 +552,14 @@ struct UsageFooter: View {
                             dispatch(.signIn(service))
                         }
                     })
-                    .frame(width: 16, height: 14)
+                    .frame(width: 16 * scale, height: 14 * scale)
             }
             Button {
                 monitor.measureNow()
             } label: {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 9 * scale, weight: .semibold))
-                    .frame(width: 16, height: 14)
+                    .frame(width: 16 * scale, height: 14 * scale)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -572,7 +573,16 @@ struct UsageFooter: View {
     }
 
     /// "Claude · principal": the service and the order's name for the account.
-    private func title(_ line: AccountUsage) -> String { line.account.name }
+    /// The service: what the row's number does not say. Never the order's
+    /// own names for the accounts ("principal", "reserva"): an account is its
+    /// place in this list (13/10/2026).
+    private func title(_ line: AccountUsage) -> String { line.account.engine.title }
+
+    /// "IA-2 · Claude": what the tabs call the account, for the tooltips.
+    private func numbered(_ line: AccountUsage) -> String {
+        let number = monitor.lines.firstIndex { $0.account.id == line.account.id }.map { $0 + 1 }
+        return number.map { "\(AIChoices.name(number: $0)) · \(title(line))" } ?? title(line)
+    }
 
     /// "2 · Claude · reserva": the same, after its place in the order, which
     /// is what the arrows beside it change. The place is written only when
@@ -612,7 +622,7 @@ struct UsageFooter: View {
             // one the order means, the address says which one the service does.
             if let email = line.account.email {
                 Text(email)
-                    .font(.system(size: 10.5 * scale))
+                    .font(numbers)
                     .foregroundStyle(UsageInk.inkResting)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -628,7 +638,7 @@ struct UsageFooter: View {
 
             if let note = note(line, now: now) {
                 Text(note)
-                    .font(.system(size: 10 * scale))
+                    .font(numbers)
                     .foregroundStyle(line.reading?.limitReached == true ? UsageInk.critical : UsageInk.inkFaint)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -659,7 +669,7 @@ struct UsageFooter: View {
         } label: {
             Image(systemName: up ? "chevron.up" : "chevron.down")
                 .font(.system(size: 7.5 * scale, weight: .bold))
-                .frame(width: 12, height: 12)
+                .frame(width: 12 * scale, height: 12 * scale)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -679,13 +689,13 @@ struct UsageFooter: View {
         let until = UsageText.until(window.resetsAt, now: now)
         return HStack(spacing: 6) {
             Text(window.label)
-                .font(.system(size: 10 * scale))
+                .font(numbers)
                 .foregroundStyle(UsageInk.inkResting)
                 .lineLimit(1)
                 // The middle: an additional limit's label ends in the window
                 // ("… 5h", "… 7d") that tells two of them apart.
                 .truncationMode(.middle)
-                .frame(width: 34, alignment: .leading)
+                .frame(width: 34 * scale, alignment: .leading)
             GeometryReader { space in
                 ZStack(alignment: .leading) {
                     Capsule().fill(UsageInk.wash(0.12))
@@ -699,14 +709,14 @@ struct UsageFooter: View {
                 .font(numbers)
                 .monospacedDigit()
                 .foregroundStyle(level == .normal ? UsageInk.inkResting : UsageInk.fill(level))
-                .frame(width: 34, alignment: .trailing)
+                .frame(width: 34 * scale, alignment: .trailing)
             Text(until ?? "")
-                .font(.system(size: 10 * scale))
+                .font(numbers)
                 .foregroundStyle(UsageInk.inkFaint)
                 .lineLimit(1)
-                .frame(width: 40, alignment: .trailing)
+                .frame(width: 40 * scale, alignment: .trailing)
         }
-        .frame(height: 13)
+        .frame(height: 16 * scale)
         .help(barHelp(window, now: now))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
@@ -720,9 +730,11 @@ struct UsageFooter: View {
     private func compact(_ line: AccountUsage, at index: Int) -> some View {
         let windows = Array((line.reading?.windows ?? []).prefix(2))
         let figures = windows.map { UsageText.percent($0.percent) }.joined(separator: " · ")
-        // The address alone, cut at its end: its start is what tells the
-        // logins apart, and the service is in the tooltip.
-        let name = line.account.email ?? title(line)
+        // The address's own part, before the @: it is what tells the logins
+        // apart, and it fits a row at any zoom. The whole address, and the
+        // service, are in the tooltip.
+        let name = line.account.email.map { String($0.split(separator: "@").first ?? Substring($0)) }
+            ?? title(line)
         return HStack(spacing: 5) {
             HStack(spacing: 5) {
                 heading(name, line, at: index)
@@ -736,8 +748,9 @@ struct UsageFooter: View {
                     .lineLimit(1)
                     .layoutPriority(1)
             }
-            .frame(height: 14)
-            .help(([title(line)] + windows.map { "\($0.title): \(UsageText.percent($0.percent))" })
+            .frame(height: 16 * scale)
+            .help(([numbered(line)] + [line.account.email].compactMap { $0 }
+                + windows.map { "\($0.title): \(UsageText.percent($0.percent))" })
                 .joined(separator: "\n"))
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(line.account.engine.title) \(name) \(figures)")
@@ -785,7 +798,7 @@ struct UsageFooter: View {
             }
             if let note = jevNote(jev, now: now) {
                 Text(note)
-                    .font(.system(size: 10 * scale))
+                    .font(numbers)
                     .foregroundStyle(UsageInk.inkFaint)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -799,10 +812,10 @@ struct UsageFooter: View {
         let level = UsageText.level(spent)
         return HStack(spacing: 6) {
             Text(label)
-                .font(.system(size: 10 * scale))
+                .font(numbers)
                 .foregroundStyle(UsageInk.inkResting)
                 .lineLimit(1)
-                .frame(width: 34, alignment: .leading)
+                .frame(width: 34 * scale, alignment: .leading)
             GeometryReader { space in
                 ZStack(alignment: .leading) {
                     Capsule().fill(UsageInk.wash(0.12))
@@ -817,9 +830,9 @@ struct UsageFooter: View {
                 .monospacedDigit()
                 .foregroundStyle(level == .normal ? UsageInk.inkResting : UsageInk.fill(level))
                 .lineLimit(1)
-                .frame(width: 74, alignment: .trailing)
+                .frame(width: 74 * scale, alignment: .trailing)
         }
-        .frame(height: 13)
+        .frame(height: 16 * scale)
         .help(help)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Jev \(label): \(says) \(UsageText.dollars(figure))")
@@ -845,7 +858,7 @@ struct UsageFooter: View {
                 .lineLimit(1)
                 .layoutPriority(1)
         }
-        .frame(height: 14)
+        .frame(height: 16 * scale)
         .help(jevHelp(jev, now: now))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Jev OpenRouter restam \(figure)")
@@ -901,11 +914,9 @@ struct UsageFooter: View {
 
     private func accountHelp(_ line: AccountUsage, now: Date) -> String {
         var lines: [String] = []
+        lines.append(numbered(line))
         if let email = line.account.email { lines.append(email) }
         if let plan = line.account.plan { lines.append("Plano \(plan)") }
-        if line.account.aliases.count > 1 {
-            lines.append("Também chamada: " + line.account.aliases.joined(separator: ", "))
-        }
         if line.account.isUsed(by: selectedAccount) {
             lines.append("Conta usada nesta aba")
         }
@@ -925,7 +936,7 @@ struct UsageFooter: View {
 /// The footer's inks: the sidebar's own (`Palette` in WorkspaceSidebar.swift,
 /// private to that file), and the two warning hues it lacks. Same values, so
 /// the footer's text sits with the list's.
-private enum UsageInk {
+enum UsageInk {
     private static func inkColor(dark: CGFloat, light: CGFloat) -> NSColor {
         NSColor(name: nil) { appearance in
             appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua

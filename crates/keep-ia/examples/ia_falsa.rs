@@ -5,6 +5,11 @@
 //! subiu, e sai pelo `/exit` (Claude) ou `/quit` (Codex) imprimindo o id da
 //! conversa como eles imprimem. `/trabalhar` finge um turno em andamento;
 //! um Esc o interrompe.
+//!
+//! O Claude falso relê o armazém de login a cada pedido, como o de verdade
+//! (que guarda o que leu por 30 s), e diz o token de acesso que achou
+//! (`conta=<token>`): é como os testes veem a troca de conta a quente. Só
+//! tokens de teste aparecem inteiros; um comprido sai pela impressão.
 
 #[cfg(unix)]
 fn main() {
@@ -21,6 +26,28 @@ mod falsa {
 
     fn casa() -> PathBuf {
         PathBuf::from(std::env::var("KEEP_IA_HOME").or_else(|_| std::env::var("HOME")).unwrap_or_default())
+    }
+
+    /// O token de acesso do armazém em que este Claude roda: o da variável,
+    /// senão o global — relido agora. Nunca o Chaveiro de verdade: sem o
+    /// `security` de mentira dos testes, não lê nada.
+    fn conta_no_armazem() -> String {
+        use keep_ia::contas::credencial::{self, Lido, Oauth};
+        if credencial::usa_chaveiro() && std::env::var_os("KEEP_IA_SECURITY").is_none() {
+            return "?".into();
+        }
+        let local = match std::env::var("CLAUDE_SECURESTORAGE_CONFIG_DIR") {
+            Ok(d) if !d.is_empty() => credencial::local_fixa(std::path::Path::new(&d)),
+            _ => credencial::local_global(),
+        };
+        match credencial::ler(&local) {
+            Lido::Ok(v) => match Oauth::de(&v).and_then(|o| o.acesso) {
+                Some(a) if a.len() <= 16 => a,
+                Some(a) => keep_ia::contas::donos::impressao(&a),
+                None => "-".into(),
+            },
+            _ => "-".into(),
+        }
     }
 
     fn agora_ms() -> u64 {
@@ -119,9 +146,10 @@ mod falsa {
         let _bruto = Bruto::liga();
         let mut out = std::io::stdout();
         let resto: Vec<&String> = argv.iter().skip(1).collect();
+        let conta = if codex { String::new() } else { format!(" conta={}", conta_no_armazem()) };
         let _ = write!(
             out,
-            "FALSO {papel} args={resto:?} escolha={} fixa={} home={} id={id}\r\n",
+            "FALSO {papel} args={resto:?} escolha={} fixa={} home={} id={id}{conta}\r\n",
             var("KEEP_IA_ESCOLHA"),
             var("CLAUDE_SECURESTORAGE_CONFIG_DIR"),
             var("CODEX_HOME")
@@ -164,7 +192,9 @@ mod falsa {
                             anota("busy");
                             caixa(&mut out, "\r\n✻ Pensando… (esc to interrupt)");
                         }
-                        outro => caixa(&mut out, &format!("\r\n> {outro}\r\n● Feito.")),
+                        outro if codex => caixa(&mut out, &format!("\r\n> {outro}\r\n● Feito.")),
+                        // A resposta diz o pedido: cada uma se acha na tela.
+                        outro => caixa(&mut out, &format!("\r\n> {outro}\r\n● Feito: {outro}, conta={}", conta_no_armazem())),
                     }
                 }
                 b => {

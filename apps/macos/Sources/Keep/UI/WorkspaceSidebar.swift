@@ -146,6 +146,10 @@ struct WorkspaceSidebar: View {
             // window must keep, and in a short window it gives way from the
             // bottom rather than making the window grow. First claim on the
             // height otherwise, so the list is what scrolls.
+            MemoryMeter()
+                .frame(minHeight: 0, alignment: .top)
+                .clipped()
+                .layoutPriority(1)
             UsageFooter(monitor: .shared, dispatch: dispatch,
                         selectedAccount: rows.first(where: \.isActive)?.tabRows
                             .first(where: \.isActive)?.usageAccount)
@@ -554,11 +558,15 @@ struct WorkspaceSidebar: View {
                     // name is the word that tells you what the tab is.
                     .layoutPriority(-1)
                     .onHover { inside in notePointer(inside, onNameOf: .tab(tab.id)) }
-                // The program, or — for an AI kept on an account of its own —
-                // which account: "— claude · reserva".
-                let program = AIChoices.programLabel(command: tab.command, account: tab.account)
+                // The program — "— bash" —, or for an AI only the number of
+                // the account it runs on, its place in the footer's list:
+                // "(IA-3)". Read, not watched (see `accountGlyph`): the
+                // session republishes when the list's order changes.
+                let program = AIChoices.tabLabel(
+                    command: tab.command, account: tab.account, running: tab.runningAccount,
+                    lines: UsageMonitor.shared.lines)
                 if !program.isEmpty {
-                    Text("— \(program)")
+                    Text(program)
                         .font(.system(size: 12 * titleZoom))
                         .foregroundStyle(wantsYou ? Palette.attentionInk.opacity(0.62) : Palette.inkFaint)
                         .lineLimit(1)

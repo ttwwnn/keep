@@ -368,7 +368,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private func changeEffort(to level: String) {
         guard let status = statusBar.status else { return }
         guard status.program == "codex" else {
-            typeKeepingDefaults("/effort \(level)")
+            pickInClaude { workspace, tab, send in
+                ClaudePickerDriver.choose(effort: level, workspace: workspace, tab: tab, send: send)
+            }
             return
         }
         guard let model = CodexStatusReader.model(named: status.modelID, in: CodexModelsCache.shared.models())
@@ -381,7 +383,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private func changeModel(to id: String) {
         guard let status = statusBar.status else { return }
         guard status.program == "codex" else {
-            typeKeepingDefaults("/model \(id)")
+            // Through the picker, for this conversation only — except the
+            // 1M-context Opus, which the picker does not list: `/model` with
+            // its id, and the default it saves put back.
+            guard let label = ClaudePicker.label(forModel: id) else {
+                typeKeepingDefaults("/model \(id)")
+                return
+            }
+            pickInClaude { workspace, tab, send in
+                ClaudePickerDriver.choose(model: label, workspace: workspace, tab: tab, send: send)
+            }
             return
         }
         guard let model = CodexStatusReader.model(named: id, in: CodexModelsCache.shared.models()) else { return }
@@ -430,6 +441,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         else { return }
         try? out.write(to: URL(fileURLWithPath: settingsPath), options: .atomic)
         Trace.log("model", "settings.json defaults put back")
+    }
+
+    private func pickInClaude(
+        _ drive: (_ workspace: String, _ tab: UInt32, _ send: @escaping @MainActor (String) -> Void) -> Void
+    ) {
+        guard let id = container.visibleTab,
+            let surface = container.hosts[id]?.surface(for: id.root)
+        else { return }
+        drive(id.workspace, id.root) { [weak surface] keys in
+            _ = surface?.perform(CutSelection.action(for: keys))
+        }
     }
 
     private func pickInCodex(model: CodexModel, effort: String) {

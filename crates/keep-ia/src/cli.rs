@@ -63,6 +63,13 @@ pub fn uso_errado(texto: &str) -> i32 {
 
 /// `keep ia <args>`.
 pub fn ia(args: &[String]) -> i32 {
+    // Os que passam a linha adiante ou falam com o Claude Code, sem JSON.
+    match args.first().map(String::as_str) {
+        Some("confinar") => return crate::confinar::cli(&args[1..]),
+        Some("statusline") => return crate::statusline::cli(),
+        Some("confiar") => return crate::confiar::cli(&args[1..]),
+        _ => {}
+    }
     let a = Args::de(args);
     let comando = a.posicoes.first().map(String::as_str).unwrap_or("");
     match comando {
@@ -108,11 +115,14 @@ pub fn ia(args: &[String]) -> i32 {
             Err(e) => responde(recusa("sem-keepd", &e)),
         },
         "trocar" => crate::trocar::cli(&a),
+        "preparar" => crate::quente::cli_preparar(&a),
         "entrar" => crate::login::cli_entrar(&a),
         "login" => crate::login::cli_login(&a),
         "sincronizar" => crate::sincronizar::cli(),
         "renovar" => crate::renovar::cli(&a),
-        _ => uso_errado("keep ia contas | uso | jev | ordem [mover] | abas | trocar | entrar | login | sincronizar | renovar"),
+        _ => uso_errado(
+            "keep ia contas | uso | jev | ordem [mover] | abas | trocar | preparar | entrar | login | sincronizar | renovar | confinar | statusline | confiar",
+        ),
     }
 }
 

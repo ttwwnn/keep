@@ -13,6 +13,14 @@
 # it (e2e/ia-falso.mjs); -NucleoReal leaves the stand-in out. Each moment
 # worth seeing is photographed when the app asks (telas/<name>.png).
 #
+# So is the bar under Claude Code and Codex, against stand-ins of both
+# (e2e/barra-falsa.mjs): the status line the app sets up in Claude Code's
+# settings on opening, which the installer's keep-statusline.ps1 answers by
+# saving the stand-in's JSON under the tab's shell — checked here from
+# outside: the shell's parent is keepd, and the settings file kept all it
+# had —, the bar showing both programs' model and effort, and each pick
+# walking the program's own picker by keys.
+#
 # Exit 0 only when the app reported every step done.
 param(
     [string]$Installer = "",
@@ -110,6 +118,42 @@ foreach ($nome in @('claude', 'codex')) {
 }
 $env:KEEP_E2E_FALSOS = $falsos
 
+# The bar: Claude Code's settings in a folder of this run's
+# (CLAUDE_CONFIG_DIR, which Claude Code and the app both read), with
+# something in it the status line must leave as it was; the status files in
+# another; Codex's model cache as Codex 0.162.1 keeps it; and the stand-ins
+# behind a claude.cmd and a codex.cmd, so the daemon names them as it names
+# the real ones.
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+$env:CLAUDE_CONFIG_DIR = Join-Path $Out 'claude'
+$env:KEEP_STATUS_DIR = Join-Path $Out 'status'
+$env:CODEX_HOME = Join-Path $Out 'codex'
+$barra = Join-Path $Out 'barra'
+Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $env:CLAUDE_CONFIG_DIR, $env:KEEP_STATUS_DIR, $env:CODEX_HOME, $barra
+foreach ($pasta in @($env:CLAUDE_CONFIG_DIR, $env:CODEX_HOME, $barra)) { New-Item -ItemType Directory -Force $pasta | Out-Null }
+$settingsAntes = "{`n  `"theme`": `"dark`",`n  `"model`": `"claude-fable-5-1`",`n  `"permissions`": {`n    `"allow`": [`n      `"Bash(git status)`"`n    ]`n  }`n}`n"
+[System.IO.File]::WriteAllText((Join-Path $env:CLAUDE_CONFIG_DIR 'settings.json'), $settingsAntes, $utf8)
+$niveis = '[{"effort": "low"}, {"effort": "medium"}, {"effort": "high"}, {"effort": "xhigh"}'
+$cache = @"
+{"fetched_at": "2026-10-12T23:46:00Z", "client_version": "0.162.1", "models": [
+ {"slug": "gpt-6.1-sol", "display_name": "GPT-6.1-Sol", "visibility": "list", "priority": 1,
+  "default_reasoning_level": "low", "supported_reasoning_levels": $niveis]},
+ {"slug": "gpt-6-astra", "display_name": "GPT-6-Astra", "visibility": "list", "priority": 2,
+  "default_reasoning_level": "medium", "supported_reasoning_levels": $niveis, {"effort": "max"}, {"effort": "ultra"}]},
+ {"slug": "gpt-reserve", "display_name": "GPT-Reserve", "visibility": "hide", "priority": 2,
+  "default_reasoning_level": "medium", "supported_reasoning_levels": $niveis]},
+ {"slug": "gpt-6-sol", "display_name": "GPT-6-Sol", "visibility": "list", "priority": 3,
+  "default_reasoning_level": "medium", "supported_reasoning_levels": $niveis, {"effort": "max"}, {"effort": "ultra"}]}
+]}
+"@
+[System.IO.File]::WriteAllText((Join-Path $env:CODEX_HOME 'models_cache.json'), $cache, $utf8)
+$barraFalsa = Join-Path $here 'barra-falsa.mjs'
+foreach ($nome in @('claude', 'codex')) {
+    Set-Content -Path (Join-Path $barra "$nome.cmd") -Value "@echo off`r`nnode `"$barraFalsa`" $nome"
+}
+$env:KEEP_E2E_BARRA = $barra
+$env:KEEP_STATUSLINE_TRACE = Join-Path $barra 'statusline-trace.txt'
+
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 function Save-Screen([string]$path) {
     $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
@@ -141,6 +185,51 @@ while (-not (Test-Path $env:KEEP_E2E_REPORT) -and (Get-Date) -lt $deadline) {
 }
 Start-Sleep -Seconds 2
 Save-Screen (Join-Path $Out 'tela.png')
+
+# The bar, from outside the app, while its tabs still run: the status file is
+# named after the tab's shell — whose parent is keepd — and holds what the
+# Claude Code stand-in said; the settings file took the status line pointing
+# at the script the installer put beside the app, and kept every byte it had.
+$barraProblemas = @()
+$barraLinhas = @()
+if (Test-Path $env:KEEP_E2E_REPORT) {
+    $relatorio = Get-Content $env:KEEP_E2E_REPORT -Raw | ConvertFrom-Json
+    $shellPid = [int]$relatorio.barra.shellPid
+    if ($shellPid -le 0) {
+        $barraProblemas += 'o roteiro não disse o shell da aba do Claude falso'
+    } else {
+        $shellProc = Get-CimInstance Win32_Process -Filter "ProcessId = $shellPid"
+        $paiProc = if ($shellProc) { Get-CimInstance Win32_Process -Filter "ProcessId = $($shellProc.ParentProcessId)" } else { $null }
+        $arquivo = Join-Path $env:KEEP_STATUS_DIR "$shellPid.json"
+        $conteudo = if (Test-Path $arquivo) { Get-Content $arquivo -Raw } else { '' }
+        $barraLinhas += "shell da aba: $shellPid ($($shellProc.Name)); pai: $($paiProc.ProcessId) ($($paiProc.Name)); $($arquivo): $conteudo"
+        if (-not $shellProc -or -not $paiProc -or $paiProc.Name -notlike 'keepd*') {
+            $barraProblemas += "o pai do shell $shellPid não é o keepd: $($paiProc.Name)"
+        }
+        if ($conteudo -notmatch 'keep-e2e-claude') { $barraProblemas += "o $shellPid.json não tem o JSON do Claude falso" }
+    }
+    $script = Join-Path $dir 'keep-statusline.ps1'
+    $esperado = 'powershell -NoProfile -ExecutionPolicy Bypass -File "' + ($script -replace '\\', '/') + '"'
+    $settingsDepois = [string]$relatorio.barra.settings
+    $barraLinhas += "settings.json ao abrir: $settingsDepois"
+    if (-not (Test-Path $script)) { $barraProblemas += "o instalador não pôs o keep-statusline.ps1 em $dir" }
+    $comando = try { ($settingsDepois | ConvertFrom-Json).statusLine.command } catch { $null }
+    if ($comando -ne $esperado) { $barraProblemas += "statusLine: $comando; esperada: $esperado" }
+    $prefixo = $settingsAntes.Substring(0, $settingsAntes.LastIndexOf('}')).TrimEnd()
+    if (-not $settingsDepois.StartsWith($prefixo)) { $barraProblemas += 'o settings.json mudou além da statusLine' }
+} else {
+    $barraProblemas += 'sem relatório'
+}
+foreach ($log in @('claude-statusline.txt', 'statusline-trace.txt', 'claude-teclas.txt', 'codex-teclas.txt')) {
+    $caminho = Join-Path $barra $log
+    if (Test-Path $caminho) { $barraLinhas += "--- $($log):"; $barraLinhas += (Get-Content $caminho) }
+}
+$appLog = Join-Path $env:KEEP_STATE_DIR 'app.log'
+if (Test-Path $appLog) { $barraLinhas += '--- app.log:'; $barraLinhas += (Get-Content $appLog) }
+$barraResumo = if ($barraProblemas.Count -eq 0) { 'ok' } else { 'FALHOU: ' + ($barraProblemas -join '; ') }
+Set-Content -Path (Join-Path $Out 'barra.txt') -Value (@("barra: $barraResumo") + $barraLinhas)
+Write-Host "==> barra: $barraResumo"
+$barraLinhas | ForEach-Object { Write-Host "    $_" }
 
 # The worktree the close sent away: gone from its place, and in the Recycle
 # Bin — the stand-in wrote down where the app said it went.
@@ -203,4 +292,5 @@ $report.steps | Format-Table name, ok, ms, detail -AutoSize | Out-String -Width 
 if (-not $report.ok) { throw 'o roteiro do app falhou' }
 if ($update -like 'FALHOU*') { throw "a atualização com o daemon rodando falhou: $update" }
 if ($lixeira -like 'FALHOU*') { throw "a worktree não foi para a Lixeira: $lixeira" }
+if ($barraResumo -like 'FALHOU*') { throw "a barra, vista de fora: $barraResumo" }
 Write-Host '==> ok'

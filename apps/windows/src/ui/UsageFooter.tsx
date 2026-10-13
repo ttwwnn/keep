@@ -10,17 +10,18 @@
 import {
   STALE_AFTER_S,
   accountHelp,
-  accountName,
   available,
   barHelp,
   creditRows,
   dollars,
+  engineTitle,
   isUsedBy,
   jevHelp,
   jevNote,
   level,
   lineId,
   noteText,
+  numberedName,
   orderKeyOf,
   percentText,
   untilText,
@@ -48,7 +49,7 @@ import * as icon from "./icons";
 /** ▲ and ▼: one place up or down. The first has nowhere up to go and the last nowhere down; each keeps the other's place. */
 function Arrows(props: { line: UsageLine; index: number; count: number }) {
   const { line, index, count } = props;
-  const name = accountName(line.account);
+  const name = numberedName(index + 1, line.account);
   const arrow = (up: boolean, shown: boolean) => (
     <button
       class={`usage-arrow ${shown ? "" : "hidden"}`}
@@ -94,7 +95,12 @@ function Bar(props: { window: UsageWindow; name: string; nowMs: number }) {
   );
 }
 
-/** "2 · Claude · reserva": the place in the order, which the arrows change, then the name. */
+/**
+ * "2 · Claude": the place in the order, which the arrows change and the tabs
+ * call the account by ("IA-2"), then the service. Never the order's own
+ * names for the accounts ("principal", "reserva"): an account is its place
+ * in this list (13/10/2026).
+ */
 function Heading(props: { text: string; index: number; used: boolean }) {
   return (
     <span class={`usage-name ${props.used ? "used" : ""}`}>
@@ -109,9 +115,10 @@ function Block(props: { line: UsageLine; index: number; count: number; nowMs: nu
   const selected = selectedAccount.value;
   const used = isUsedBy(line.account, selected.key, selected.running);
   const stale = line.problem !== null || line.measuredAt === null || nowMs / 1000 - line.measuredAt > STALE_AFTER_S;
-  const help = accountHelp(line, nowMs, used);
+  const help = accountHelp(line, index + 1, nowMs, used);
   const note = noteText(line, nowMs);
-  const name = accountName(line.account);
+  const name = engineTitle(line.account.engine);
+  const numbered = numberedName(index + 1, line.account);
   return (
     <div class="usage-block" data-account={orderKeyOf(line.account)}>
       <div class="usage-title-row">
@@ -121,7 +128,7 @@ function Block(props: { line: UsageLine; index: number; count: number; nowMs: nu
         </span>
         <Arrows line={line} index={index} count={count} />
       </div>
-      {/* Which login this is, written out: the name says which one the order means, the address which one the service does. */}
+      {/* Which login this is, written out: the place says which one the order means, the address which one the service does. */}
       {line.account.email && (
         <div class="usage-email" title={help}>
           {line.account.email}
@@ -130,7 +137,7 @@ function Block(props: { line: UsageLine; index: number; count: number; nowMs: nu
       {line.reading && line.reading.windows.length > 0 && (
         <div class={`usage-bars ${stale ? "stale" : ""}`}>
           {line.reading.windows.map((w, i) => (
-            <Bar key={`${w.label}${i}`} window={w} name={name} nowMs={nowMs} />
+            <Bar key={`${w.label}${i}`} window={w} name={numbered} nowMs={nowMs} />
           ))}
         </div>
       )}
@@ -148,14 +155,16 @@ function Compact(props: { line: UsageLine; index: number; count: number }) {
   const selected = selectedAccount.value;
   const used = isUsedBy(line.account, selected.key, selected.running);
   const windows = (line.reading?.windows ?? []).slice(0, 2);
-  const name = accountName(line.account);
-  const help = [name, ...windows.map((w) => `${w.title}: ${percentText(w.percent)}`)].join("\n");
+  const name = engineTitle(line.account.engine);
+  const numbered = numberedName(index + 1, line.account);
+  const figures = windows.map((w) => `${w.title}: ${percentText(w.percent)}`);
+  const help = [numbered, ...(line.account.email ? [line.account.email] : []), ...figures].join("\n");
   return (
     <div class="usage-compact" data-account={orderKeyOf(line.account)}>
       <span class="usage-compact-name" title={help}>
         <Heading text={line.account.email ?? name} index={index} used={used} />
       </span>
-      <span class="usage-compact-figures" aria-label={`${name} ${windows.map((w) => percentText(w.percent)).join(" · ")}`}>
+      <span class="usage-compact-figures" aria-label={`${numbered} ${windows.map((w) => percentText(w.percent)).join(" · ")}`}>
         {windows.length === 0 ? (
           <span class="faint">—</span>
         ) : (

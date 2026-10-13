@@ -2,9 +2,12 @@
 // it runs with — both change with a click — and how many agents it has going.
 // A port of ClaudeStatusBar.swift in the macOS app.
 //
-// A change types the slash command into the conversation, so the menus only
-// turn it on when the turn is over and the prompt is empty (aiStatus.ts):
-// typing into a draft, a dialog or a running turn would spoil it.
+// A change walks the program's own picker by keys (pickers.ts): Claude Code's
+// `/model` list and `/effort` rule, for this conversation only, and Codex's
+// `/model`, its models and levels from its cache. It types into the
+// conversation, so the menus only turn it on when the turn is over and the
+// prompt is empty (aiStatus.ts): typing into a draft, a dialog or a running
+// turn would spoil it.
 
 import {
   agentsLabel,
@@ -15,23 +18,29 @@ import {
   type AiStatus,
   type Choice,
 } from "../aiStatus";
-import { focusPane, runCommand } from "../store";
+import { viewKey } from "../terminals";
+import { codexModels, focusPane, picking, runChoice } from "../store";
 import { openMenuAt, type MenuItem } from "./common";
 
 /** Rows a menu takes, to hang it above the bar rather than over it. */
 const ROW = 28;
 const MENU_PADDING = 12;
 
-function menuItems(status: AiStatus, choices: Choice[], run: (command: string) => void): (MenuItem | "separator")[] {
-  const note = menuNote(status);
+function menuItems(
+  status: AiStatus,
+  choices: Choice[],
+  busy: boolean,
+  run: (choice: Choice) => void,
+): (MenuItem | "separator")[] {
+  const note = menuNote(status, busy);
   const items: (MenuItem | "separator")[] = [];
   if (note) items.push({ label: note, disabled: true, action: () => {} }, "separator");
   for (const choice of choices) {
     items.push({
       label: choice.label,
       mark: choice.current ? "on" : null,
-      disabled: !status.canType,
-      action: () => run(choice.command),
+      disabled: busy || !status.canType,
+      action: () => run(choice),
     });
   }
   return items;
@@ -49,23 +58,25 @@ function keepFocus(event: MouseEvent): void {
 
 export function AiStatusBar(props: { workspace: string; root: number; pane: number; status: AiStatus }) {
   const { workspace, root, pane, status } = props;
+  const busy = picking.value.has(viewKey(workspace, pane));
   const open = (event: MouseEvent, choices: Choice[]) => {
     event.stopPropagation();
     focusPane(workspace, root, pane);
-    const items = menuItems(status, choices, (command) => void runCommand(workspace, pane, command));
+    // While a picker is being walked, the menu says so and offers nothing.
+    const items = menuItems(status, choices, busy, (choice) => void runChoice(workspace, pane, choice));
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
     const height = items.length * ROW + MENU_PADDING;
     openMenuAt(rect.left, Math.max(6, rect.top - height - 4), items, true);
   };
-  const model = status.program === "codex" ? "Modelo do Codex" : `Modelo: ${status.modelId}`;
+  const models = codexModels.value;
   return (
-    <div class="ai-status-bar" data-program={status.program} data-bar-pane={pane}>
+    <div class="ai-status-bar" data-program={status.program} data-bar-pane={pane} data-picking={busy ? "1" : undefined}>
       <button
         class="ai-chip"
         data-chip="model"
-        title={`${model}. Clique para trocar.`}
+        title={`Modelo: ${status.modelId}. Clique para trocar.`}
         onMouseDown={keepFocus}
-        onClick={(e) => open(e, modelChoices(status))}
+        onClick={(e) => open(e, modelChoices(status, models))}
       >
         {status.modelName} ▾
       </button>
@@ -77,7 +88,7 @@ export function AiStatusBar(props: { workspace: string; root: number; pane: numb
             data-chip="effort"
             title="Esforço de raciocínio. Clique para trocar."
             onMouseDown={keepFocus}
-            onClick={(e) => open(e, effortChoices(status))}
+            onClick={(e) => open(e, effortChoices(status, models))}
           >
             {effortLabel(status.effort)} ▾
           </button>

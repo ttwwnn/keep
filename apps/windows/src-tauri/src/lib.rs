@@ -4,6 +4,7 @@
 //! below is one question to the daemon or one attached tab, and the page —
 //! sidebar, tab strip, terminals — is in `../src`.
 
+mod claude_settings;
 mod daemon;
 mod ia;
 mod sessions;
@@ -257,6 +258,16 @@ async fn ia_trash(app: AppHandle, items: Vec<ia::Going>, pids: Vec<u32>) -> Answ
         .map_err(|e| e.to_string())
 }
 
+/// The worktrees of tabs that closed without the question, to the Recycle
+/// Bin by the core's say; what did not go.
+#[tauri::command]
+async fn ia_sweep(app: AppHandle) -> Answer<Vec<String>> {
+    let dir = resources(&app);
+    tauri::async_runtime::spawn_blocking(move || ia::sweep(dir.as_deref(), &daemon::address()))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// What Claude Code's status line saved for each of these shells (the model
 /// and the effort it runs with): the JSON text, by shell pid; see `status`.
 #[tauri::command]
@@ -268,6 +279,82 @@ async fn claude_statuses(shells: Vec<u32>) -> Answer<std::collections::HashMap<u
     })
     .await
     .map_err(|e| e.to_string())
+}
+
+/// Claude Code's settings file as it stands, and the status line script this
+/// app carries: what the page needs to set the status line up and to put
+/// back a default `/model <id>` saved; see `claude_settings`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudeSettings {
+    path: String,
+    /// The file's text; `None` when there is no file.
+    text: Option<String>,
+    /// Whether Claude Code's folder is there: where it is not, Claude Code
+    /// has not run here, and no file is made for it.
+    folder: bool,
+    /// The `keep-statusline.ps1` installed with the app, when it is there.
+    script: Option<String>,
+}
+
+#[tauri::command]
+async fn claude_settings(app: AppHandle) -> Answer<ClaudeSettings> {
+    let resources = resources(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = claude_settings::directory(|name| std::env::var(name).ok())
+            .ok_or_else(|| "sem pasta do usuário".to_string())?;
+        let path = dir.join("settings.json");
+        let text = claude_settings::read(&path).map_err(crate::text)?;
+        let script = resources
+            .map(|r| r.join("keep-statusline.ps1"))
+            .filter(|p| p.is_file())
+            .map(|p| claude_settings::plain(&p));
+        Ok(ClaudeSettings { path: claude_settings::plain(&path), text, folder: dir.is_dir(), script })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Write Claude Code's settings file, if it still holds what the page read
+/// (`expected`; `None` for no file). False when it changed meanwhile.
+#[tauri::command]
+async fn write_claude_settings(expected: Option<String>, text: String) -> Answer<bool> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = claude_settings::directory(|name| std::env::var(name).ok())
+            .ok_or_else(|| "sem pasta do usuário".to_string())?;
+        claude_settings::replace(&dir.join("settings.json"), expected.as_deref(), &text).map_err(crate::text)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Codex's model cache, when it is not the version the page has.
+#[derive(Serialize)]
+struct CodexModels {
+    /// Which version is there; `None` when there is no cache.
+    stamp: Option<String>,
+    /// Its text, when the version changed.
+    text: Option<String>,
+}
+
+#[tauri::command]
+async fn codex_models(known: Option<String>) -> Answer<CodexModels> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(path) = status::codex_cache(|name| std::env::var(name).ok()) else {
+            return CodexModels { stamp: None, text: None };
+        };
+        let (stamp, text) = status::if_changed(&path, known.as_deref());
+        CodexModels { stamp, text }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// A line for the app's log (`settings::log_file`): what the page did that
+/// nobody sees, such as a status line left alone or a picker backed out of.
+#[tauri::command]
+async fn app_log(line: String) {
+    let _ = tauri::async_runtime::spawn_blocking(move || settings::log(&line)).await;
 }
 
 /// For the scripted check: whether a path is still there.
@@ -378,7 +465,12 @@ pub fn run() {
             ia,
             ia_signature,
             ia_trash,
+            ia_sweep,
             claude_statuses,
+            claude_settings,
+            write_claude_settings,
+            codex_models,
+            app_log,
             path_exists,
             e2e_shot,
             e2e_fake,

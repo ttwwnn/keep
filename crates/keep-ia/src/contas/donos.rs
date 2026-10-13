@@ -87,6 +87,18 @@ fn guarda(chave: &str, dono: &Dono) {
     }
 }
 
+/// O acesso novo que uma renovação trouxe é da mesma conta que o antigo: o
+/// dono passa para ele sem perguntar à rede (a conta de um armazém renovado
+/// continua sabida até a próxima pergunta).
+pub fn herda(antigo: &str, novo: &str) {
+    if antigo.is_empty() || novo.is_empty() || antigo == novo {
+        return;
+    }
+    if let Some(d) = em_cache(&impressao(antigo)) {
+        guarda(&impressao(novo), &d);
+    }
+}
+
 /// O perfil do servidor para este token, ou `None` (sem rede, recusado).
 pub fn perfil(acesso: &str) -> Option<Value> {
     let url = rede::url_de_teste(

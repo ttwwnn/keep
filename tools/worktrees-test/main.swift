@@ -3,6 +3,8 @@ import Foundation
 // compiles this with the real file and stubs the two app types it touches.
 enum Trace { static func log(_ k: String, _ d: @autoclosure () -> String) {} }
 enum Daemon { static var socketPath: String { "/tmp/sock-de-teste" } }
+// KeepCLI.swift (the restoration's half) asks for the app's state folder.
+func stateDirectory() -> URL { URL(fileURLWithPath: NSTemporaryDirectory()) }
 
 var falhas = 0, casos = 0
 func confere(_ ok: Bool, _ nome: String, _ det: @autoclosure () -> String = "") {
@@ -145,4 +147,71 @@ limpaChamadas()
 confere(Worktrees.index() == nil, "indexar: respondido")
 confere(chamadas().last.map { ($0["argv"] as? [String]) == ["indexar", "--json"] && ($0["grupo"] as? String) == "worktrees" } == true,
         "indexar: keep worktrees indexar --json", "\(chamadas())")
+// a varredura: as worktrees de abas que fecharam sem a pergunta
+let orfa = dir + "/repo-wt-orfa-\(getpid())"
+try! fm.createDirectory(atPath: orfa, withIntermediateDirectories: true)
+try! "y".write(toFile: orfa + "/arquivo.txt", atomically: true, encoding: .utf8)
+let semPasta = dir + "/repo-wt-sem-pasta-\(getpid())"
+let recusado = dir + "/repo-wt-registro-recusado-\(getpid())"
+escreve("orfas.json", ["versao": 1,
+    "lixeira": [["caminho": orfa, "ramo": "fix/orfa", "nasceu_ns": 1790000000987654321]],
+    "registros": [["caminho": semPasta, "nasceu_ns": 1790000000111111111], ["caminho": recusado]],
+    "aguardando": [["caminho": dir + "/outra", "motivo": "aba fechada há 3 min"]],
+    "mantidas": [], "avisos": []])
+escreve("esquecer-" + (recusado as NSString).lastPathComponent + ".json", ["versao": 1, "ok": false, "motivo": "travada: teste"])
+limpaChamadas()
+let t5 = Date()
+let sobras = Worktrees.sweep()
+let cv = chamadas().map { ($0["argv"] as? [String]) ?? [] }
+confere(cv.first == ["orfas", "--json"] && chamadas().first?["grupo"] as? String == "worktrees", "varredura: keep worktrees orfas --json", "\(cv)")
+confere(!fm.fileExists(atPath: orfa), "varredura: a órfã saiu do lugar")
+let orfaNaLixeira = NSHomeDirectory() + "/.Trash/" + (orfa as NSString).lastPathComponent
+confere(fm.fileExists(atPath: orfaNaLixeira + "/arquivo.txt"), "varredura: e está na Lixeira com o conteúdo")
+confere(cv.contains(["preparar", orfa, "--nasceu", "1790000000987654321"]), "varredura: preparar com o nascimento", "\(cv)")
+confere(cv.contains { $0.first == "concluir" && $0.count == 3 && $0[1] == orfa && $0[2].hasPrefix(NSHomeDirectory() + "/.Trash/") }, "varredura: concluir com o destino real", "\(cv)")
+confere(cv.contains(["esquecer", semPasta, "--nasceu", "1790000000111111111"]), "varredura: registro sem pasta vai ao esquecer, com o nascimento", "\(cv)")
+confere(cv.contains(["esquecer", recusado]), "varredura: registro sem nascimento vai sem ele", "\(cv)")
+confere(!cv.contains { $0.contains(dir + "/outra") }, "varredura: a que está na carência não é tocada", "\(cv)")
+confere(sobras.count == 1 && sobras[0].contains("travada: teste"), "varredura: a recusa vira linha dita", "\(sobras)")
+confere(cv.last == ["purgar", "--json"], "varredura: a purga roda depois, na mesma rodada", "\(cv)")
+confere(Date().timeIntervalSince(t5) >= 2, "varredura: espera o \u{201C}Colocar de volta\u{201D} ser gravado")
+try? fm.removeItem(atPath: orfaNaLixeira)
+// nada a varrer: só a pergunta, sem espera
+escreve("orfas.json", ["versao": 1, "lixeira": [], "registros": [], "aguardando": [], "mantidas": [], "avisos": []])
+limpaChamadas()
+let t6 = Date()
+confere(Worktrees.sweep().isEmpty && chamadas().map { ($0["argv"] as? [String]) ?? [] } == [["orfas", "--json"], ["purgar", "--json"]]
+        && Date().timeIntervalSince(t6) < 1.5, "varredura vazia: a pergunta, a purga e nada mais", "\(chamadas())")
+// a purga: o que saiu de vez e o que ficou viram linhas do registro
+escreve("purgar.json", ["versao": 1,
+    "purgadas": [["destino": NSHomeDirectory() + "/.Trash/wt-velha", "caminho": "/x/wt-velha", "id": "wt-velha"]],
+    "ignoradas": [["destino": NSHomeDirectory() + "/.Trash/da-pessoa", "motivo": "outro item no mesmo lugar"]],
+    "avisos": ["um aviso"]])
+let purga = Worktrees.sweep()
+confere(purga == ["saiu da lixeira de vez: ~/.Trash/wt-velha", "fica na lixeira: ~/.Trash/da-pessoa — outro item no mesmo lugar", "um aviso"],
+        "purga: linhas do que saiu e do que ficou", "\(purga)")
+try? fm.removeItem(atPath: dir + "/purgar.json")
+// outra rodada em curso no núcleo: nada
+escreve("orfas.json", ["versao": 1, "ocupado": true])
+limpaChamadas()
+confere(Worktrees.sweep().isEmpty && chamadas().count == 1, "varredura ocupada: nada, nem a purga")
+// núcleo que falha: dito, nada movido
+let intacta = dir + "/repo-wt-intacta-\(getpid())"
+try! fm.createDirectory(atPath: intacta, withIntermediateDirectories: true)
+escreve("orfas.json", ["versao": 1, "lixeira": [["caminho": intacta]]])
+escreve("orfas-falha", 1)
+limpaChamadas()
+let falhou = Worktrees.sweep()
+confere(falhou.first?.contains("falhou") == true && fm.fileExists(atPath: intacta) && chamadas().count == 2,
+        "varredura que falha: dita e nada move (a purga ainda roda)", "\(falhou) \(chamadas())")
+try? fm.removeItem(atPath: dir + "/orfas-falha")
+// núcleo de antes da varredura (saída 2): nada, sem erro
+escreve("sem-worktrees", 1)
+confere(Worktrees.sweep().isEmpty && fm.fileExists(atPath: intacta), "keep sem a varredura (saída 2): nada, sem erro")
+try? fm.removeItem(atPath: dir + "/sem-worktrees")
+// o app saindo: nenhuma varredura começa
+confere(Worktrees.stopSweeping(then: {}) == false, "sair sem varredura em curso: não espera")
+limpaChamadas()
+confere(Worktrees.sweep().isEmpty && chamadas().isEmpty && fm.fileExists(atPath: intacta), "sair: nenhuma varredura começa depois")
+try? fm.removeItem(atPath: intacta)
 print("\(casos - falhas)/\(casos) ok"); exit(falhas == 0 ? 0 : 1)

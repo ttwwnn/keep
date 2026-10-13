@@ -5,6 +5,11 @@ import Foundation
 // a daemon of the test's own, whose tab runs a fake Claude and a fake Codex
 // (crates/keep-ia/examples/ia_falsa.rs). Every answer the app reads is read
 // here as the app reads it. No window, no real login, no real daemon.
+//
+// The fake Claude reads its login store again at every request and prints the
+// access token it found (`conta=<token>`): that is how a switch between
+// Claude accounts made with Claude open shows — the same process, answering
+// from the other account, with nothing typed into the tab.
 
 // The app types Daemon.swift reaches for, stubbed.
 enum Trace { static func log(_ kind: String, _ detail: @autoclosure () -> String) {} }
@@ -83,6 +88,9 @@ func escreve(_ tab: UInt32, _ text: String, enter: Bool = true) {
 }
 func ms() -> Double { Date().timeIntervalSince1970 * 1000 }
 
+// Para a pessoa, cada conta é a posição dela na lista do rodapé (IA-n): aqui
+// ana é a IA-1, bia a IA-2 e o GPT a IA-3.
+
 // --- o daemon, como o app o vê
 let lista = try? Daemon.list()
 let info = Daemon.lastInfo
@@ -111,24 +119,38 @@ func conta(_ tab: UInt32) -> (escolha: String?, roda: String?, rodape: String?, 
 
 // --- seguir a ordem numa aba só com o shell: o núcleo sobe o Claude nela
 switch AIHelper.switchAccount(workspace: ws, tab: aba, to: AIHelper.followOrder, interrupt: false) {
-case .success(let feito): confere(feito.contains("Claude"), "seguir a ordem numa concha: \(feito)")
+case .success(let feito): confere(feito.contains("IA-1"), "seguir a ordem numa concha: \(feito)")
 case .failure(let p): confere(false, "seguir a ordem numa concha", "\(p)")
 }
 confere(mostra("FALSO claude", em: aba), "o Claude falso subiu na aba", tela(aba))
+let casa = KeepCLI.madeUpHome(ambiente)!
+confere(mostra("fixa=\(casa)/.claude/contas/abas/", em: aba), "o Claude sobe no armazém de login da aba", tela(aba))
+escreve(aba, "um")
+confere(mostra("Feito: um, conta=G", em: aba), "o armazém da aba tem o acesso da ana", tela(aba))
 var agora = conta(aba)
 confere(agora.crida, "abas: a resposta do núcleo é crida para este daemon")
 confere(agora.escolha == AIHelper.followOrder && agora.roda == "claude:ana",
         "abas: segue a ordem, e roda na ana", "\(agora)")
 confere(agora.rodape == "claude:ana", "rodapé: o ponto verde na conta em que roda", "\(agora)")
 
-// --- Claude → Claude noutra conta: a mesma conversa
+// --- Claude → Claude noutra conta, com o Claude aberto: a quente
+func falsos(_ tab: UInt32) -> Int { tela(tab).components(separatedBy: "FALSO claude").count - 1 }
+let subidas = falsos(aba)
 switch AIHelper.switchAccount(workspace: ws, tab: aba, to: "claude:bia", interrupt: false) {
-case .success(let feito): confere(feito == "retomou Claude · bia", "trocar para claude:bia: \(feito)")
-case .failure(let p): confere(false, "trocar para claude:bia", "\(p)")
+case .success(let feito):
+    confere(feito == "passou para a IA-2 sem sair do Claude", "trocar para claude:bia a quente: \(feito)")
+case .failure(let p): confere(false, "trocar para claude:bia a quente", "\(p)")
 }
-confere(mostra("escolha=claude:bia", em: aba), "a aba roda na bia", tela(aba))
+confere(!tela(aba).contains("/exit"), "a quente: nada foi digitado na aba", tela(aba))
+escreve(aba, "dois")
+confere(mostra("Feito: dois, conta=F", em: aba), "o mesmo Claude passa a falar pela bia", tela(aba))
+confere(falsos(aba) == subidas, "o Claude não foi reaberto", tela(aba))
 agora = conta(aba)
-confere(agora.escolha == "claude:bia" && agora.roda == "claude:bia", "abas: fixa na bia", "\(agora)")
+confere(agora.escolha == "claude:bia" && agora.roda == "claude:bia", "abas: presa na bia", "\(agora)")
+switch AIHelper.switchAccount(workspace: ws, tab: aba, to: "claude:bia", interrupt: false) {
+case .success(let feito): confere(feito == "a aba já está na IA-2", "trocar de novo para a bia: \(feito)")
+case .failure(let p): confere(false, "trocar de novo para a bia", "\(p)")
+}
 
 // --- trabalhando: só com a pessoa dizendo que pode interromper
 escreve(aba, "/trabalhar")
@@ -139,21 +161,29 @@ case .failure(let p): confere(p.reason == "ocupada" && !p.detail.isEmpty, "ocupa
 }
 switch AIHelper.switchAccount(workspace: ws, tab: aba, to: "gpt:principal", interrupt: true) {
 case .success(let feito):
-    confere(feito.hasPrefix("abriu conversa nova em GPT · principal"), "Claude → Codex com --interromper: \(feito)")
+    confere(feito.hasPrefix("abriu conversa nova na IA-3"), "Claude → Codex com --interromper: \(feito)")
 case .failure(let p): confere(false, "Claude → Codex", "\(p)")
 }
 confere(mostra("FALSO codex", em: aba), "o Codex falso subiu na aba", tela(aba))
 agora = conta(aba)
 confere(programa(aba) == .codex && agora.escolha == "gpt:principal" && agora.roda == "gpt:principal",
         "abas: Codex no principal", "\(agora) \(programa(aba))")
-confere(AIChoices.programLabel(command: "codex", account: agora.escolha) == "codex", "lateral: Codex no principal diz só codex")
+// A lateral diz só o número da conta em que a aba roda (13/10/2026): o GPT é a IA-3.
+switch AIHelper.usage(.cached) {
+case .success(let resposta):
+    let lateral = AIChoices.tabLabel(command: "codex", account: agora.escolha, running: agora.roda, lines: resposta.linhas)
+    confere(lateral == "(IA-3)", "lateral: o Codex na IA-3 diz só o número", lateral)
+case .failure(let p): confere(false, "lateral: as contas do núcleo", "\(p)")
+}
 
 // --- Codex → seguir a ordem: o Claude da frente da fila
 switch AIHelper.switchAccount(workspace: ws, tab: aba, to: AIHelper.followOrder, interrupt: false) {
-case .success(let feito): confere(feito.contains("Claude · ana"), "Codex → seguir a ordem: \(feito)")
+case .success(let feito): confere(feito.contains("IA-1"), "Codex → seguir a ordem: \(feito)")
 case .failure(let p): confere(false, "Codex → seguir a ordem", "\(p)")
 }
 confere(mostra("FALSO claude", em: aba), "o Claude voltou", tela(aba))
+escreve(aba, "tres")
+confere(mostra("Feito: tres, conta=G", em: aba), "de volta à ana, no armazém da aba", tela(aba))
 
 // --- o consumo, e a ordem seguida sozinha
 switch AIHelper.usage(.due) {
@@ -163,20 +193,23 @@ case .success(let resposta):
     confere(ana?.reading?.windows.map(\.label) == ["5h", "7d"] && ana?.isAvailable == false,
             "uso: a ana no limite da semana sai da fila", "\(String(describing: ana))")
     confere(bia?.isAvailable == true && bia?.reading != nil, "uso: a bia medida e disponível", "\(String(describing: bia))")
+    let antes = falsos(aba)
     switch AIHelper.sync() {
     case .success(let rodada):
         confere(rodada["alvo"] as? String == "claude:bia" && (rodada["alteradas"] as? [Any])?.count == 1,
-                "sincronizar: a aba que segue a ordem vai para a bia", "\(rodada)")
+                "sincronizar: a aba que segue a ordem vai para a bia, a quente", "\(rodada)")
     case .failure(let p): confere(false, "sincronizar", "\(p)")
     }
-    confere(mostra("escolha=claude:ordem", em: aba), "a aba segue a ordem, agora na bia", tela(aba))
+    escreve(aba, "quatro")
+    confere(mostra("Feito: quatro, conta=F", em: aba), "a aba segue a ordem, agora na bia, sem sair do Claude", tela(aba))
+    confere(falsos(aba) == antes, "a sincronização não reabriu o Claude", tela(aba))
     agora = conta(aba)
     confere(agora.escolha == AIHelper.followOrder && agora.roda == "claude:bia", "abas: segue a ordem, roda na bia", "\(agora)")
     let menu = AIChoices.rows(lines: resposta.linhas, current: agora.escolha, running: agora.roda, program: programa(aba))
     confere(menu.first?.mark == .on && menu.first?.key == AIHelper.followOrder, "menu: ✓ em seguir a ordem, que pede claude:ordem")
     let traco = menu.filter { $0.mark == .mixed }.map(\.label)
-    confere(traco == ["Claude · bia"], "menu: o traço na conta em que a aba roda", "\(traco)")
-    confere(menu.contains { $0.title.hasPrefix("Claude · ana") && $0.title.hasSuffix("— no limite") },
+    confere(traco == ["IA-2"], "menu: o traço na conta em que a aba roda", "\(traco)")
+    confere(menu.contains { $0.title.hasPrefix("IA-1 · ana@x.com") && $0.title.hasSuffix("— no limite") },
             "menu: a ana diz que está no limite", "\(menu.map(\.title))")
     switch AIHelper.sync() {
     case .success(let rodada):
@@ -185,6 +218,25 @@ case .success(let resposta):
     }
 case .failure(let p):
     confere(false, "uso: a rodada", "\(p)")
+}
+
+// --- a renovação espalha o acesso novo da conta pelo armazém da aba: o
+// login da bia renovado por fora (o item dela regravado), e uma rodada
+if let item = ambiente["FIXA_BIA_ITEM"] {
+    let validade = Int(ms()) + 2 * 3600 * 1000
+    let novo = "{\"claudeAiOauth\":{\"accessToken\":\"F2\",\"refreshToken\":\"r2\",\"expiresAt\":\(validade),"
+        + "\"rateLimitTier\":\"default_claude_max_20x\",\"subscriptionType\":\"max\"}}"
+    try? novo.write(toFile: casa + "/chaveiro/" + item, atomically: true, encoding: .utf8)
+    switch AIHelper.renew() {
+    case .success(let rodada):
+        let abas = rodada["abas"] as? [String: Any]
+        confere((abas?["atualizadas"] as? Int) == 1, "renovar: o acesso novo da bia vai para o armazém da aba", "\(rodada)")
+    case .failure(let p): confere(false, "renovar", "\(p)")
+    }
+    escreve(aba, "cinco")
+    confere(mostra("Feito: cinco, conta=F2", em: aba), "o Claude da aba já fala com o acesso novo", tela(aba))
+} else {
+    confere(false, "renovar: falta FIXA_BIA_ITEM")
 }
 
 // --- entrar noutra conta: a aba do login, aberta pelo núcleo

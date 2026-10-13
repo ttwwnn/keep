@@ -5,9 +5,15 @@
 //! livre. E a que está numa conta mais abaixo na fila que a primeira
 //! disponível sobe para ela, depois de dois minutos sem uso.
 //!
+//! Com o Claude aberto num armazém de aba (`quente.rs`), a troca é a quente:
+//! nada é digitado e a conversa segue no mesmo processo — por isso ela vale
+//! com a aba trabalhando. O Claude aberto no login global (de antes da
+//! troca a quente) fica com a ordem global.
+//!
 //! O app chama a cada 30 s. No máximo 3 abas por rodada; uma aba que
 //! recusou a troca espera um pouco antes de ser tentada de novo. Com um
-//! gerente externo (o kit), quem faz isso é ele, e aqui nada acontece.
+//! gerente externo (o kit), quem faz isso é ele, e aqui nada acontece (a
+//! renovação leva as abas de armazém próprio para a conta que ele escolhe).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -91,6 +97,8 @@ pub fn rodada() -> Value {
         limite: bool,
         ociosa: bool,
         claude_aberto: bool,
+        /// O Claude roda num armazém de aba: troca a quente.
+        armazem_proprio: bool,
     }
     let mut seguidoras = Vec::new();
     for i in ia.into_iter().filter(|i| i.conta == SEGUIR_ORDEM) {
@@ -110,7 +118,9 @@ pub fn rodada() -> Value {
         }
         let ociosa = a.info.last_active != 0
             && crate::contas::donos::agora_ms().saturating_sub(a.info.last_active) >= OCIOSA_MS;
-        seguidoras.push(Seguidora { ia: i, estado, limite, ociosa, claude_aberto: prog == tela::Programa::Claude });
+        let claude_aberto = prog == tela::Programa::Claude;
+        let armazem_proprio = claude_aberto && crate::quente::registro_do_processo(i.pid).is_some();
+        seguidoras.push(Seguidora { ia: i, estado, limite, ociosa, claude_aberto, armazem_proprio });
     }
 
     let livre = |c: &Conta| -> bool {
@@ -150,15 +160,19 @@ pub fn rodada() -> Value {
         if atual_livre && !(abaixo && s.ociosa) {
             continue;
         }
-        // Com o Claude aberto, nunca: trocar a conta dele é sair e voltar
-        // (ver `trocar`). Fica onde está até a pessoa escolher no menu.
-        if s.claude_aberto {
+        // Com o Claude aberto no login global, nunca: trocar a conta dele
+        // seria sair e voltar. A ordem global (o kit) é que o leva.
+        if s.claude_aberto && !s.armazem_proprio {
             if !atual_livre {
-                pendentes.push(refe("claude-aberto", "O Claude da aba está aberto; escolha outra conta no menu dela."));
+                pendentes.push(refe(
+                    "claude-global",
+                    "O Claude da aba usa o login global (aberto antes da troca a quente); a conta dele muda com a ordem global.",
+                ));
             }
             continue;
         }
-        if s.estado != Estado::Livre && !(s.estado == Estado::Dialogo && s.limite) {
+        // A quente, a aba pode estar trabalhando: nada é digitado nela.
+        if !s.armazem_proprio && s.estado != Estado::Livre && !(s.estado == Estado::Dialogo && s.limite) {
             pendentes.push(refe(
                 match s.estado {
                     Estado::Ocupada => "ocupada",
@@ -187,7 +201,7 @@ pub fn rodada() -> Value {
             aba: i.aba,
             para: SEGUIR_ORDEM.into(),
             conta: Some(alvo.order_key.clone()),
-            cancelar_limite: s.limite,
+            cancelar_limite: s.limite && !s.armazem_proprio,
             interromper: false,
         };
         match trocar::trocar(&p) {

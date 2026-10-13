@@ -40,5 +40,14 @@ elif cmd == "concluir":
     print(json.dumps({"versao":1,"ok":os.path.exists(args[1]) is False, "motivo": "ainda existe" if os.path.exists(args[1]) else None}))
 elif cmd == "indexar":
     print(json.dumps({"versao": 1, "novas": 0}))
+elif cmd == "orfas":
+    if os.path.exists(os.path.join(d, "orfas-falha")):
+        sys.exit(3)
+    print(json.dumps(resp("orfas.json", {"versao": 1, "lixeira": [], "registros": [], "aguardando": [], "mantidas": [], "avisos": []})))
+elif cmd == "purgar":
+    print(json.dumps(resp("purgar.json", {"versao": 1, "purgadas": [], "ignoradas": [], "avisos": []})))
+elif cmd == "esquecer":
+    n = os.path.join(d, "esquecer-" + os.path.basename(args[1]) + ".json")
+    print(json.dumps(json.load(open(n)) if os.path.exists(n) else {"versao": 1, "ok": True}))
 else:
     sys.exit(3)

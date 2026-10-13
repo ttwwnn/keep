@@ -11,15 +11,22 @@
 //!   refresh token, que vive umas quatro semanas, não morrer em silêncio — a
 //!   conta parada é a que tem de estar viva na hora do aperto.
 //!
+//! - vencida: nenhuma aba renova o dono de uma conta (cada uma roda num
+//!   armazém só de acesso, `crate::quente`), então o acesso vencido também é
+//!   com o Keep.
+//!
 //! Armazéns: as pastas fixas, sempre; o login global só sem gerente externo
 //! (o kit renova o global sozinho). Nunca o cofre do kit, nunca cópia de um
-//! armazém para outro.
+//! armazém para outro. Depois de renovar, o acesso de cada dono é espalhado
+//! pelos armazéns das abas da conta dele (`quente::espalhar`): só o acesso,
+//! nunca o refresh.
 //!
-//! Tudo sob a trava de renovação do próprio Claude Code
-//! (`~/.claude/.oauth_refresh.lock`, um diretório; velha após 60 s), para a
-//! nossa renovação nunca correr junto com a de uma aba, e com a gravação em
-//! compare-and-swap sob a trava de escrita dele (`.storage-write.lock`): se o
-//! refresh do armazém mudou enquanto o pedido estava no ar, a resposta é
+//! Tudo sob a trava de renovação do próprio Claude Code, que mora na pasta
+//! do armazém (`<pasta>/.oauth_refresh.lock`, um diretório; velha após 60 s;
+//! `~/.claude` para o global), para a nossa renovação nunca correr junto com
+//! a de um Claude que use o mesmo armazém, e com a gravação em
+//! compare-and-swap sob a trava de escrita dele (`<pasta>/.storage-write.lock`):
+//! se o refresh do armazém mudou enquanto o pedido estava no ar, a resposta é
 //! descartada. Só a chave `claudeAiOauth` muda; o resto do JSON fica.
 //!
 //! Recusa do servidor, no critério do CLI: `morto` (invalid_grant) marca o
@@ -65,6 +72,8 @@ pub struct Alvo {
     /// A chave da conta (`claude:reserva`), ou a pasta, se não se sabe.
     pub conta: String,
     pub local: Local,
+    /// A pasta das travas do CLI para este armazém (`Lw()` no CLI).
+    pub pasta: PathBuf,
 }
 
 /// O que se sabe de um armazém entre um tique e outro. Nunca o token: só a
@@ -181,7 +190,10 @@ pub fn morto(armazem: &Armazem, oauth: &Oauth) -> bool {
 
 /// Os armazéns que o Keep renova, com a conta de cada um.
 pub fn alvos() -> Vec<Alvo> {
-    let lista = contas::listar(false);
+    alvos_de(&contas::listar(false))
+}
+
+fn alvos_de(lista: &[contas::Conta]) -> Vec<Alvo> {
     let conta_de = |a: &Armazem| {
         lista.iter().find(|c| c.armazens.contains(a)).map(|c| c.order_key.clone())
     };
@@ -192,15 +204,12 @@ pub fn alvos() -> Vec<Alvo> {
             armazem: "global",
             conta: conta_de(&Armazem::Global).unwrap_or_else(|| "global".into()),
             local: credencial::local_global(),
+            pasta: caminhos::claude(),
         });
     }
-    let Ok(dir) = std::fs::read_dir(caminhos::fixas()) else { return saida };
-    let mut pastas: Vec<PathBuf> = dir
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.is_dir() && p.file_name().is_some_and(|n| !n.to_string_lossy().starts_with('.')))
-        .collect();
-    pastas.sort();
-    for pasta in pastas {
+    // As pastas que viraram armazém de aba não são donas de nada: o acesso
+    // delas vem do dono da conta, por `quente::espalhar`.
+    for pasta in contas::pastas_fixas() {
         let armazem = Armazem::Fixa { pasta: pasta.clone() };
         let nome = pasta.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         saida.push(Alvo {
@@ -208,6 +217,7 @@ pub fn alvos() -> Vec<Alvo> {
             armazem: "fixa",
             conta: conta_de(&armazem).unwrap_or(nome),
             local: credencial::local_fixa(&pasta),
+            pasta,
         });
     }
     saida
@@ -217,6 +227,8 @@ pub fn alvos() -> Vec<Alvo> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Motivo {
     PertoDeVencer,
+    /// O acesso já venceu: as abas da conta, que só têm o acesso, param.
+    Vencido,
     Parada,
     Pedido,
 }
@@ -242,12 +254,14 @@ pub fn decide(oauth: &Oauth, marca: &mut Marca, agora: u64, forcar: bool) -> Opt
     if forcar {
         return Some(Motivo::Pedido);
     }
-    if let Some(e) = oauth.expira_em {
-        if e > agora && e - agora < FOLGA_MS {
-            return Some(Motivo::PertoDeVencer);
-        }
+    if agora.saturating_sub(marca.girado_em) > PARADA_MS {
+        return Some(Motivo::Parada);
     }
-    (agora.saturating_sub(marca.girado_em) > PARADA_MS).then_some(Motivo::Parada)
+    match oauth.expira_em {
+        Some(e) if e <= agora => Some(Motivo::Vencido),
+        Some(e) if e - agora < FOLGA_MS => Some(Motivo::PertoDeVencer),
+        _ => None,
+    }
 }
 
 // ------------------------------------------------------------------ travas do CLI
@@ -255,15 +269,25 @@ pub fn decide(oauth: &Oauth, marca: &mut Marca, agora: u64, forcar: bool) -> Opt
 /// Uma trava do Claude Code (proper-lockfile: um diretório criado com
 /// `mkdir`, velho depois de `velha` sem ser tocado). Enquanto viva, é tocada
 /// a cada 2 s, como o CLI toca a dele: ninguém a toma por abandonada.
-struct TravaDoCli {
+///
+/// O CLI põe as travas de um armazém na pasta dele (`Lw()`: a de
+/// `CLAUDE_SECURESTORAGE_CONFIG_DIR`, ou `~/.claude`): `.oauth_refresh.lock`
+/// ao renovar, `.storage-write.lock` ao gravar.
+pub(crate) struct TravaDoCli {
     caminho: PathBuf,
     viva: std::sync::Arc<std::sync::atomic::AtomicBool>,
     tocador: Option<std::thread::JoinHandle<()>>,
 }
 
+pub(crate) const TRAVA_RENOVAR: (&str, Duration) = (".oauth_refresh.lock", Duration::from_secs(60));
+pub(crate) const TRAVA_GRAVAR: (&str, Duration) = (".storage-write.lock", Duration::from_secs(15));
+
 impl TravaDoCli {
-    fn pega(nome: &str, velha: Duration, espera: Duration) -> Option<TravaDoCli> {
-        let caminho = caminhos::claude().join(nome);
+    /// A trava `qual` da pasta `pasta`, esperando por ela até `espera`.
+    pub(crate) fn pega(pasta: &Path, qual: (&str, Duration), espera: Duration) -> Option<TravaDoCli> {
+        let (nome, velha) = qual;
+        let _ = std::fs::create_dir_all(pasta);
+        let caminho = pasta.join(nome);
         let fim = std::time::Instant::now() + espera;
         loop {
             match std::fs::create_dir(&caminho) {
@@ -407,7 +431,7 @@ fn renova_um(alvo: &Alvo, marca: &mut Marca, forcar: bool) -> Fim {
     if decide(&oauth, marca, agora, forcar).is_none() {
         return Fim::Nada;
     }
-    let Some(_trava) = TravaDoCli::pega(".oauth_refresh.lock", Duration::from_secs(60), Duration::from_secs(5)) else {
+    let Some(_trava) = TravaDoCli::pega(&alvo.pasta, TRAVA_RENOVAR, Duration::from_secs(5)) else {
         return Fim::Falhou("o Claude Code está renovando agora".into());
     };
     // Sob a trava, de novo: o CLI pode ter renovado enquanto esperávamos.
@@ -439,7 +463,7 @@ fn renova_um(alvo: &Alvo, marca: &mut Marca, forcar: bool) -> Fim {
     let agora = donos::agora_ms();
     let novo = oauth_novo(&antigo, &resposta, agora);
     // Gravar: compare-and-swap sob a trava de escrita do CLI.
-    let Some(_escrita) = TravaDoCli::pega(".storage-write.lock", Duration::from_secs(15), Duration::from_secs(5)) else {
+    let Some(_escrita) = TravaDoCli::pega(&alvo.pasta, TRAVA_GRAVAR, Duration::from_secs(5)) else {
         return Fim::Falhou("não gravei: o Claude Code está gravando o login agora".into());
     };
     let mut ultima = String::new();
@@ -456,6 +480,12 @@ fn renova_um(alvo: &Alvo, marca: &mut Marca, forcar: bool) -> Fim {
         }
         match credencial::gravar(&alvo.local, &atual) {
             Ok(()) => {
+                // O acesso novo é da mesma conta: as abas dela continuam
+                // sabendo de quem é, sem perguntar à rede.
+                donos::herda(
+                    oauth.acesso.as_deref().unwrap_or_default(),
+                    novo.get("accessToken").and_then(Value::as_str).unwrap_or_default(),
+                );
                 let novo_refresh = novo.get("refreshToken").and_then(Value::as_str).unwrap_or_default();
                 marca.impressao = impressao(novo_refresh);
                 marca.girado_em = agora;
@@ -476,6 +506,8 @@ pub struct Rodada {
     pub em_andamento: bool,
     pub renovados: Vec<(String, String, Motivo)>,
     pub falhas: Vec<(String, String, String)>,
+    /// O acesso espalhado pelos armazéns das abas.
+    pub abas: crate::quente::Espalhado,
 }
 
 /// Uma rodada em todos os armazéns. Uma por vez: outra em curso, esta não faz
@@ -495,7 +527,8 @@ pub fn rodada(forcar: bool) -> Rodada {
     }
     let mut marcas = ler_marcas();
     let mut saida = Rodada::default();
-    let alvos = alvos();
+    let lista = contas::listar(false);
+    let alvos = alvos_de(&lista);
     for alvo in &alvos {
         let mut marca = marcas.get(&alvo.id).cloned().unwrap_or_default();
         let fim = renova_um(alvo, &mut marca, forcar);
@@ -503,6 +536,7 @@ pub fn rodada(forcar: bool) -> Rodada {
             Fim::Renovado(m) => {
                 let por = match m {
                     Motivo::PertoDeVencer => "perto de vencer",
+                    Motivo::Vencido => "vencida",
                     Motivo::Parada => "parada",
                     Motivo::Pedido => "pedido",
                 };
@@ -522,6 +556,18 @@ pub fn rodada(forcar: bool) -> Rodada {
     // Armazém que sumiu (pasta apagada) não fica no estado.
     marcas.retain(|id, _| alvos.iter().any(|a| &a.id == id) || id == "global");
     gravar_marcas(&marcas);
+    // O acesso de cada dono, renovado agora ou não, nos armazéns das abas
+    // da conta dele; e os armazéns de abas que acabaram, apagados.
+    saida.abas = crate::quente::espalhar(&lista);
+    for (chave, conta) in &saida.abas.trocadas {
+        registra(&format!("aba {chave}: passou para {conta} (a quente)"));
+    }
+    for chave in &saida.abas.apagadas {
+        registra(&format!("aba {chave}: armazém apagado (a aba acabou)"));
+    }
+    for (chave, motivo) in &saida.abas.falhas {
+        registra(&format!("aba {chave}: {motivo}"));
+    }
     let _ = trava.unlock();
     saida
 }
@@ -530,15 +576,18 @@ pub fn rodada(forcar: bool) -> Rodada {
 pub fn cli(a: &crate::cli::Args) -> i32 {
     let r = rodada(a.tem("agora"));
     if r.em_andamento {
-        return crate::cli::responde(json!({ "ok": true, "estado": "em-andamento", "renovados": [], "falhas": [] }));
+        return crate::cli::responde(
+            json!({ "ok": true, "estado": "em-andamento", "renovados": [], "falhas": [], "abas": crate::quente::Espalhado::default().json() }),
+        );
     }
     crate::cli::responde(json!({
         "ok": true,
         "estado": "feito",
         "renovados": r.renovados.iter().map(|(c, a, _)| json!({ "conta": c, "armazem": a })).collect::<Vec<_>>(),
         "falhas": r.falhas.iter().map(|(c, a, m)| json!({ "conta": c, "armazem": a, "motivo": m })).collect::<Vec<_>>(),
+        "abas": r.abas.json(),
     }))
 }
 
 #[cfg(all(test, unix))]
-mod testes;
+pub(crate) mod testes;

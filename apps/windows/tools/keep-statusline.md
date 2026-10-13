@@ -1,35 +1,41 @@
-# Barra do Claude Code no Keep para Windows
+# Barra do Claude Code e do Codex no Keep para Windows
 
-A barra sob a conversa mostra o modelo, o esforço e os agentes do Claude Code. O Claude Code
-informa o modelo e o esforço apenas ao comando de `statusLine`; este script grava o que recebe
-para o Keep ler. O Keep não altera o seu `settings.json`: a ligação abaixo é manual.
+A barra sob a conversa mostra o modelo, o esforço e os agentes do Claude Code, e o modelo e o
+esforço do Codex. O Claude Code informa o modelo e o esforço apenas ao comando de `statusLine`;
+este script (`keep-statusline.ps1`) grava o que recebe para o Keep ler.
 
-## Ligar
+## Ligação automática
 
-1. Copie `keep-statusline.ps1` (esta pasta) para `%USERPROFILE%\.local\bin\keep-statusline.ps1`.
-   No PowerShell, a partir da pasta do repositório:
+O instalador põe o script ao lado do app (`%LOCALAPPDATA%\Keep\keep-statusline.ps1`). Ao abrir, o
+Keep confere o `settings.json` do Claude Code (`%USERPROFILE%\.claude\settings.json`, ou o da pasta
+de `CLAUDE_CONFIG_DIR`):
 
-   ```powershell
-   New-Item -ItemType Directory -Force "$env:USERPROFILE\.local\bin" | Out-Null
-   Copy-Item apps\windows\tools\keep-statusline.ps1 "$env:USERPROFILE\.local\bin\"
-   ```
+- sem `statusLine`: acrescenta a chave apontando para o script, antes da chave de fechamento, no
+  recuo e nas quebras de linha do próprio arquivo, sem mexer em mais nada;
+- já com a `statusLine` do Keep: nada a fazer;
+- com outra `statusLine`: não toca e registra no log do app (`%LOCALAPPDATA%\Keep\app.log`);
+- sem a pasta do Claude Code (ele ainda não rodou nesta máquina): não cria nada; a ligação
+  acontece na primeira abertura depois disso.
 
-2. Em `%USERPROFILE%\.claude\settings.json`, acrescente (troque `SEU_USUARIO`; barras normais,
-   porque o Claude Code pode executar o comando por um shell que não entende `\`):
+A chave gravada é esta (o caminho em barras normais e entre aspas, porque o Claude Code executa
+o comando pelo Git Bash, ou pelo cmd na falta dele):
 
-   ```json
-   {
-     "statusLine": {
-       "type": "command",
-       "command": "powershell -NoProfile -ExecutionPolicy Bypass -File C:/Users/SEU_USUARIO/.local/bin/keep-statusline.ps1"
-     }
-   }
-   ```
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"C:/Users/SEU_USUARIO/AppData/Local/Keep/keep-statusline.ps1\""
+  }
+}
+```
 
-   O script não imprime nada: a linha de status do próprio Claude Code fica vazia, porque o Keep
-   mostra essas informações na barra. Se você já usa uma `statusLine`, ela será substituída.
+O script não imprime nada: a linha de status do próprio Claude Code fica vazia, porque o Keep
+mostra essas informações na barra.
 
-3. Abra uma aba nova no Keep e rode `claude`. Em alguns segundos a barra aparece sob a conversa.
+## Ligar à mão (quando já há outra statusLine)
+
+Troque a `statusLine` do `settings.json` pela acima, com o seu usuário no caminho. A sua deixa
+de rodar: o Claude Code executa uma só.
 
 ## Conferir
 
@@ -39,7 +45,9 @@ Numa aba do Keep com o Claude Code aberto, em outro terminal:
 Get-ChildItem "$env:USERPROFILE\.local\state\keep\claude"
 ```
 
-Deve haver um `<número>.json`, o número do shell da aba. Sem arquivo, a barra não aparece.
+Deve haver um `<número>.json`, o número do shell da aba. Sem arquivo, a barra não aparece. Com
+`KEEP_STATUSLINE_TRACE` apontando para um arquivo, o script registra nele cada execução: os
+processos percorridos e o que gravou.
 
 ## Como funciona
 
@@ -53,12 +61,21 @@ Deve haver um `<número>.json`, o número do shell da aba. Sem arquivo, a barra 
 ## Codex
 
 Não precisa de nada. O Codex não tem comando de `statusLine`: o Keep lê o modelo e o esforço do
-rodapé da própria tela do Codex (por exemplo `gpt-6.1-sol high · 100% context left`).
+rodapé da própria tela do Codex (por exemplo `GPT-6-Astra max · ~/projeto`), e o cache de modelos
+do Codex (`%USERPROFILE%\.codex\models_cache.json`, ou o de `CODEX_HOME`) diz o nome de cada
+modelo, a ordem e os esforços que cada um aceita.
 
 ## Trocar pela barra
 
-Clicar no modelo ou no esforço digita o comando na conversa, só com o turno terminado e o prompt
-vazio (senão o menu fica desligado, com um aviso):
+Clicar no modelo ou no esforço digita na conversa, só com o turno terminado e o prompt vazio
+(senão o menu fica desligado, com um aviso). A troca percorre o seletor do próprio programa por
+teclas, lendo a tela antes de cada uma; um passo que não aparece é desfeito com Esc.
 
-- Claude Code: `/model <id>` e `/effort <nível>` (`low`, `medium`, `high`, `xhigh`, `max`).
-- Codex: `/model`, que abre o seletor do próprio Codex; escolha ali com as setas e Enter.
+- Claude Code, só nesta conversa: o modelo por `/model`, as setas até o item e `s` ("use this
+  session only"), com a pergunta "Switch model?" respondida que sim; o esforço por `/effort`, as
+  setas na régua até o nível e `s`. O Opus 5.5 (1M), que a lista não tem, vai por
+  `/model claude-opus-5-5[1m]`; como esse comando grava o padrão para as sessões novas, o Keep
+  devolve `model`, `effortLevel` e `modelSettings` do `settings.json` como estavam, 2 e 5
+  segundos depois.
+- Codex: `/model`, o número do modelo e o do nível (Max e Ultra em "More reasoning…"), com os
+  modelos e os esforços do cache.

@@ -38,8 +38,8 @@ import {
   zoom,
   zoomReset,
 } from "../store";
-import { programLabel } from "../ia";
-import { tabAccount } from "../iaStore";
+import { tabAccountLabel } from "../ia";
+import { tabAccount, usageLines } from "../iaStore";
 import { homeRelative } from "../text";
 import { info } from "../store";
 import { zoomPercent } from "../zoom";
@@ -58,10 +58,13 @@ function TabRow(props: { workspace: string; tab: RootTab; index: number; selecte
   const startRename = () => (editing.value = { kind: "tab", workspace, tab: tab.root.id });
   const close = () => void closeTab(workspace, tab, look.label);
   const where = homeRelative(tab.root.cwd, info.value?.home ?? "");
-  // An AI kept on an account of its own says which: "— claude · reserva".
-  const command = tab.root.command;
-  const program = programLabel(command, tabAccount(workspace, tab.root).key);
-  const suffix = program !== command && program ? <span class="tab-program">— {program}</span> : null;
+  // An AI says only the number of the account it runs on, its place in the
+  // footer's list — "(IA-3)" —, and follows that list's order; any other
+  // program says its name — "— pwsh" —, unless the title already is it.
+  const account = tabAccount(workspace, tab.root);
+  const program = tabAccountLabel(account.program, tab.root.command, account.key, account.running, usageLines.value);
+  const repeats = program === `— ${look.label}` || program === `— ${look.label.replace(/\.exe$/i, "")}`;
+  const suffix = program && !repeats ? <span class="tab-program">{program}</span> : null;
   return (
     <div
       class={`tab-row ${selected ? "selected" : ""}`}

@@ -134,4 +134,37 @@ try? FileManager.default.removeItem(atPath: cachePath)
 check("cache: listed models in Codex's order", cached.map(\.slug).joined(separator: ","), "gpt-6.1-sol,gpt-6-astra")
 check("cache: a model's efforts", cached.last?.efforts.joined(separator: ","), "low,max")
 check("cache: found by its name on screen", CodexStatusReader.model(named: "GPT-6-Astra", in: cached)?.slug, "gpt-6-astra")
+
+// Claude Code 2.1.296's pickers, as they were on screen (12/10).
+let claudeModels = """
+   Select model
+   Switch between Claude models. Your pick becomes the default for new sessions. For other/previous model names,
+   specify with --model.
+     1.  Default (recommended)  Fable 5.1
+     2.  Opus 5.5               For complex work and everyday tasks
+     3.  Fable 5.1              For your toughest challenges
+   ❯ 4.  Sonnet 5.5 ✔           Most efficient for simpler tasks
+     5.  Haiku 5.5              Fastest for quick answers
+     6.  Haiku 4.5              Fastest for quick answers
+   ↓ 10. Opus 4.8               Best for everyday, complex tasks
+   ○ Low effort ←/→ to adjust
+   Enter to set as default · s to use this session only · Esc to cancel
+"""
+check("Claude's model picker: the pointed item", ClaudePicker.items(onScreen: claudeModels).first(where: \.pointed)?.label, "Sonnet 5.5")
+check("Claude's model picker: up two to Opus 5.5", ClaudePicker.steps(to: "Opus 5.5", onScreen: claudeModels).map(String.init), "-2")
+check("Claude's model picker: down one to Haiku 5.5", ClaudePicker.steps(to: "Haiku 5.5", onScreen: claudeModels).map(String.init), "1")
+check("Claude's model picker: Fable 5.1 is its own item, not the default's", ClaudePicker.steps(to: "Fable 5.1", onScreen: claudeModels).map(String.init), "-1")
+check("Claude's model picker: the 1M Opus has no item", ClaudePicker.label(forModel: "claude-opus-5-5[1m]"), nil)
+let claudeEffort = """
+   Effort
+                             Faster                             Smarter
+                             ─▲────────────────────────────────────────      Ultracode  off
+                             low     medium     high     xhigh      max      Tab to toggle
+   ←/→ to adjust · Enter to confirm · s for this session only · Esc to cancel
+"""
+check("Claude's effort picker: on low, four right to max", ClaudePicker.effortSteps(to: "max", onScreen: claudeEffort).map(String.init), "4")
+check("Claude's effort picker: on low, none to low", ClaudePicker.effortSteps(to: "low", onScreen: claudeEffort).map(String.init), "0")
+let onHigh = claudeEffort.replacingOccurrences(of: "─▲──────────────────", with: "───────────────────▲")
+check("Claude's effort picker: on high, one left to medium", ClaudePicker.effortSteps(to: "medium", onScreen: onHigh).map(String.init), "-1")
+check("the switch question", ClaudePicker.asksToSwitch(onScreen: "Switch model?\n  the full history gets re-read\n ❯ 1. Yes, switch to Sonnet 5.5\n   2. No"), true)
 exit(failures == 0 ? 0 : 1)

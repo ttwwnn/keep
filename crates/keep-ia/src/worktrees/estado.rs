@@ -33,6 +33,19 @@ pub struct Historia {
     pub codex: Vec<String>,
 }
 
+/// Uma conversa que rodou numa aba do Keep cuja aba já fechou (o shell
+/// acabou, ou o daemon é outro): é o que prova, depois, que a conversa dona
+/// de uma worktree foi de uma aba — e não do Terminal, de um editor ou de um
+/// `claude -p` agendado, que nunca têm as worktrees varridas.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Encerrada {
+    /// Quando se viu que a aba dela não existia mais.
+    pub saiu_em: f64,
+    /// A conversa é do Codex.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub codex: bool,
+}
+
 /// O que o diálogo mostra de uma worktree, como o `indexar` o contou.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct DetalhesGit {
@@ -65,6 +78,14 @@ pub struct Estado {
     pub repos: Vec<String>,
     #[serde(default)]
     pub git: BTreeMap<String, DetalhesGit>,
+    /// As conversas de abas que já fecharam (por id), até
+    /// `RETENCAO_ENCERRADAS`; uma que volta a rodar numa aba sai daqui.
+    #[serde(default)]
+    pub encerradas: BTreeMap<String, Encerrada>,
+    /// As worktrees órfãs (por chave): desde quando a conversa dona não tem
+    /// mais aba. A varredura só as move depois de `CARENCIA` seguidos.
+    #[serde(default)]
+    pub orfas: BTreeMap<String, f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub atualizado_em: Option<String>,
     /// O histórico que veio do kit, até se saber se é do daemon que roda.
@@ -129,10 +150,97 @@ pub fn do_kit(amb: &Ambiente) -> Option<Estado> {
         historico: BTreeMap::new(),
         repos,
         git,
+        encerradas: BTreeMap::new(),
+        orfas: BTreeMap::new(),
         atualizado_em: None,
         historico_do_kit: (!historico.is_empty()).then_some(historico),
         trazido_do_kit: Some(iso(agora())),
     })
+}
+
+/// Refaz as chaves cujo repositório o disco hoje escreve de outro jeito: a
+/// pasta renomeada só na caixa (`~/projetos` → `~/Projetos`) ou alcançada
+/// por um link. A chave leva o caminho canônico do diretório comum; sem
+/// isto, depois da troca, cada decisão já tomada ficaria órfã da worktree e
+/// seria refeita do zero — e uma worktree mais velha que os transcritos
+/// indexados nunca mais teria dono. Só troca o que ainda existe e cuja chave
+/// nova não está tomada. Devolve quantas chaves mudaram.
+pub fn recanoniza(est: &mut Estado) -> usize {
+    use super::pastas::{canon, e_pasta};
+    use super::repos::repo_de;
+    let mut novos: std::collections::HashMap<String, Option<String>> = std::collections::HashMap::new();
+    let mut novo_comum = |comum: &str| -> Option<String> {
+        novos
+            .entry(comum.to_string())
+            .or_insert_with(|| {
+                if !e_pasta(comum) {
+                    return None;
+                }
+                let c = canon(comum);
+                (c != comum).then_some(c)
+            })
+            .clone()
+    };
+    let parte = |k: &str| k.split_once('|').map(|(c, resto)| (c.to_string(), resto.to_string()));
+    let mut mudou = 0;
+    let velhas: Vec<String> = est.nascimentos.keys().cloned().collect();
+    for k in velhas {
+        let Some((comum, resto)) = parte(&k) else { continue };
+        let Some(c) = novo_comum(&comum) else { continue };
+        let nova = format!("{c}|{resto}");
+        if est.nascimentos.contains_key(&nova) {
+            continue;
+        }
+        let Some(mut d) = est.nascimentos.remove(&k) else { continue };
+        d.comum = Some(c.clone());
+        d.repo = Some(repo_de(&c));
+        if let Some(cam) = d.caminho.clone().filter(|p| e_pasta(p)) {
+            d.caminho = Some(canon(&cam));
+        }
+        est.nascimentos.insert(nova, d);
+        mudou += 1;
+    }
+    let velhas: Vec<String> = est.git.keys().cloned().collect();
+    for k in velhas {
+        let Some((comum, resto)) = parte(&k) else { continue };
+        let Some(c) = novo_comum(&comum) else { continue };
+        let nova = format!("{c}|{resto}");
+        if !est.git.contains_key(&nova) {
+            if let Some(g) = est.git.remove(&k) {
+                est.git.insert(nova, g);
+            }
+        }
+    }
+    let velhas: Vec<String> = est.orfas.keys().cloned().collect();
+    for k in velhas {
+        let Some((comum, resto)) = parte(&k) else { continue };
+        let Some(c) = novo_comum(&comum) else { continue };
+        let nova = format!("{c}|{resto}");
+        if !est.orfas.contains_key(&nova) {
+            if let Some(t) = est.orfas.remove(&k) {
+                est.orfas.insert(nova, t);
+            }
+        }
+    }
+    let mut repos: Vec<String> = Vec::new();
+    for r in std::mem::take(&mut est.repos) {
+        let r = novo_comum(&r).unwrap_or(r);
+        if !repos.contains(&r) {
+            repos.push(r);
+        }
+    }
+    est.repos = repos;
+    mudou
+}
+
+/// Uma conversa de aba que fechou entra em `encerradas` (a primeira vez que
+/// se vê a aba fechada vale; se ela já estava lá, nada muda).
+pub fn encerra(est: &mut Estado, id: &str, codex: bool, agora: f64) {
+    if id.is_empty() {
+        return;
+    }
+    let e = est.encerradas.entry(id.to_string()).or_insert(Encerrada { saiu_em: agora, codex });
+    e.codex |= codex;
 }
 
 /// A chave de um daemon no histórico.

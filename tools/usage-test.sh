@@ -30,7 +30,7 @@ CHOICE=apps/macos/Sources/Keep/Model/AIChoice.swift
 HELPER=apps/macos/Sources/Keep/Daemon/KeepCLI.swift
 
 build() {  # build <AIUsage.swift> <AIChoice.swift> <KeepCLI.swift>
-    swiftc -O "$1" "$2" "$3" tools/usage-test/main.swift -o "$WORK/test" 2>"$WORK/build.log" || {
+    swiftc -O "$1" "$2" "$3" tools/usage-test/stubs.swift tools/usage-test/main.swift -o "$WORK/test" 2>"$WORK/build.log" || {
         grep -E "error" "$WORK/build.log" | head -5; return 1; }
 }
 # The core, played by the stand-in the app's own tests use: it logs what it

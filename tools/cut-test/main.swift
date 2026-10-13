@@ -45,4 +45,31 @@ check("the whole prompt selected, wrapped or not: emptied",
       String(repeating: R, count: n) + String(repeating: B, count: n))
 check("part of it across rows: not emptied",
       CutSelection.keysEmptying(selected: "pedido que\ncontinua", box: ["primeira linha do pedido que", "continua aqui"]), nil)
+
+// Claude Code 2.1.296's prompt box, as it was on screen (12/10), each cut
+// tried on the real editor and found right (tools/cut-test/claude-prompt-box.jsonl:
+// the box between its rules, the cursor, the selection and the keys).
+let fixtures = (try? String(contentsOfFile: "tools/cut-test/claude-prompt-box.jsonl", encoding: .utf8)) ?? ""
+var tried = 0
+for line in fixtures.split(separator: "\n") {
+    guard let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+        let lines = json["lines"] as? [String], let row = json["cursorRow"] as? Int,
+        let column = json["cursorCol"] as? Int, let selected = json["selected"] as? String,
+        let want = json["keys"] as? String
+    else { continue }
+    tried += 1
+    let name = "Claude's box: cut \(selected.prefix(24).replacingOccurrences(of: "\n", with: "⏎"))…"
+    guard let (box, first) = CutSelection.promptBoxRows(lines, cursorRow: row) else {
+        check(name, "no box", want); continue
+    }
+    let width = lines[first - 1].trimmingCharacters(in: .whitespaces).count - 4
+    let keys = CutSelection.keysAcrossRows(
+        selected: selected, box: box, width: width, cursorRow: row - first, cursorColumn: column - 2)
+        ?? CutSelection.keysEmptying(selected: selected, box: box)
+    check(name, keys.map { Data($0.utf8).map { String(format: "%02x", $0) }.joined() }, want)
+}
+check("the real cases were read", String(tried), "8")
+let twice = ["─────────────────────", "❯\u{a0}alfa beta alfa beta", "─────────────────────"]
+check("words found twice in the box: not cut", CutSelection.keysAcrossRows(
+    selected: "alfa", box: CutSelection.promptBox(twice, cursorRow: 1) ?? [], width: 17, cursorRow: 0, cursorColumn: 20), nil)
 exit(failures == 0 ? 0 : 1)

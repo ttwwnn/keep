@@ -217,10 +217,33 @@ pub struct Metadados {
     pub uuid: String,
     #[serde(default, rename = "criadaEm")]
     pub criada_em: u64,
+    /// A pasta virou o armazém de uma aba (`crate::quente`): só acesso, sem
+    /// refresh, e não é mais um dono da conta.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub aba: bool,
 }
 
 pub fn ler_metadados(pasta: &Path) -> Option<Metadados> {
     serde_json::from_str(&std::fs::read_to_string(pasta.join("keep.json")).ok()?).ok()
+}
+
+/// Uma pasta fixa que virou o armazém de uma aba: não é conta, e a
+/// renovação não passa por ela.
+pub fn pasta_de_aba(pasta: &Path) -> bool {
+    ler_metadados(pasta).is_some_and(|m| m.aba)
+}
+
+/// As pastas fixas que são donas de conta: as de `fixas/`, menos as que
+/// viraram armazém de aba, em ordem.
+pub fn pastas_fixas() -> Vec<PathBuf> {
+    let Ok(dir) = std::fs::read_dir(caminhos::fixas()) else { return Vec::new() };
+    let mut pastas: Vec<PathBuf> = dir
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_dir() && p.file_name().is_some_and(|n| !n.to_string_lossy().starts_with('.')))
+        .filter(|p| !pasta_de_aba(p))
+        .collect();
+    pastas.sort();
+    pastas
 }
 
 pub fn gravar_metadados(pasta: &Path, m: &Metadados) -> std::io::Result<()> {
@@ -276,7 +299,7 @@ fn slots_do_kit() -> Vec<Achado> {
 }
 
 /// O slot que o kit diz estar no login global (`.ativa`), se houver kit.
-fn ativa_do_kit() -> Option<String> {
+pub fn ativa_do_kit() -> Option<String> {
     std::fs::read_to_string(caminhos::contas().join(".ativa"))
         .ok()
         .map(|s| s.trim().to_string())
@@ -332,13 +355,7 @@ fn armazens_claude(perguntar: bool) -> Vec<Achado> {
         }
         saida.push(a);
     }
-    let Ok(dir) = std::fs::read_dir(caminhos::fixas()) else { return saida };
-    let mut pastas: Vec<PathBuf> = dir
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.is_dir() && p.file_name().is_some_and(|n| !n.to_string_lossy().starts_with('.')))
-        .collect();
-    pastas.sort();
-    for pasta in pastas {
+    for pasta in pastas_fixas() {
         let meta = ler_metadados(&pasta);
         let armazem = Armazem::Fixa { pasta: pasta.clone() };
         let achado = achado_de_login(credencial::fixa(&pasta), armazem.clone(), perguntar, "próprio");
@@ -692,7 +709,7 @@ pub enum Falta {
 /// Se um login guardado pode rodar uma aba: tem o refresh que o CLI zera
 /// quando o servidor recusa, e o servidor não recusou esse refresh na
 /// renovação do Keep.
-fn login_roda(lido: Lido, armazem: &Armazem) -> bool {
+pub(crate) fn login_roda(lido: Lido, armazem: &Armazem) -> bool {
     matches!(lido, Lido::Ok(ref v) if Oauth::de(v).is_some_and(|o| !o.recusado() && !crate::renovar::morto(armazem, &o)))
 }
 
