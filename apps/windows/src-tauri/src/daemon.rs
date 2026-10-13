@@ -279,6 +279,17 @@ pub fn preview(workspace: &str, tab: u32) -> Result<String> {
     }
 }
 
+/// The same screen with its colours still on it: the sequences the daemon
+/// repaints an attaching client with. A daemon that predates the question
+/// closes the connection, which the page takes as its cue to ask `preview`.
+pub fn preview_vt(workspace: &str, tab: u32) -> Result<String> {
+    match ask(ClientMsg::PreviewVt { workspace: workspace.into(), tab })? {
+        ServerMsg::PreviewText(text) => Ok(text),
+        ServerMsg::Error(e) => bail!(e),
+        other => bail!("resposta inesperada: {other:?}"),
+    }
+}
+
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Hit {
