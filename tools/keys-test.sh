@@ -222,7 +222,9 @@ start_probe
 "$SENDKEY" "$APP_PID" key 51 alt   ; sleep 0.5   # alt-backspace, a word away
 MODS=$(screen)
 check "alt-left"      "$MODS" '^[[1;3D' '^[b' '^[^[[D'
-check "shift-return"  "$MODS" '^[^M' '^M' '^[[13;2u'
+# The bundled Ghostty writes shift-return the xterm way, `CSI 27;2;13~`,
+# which a program reading modifiers (Claude Code) takes for shift-return.
+check "shift-return"  "$MODS" '^[^M' '^M' '^[[13;2u' '^[[27;2;13~'
 check "alt-backspace" "$MODS" '^[^?' '^W' '^[[127;3u'
 
 # ------------------------------- keys inside a program that asked for more
