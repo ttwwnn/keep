@@ -84,6 +84,13 @@ jobs:
           target/debug/keep.exe ia confinar --diagnostico
           target/debug/keep.exe ia confinar --autoteste
 
+      # O Claude Code de verdade, para o roteiro conferir que ele sobe preso.
+      - name: Claude Code (para o roteiro da contenção)
+        if: always() && matrix.name == 'Windows'
+        continue-on-error: true
+        timeout-minutes: 5
+        run: npm install -g @anthropic-ai/claude-code@2.1.296
+
       - name: Contenção da IA (roteiro em PowerShell)
         if: always() && matrix.name == 'Windows'
         timeout-minutes: 10

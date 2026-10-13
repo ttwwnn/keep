@@ -11,9 +11,11 @@
 # O `keep` é o de `target\release` deste repositório, o do PATH, ou o dado.
 param([string]$Keep = "")
 
-# Sem `$ErrorActionPreference = "Stop"`: no Windows PowerShell 5.1 a primeira linha
-# que o `keep` escreve no erro (`Keep: …`), redirecionada por `2>&1`, seria uma
-# exceção e acabaria o roteiro.
+# Sem `Stop`: no Windows PowerShell 5.1 a primeira linha que o `keep` escreve no
+# erro (`Keep: …`), redirecionada por `2>&1`, seria uma exceção e acabaria o
+# roteiro. E quem chama (o `shell: pwsh` do GitHub Actions) põe `Stop` no escopo
+# de cima, que este herdaria.
+$ErrorActionPreference = "Continue"
 $repo = Split-Path -Parent $PSScriptRoot
 if (-not $Keep) {
     $local = Join-Path $repo "target\release\keep.exe"
@@ -91,8 +93,31 @@ try {
     Confere "o código de saída volta" 7 $LASTEXITCODE
 
     # Programas de verdade, não só o cmd: o que a IA usa no dia a dia. Cada um
-    # só entra se está instalado.
+    # só entra se está instalado. Quando algo falha, mostra o que o programa
+    # disse e o rastro do `keep` (KEEP_CONFINE_TRACE), que é o que explica.
     Write-Host "programas de verdade"
+    function Programa([string]$o_que, [string[]]$comando, [scriptblock]$criterio, [switch]$mostrar) {
+        $env:KEEP_WORKSPACE = "presa"
+        $env:KEEP_CONFINE_TRACE = "1"
+        $saida = & $Keep ia confinar -- @comando 2>&1
+        $codigo = $LASTEXITCODE
+        Remove-Item Env:\KEEP_CONFINE_TRACE -ErrorAction SilentlyContinue
+        $linhas = @($saida | ForEach-Object { "$_" })
+        $texto = (($linhas | Where-Object { $_ -notmatch '^Keep(\[confinar\])?: ' }) -join "`n").Trim()
+        if (& $criterio $codigo $texto) {
+            Write-Host "  ok    $o_que"
+            if ($mostrar) {
+                Write-Host "        saiu com $codigo; a saída:"
+                foreach ($l in $linhas) { Write-Host "          $l" }
+            }
+            $script:passou++
+        } else {
+            Write-Host "  FALHOU  $o_que"
+            Write-Host "        saiu com $codigo; a saída:"
+            foreach ($l in $linhas) { Write-Host "          $l" }
+            $script:falhou++
+        }
+    }
     $git = (Get-Command git -ErrorAction SilentlyContinue).Source
     $node = (Get-Command node -ErrorAction SilentlyContinue).Source
     $bash = $null
@@ -103,28 +128,27 @@ try {
     function Posix([string]$caminho) { return ($caminho -replace '\\', '/') }
     if ($git) {
         $repo = Join-Path $permitida "repo"
-        $env:KEEP_WORKSPACE = "presa"
-        & $Keep ia confinar -- git init -q $repo 2>&1 | Out-Null
-        Confere "git cria o repositório na pasta" "True" (Test-Path (Join-Path $repo ".git"))
-        Set-Content -Path (Join-Path $repo "novo.txt") -Value "x"
-        Confere "git vê o arquivo novo" "?? novo.txt" (Roda "presa" @("git", "-C", $repo, "status", "--short"))
-        $env:KEEP_WORKSPACE = "presa"
-        & $Keep ia confinar -- git init -q (Join-Path $fora "repo-fora") 2>&1 | Out-Null
-        Confere "git não cria repositório fora" "False" (Test-Path (Join-Path $fora "repo-fora"))
+        Programa "git roda" @($git, "--version") { param($c, $t) $c -eq 0 -and $t -match "git version" }
+        Programa "git cria o repositório na pasta" @($git, "init", "-q", $repo) { param($c, $t) $c -eq 0 -and (Test-Path (Join-Path $repo ".git")) }
+        if (Test-Path $repo) {
+            Set-Content -Path (Join-Path $repo "novo.txt") -Value "x"
+            Programa "git vê o arquivo novo" @($git, "-C", $repo, "status", "--short") { param($c, $t) $t -eq "?? novo.txt" }
+        }
+        $repoFora = Join-Path $fora "repo-fora"
+        Programa "git não cria repositório fora" @($git, "init", "-q", $repoFora) { param($c, $t) -not (Test-Path $repoFora) }
     }
     if ($node) {
         $js = Join-Path $permitida "grava.js"
         Set-Content -Path $js -Value 'require("fs").writeFileSync(process.argv[2], "node")'
         $n1 = Join-Path $permitida "do-node.txt"
         $n2 = Join-Path $fora "do-node.txt"
-        Roda "presa" @($node, $js, $n1) | Out-Null
-        Confere "node grava na pasta" "True" (Test-Path $n1)
-        Roda "presa" @($node, $js, $n2) | Out-Null
-        Confere "node não grava fora" "False" (Test-Path $n2)
+        Programa "node roda" @($node, "--version") { param($c, $t) $c -eq 0 -and $t -match "^v\d+" }
+        Programa "node grava na pasta" @($node, $js, $n1) { param($c, $t) $c -eq 0 -and (Test-Path $n1) }
+        Programa "node não grava fora" @($node, $js, $n2) { param($c, $t) -not (Test-Path $n2) }
         $leitura = Join-Path $permitida "le.js"
         Set-Content -Path $leitura -Value 'process.stdout.write(require("fs").readFileSync(process.argv[2], "utf8"))'
-        Confere "node lê na pasta" "dentro" (Roda "presa" @($node, $leitura, (Join-Path $permitida "a.txt")))
-        Confere "node não lê o que está fora" "False" ((Roda "presa" @($node, $leitura, (Join-Path $fora "b.txt"))) -match "fora")
+        Programa "node lê na pasta" @($node, $leitura, (Join-Path $permitida "a.txt")) { param($c, $t) $t -eq "dentro" }
+        Programa "node não lê o que está fora" @($node, $leitura, (Join-Path $fora "b.txt")) { param($c, $t) $t -notmatch "fora" -and $c -ne 0 }
         # O localhost, que o AppContainer tiraria: o servidor de desenvolvimento
         # que a IA sobe e o retorno do login.
         $laco = Join-Path $permitida "laco.js"
@@ -134,7 +158,15 @@ const s = net.createServer((c) => c.end("pong")).listen(0, "127.0.0.1", () => {
   net.connect(s.address().port, "127.0.0.1").on("data", (d) => { process.stdout.write(String(d)); s.close(); });
 });
 '@
-        Confere "localhost funciona" "pong" (Roda "presa" @($node, $laco))
+        Programa "localhost funciona" @($node, $laco) { param($c, $t) $t -eq "pong" }
+    }
+    # O Claude Code de verdade, se está instalado (npm i -g @anthropic-ai/claude-code):
+    # sobe preso, e sem login responde que falta o login, não que falta permissão.
+    $claude = (Get-Command claude.cmd -ErrorAction SilentlyContinue).Source
+    if (-not $claude) { $claude = (Get-Command claude.exe -ErrorAction SilentlyContinue).Source }
+    if ($claude) {
+        Programa "claude --version" @($claude, "--version") { param($c, $t) $c -eq 0 -and $t -match "\d+\.\d+\.\d+" } -mostrar
+        Programa "claude -p chega ao pedido de login" @($claude, "-p", "ola") { param($c, $t) $t -match "(?i)log.?in|api key|authenticat|credential" -and $t -notmatch "(?i)EPERM|EACCES|access is denied|permission" } -mostrar
     }
     if ($bash) {
         # O Git Bash (MSYS2) é o que o Claude Code usa para o Bash. Com outro
@@ -142,15 +174,13 @@ const s = net.createServer((c) => c.end("pong")).listen(0, "127.0.0.1", () => {
         # As aspas são nossas: o Start-Process junta os argumentos sem pô-las.
         $aberto = Start-Process -FilePath $bash -ArgumentList @("-c", '"sleep 60"') -PassThru -WindowStyle Hidden
         Start-Sleep -Seconds 1
-        Confere "o bash roda" "ola" (Roda "presa" @($bash, "-c", "echo ola"))
         $b1 = Join-Path $permitida "do-bash.txt"
         $b2 = Join-Path $fora "do-bash.txt"
-        Roda "presa" @($bash, "-c", ("echo bash > '" + (Posix $b1) + "'")) | Out-Null
-        Confere "o bash grava na pasta" "True" (Test-Path $b1)
-        Roda "presa" @($bash, "-c", ("echo bash > '" + (Posix $b2) + "'")) | Out-Null
-        Confere "o bash não grava fora" "False" (Test-Path $b2)
-        Confere "o bash não lê o que está fora" "False" ((Roda "presa" @($bash, "-c", ("cat '" + (Posix (Join-Path $fora "b.txt")) + "'"))) -match "fora")
-        Confere "o bash faz um filho e espera" "filho" (Roda "presa" @($bash, "-c", "(echo filho) | cat"))
+        Programa "o bash roda" @($bash, "-c", "echo ola") { param($c, $t) $t -eq "ola" }
+        Programa "o bash grava na pasta" @($bash, "-c", ("echo bash > '" + (Posix $b1) + "'")) { param($c, $t) $c -eq 0 -and (Test-Path $b1) }
+        Programa "o bash não grava fora" @($bash, "-c", ("echo bash > '" + (Posix $b2) + "'")) { param($c, $t) -not (Test-Path $b2) }
+        Programa "o bash não lê o que está fora" @($bash, "-c", ("cat '" + (Posix (Join-Path $fora "b.txt")) + "'")) { param($c, $t) $t -notmatch "fora" -and $c -ne 0 }
+        Programa "o bash faz um filho e espera" @($bash, "-c", "(echo filho) | cat") { param($c, $t) $t -eq "filho" }
         Stop-Process -Id $aberto.Id -Force -ErrorAction SilentlyContinue
     }
 
