@@ -12,9 +12,11 @@
  * folder by a restricted token that `keep ia confinar` puts on the program
  * and proves before it starts it (the part that touches Windows is in
  * crates/keep-ia/src/confinar_win/); if that cannot be shown to hold on a
- * computer, the AI does not start there. Turn this off if the mechanism has to
- * be pulled back: the choice already made stays in the file and the button
- * and the menu items go.
+ * computer, the AI does not start there. Only a start that goes through
+ * `keep ia confinar` is held: the account switch and the restore do, and the
+ * shell's `claude` function has to (docs/paridade-windows.md, fatia confine).
+ * Turn this off if the mechanism has to be pulled back: the choice already
+ * made stays in the file and the button and the menu items go.
  */
 export const CONFINEMENT_ENFORCED = true;
 
