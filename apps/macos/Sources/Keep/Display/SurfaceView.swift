@@ -1476,9 +1476,10 @@ final class TerminalSurfaceView: NSView {
     ///
     /// What opens is what ⌘-click would have opened — the runtime is asked
     /// what link it sees there, which covers an address a program put behind
-    /// its text (OSC 8: Claude Code's markdown links) — and failing that the
-    /// word under the pointer pieced back together from the screen, when it
-    /// names a file or holds a web address.
+    /// its text (OSC 8) — and failing that the word under the pointer pieced
+    /// back together from the screen, when it names a file or holds a web
+    /// address. Addresses only while the program leaves the mouse alone: one
+    /// that takes it (Claude Code in full screen) opens its links itself.
     private func openPathUnderPlainClick(_ event: NSEvent) {
         guard let pressed, pressed.focused, event.clickCount == 1,
             event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
@@ -1496,10 +1497,11 @@ final class TerminalSurfaceView: NSView {
         let row = cell?.row ?? screen.pointerRow
         let directory = currentDirectory
         let columns = self.columns
+        let programHasMouse = surface.map { ghostty_surface_mouse_captured($0) } ?? false
         let at = pressed.time
         DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval) { [weak self] in
             guard let self, self.pressed?.time == at else { return }
-            if let link, LinkOpener.plainClickMayOpen(link) {
+            if let link, LinkOpener.plainClickMayOpen(link, programHasMouse: programHasMouse) {
                 Trace.log("link", "plain click on the link: \(link)")
                 if LinkOpener.open(
                     link, from: directory, screen: screen.lines, near: row, columns: columns,
@@ -1510,7 +1512,9 @@ final class TerminalSurfaceView: NSView {
             }
             guard let word else { return }
             Trace.log("link", "plain click on: \(word)")
-            if !LinkOpener.openRecovered(word, from: directory, screen: screen.lines, near: row) {
+            if !LinkOpener.openRecovered(word, from: directory, screen: screen.lines, near: row),
+                !programHasMouse
+            {
                 LinkOpener.openRecoveredAddress(word, screen: screen.lines, near: row, columns: columns)
             }
         }

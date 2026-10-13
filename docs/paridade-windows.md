@@ -120,7 +120,9 @@ do vitest); o mouse real, os cursores e a dica nativa do workspace não foram ex
 - [ ] URLs mailto: e file://; Ctrl+clique.
 - [ ] Endereços web: clique simples abre no navegador, inclusive o link OSC 8
   atrás do texto (markdown do Claude Code) e o endereço quebrado em linhas;
-  menu Abrir link / Copiar link (Mac: 0e8c0bc).
+  menu Abrir link / Copiar link (Mac: 0e8c0bc). Com o mouse tomado pelo
+  programa (Claude Code em tela cheia), o clique simples deixa o endereço
+  para ele, que já o abre (Mac: 62be02e).
 - [ ] OSC 52 com política; confirmar colagem multi-linha; colar arquivo copiado.
 - [ ] Soltar arquivos: realce do painel sob o ponteiro.
 - [ ] Teclado kitty (CSI u): Ctrl+Enter, desambiguação.

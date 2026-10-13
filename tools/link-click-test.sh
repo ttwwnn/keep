@@ -19,11 +19,14 @@
 #   - all of it again with the tab's program having asked for the mouse;
 #   - a path the program broke across two rows, as Claude Code does with one
 #     wider than the screen, opens whole from either row;
-#   - web addresses, the mouse taken as Claude Code takes it (PRINT=web): a
-#     plain click on one opens it in the browser, a double click does not;
-#     a markdown link whose address is behind its text (OSC 8) opens that
-#     address; one broken across rows opens whole, plain click or ⌘-click;
-#     the right button offers "Abrir link".
+#   - web addresses (PRINT=web, osc8, webwrapped): a plain click on one
+#     opens it in the browser, a double click does not; a markdown link whose
+#     address is behind its text (OSC 8) opens that address; one broken
+#     across rows opens whole, plain click or ⌘-click; the right button
+#     offers "Abrir link". With the mouse taken, as Claude Code in full
+#     screen takes it, the plain click opens nothing here: the program has
+#     it and opens its own links (opening it here too opened it twice);
+#     ⌘-click and the menu still open it.
 #
 # It takes the pointer for a few seconds. Your app and your daemon are never
 # touched.
@@ -43,8 +46,10 @@ if [ -z "${MOUSE_MODE:-}" ]; then
     echo "== a path broken across two rows, the mouse taken"
     MOUSE_MODE=1 PRINT=wrapped "$0" || status=1
     for print in web osc8 webwrapped; do
-        echo "== web addresses ($print), the mouse taken"
-        MOUSE_MODE=1 PRINT=$print "$0" || status=1
+        for mode in 0 1; do
+            echo "== web addresses ($print), the program takes the mouse: $([ "$mode" = 1 ] && echo yes || echo no)"
+            MOUSE_MODE=$mode PRINT=$print "$0" || status=1
+        done
     done
     exit $status
 fi
@@ -203,8 +208,12 @@ if [ "$PRINT" = web ] || [ "$PRINT" = osc8 ]; then
     say "a web address on the screen ($PRINT)"
     "$MOUSE" click "$TX" "$TY"
     sleep 2
-    check "a plain click opens it" "$ADDRESS" "$(head -1 "$KEEP_LINK_LOG" | cut -c1-${#ADDRESS})"
-    check "once" "1" "$(wc -l <"$KEEP_LINK_LOG" | tr -d ' ')"
+    if [ "$MOUSE_MODE" = 1 ]; then
+        check "a plain click leaves it to the program, which has the mouse" "" "$(cat "$KEEP_LINK_LOG")"
+    else
+        check "a plain click opens it" "$ADDRESS" "$(head -1 "$KEEP_LINK_LOG" | cut -c1-${#ADDRESS})"
+        check "once" "1" "$(wc -l <"$KEEP_LINK_LOG" | tr -d ' ')"
+    fi
     : >"$KEEP_LINK_LOG"
     "$MOUSE" dblclick "$TX" "$((TY + 40))"
     sleep 2
@@ -241,8 +250,12 @@ if [ "$PRINT" = webwrapped ]; then
         sleep 1.5
     done
     sleep 1
-    check "every plain click opens the whole address" "6 $LONG_ADDRESS" \
-        "$(wc -l <"$KEEP_LINK_LOG" | tr -d ' ') $(sort -u "$KEEP_LINK_LOG")"
+    if [ "$MOUSE_MODE" = 1 ]; then
+        check "every plain click leaves it to the program, which has the mouse" "" "$(cat "$KEEP_LINK_LOG")"
+    else
+        check "every plain click opens the whole address" "6 $LONG_ADDRESS" \
+            "$(wc -l <"$KEEP_LINK_LOG" | tr -d ' ') $(sort -u "$KEEP_LINK_LOG")"
+    fi
     : >"$KEEP_LINK_LOG"
     for step in 0 1 2 3; do
         "$MOUSE" move "$((LX - 150))" "$((TY + step * 7 + 100))"
