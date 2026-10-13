@@ -204,6 +204,7 @@ export async function runE2E(): Promise<void> {
     });
 
     await barSteps(step);
+    if (iaAvailable.value) await sidebarSteps(step);
   }
 
   const tab = firstTab();
@@ -468,6 +469,9 @@ async function aiSteps(step: StepRunner, real: boolean): Promise<void> {
       const shown = [...document.querySelectorAll(".usage-footer .usage-name")].map((e) => e.textContent ?? "");
       return shown.length >= 3 ? shown : null;
     }, 5000);
+    // Each account by its place and its service, never by the order's own names.
+    const named = names.filter((n) => !/^\d+ · (Claude|GPT)$/.test(n.trim()));
+    if (named.length > 0) throw new Error(`nomes no rodapé fora de "n · serviço": ${named.join(" | ")}`);
     const figures = lines.map(
       (l) => `${l.account.alias}: ${l.reading?.windows.map((w) => `${w.label} ${Math.round(w.percent)}%`).join(", ") ?? l.problem}`,
     );
@@ -521,8 +525,12 @@ async function aiSteps(step: StepRunner, real: boolean): Promise<void> {
   await step("IA: o menu da aba lista a ordem e as contas", async () => {
     const rows = await openTabMenu(first.root.id);
     if (!rows[0]?.includes("Seguir a ordem de prioridade")) throw new Error(`sem seguir a ordem: ${rows.join(" | ")}`);
-    if (!rows.some((r) => r.includes("Claude · semlogin") && r.includes("sem login próprio"))) {
+    // The account with no login of its own, by its place and its address.
+    if (!rows.some((r) => /IA-\d+ · carla@exemplo\.com — sem login próprio/.test(r))) {
       throw new Error(`sem a conta sem login: ${rows.join(" | ")}`);
+    }
+    if (rows.some((r) => /semlogin|trabalho|principal|Claude · |GPT · /.test(r))) {
+      throw new Error(`um apelido no menu: ${rows.join(" | ")}`);
     }
     await api.e2eShot("menu");
     return rows.join(" | ");
@@ -530,7 +538,7 @@ async function aiSteps(step: StepRunner, real: boolean): Promise<void> {
 
   await step("IA: uma conta sem login próprio abre o login dela", async () => {
     const item = [...document.querySelectorAll<HTMLElement>(".context-menu .menu-item")].find((e) =>
-      (e.textContent ?? "").includes("Claude · semlogin"),
+      (e.textContent ?? "").includes("carla@exemplo.com"),
     );
     if (!item) throw new Error("sem a linha da conta no menu");
     item.click();
@@ -539,7 +547,7 @@ async function aiSteps(step: StepRunner, real: boolean): Promise<void> {
     const message = said.message ?? "";
     await api.e2eShot("precisa-login");
     answer("ok");
-    if (!title.startsWith("Falta aprovar")) throw new Error(`${title}: ${message}`);
+    if (!/^Falta aprovar IA-\d+ no navegador$/.test(title)) throw new Error(`${title}: ${message}`);
     const shown = activeTab.value?.root.id;
     if (shown === first.root.id) throw new Error("a aba do login não veio para a frente");
     return `${title} — aba do login ${shown}: ${message.slice(0, 160)}`;
@@ -587,5 +595,54 @@ async function aiSteps(step: StepRunner, real: boolean): Promise<void> {
       throw new Error(said);
     }
     return message.split("\n").filter((l) => l.trim()).slice(0, 4).join(" / ");
+  });
+}
+
+// ---------------------------------------------------------------- the sidebar's account
+
+/** What the sidebar writes after a tab's title, as drawn. */
+function sidebarSuffix(tab: number): string | null {
+  const row = [...document.querySelectorAll<HTMLElement>(".sidebar .tab-row")].find((r) =>
+    r.querySelector(`.ai-chevron[data-ia-ws="${WORKSPACE}"][data-ia-tab="${tab}"]`),
+  );
+  if (!row) return null;
+  return row.querySelector(".tab-program")?.textContent?.trim() ?? "";
+}
+
+/**
+ * The sidebar names an AI tab's account by its place in the footer's list
+ * only — "(IA-3)", never the AI or the order's own names — and the number
+ * follows the list when its order changes: the Codex stand-in's tab, on the
+ * GPT account, as that account goes one place down the list and back.
+ */
+async function sidebarSteps(step: StepRunner): Promise<void> {
+  await step("barra lateral: a aba de IA diz só (IA-n), e o número segue a ordem do rodapé", async () => {
+    const codexTab = [...(tabsByWorkspace.value.get(WORKSPACE) ?? [])]
+      .reverse()
+      .find((t) => programOf(t.root.command, t.root.title) === "codex" && statuses.value.has(viewKey(WORKSPACE, t.root.id)));
+    if (!codexTab) throw new Error("sem a aba do Codex falso");
+    const gpt = usageLines.value.findIndex((l) => l.account.engine === "codex");
+    if (gpt < 0) throw new Error("sem a conta do GPT no rodapé");
+    const wanted = (at: number) => `(IA-${at + 1})`;
+    const seen: string[] = [];
+    const expect = async (at: number) => {
+      const shown = await waitFor(() => (sidebarSuffix(codexTab.root.id) === wanted(at) ? wanted(at) : null), 15000).catch(() => {
+        throw new Error(`a barra lateral diz "${sidebarSuffix(codexTab.root.id)}", não "${wanted(at)}"`);
+      });
+      seen.push(shown);
+    };
+    await expect(gpt);
+    const by = gpt < usageLines.value.length - 1 ? 1 : -1;
+    moveOrder(usageLines.value[gpt], by);
+    await expect(gpt + by);
+    await api.e2eShot("barra-lateral-ia");
+    moveOrder(usageLines.value[gpt + by], -by);
+    await expect(gpt);
+    // After a title: an AI's account by its number only, another program by its name — no account's own name.
+    const suffixes = [...document.querySelectorAll(".sidebar .tab-program")].map((e) => e.textContent?.trim() ?? "");
+    const odd = suffixes.filter((t) => !/^\(IA-\d+\)$/.test(t) && !/^— [^·]+$/.test(t));
+    const named = suffixes.filter((t) => /principal|reserva|semlogin|trabalho/i.test(t));
+    if (odd.length > 0 || named.length > 0) throw new Error(`na barra lateral: ${[...odd, ...named].join(" | ")}`);
+    return `${seen.join(" → ")}; todas: ${suffixes.join(" | ")}`;
   });
 }

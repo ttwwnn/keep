@@ -44,6 +44,7 @@ import {
   iaInfo,
   info,
   loaded,
+  log,
   notice,
   refresh,
   say,
@@ -453,7 +454,10 @@ export async function chooseAccount(
   switch (outcome.kind) {
     case "done":
       notes.value = new Map(notes.value).set(id, { key, at: Date.now() });
-      say(`Aba “${tabName}”: ${outcome.text || `em ${label}`}`);
+      // In the window's words, not the core's: the core names the account
+      // by the order's own names, and here an account is its place in the list.
+      log(`ia: ${workspace}/${tab} → ${key}: ${outcome.text}`);
+      say(key === FOLLOW_ORDER ? `Aba “${tabName}” segue a ordem de prioridade` : `Aba “${tabName}” passou para ${label}`);
       void refresh();
       setTimeout(() => void readTabs(), 1500);
       return;
