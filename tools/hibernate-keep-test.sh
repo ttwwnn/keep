@@ -614,8 +614,10 @@ else
         say "  skip  full screen: the system took the window out of it again, as it does any app's here"
         SKIPPED=$((SKIPPED + 1))
         # The same tabs shown as in full screen, for what follows to start
-        # from where it would have.
+        # from where it would have — tab 1 for as long, too: a tab shown for
+        # a moment is let go of before its client tells the daemon its grid.
         show 1 || say "  (tab 1 would not come up)"
+        sleep 4
         for n in 3 4 5; do
             show "$n" || say "  (tab $n would not come up)"
             sleep 1
