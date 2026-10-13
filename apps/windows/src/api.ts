@@ -95,6 +95,10 @@ export const rearrange = (
   moves: { tab: number; splitOf: number; splitDir: number }[],
 ) => invoke<void>("rearrange", { workspace, moves });
 export const preview = (workspace: string, tab: number) => invoke<string>("preview", { workspace, tab });
+/** The same screen with its colours (the sequences the daemon repaints with); a daemon that predates it refuses, and `preview` is the fallback. */
+export const previewVt = (workspace: string, tab: number) => invoke<string>("preview_vt", { workspace, tab });
+/** The folders the person goes to, from zoxide, best first; none where it is not installed. */
+export const directories = () => invoke<string[]>("directories");
 export const search = (query: string, limit = 50, workspace?: string, tab?: number) =>
   invoke<SearchHit[]>("search", { query, limit, workspace: workspace ?? null, tab: tab ?? null });
 
