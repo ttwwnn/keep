@@ -339,7 +339,9 @@ async function refreshOnce(): Promise<void> {
     // A move began while this was on its way: the answer may be from either side of it.
     if (moves > 0) return;
     const firstAnswer = daemonError.value !== null;
-    applyList(list);
+    // After an outage the list may be another daemon's: its ids are not the
+    // ones the last list had, and a tab is not an heir to one of those.
+    applyList(list, firstAnswer);
     if (firstAnswer) {
       terminals.reattach();
       void forgetOrderOfAnotherDaemon();
@@ -363,8 +365,8 @@ async function forgetOrderOfAnotherDaemon(): Promise<void> {
   gui.value = { ...gui.value, daemon: identity, tabOrder: gui.value.daemon === "" ? gui.value.tabOrder : {} };
 }
 
-function applyList(list: WorkspaceInfo[]): void {
-  const previous = workspaces.value;
+function applyList(list: WorkspaceInfo[], fresh = false): void {
+  const previous = fresh ? [] : workspaces.value;
   batch(() => {
     workspaces.value = list;
     daemonError.value = null;
@@ -1166,6 +1168,8 @@ export function startRename(workspace: string, tab: number, surface?: NameSurfac
     void renameByQuestion(workspace, tab);
     return;
   }
+  // A name cannot be typed in a row folded out of sight.
+  if (where === "sidebar" && gui.value.folded.includes(workspace)) toggleFolded(workspace);
   editing.value = { kind: "tab", workspace, tab, surface: where };
 }
 
