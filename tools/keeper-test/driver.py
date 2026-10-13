@@ -111,6 +111,18 @@ while True:
                     n += 1
                     out.append(b"L%07d line of output\r\n" % n)
                 os.write(1, b"".join(out))
+            elif op == "pace":
+                # Lots of lines, a pause after each: output a reader keeps
+                # up with, as the daemon's queue for a client does not hold
+                # a burst of thousands of lines at once.
+                lots, per, pause = arg.split()
+                for _ in range(int(lots)):
+                    out = []
+                    for _ in range(int(per)):
+                        n += 1
+                        out.append(b"L%07d line of output\r\n" % n)
+                    os.write(1, b"".join(out))
+                    time.sleep(float(pause))
             elif op == "raw":
                 os.write(1, arg.replace("\\e", "\x1b").replace("\\a", "\x07").replace("\\r", "\r").replace("\\n", "\n").encode())
             elif op == "ask":
@@ -615,9 +627,12 @@ try:
     ten.hibernate()
     wait_for(30, ten.kept)
     seen = []
-    slow = threading.Thread(target=play_the_app, args=(ten.dir, "later", seen, 3.0), daemon=True)
+    slow = threading.Thread(target=play_the_app, args=(ten.dir, "later", seen, 4.0), daemon=True)
     slow.start()
-    command("raw \\e]52;c;?\\a", "print 40000", "listen 8")
+    # Paced, as a program that goes on working writes: no more than a
+    # reader keeps up with — and far more than the daemon holds for one
+    # that stops reading for the four seconds the app takes.
+    command("raw \\e]52;c;?\\a", "pace 200 200 0.02", "listen 4")
     slow.join(10)
     check("a program reading the clipboard is answered once the app answers, however long that takes",
           repr(b"\x1b]52;c;bGF0ZXI=\x1b\\"), open(os.path.join(WORK, "answers-9")).read())
