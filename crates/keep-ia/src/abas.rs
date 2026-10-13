@@ -15,7 +15,8 @@ use serde::Serialize;
 
 use crate::contas::{self, Armazem, Conta, Motor};
 use crate::daemon::{self, Retrato};
-use crate::{processos, sessoes, tela, vinculo};
+use crate::uso::Linha;
+use crate::{processos, sessoes, statusline, tela, vinculo};
 
 pub const SEGUIR_ORDEM: &str = "claude:ordem";
 
@@ -35,6 +36,13 @@ pub struct IaAba {
     pub pid: u32,
     /// A conversa (id), quando se sabe.
     pub conversa: Option<String>,
+    /// A conta em que o Claude da aba respondeu por último, provada pelos
+    /// limites que o serviço devolveu nessa resposta (a statusLine). Logo
+    /// depois de uma troca a quente difere de `atual`: o Claude só passa a
+    /// usar o token novo na primeira resposta depois de reler o armazém (até
+    /// 30 s). Sem prova (sem resposta, sem medição que case), nada.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provada: Option<String>,
 }
 
 /// Uma chave que o Keep aceita: `claude:<apelido>`, `gpt:<apelido>` ou
@@ -111,6 +119,52 @@ pub fn conta_do_processo(pid: u32, agente: &str, contas: &[Conta]) -> (String, O
     (escolha, atual)
 }
 
+/// Diferença, em segundos, até a qual um recomeço dito pela statusLine e o
+/// medido no rodapé são o mesmo: os dois vêm do serviço, mas por caminhos
+/// diferentes, e um pode vir arredondado.
+const FOLGA_RECOMECO: f64 = 120.0;
+
+/// A conta dona destes limites (o `rate_limits` da statusLine), pelos
+/// recomeços das janelas de 5 h e da semana medidos de cada conta do Claude:
+/// a única cujas janelas comparáveis casam todas. Nenhuma ou mais de uma,
+/// nada — sem prova não se afirma.
+pub fn conta_dos_limites(limites: &serde_json::Value, linhas: &[Linha]) -> Option<String> {
+    let recomeco = |nome: &str| limites.get(nome)?.get("resets_at")?.as_f64();
+    let ditas = [("5h", recomeco("five_hour")), ("7d", recomeco("seven_day"))];
+    let mut achadas = linhas.iter().filter(|l| l.account.engine == Motor::Claude).filter(|l| {
+        let Some(leitura) = &l.reading else { return false };
+        let mut comparadas = 0;
+        for (rotulo, dita) in ditas {
+            let Some(dita) = dita else { continue };
+            let Some(medida) = leitura.windows.iter().find(|j| j.label == rotulo).and_then(|j| j.resets_at) else {
+                continue;
+            };
+            if (dita - medida).abs() > FOLGA_RECOMECO {
+                return false;
+            }
+            comparadas += 1;
+        }
+        comparadas > 0
+    });
+    let achada = achadas.next()?;
+    achadas.next().is_none().then(|| achada.account.order_key.clone())
+}
+
+/// A conta em que o Claude `pid` respondeu por último: a statusLine da aba
+/// dele, gravada depois que ele nasceu (a de um Claude anterior na mesma
+/// aba não vale).
+fn conta_provada(pid: u32, linhas: &[Linha]) -> Option<String> {
+    let shell = statusline::shell_da_aba(pid)?;
+    let arquivo = statusline::pasta().join(format!("{shell}.json"));
+    let gravado = std::fs::metadata(&arquivo).ok()?.modified().ok()?;
+    let gravado_ms = gravado.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis() as u64;
+    if processos::inicio_ms(pid).is_none_or(|nasceu| gravado_ms < nasceu) {
+        return None;
+    }
+    let entrada: serde_json::Value = serde_json::from_slice(&std::fs::read(&arquivo).ok()?).ok()?;
+    conta_dos_limites(entrada.get("rate_limits")?, linhas)
+}
+
 /// A conversa de um processo de IA.
 pub fn conversa_do_processo(pid: u32, agente: &str) -> Option<String> {
     if agente == "claude" {
@@ -126,6 +180,7 @@ pub fn conversa_do_processo(pid: u32, agente: &str) -> Option<String> {
 pub fn das_abas(r: &Retrato, contas: &[Conta]) -> Vec<IaAba> {
     let vinculos = vinculo::vincular(r);
     let mut lista: Option<Vec<processos::Processo>> = None;
+    let mut linhas: Option<Vec<Linha>> = None;
     let mut saida = Vec::new();
     for a in &r.abas {
         if a.info.finished {
@@ -147,6 +202,11 @@ pub fn das_abas(r: &Retrato, contas: &[Conta]) -> Vec<IaAba> {
             None => continue,
         };
         let (conta, atual) = conta_do_processo(pid, agente, contas);
+        let provada = if agente == "claude" {
+            conta_provada(pid, linhas.get_or_insert_with(|| crate::uso::em_cache_de(contas)))
+        } else {
+            None
+        };
         saida.push(IaAba {
             workspace: a.ws.clone(),
             aba: a.info.id,
@@ -156,6 +216,7 @@ pub fn das_abas(r: &Retrato, contas: &[Conta]) -> Vec<IaAba> {
             vinculo: if v.exato { "exato" } else { "provavel" }.into(),
             pid,
             conversa: conversa_do_processo(pid, agente),
+            provada,
         });
     }
     saida
@@ -214,6 +275,73 @@ mod testes {
         assert_eq!(ia_na_frente(&lista, 4_000_010, 4_000_099), None);
         let sem_ia = vec![p(4_000_010, 1, "zsh"), p(4_000_013, 4_000_010, "vim")];
         assert_eq!(ia_na_frente(&sem_ia, 4_000_010, 4_000_013), None);
+    }
+
+    fn linha(motor: Motor, ordem: &str, janelas: &[(&str, f64)]) -> Linha {
+        Linha {
+            account: Conta {
+                engine: motor,
+                key: ordem.into(),
+                alias: ordem.into(),
+                aliases: vec![],
+                email: None,
+                plan: None,
+                is_active: false,
+                is_preferred: false,
+                warning: None,
+                order_key: ordem.into(),
+                has_token: true,
+                armazens: vec![],
+                token: None,
+                roda: true,
+            },
+            reading: Some(crate::uso::Leitura {
+                windows: janelas
+                    .iter()
+                    .map(|(l, r)| crate::uso::Janela { label: (*l).into(), title: String::new(), percent: 1.0, resets_at: Some(*r) })
+                    .collect(),
+                limit_reached: false,
+            }),
+            measured_at: None,
+            problem: None,
+        }
+    }
+
+    #[test]
+    fn a_conta_provada_e_a_unica_cujos_recomecos_casam() {
+        // Os números da troca de 13/10/2026: IA·1 e IA·2 com recomeços diferentes.
+        let linhas = vec![
+            linha(Motor::Claude, "claude:principal", &[("5h", 1_791_925_200.0), ("7d", 1_792_404_000.0)]),
+            linha(Motor::Claude, "claude:reserva", &[("5h", 1_791_923_400.0), ("7d", 1_792_018_800.0)]),
+            linha(Motor::Codex, "gpt:principal", &[("7d", 1_792_018_800.0)]),
+        ];
+        let limites = |cinco: Option<f64>, sete: Option<f64>| {
+            let mut v = serde_json::json!({});
+            if let Some(r) = cinco {
+                v["five_hour"] = serde_json::json!({"used_percentage": 2, "resets_at": r});
+            }
+            if let Some(r) = sete {
+                v["seven_day"] = serde_json::json!({"used_percentage": 21, "resets_at": r});
+            }
+            v
+        };
+        let prova = |c, s| conta_dos_limites(&limites(c, s), &linhas);
+        assert_eq!(prova(Some(1_791_923_400.0), Some(1_792_018_800.0)).as_deref(), Some("claude:reserva"));
+        assert_eq!(prova(Some(1_791_925_200.0), Some(1_792_404_000.0)).as_deref(), Some("claude:principal"));
+        // Só a semana, e com o arredondamento de um minuto: basta.
+        assert_eq!(prova(None, Some(1_792_404_060.0)).as_deref(), Some("claude:principal"));
+        // Uma janela de cada conta: nenhuma casa todas.
+        assert_eq!(prova(Some(1_791_925_200.0), Some(1_792_018_800.0)), None);
+        // Uma janela que recomeçou depois da medição: nada casa, nada se afirma.
+        assert_eq!(prova(Some(1_791_941_400.0), None), None);
+        // Sem janela nenhuma, nada.
+        assert_eq!(prova(None, None), None);
+        // Duas contas com os mesmos recomeços: ambíguo, nada (e o Codex não entra).
+        let gemeas = vec![
+            linha(Motor::Claude, "claude:a", &[("7d", 1_792_018_800.0)]),
+            linha(Motor::Claude, "claude:b", &[("7d", 1_792_018_800.0)]),
+        ];
+        assert_eq!(conta_dos_limites(&limites(None, Some(1_792_018_800.0)), &gemeas), None);
     }
 
     #[test]

@@ -847,6 +847,9 @@ struct SessionSnapshot: Hashable {
         /// The account its AI runs on now, when the core could tell — what
         /// following the order has it on. For the menu's dash.
         var runningAccount: String? = nil
+        /// The account its Claude last answered on, when the core could
+        /// prove it: "(IA·1→2)" while a switch has not reached it.
+        var provenAccount: String? = nil
     }
 
     struct StripItem: Hashable, Identifiable {

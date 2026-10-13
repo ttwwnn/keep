@@ -316,6 +316,16 @@ confere(rotulo("2.1.296", "claude:reserva") == "(IA·4)", "lateral: o Claude cha
 confere(rotulo("codex", "gpt:trabalho") == "", "lateral: conta fora da lista, nada")
 confere(rotulo("zsh", nil) == "— zsh", "lateral: sem IA, o programa")
 confere(!rotulo("claude", "claude:reserva").contains("claude"), "lateral: nunca o nome da IA")
+// Trocada a quente e ainda sem resposta na conta nova: as duas, "(IA·de→para)" (13/10/2026).
+func rotuloProvado(_ conta: String?, _ rodando: String?, _ provada: String?) -> String {
+    AIChoices.tabLabel(command: "claude", account: conta, running: rodando, proven: provada, lines: fila)
+}
+confere(rotuloProvado("claude:reserva", "claude:reserva", "claude:assinaturas") == "(IA·3→4)",
+        "lateral: trocada e ainda respondendo na antiga, as duas", rotuloProvado("claude:reserva", "claude:reserva", "claude:assinaturas"))
+confere(rotuloProvado("claude:reserva", "claude:reserva", "claude:reserva") == "(IA·4)", "lateral: a resposta já veio da nova, só ela")
+confere(rotuloProvado("claude:ordem", nil, "claude:principal") == "(IA·3)", "lateral: a prova por outro apelido da mesma conta, só ela")
+confere(rotuloProvado("claude:reserva", "claude:reserva", "claude:sumida") == "(IA·4)", "lateral: prova de conta fora da lista, ignorada")
+confere(rotuloProvado("claude:reserva", "claude:reserva", nil) == "(IA·4)", "lateral: sem prova, a conta em que roda")
 
 // --- o programa da aba
 confere(AIProgramKind(command: "-zsh") == .shell && AIProgramKind(command: "zsh") == .shell
@@ -335,11 +345,11 @@ func abas(exato: Bool = true, inicioMs: UInt64? = inicio, pid: UInt32 = 4242, ve
     return try! JSONSerialization.data(withJSONObject: ["versao": versao, "ok": ok, "exato": exato, "keepd": keepd, "ia": ia])
 }
 let entradas: [[String: Any]] = [
-    ["workspace": "w", "aba": 2, "agente": "claude", "conta": "claude:ordem", "atual": "claude:reserva", "vinculo": "exato", "pid": 10, "conversa": NSNull()],
+    ["workspace": "w", "aba": 2, "agente": "claude", "conta": "claude:ordem", "atual": "claude:reserva", "vinculo": "exato", "pid": 10, "conversa": NSNull(), "provada": "claude:principal"],
     ["workspace": "w", "aba": 3, "agente": "codex", "conta": "gpt:trabalho", "atual": "gpt:trabalho", "vinculo": "provavel", "pid": 11],
     ["workspace": "w", "aba": 4, "agente": "claude", "conta": "claude:com espaço", "vinculo": "exato"],
     ["workspace": "w", "aba": 5, "agente": "codex", "conta": "claude:ordem", "atual": "gpt:principal", "vinculo": "exato"],
-    ["workspace": "w", "aba": 6, "agente": "claude", "conta": "claude:reserva", "atual": "claude:ordem", "vinculo": "exato"],
+    ["workspace": "w", "aba": 6, "agente": "claude", "conta": "claude:reserva", "atual": "claude:ordem", "vinculo": "exato", "provada": "claude:ordem"],
 ]
 func ms(_ d: Date = Date()) -> Double { d.timeIntervalSince1970 * 1000 }
 MainActor.assumeIsolated {
@@ -359,6 +369,9 @@ MainActor.assumeIsolated {
             "abas: Codex seguindo a ordem: a escolha é claude:ordem, roda no GPT")
     confere(loja.confirmedAccount(workspace: "w", tab: 5, program: .codex) == "gpt:principal", "rodapé: o Codex que segue a ordem marca o GPT")
     confere(loja.running(workspace: "w", tab: 6, program: .claude) == nil, "abas: 'atual' que não é conta é ignorado")
+    confere(loja.proven(workspace: "w", tab: 2, program: .claude) == "claude:principal", "abas: a conta provada pela resposta")
+    confere(loja.proven(workspace: "w", tab: 6, program: .claude) == nil, "abas: 'provada' que não é conta é ignorada")
+    confere(loja.proven(workspace: "w", tab: 2, program: .shell) == nil, "abas: aba de volta à concha não tem prova")
     confere(loja.account(workspace: "w", tab: 9, program: .claude) == AIHelper.followOrder, "abas: Claude sem linha segue a ordem")
     confere(loja.account(workspace: "w", tab: 9, program: .codex) == "gpt:principal", "abas: Codex sem linha está no principal")
     confere(loja.account(workspace: "w", tab: 2, program: .shell) == nil && loja.running(workspace: "w", tab: 2, program: .shell) == nil,

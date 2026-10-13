@@ -81,6 +81,11 @@ struct AITabAccount: Equatable {
     let running: String?
     /// "exato" when the core tied the process to the tab for certain.
     let link: String
+    /// The account its Claude last answered on, proven by the limits the
+    /// service sent back with that answer. Right after a switch it is still
+    /// the old one: Claude takes up the new login on its first answer after
+    /// reading it again, up to 30 s on.
+    var proven: String? = nil
 }
 
 /// The account each tab runs on, as the core last said.
@@ -182,6 +187,14 @@ final class AITabAccounts {
         return entries[id]?.running
     }
 
+    /// The account the tab's Claude last answered on, when the core could
+    /// prove it — kept through a note, since a switch just made is exactly
+    /// when it tells something.
+    func proven(workspace: String, tab: UInt32, program: AIProgramKind) -> String? {
+        guard program.runsAI else { return nil }
+        return entries[Self.id(workspace, tab)]?.proven
+    }
+
     /// Only an account the core said for the program actually on screen may
     /// light the usage footer — the one the tab runs on when it said that,
     /// else the one it was put on. A stale Claude record must not label a
@@ -209,8 +222,8 @@ final class AITabAccounts {
 
     /// What the tabs show, for telling whether an answer changed it.
     private var shown: [String: String] {
-        var map = entries.mapValues { "\($0.key) \($0.running ?? "-")" }
-        for (id, note) in notes { map[id] = note.key }
+        var map = entries.mapValues { "\($0.key) \($0.running ?? "-") \($0.proven ?? "-")" }
+        for (id, note) in notes { map[id] = "\(note.key) \(entries[id]?.proven ?? "-")" }
         return map
     }
 
@@ -255,7 +268,10 @@ final class AITabAccounts {
                 agent: item["agente"] as? String ?? "",
                 key: key,
                 running: running,
-                link: item["vinculo"] as? String ?? ""))
+                link: item["vinculo"] as? String ?? "",
+                proven: (item["provada"] as? String).flatMap {
+                    AIHelper.isValidKey($0) && $0 != AIHelper.followOrder ? $0 : nil
+                }))
         }
         return entries
     }
@@ -373,8 +389,15 @@ enum AIChoices {
     /// not said, and for a tab following the order the Claude login the
     /// tabs share; nothing when no account can be told. For any other
     /// program, its name: "— bash".
+    ///
+    /// A Claude switched to another account that has not answered on it yet
+    /// says both, "(IA·1→2)": the switch is made, and it is not the one
+    /// answering yet — the account it last answered on is `proven`. Without
+    /// that, the tab said the new account while the old one went on
+    /// answering, and the switch looked made and not working (13/10/2026:
+    /// "mostra como se estivesse trocado mas não está de fato").
     static func tabLabel(
-        command: String, account: String?, running: String?, lines: [AccountUsage]
+        command: String, account: String?, running: String?, proven: String? = nil, lines: [AccountUsage]
     ) -> String {
         guard [AIProgramKind.claude, .codex].contains(AIProgramKind(command: command)) else {
             return command.isEmpty ? "" : "— \(command)"
@@ -383,6 +406,10 @@ enum AIChoices {
         if key == AIHelper.followOrder {
             key = lines.first { $0.account.engine == .claude && $0.account.isActive }?.account.keys.first
         }
-        return number(of: key, in: lines).map { "(\(name(number: $0)))" } ?? ""
+        guard let now = number(of: key, in: lines) else { return "" }
+        if let before = number(of: proven, in: lines), before != now {
+            return "(\(name(number: before))→\(now))"
+        }
+        return "(\(name(number: now)))"
     }
 }
