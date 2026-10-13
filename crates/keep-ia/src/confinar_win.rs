@@ -51,6 +51,11 @@
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
+#[cfg(windows)]
+pub mod executar;
+#[cfg(windows)]
+mod sistema;
+
 /// Onde a função `claude` do PowerShell se encaixa: o `keep ia confinar --`
 /// é transparente (sem pasta para o workspace, roda o programa como sempre),
 /// então a função pode passar por ele sempre que `KEEP_WORKSPACE` existe.
@@ -295,6 +300,10 @@ pub struct Entrada {
     pub local: Option<String>,
     /// O `keep.exe` em uso: a IA o chama (a linha de status, os ganchos).
     pub keep: Option<String>,
+    /// O `git.exe` (ou o `bash.exe`) que o Claude Code usará, se achado.
+    pub git: Option<String>,
+    /// O `node.exe` de que um atalho `.cmd` do npm precisa, se achado.
+    pub node: Option<String>,
     /// `%SystemRoot%`, `%ProgramFiles%` e afins: já legíveis, e não são do
     /// usuário para ter a permissão mexida.
     pub sistema: Vec<String>,
@@ -414,8 +423,15 @@ pub fn plano(amb: &dyn Ambiente, e: &Entrada) -> Plano {
     if amb.existe(&gitconfig) {
         poe(le(gitconfig, false));
     }
+    // O Keep que a IA chama (a linha de status, os ganchos) e o script de
+    // status que mora ao lado de `bin`: a pasta de instalação, se o exe está
+    // numa `bin`.
     if let Some(keep) = &e.keep {
-        if let Some(d) = pasta_de(keep).filter(|d| amb.existe(d) && !do_sistema(d)) {
+        let instalacao = pasta_de(keep).map(|d| match (nome_de(&d).eq_ignore_ascii_case("bin"), pasta_de(&d)) {
+            (true, Some(raiz)) => raiz,
+            _ => d,
+        });
+        if let Some(d) = instalacao.filter(|d| amb.existe(d) && !do_sistema(d)) {
             poe(le(d, true));
         }
     }
@@ -428,9 +444,7 @@ pub fn plano(amb: &dyn Ambiente, e: &Entrada) -> Plano {
     // O programa e, se é um atalho do npm, o node que ele chama; o Git for
     // Windows de um usuário só (o do sistema o Windows já deixa ler).
     let mut programas = vec![e.programa.clone()];
-    if let Some(node) = amb.var("KEEP_CONFINE_NODE") {
-        programas.push(node);
-    }
+    programas.extend(e.node.clone());
     for p in programas {
         if let Some(d) =
             pasta_de(&p).filter(|d| amb.existe(d) && !do_sistema(d) && !dentro_de(&e.pasta, d) && sob_a_casa(d))
@@ -438,8 +452,8 @@ pub fn plano(amb: &dyn Ambiente, e: &Entrada) -> Plano {
             poe(le(d, true));
         }
     }
-    if let Some(git) = amb.var("KEEP_CONFINE_GIT") {
-        if let Some(raiz) = raiz_do_git(&git).filter(|r| sob_a_casa(r) && !do_sistema(r)) {
+    if let Some(git) = &e.git {
+        if let Some(raiz) = raiz_do_git(git).filter(|r| amb.existe(r) && sob_a_casa(r) && !do_sistema(r)) {
             poe(le(raiz, true));
         }
     }
@@ -714,6 +728,12 @@ pub fn sondar_fs(dentro: &Path, canario: &Path, listar: &Path, onde_criar: &Path
     Sonda { dentro, le_fora, lista_fora, grava_fora }
 }
 
+/// Onde pôr a isca da prova: o primeiro dos lugares que nenhuma permissão
+/// alcança. Uma isca dentro de uma pasta permitida não provaria nada.
+pub fn lugar_da_isca(candidatos: &[String], concessoes: &[Concessao]) -> Option<String> {
+    candidatos.iter().find(|c| !concessoes.iter().any(|g| g.heranca && dentro_de(&g.caminho, c))).cloned()
+}
+
 // ------------------------------------------------------------------ o NTSTATUS de um processo que não nasceu
 
 /// Se o código de saída de um processo que morreu logo é o de um que o
@@ -768,6 +788,8 @@ mod testes {
             dados: Some(r"C:\Users\ana\AppData\Roaming".into()),
             local: Some(r"C:\Users\ana\AppData\Local".into()),
             keep: Some(r"C:\Users\ana\AppData\Local\Keep\bin\keep.exe".into()),
+            git: None,
+            node: None,
             sistema: vec![r"C:\Windows".into(), r"C:\Program Files".into(), r"C:\Program Files (x86)".into()],
         }
     }
@@ -923,7 +945,7 @@ mod testes {
             r"C:\Users\ana\.local\share\claude",
             r"C:\Users\ana\.gitconfig",
             r"C:\Users\ana\AppData\Roaming\npm",
-            r"C:\Users\ana\AppData\Local\Keep\bin",
+            r"C:\Users\ana\AppData\Local\Keep",
         ]);
         let mut e = entrada(r"C:\Users\ana\.local\bin\claude.exe");
         e.pastas_git = vec![r"D:\projetos\repo\.git\worktrees\app".into(), r"D:\nao\existe".into()];
@@ -949,13 +971,14 @@ mod testes {
         let json = de(&p, r"C:\Users\ana\.claude.json");
         assert_eq!((json[0].acesso, json[0].heranca), (Acesso::Gravacao, false));
         assert!(de(&p, r"C:\Users\ana\.claude.json.backup").is_empty());
-        // Só leitura: os programas, o git, o npm, o Keep.
+        // Só leitura: os programas, o git, o npm e a instalação do Keep (a
+        // pasta de cima do `bin`, onde está o script da linha de status).
         for so_le in [
             r"C:\Users\ana\.local\bin",
             r"C:\Users\ana\.local\share\claude",
             r"C:\Users\ana\.gitconfig",
             r"C:\Users\ana\AppData\Roaming\npm",
-            r"C:\Users\ana\AppData\Local\Keep\bin",
+            r"C:\Users\ana\AppData\Local\Keep",
         ] {
             let c = de(&p, so_le);
             assert_eq!((c.len(), c[0].acesso, c[0].quem), (1, Acesso::Leitura, Quem::Base), "{so_le}");
@@ -986,8 +1009,9 @@ mod testes {
         let mut amb = Falso::novo(&[r"C:\Windows\System32", r"E:\contas\codex2", r"C:\Program Files\nodejs", r"C:\Users\ana\fnm\node"]);
         amb.vars.insert("CODEX_HOME".into(), r"E:\contas\codex2".into());
         amb.vars.insert("CLAUDE_CONFIG_DIR".into(), r"C:\Windows\System32".into());
-        amb.vars.insert("KEEP_CONFINE_NODE".into(), r"C:\Users\ana\fnm\node\node.exe".into());
-        let p = plano(&amb, &entrada(r"C:\Windows\System32\cmd.exe"));
+        let mut e = entrada(r"C:\Windows\System32\cmd.exe");
+        e.node = Some(r"C:\Users\ana\fnm\node\node.exe".into());
+        let p = plano(&amb, &e);
         // O Codex extra entra; a variável que aponta para o sistema, não.
         assert_eq!(de(&p, r"E:\contas\codex2").len(), 1);
         assert!(de(&p, r"C:\Windows\System32").is_empty());
@@ -1000,13 +1024,14 @@ mod testes {
         assert_eq!(raiz_do_git(r"C:\Users\ana\AppData\Local\Programs\Git\cmd\git.exe").as_deref(), Some(r"C:\Users\ana\AppData\Local\Programs\Git"));
         assert_eq!(raiz_do_git(r"C:\Users\ana\git\bin\bash.exe").as_deref(), Some(r"C:\Users\ana\git"));
         assert_eq!(raiz_do_git("git.exe"), None);
-        let mut amb = Falso::novo(&[]);
-        amb.vars.insert("KEEP_CONFINE_GIT".into(), r"C:\Users\ana\AppData\Local\Programs\Git\cmd\git.exe".into());
-        let p = plano(&amb, &entrada(r"C:\Users\ana\.local\bin\claude.exe"));
+        let amb = Falso::novo(&[r"C:\Users\ana\AppData\Local\Programs\Git", r"C:\Program Files\Git"]);
+        let mut e = entrada(r"C:\Users\ana\.local\bin\claude.exe");
+        e.git = Some(r"C:\Users\ana\AppData\Local\Programs\Git\cmd\git.exe".into());
+        let p = plano(&amb, &e);
         assert_eq!(de(&p, r"C:\Users\ana\AppData\Local\Programs\Git")[0].acesso, Acesso::Leitura);
         // O do sistema o Windows já deixa ler.
-        amb.vars.insert("KEEP_CONFINE_GIT".into(), r"C:\Program Files\Git\cmd\git.exe".into());
-        let p = plano(&amb, &entrada(r"C:\Users\ana\.local\bin\claude.exe"));
+        e.git = Some(r"C:\Program Files\Git\cmd\git.exe".into());
+        let p = plano(&amb, &e);
         assert!(de(&p, r"C:\Program Files\Git").is_empty());
     }
 
@@ -1029,6 +1054,25 @@ mod testes {
         }
         assert_ne!(Acesso::Gravacao.mascara() & 0x0001_0000, 0, "DELETE");
         assert_eq!(Acesso::Leitura.mascara() & 0x0001_0000, 0);
+    }
+
+    #[test]
+    fn a_isca_fica_onde_nenhuma_permissao_alcanca() {
+        let amb = Falso::novo(&[]);
+        let mut e = entrada(r"C:\Users\ana\.local\bin\claude.exe");
+        // A pasta escolhida é a do Roaming: a isca que estaria nela não prova nada.
+        e.pasta = r"C:\Users\ana\AppData\Roaming".into();
+        let p = plano(&amb, &e);
+        let candidatos: Vec<String> = vec![
+            r"C:\Users\ana\AppData\Roaming\Keep\isca".into(),
+            r"C:\Users\ana\AppData\Local\Keep\confine\isca".into(),
+            r"C:\Users\ana\.keep-isca".into(),
+        ];
+        assert_eq!(lugar_da_isca(&candidatos, &p.concessoes).as_deref(), Some(r"C:\Users\ana\.keep-isca"));
+        e.pasta = r"D:\projetos\app".into();
+        let p = plano(&amb, &e);
+        assert_eq!(lugar_da_isca(&candidatos, &p.concessoes).as_deref(), Some(r"C:\Users\ana\AppData\Roaming\Keep\isca"));
+        assert_eq!(lugar_da_isca(&candidatos[1..2], &p.concessoes), None);
     }
 
     #[test]

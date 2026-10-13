@@ -7,9 +7,11 @@
 //! aba (`KEEP_WORKSPACE`) e roda o programa num sandbox do macOS
 //! (`sandbox-exec`): ele e tudo o que ele roda não leem nem gravam em /Users
 //! e /Volumes, salvo na pasta escolhida e no mínimo de que a IA precisa.
-//! Sem a pasta existir, ou sem o sandbox, o programa NÃO sobe: a restrição
-//! não se desliga sozinha. Sem restrição para o workspace, a linha continua
-//! exatamente a que era.
+//! No Windows o sandbox é um token restrito com permissões só na pasta e no
+//! mínimo de que a IA precisa (`confinar_win.rs`): o perfil do usuário fica
+//! de fora, para leitura e gravação. Sem a pasta existir, ou sem o sandbox, o
+//! programa NÃO sobe: a restrição não se desliga sozinha. Sem restrição para
+//! o workspace, a linha continua exatamente a que era.
 //!
 //! O que manda trabalho para um servidor de fundo, fora do sandbox, é
 //! recusado num workspace restrito: `claude agents` e `claude attach` (o
@@ -46,9 +48,9 @@ fn helper() -> Option<PathBuf> {
 
 /// O programa e os argumentos da linha, com `keep ia confinar --` na frente
 /// quando o workspace tem pasta permitida; do contrário, os mesmos. Só no
-/// macOS: o sandbox é o dele.
+/// macOS e no Windows: o sandbox é o de cada um.
 pub fn envolve(ws: &str, programa: String, args: Vec<String>) -> (String, Vec<String>) {
-    if !cfg!(target_os = "macos") || pasta(ws).is_none() {
+    if !cfg!(any(target_os = "macos", windows)) || pasta(ws).is_none() {
         return (programa, args);
     }
     match helper() {
@@ -78,7 +80,7 @@ fn escapa_regex(p: &str) -> String {
 }
 
 /// As pastas do git que uma worktree usa e que ficam fora dela.
-fn pastas_do_git(pasta: &Path) -> Vec<String> {
+pub(crate) fn pastas_do_git(pasta: &Path) -> Vec<String> {
     let mut saida = Vec::new();
     let Ok(texto) = std::fs::read_to_string(pasta.join(".git")) else { return saida };
     let Some(gitdir) = texto.trim().strip_prefix("gitdir:") else { return saida };
@@ -225,17 +227,9 @@ pub fn cli(args: &[String]) -> i32 {
     1
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 pub fn cli(args: &[String]) -> i32 {
-    let args: Vec<String> = match args.first().map(String::as_str) {
-        Some("--") => args[1..].to_vec(),
-        _ => args.to_vec(),
-    };
-    let Some((programa, resto)) = args.split_first() else { return 2 };
-    match std::process::Command::new(programa).args(resto).status() {
-        Ok(s) => s.code().unwrap_or(1),
-        Err(_) => 127,
-    }
+    crate::confinar_win::executar::cli(args)
 }
 
 #[cfg(test)]
@@ -258,11 +252,11 @@ mod testes {
         assert_eq!(pasta("vazia"), None);
         assert_eq!(pasta("livre"), None);
         let (p, a) = envolve("presa", "/bin/claude".into(), vec!["--effort".into(), "max".into()]);
-        if cfg!(target_os = "macos") {
+        if cfg!(any(target_os = "macos", windows)) {
             assert_eq!(p, helper.to_string_lossy());
             assert_eq!(a, vec!["ia", "confinar", "--", "/bin/claude", "--effort", "max"]);
         } else {
-            // O sandbox é o do macOS: no Windows a linha fica a de sempre.
+            // Sem sandbox neste sistema (Linux): a linha fica a de sempre.
             assert_eq!((p.as_str(), a), ("/bin/claude", vec!["--effort".to_string(), "max".to_string()]));
         }
         let (p, a) = envolve("livre", "/bin/claude".into(), vec!["--effort".into()]);
