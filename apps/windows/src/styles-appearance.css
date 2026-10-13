@@ -172,6 +172,11 @@
   padding-right: 4px;
 }
 
+/* A fieldset will not be narrower than its widest line, which would push the buttons of a long name out of the card. */
+.settings fieldset {
+  min-width: 0;
+}
+
 .segmented button:disabled {
   opacity: 0.45;
 }
