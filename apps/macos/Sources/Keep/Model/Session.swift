@@ -1698,7 +1698,7 @@ final class Session {
     func noteClaudeStatuses(_ statuses: [TabID: ClaudeStatus]) {
         var next = claudeStatuses
         for (id, status) in statuses { next[id] = status }
-        let running = Set(claudeTabs())
+        let running = Set(aiTabs().map { $0.0 })
         next = next.filter { running.contains($0.key) }
         guard next != claudeStatuses else { return }
         claudeStatuses = next

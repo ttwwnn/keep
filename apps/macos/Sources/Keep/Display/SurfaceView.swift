@@ -1331,6 +1331,10 @@ final class TerminalSurfaceView: NSView {
             window?.isKeyWindow == true && isFirstResponderHere && now - Self.windowKeyAt > 0.5
         )
         window?.makeFirstResponder(self)
+        // What the clipboard was before this press: a program that selects
+        // text itself (Claude Code in full screen) copies it on release, and
+        // a change after the press is how ⌘X knows that copy is a selection.
+        pasteboardAtPress = (NSPasteboard.general.changeCount, now)
         // Where before whether. A press in a window that was not key arrives
         // without any of the tracked movement that would have said where the
         // pointer is, and a press at the wrong place selects from there.
@@ -1603,23 +1607,61 @@ final class TerminalSurfaceView: NSView {
     /// (the prompt being typed in), takes it out of that line with keys. See
     /// `CutSelection`. Anywhere else it only copies.
     @objc func cut(_ sender: Any?) {
-        guard let surface, ghostty_surface_has_selection(surface) else { return }
-        var text = ghostty_text_s()
-        guard ghostty_surface_read_selection(surface, &text), let raw = text.text else { return }
-        let selected = String(cString: raw)
-        ghostty_surface_free_text(surface, &text)
-        perform("copy_to_clipboard")
+        guard let surface else { return }
+        let selected: String
+        if ghostty_surface_has_selection(surface) {
+            var text = ghostty_text_s()
+            guard ghostty_surface_read_selection(surface, &text), let raw = text.text else { return }
+            selected = String(cString: raw)
+            ghostty_surface_free_text(surface, &text)
+            perform("copy_to_clipboard")
+        } else if let copied = selectionTheProgramCopied() {
+            // Claude Code in full screen selects with the mouse itself and
+            // copies on release: the terminal has no selection, the
+            // clipboard has the text.
+            selected = copied
+        } else {
+            return
+        }
         guard let (row, column) = cursorCell() else { return }
         let lines = visibleText().lines
-        guard lines.indices.contains(row),
-            let keys = CutSelection.keys(selected: selected, row: lines[row], cursorColumn: column)
-        else {
+        let keys = lines.indices.contains(row)
+            ? CutSelection.keys(selected: selected, row: lines[row], cursorColumn: column)
+                ?? CutSelection.promptBox(lines, cursorRow: row).flatMap {
+                    CutSelection.keysEmptying(selected: selected, box: $0)
+                }
+            : nil
+        guard let keys else {
             Trace.log("cut", "copied only: \(selected.count) chars, cursor row \(row)")
             return
         }
         Trace.log("cut", "cut \(selected.count) chars, cursor row \(row) column \(column)")
         perform(CutSelection.action(for: keys))
         perform("clear_selection")
+    }
+
+    /// The clipboard's count, and when, as the pointer last went down here.
+    private var pasteboardAtPress: (count: Int, at: CFTimeInterval)?
+
+    /// When the app last stopped being the one in front: a copy made in
+    /// another app after a press here is not this pane's selection.
+    private static var appLeftAt: CFTimeInterval = 0
+    private static let appLeftWatch = NotificationCenter.default.addObserver(
+        forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
+    ) { _ in appLeftAt = CACurrentMediaTime() }
+
+    /// The text a program that selects by itself copied when the pointer was
+    /// let go here: the clipboard changed since the last press in this pane,
+    /// and the press was on this pane. Nil otherwise — an old clipboard is
+    /// not a selection, and cutting it out of the prompt would delete text
+    /// nobody selected.
+    private func selectionTheProgramCopied() -> String? {
+        _ = Self.appLeftWatch
+        guard let before = pasteboardAtPress, before.at > Self.appLeftAt,
+            NSPasteboard.general.changeCount != before.count,
+            let text = NSPasteboard.general.string(forType: .string), !text.isEmpty
+        else { return nil }
+        return text
     }
 
     /// The row and column of the cell the cursor is in, from the point the

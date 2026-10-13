@@ -1,15 +1,19 @@
 import AppKit
 
-/// The bar at the foot of a Claude Code conversation: the model and the
-/// effort it runs with, both of which can be changed by clicking them, and
-/// how many agents it has going.
+/// The bar at the foot of a Claude Code or Codex conversation: the model and
+/// the effort it runs with, both of which can be changed by clicking them,
+/// and how many agents it has going (Claude Code lists them; Codex does not).
 ///
-/// Changing one types the slash command into the conversation, so it only
-/// offers to when the turn is over and the prompt is empty — typing into a
-/// draft, a dialog or a running turn would spoil it.
+/// Changing one types into the conversation — the slash command in Claude
+/// Code, Codex's own picker in Codex — so it only offers to when the turn is
+/// over and the prompt is empty: typing into a draft, a dialog or a running
+/// turn would spoil it.
 @MainActor
 final class ClaudeStatusBar: NSView {
-    static let height: CGFloat = 22
+    /// Tall enough for its text at the terminal's zoom.
+    static var height: CGFloat { (ClaudeStatusBar.fontSize + 13).rounded() }
+    /// Readable: the size of the terminal's own text, zoom included.
+    static var fontSize: CGFloat { 13 * CGFloat(GhosttyApp.shared.zoomLevel) }
 
     /// A level was picked from the effort menu (`low` … `max`).
     var onEffort: ((String) -> Void)?
@@ -20,6 +24,8 @@ final class ClaudeStatusBar: NSView {
     private let modelButton = ClaudeStatusBar.chip(id: "claude-model")
     private let effortButton = ClaudeStatusBar.chip(id: "claude-effort")
     private let agentsLabel = NSTextField(labelWithString: "")
+    private let effortDot = ClaudeStatusBar.dot()
+    private let agentsDot = ClaudeStatusBar.dot()
     private let rule = NSBox()
 
     override init(frame: NSRect) {
@@ -35,7 +41,7 @@ final class ClaudeStatusBar: NSView {
         modelButton.action = #selector(showModels(_:))
         effortButton.target = self
         effortButton.action = #selector(showEfforts(_:))
-        let stack = NSStackView(views: [modelButton, Self.dot(), effortButton, Self.dot(), agentsLabel])
+        let stack = NSStackView(views: [modelButton, effortDot, effortButton, agentsDot, agentsLabel])
         stack.orientation = .horizontal
         stack.spacing = 6
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -55,7 +61,7 @@ final class ClaudeStatusBar: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not supported") }
 
-    private static let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    private static var font: NSFont { NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular) }
 
     private static func chip(id: String) -> NSButton {
         let button = NSButton(title: "", target: nil, action: nil)
@@ -83,18 +89,24 @@ final class ClaudeStatusBar: NSView {
         self.status = status
         isHidden = status == nil
         guard let status else { return }
+        for label in [agentsLabel, effortDot, agentsDot] { label.font = Self.font }
         modelButton.attributedTitle = title(status.modelName)
         modelButton.toolTip = "Modelo: \(status.modelID). Clique para trocar."
         effortButton.isHidden = status.effort == nil
+        effortDot.isHidden = status.effort == nil
         effortButton.attributedTitle = title("esforço \(status.effort ?? "")")
         effortButton.toolTip = "Esforço de raciocínio. Clique para trocar."
-        agentsLabel.stringValue = status.agents == 1 ? "1 agente" : "\(status.agents) agentes"
+        agentsLabel.isHidden = status.agents == nil
+        agentsDot.isHidden = status.agents == nil
+        if let agents = status.agents {
+            agentsLabel.stringValue = agents == 1 ? "1 agente" : "\(agents) agentes"
+        }
     }
 
     @objc private func showEfforts(_ sender: NSButton) {
         guard let status else { return }
         let menu = menu(title: "Esforço")
-        for level in ClaudeStatusReader.efforts {
+        for level in efforts(for: status) {
             let item = NSMenuItem(title: level, action: #selector(pickedEffort(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = level
@@ -108,7 +120,7 @@ final class ClaudeStatusBar: NSView {
     @objc private func showModels(_ sender: NSButton) {
         guard let status else { return }
         let menu = menu(title: "Modelo")
-        for model in ClaudeStatusReader.models {
+        for model in models(for: status) {
             let item = NSMenuItem(title: model.name, action: #selector(pickedModel(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = model.id
@@ -117,6 +129,20 @@ final class ClaudeStatusBar: NSView {
             menu.addItem(item)
         }
         popUp(menu, from: sender)
+    }
+
+    /// The efforts to offer: Claude Code's five, or what Codex's cache says
+    /// the model takes.
+    private func efforts(for status: ClaudeStatus) -> [String] {
+        guard status.program == "codex" else { return ClaudeStatusReader.efforts }
+        let model = CodexStatusReader.model(named: status.modelID, in: CodexModelsCache.shared.models())
+        return model.map(\.efforts).flatMap { $0.isEmpty ? nil : $0 } ?? CodexStatusReader.efforts
+    }
+
+    /// The models to offer: Claude Code's, or the ones Codex lists.
+    private func models(for status: ClaudeStatus) -> [(name: String, id: String)] {
+        guard status.program == "codex" else { return ClaudeStatusReader.models }
+        return CodexModelsCache.shared.models().map { ($0.name, $0.slug) }
     }
 
     private func menu(title: String) -> NSMenu {
@@ -142,5 +168,61 @@ final class ClaudeStatusBar: NSView {
 
     @objc private func pickedModel(_ sender: NSMenuItem) {
         if let id = sender.representedObject as? String { onModel?(id) }
+    }
+}
+
+/// Changes Codex's model or effort the way a person does, through its own
+/// picker: `/model`, the model's number, then the level's — by way of "More
+/// reasoning…" for Max and Ultra. Each step waits for the screen it needs
+/// (read from the daemon) before it presses anything, and a step that does
+/// not come backs out with Esc rather than pressing on blind.
+enum CodexPickerDriver {
+    static func choose(
+        model: CodexModel, effort: String, workspace: String, tab: UInt32,
+        send: @escaping @MainActor (String) -> Void
+    ) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            func key(_ keys: String) { DispatchQueue.main.sync { send(keys) } }
+            func screen(showing title: String) -> String? {
+                for _ in 0..<50 {
+                    if let text = try? Daemon.preview(workspace: workspace, tab: tab), text.contains(title) {
+                        return text
+                    }
+                    usleep(100_000)
+                }
+                return nil
+            }
+            func giveUp(_ why: String) {
+                Trace.log("codex", "picker: \(why); backing out")
+                for _ in 0..<3 {
+                    key("\u{1B}")
+                    usleep(300_000)
+                }
+            }
+            key("/model")
+            usleep(250_000)
+            key("\r")
+            guard let list = screen(showing: CodexPicker.modelsTitle) else { return giveUp("no model list") }
+            guard let n = CodexPicker.number(of: model.name, onScreen: list), n < 10 else {
+                return giveUp("\(model.name) not in the list")
+            }
+            key(String(n))
+            guard let levels = screen(showing: CodexPicker.levelsTitle) else { return giveUp("no levels") }
+            let label = CodexPicker.label(ofEffort: effort)
+            if let m = CodexPicker.number(of: label, onScreen: levels), m < 10 {
+                key(String(m))
+                Trace.log("codex", "picker: \(model.slug) \(effort)")
+                return
+            }
+            guard let more = CodexPicker.number(of: CodexPicker.moreReasoning, onScreen: levels), more < 10 else {
+                return giveUp("\(label) not offered")
+            }
+            key(String(more))
+            guard let advanced = screen(showing: CodexPicker.advancedTitle),
+                let a = CodexPicker.number(of: label, onScreen: advanced), a < 10
+            else { return giveUp("\(label) not under More reasoning") }
+            key(String(a))
+            Trace.log("codex", "picker: \(model.slug) \(effort)")
+        }
     }
 }

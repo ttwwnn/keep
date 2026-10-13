@@ -73,11 +73,12 @@ import os, sys, tty
 WORK = os.environ["KEEP_BAR_WORK"]
 tty.setraw(0)
 out = sys.stdout
+pointer = 0   # 0: on "No, exit" (where Claude Code starts), 1: on "Yes, I trust this folder"
 def trust():
     out.write("\x1b]2;✳ teste\x07\x1b[2J\x1b[H")
     out.write("\r\n Accessing workspace:\r\n\r\n /Users/thiago/projetos/novo\r\n\r\n")
-    out.write(" Quick safety check: is this a project you created or one you trust?\r\n\r\n")
-    out.write(" ❯ 1. Yes, I trust this folder\r\n   2. No, exit\r\n\r\n Enter to confirm · Esc to cancel\r\n")
+    out.write(" Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your\r\n team). If not, take a moment to review what's in this folder first.\r\n\r\n")
+    out.write((" ❯ " if pointer == 0 else "   ") + "No, exit\r\n" + (" ❯ " if pointer == 1 else "   ") + "Yes, I trust this folder\r\n\r\n Enter to confirm · Esc to cancel\r\n")
     out.flush()
 def prompt():
     rule = "─" * 100
@@ -85,15 +86,20 @@ def prompt():
     out.flush()
 trust()
 open(os.path.join(WORK, "ready"), "w").close()
-answers = 0
 while True:
     data = os.read(0, 256)
     if not data:
         break
     with open(os.path.join(WORK, "bytes"), "a") as f:
-        f.write(data.decode("utf-8", "replace").replace("\r", "<CR>"))
-    answers += 1
-    prompt()
+        f.write(data.decode("utf-8", "replace").replace("\r", "<CR>").replace("\x1b", "<ESC>"))
+    if data == b"\x1b[B":
+        pointer = 1
+        trust()
+    elif data == b"\r":
+        if pointer == 1:
+            prompt()
+        else:
+            out.write("\x1b[2J\x1b[H EXIT\r\n"); out.flush()
 PY
 chmod +x "$WORK/printer"
 export KEEP_BAR_WORK=$WORK
@@ -141,7 +147,7 @@ for _ in $(seq 20); do
     sleep 1
 done
 sleep 12
-check "Enter is sent once, on the first choice" "<CR>" "$(cat "$WORK/bytes" 2>/dev/null)"
+check "the pointer goes down to the yes, then Enter, once each" "<ESC>[B<CR>" "$(cat "$WORK/bytes" 2>/dev/null)"
 
 stop_app
 say ""

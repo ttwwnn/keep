@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# A workspace whose AI is held to a folder wears a lock, and its menu offers to
-# let the AI go again.
+# The lock between a workspace's name and its +: shut when the AI is held to a
+# folder, with a menu that says which and lets the AI go again.
 #
 # The tab's program poses as Claude Code: it draws the prompt box and the list
 # of agents the way Claude Code does, leaves the status line's file for its
@@ -109,23 +109,25 @@ done
 
 say ""
 say "a workspace with a folder"
-lock() { "$AXPRESS" "$APP_NAME" frame confined-link 2>/dev/null; }
+lock() { "$AXPRESS" "$APP_NAME" frame confine-link 2>/dev/null; }
 for _ in $(seq 20); do [ -n "$(lock)" ] && break; sleep 1; done
-check "the lock is on its header" "yes" "$([ -n "$(lock)" ] && echo yes || echo no)"
+check "the lock is between the name and the +" "yes" "$([ -n "$(lock)" ] && echo yes || echo no)"
 
 say ""
-say "its menu"
-read -r LX LY LW LH <<<"$(lock)"
-"$MOUSE" rightclick "$(( ${LX%.*} + ${LW%.*} / 3 ))" "$(( ${LY%.*} + ${LH%.*} / 2 ))"
-sleep 1
-ITEMS=$("$AXPRESS" "$APP_NAME" items 2>/dev/null | cut -f3 | grep -E 'Restringir|Liberar' | tr '\n' '|')
-check "it offers to change the folder and to let the AI go" \
-    "Restringir a IA a uma pasta…|Liberar a IA (hoje: $WORK)|" "$ITEMS"
-"$AXPRESS" "$APP_NAME" pick "Liberar a IA (hoje: $WORK)" >/dev/null 2>&1
+say "the lock's menu"
+ITEMS=
+for _ in 1 2 3; do
+    "$AXPRESS" "$APP_NAME" open confine-link >/dev/null 2>&1
+    sleep 1
+    ITEMS=$("$AXPRESS" "$APP_NAME" items 2>/dev/null | cut -f3 | grep -E 'Trocar|Liberar|só acessa' | tr '\n' '|')
+    [ -n "$ITEMS" ] && break
+done
+check "it says the folder, and offers to change it and to let the AI go" \
+    "A IA só acessa $WORK|Trocar a pasta…|Liberar a IA|" "$ITEMS"
+"$AXPRESS" "$APP_NAME" pick "Liberar a IA" >/dev/null 2>&1
 sleep 2
 check "the folder is taken back from the file" "{}" \
     "$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))))' "$KEEP_CONFINE_CONFIG")"
-check "and the lock goes" "no" "$([ -n "$(lock)" ] && echo yes || echo no)"
 
 stop_app
 say ""

@@ -177,8 +177,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         self.splitView = split.splitView
 
         super.init(window: window)
-        statusBar.onEffort = { [weak self] level in self?.typeIntoActive("/effort \(level)") }
-        statusBar.onModel = { [weak self] id in self?.typeIntoActive("/model \(id)") }
+        statusBar.onEffort = { [weak self] level in self?.changeEffort(to: level) }
+        statusBar.onModel = { [weak self] id in self?.changeModel(to: id) }
         window.delegate = self
         // The row is as tall as the titles in it need: see `updateZoomHeight`.
         updateZoomHeight()
@@ -361,6 +361,42 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         statusBar.apply(status)
         let height = status == nil ? 0 : ClaudeStatusBar.height
         if statusBarHeight.constant != height { statusBarHeight.constant = height }
+    }
+
+    /// The effort picked in the bar: `/effort` in Claude Code, Codex's
+    /// picker in Codex.
+    private func changeEffort(to level: String) {
+        guard let status = statusBar.status else { return }
+        guard status.program == "codex" else {
+            typeIntoActive("/effort \(level)")
+            return
+        }
+        guard let model = CodexStatusReader.model(named: status.modelID, in: CodexModelsCache.shared.models())
+        else { return }
+        pickInCodex(model: model, effort: level)
+    }
+
+    /// The model picked in the bar. In Codex the effort comes along: the one
+    /// in use when the new model takes it, its own default when not.
+    private func changeModel(to id: String) {
+        guard let status = statusBar.status else { return }
+        guard status.program == "codex" else {
+            typeIntoActive("/model \(id)")
+            return
+        }
+        guard let model = CodexStatusReader.model(named: id, in: CodexModelsCache.shared.models()) else { return }
+        let effort = status.effort.flatMap { model.efforts.contains($0) ? $0 : nil }
+            ?? model.defaultEffort ?? "medium"
+        pickInCodex(model: model, effort: effort)
+    }
+
+    private func pickInCodex(model: CodexModel, effort: String) {
+        guard let id = container.visibleTab,
+            let surface = container.hosts[id]?.surface(for: id.root)
+        else { return }
+        CodexPickerDriver.choose(model: model, effort: effort, workspace: id.workspace, tab: id.root) {
+            [weak surface] keys in surface?.perform(CutSelection.action(for: keys))
+        }
     }
 
     /// Type a slash command and send it, into the root pane of the tab on

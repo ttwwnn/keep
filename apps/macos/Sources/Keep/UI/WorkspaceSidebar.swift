@@ -32,6 +32,8 @@ struct WorkspaceSidebar: View {
     /// The zoom's share, which the names here are written at (see
     /// `TerminalZoom`). Held as state so that a step redraws the rows.
     @State private var titleZoom = GhosttyApp.shared.zoomLevel
+    /// The workspace whose lock the pointer is over.
+    @State private var hoveredLock: String?
     /// A header's +, which brightens under the pointer. Apart from `hovered`,
     /// which the header itself sets while the pointer is anywhere on it.
     @State private var hoveredNewTab: String?
@@ -287,14 +289,6 @@ struct WorkspaceSidebar: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .onHover { inside in notePointer(inside, onNameOf: .workspace(row.name)) }
-                if let folder = row.confinedTo {
-                    // The AI in here is held to one folder.
-                    Image(systemName: "lock.fill")
-                        .font(counter)
-                        .foregroundStyle(Palette.inkFaint)
-                        .help("A IA deste workspace só acessa \(folder)")
-                        .accessibilityIdentifier("confined-\(row.name)")
-                }
                 if row.working {
                     // The one fact worth carrying up from the tabs: something
                     // is at work in here, visible with the group folded shut.
@@ -308,8 +302,9 @@ struct WorkspaceSidebar: View {
                     attentionBadge(count: row.needsYou, since: row.needsYouSince)
                 }
                 Spacer(minLength: 8)
-                // The +'s room, kept here so the fold stays at the far end.
-                Color.clear.frame(width: 10, height: 1)
+                // The lock's and the +'s room, kept here so the fold stays at
+                // the far end.
+                Color.clear.frame(width: 10 + 8 + 10, height: 1)
                 disclosure(row)
             }
             .padding(.horizontal, 12)
@@ -325,10 +320,13 @@ struct WorkspaceSidebar: View {
         // one line; in from the edge by the label's inset, the fold's width
         // and the gap between them.
         .overlay(alignment: .trailing) {
-            newTabButton(row)
-                .padding(.top, 10)
-                .padding(.bottom, 4)
-                .padding(.trailing, 12 + 10 + 8)
+            HStack(spacing: 8) {
+                confinementButton(row)
+                newTabButton(row)
+            }
+            .padding(.top, 10)
+            .padding(.bottom, 4)
+            .padding(.trailing, 12 + 10 + 8)
         }
         .help(tooltip(for: row))
         // Dragging a header rearranges the workspaces. This replaces the
@@ -441,6 +439,39 @@ struct WorkspaceSidebar: View {
     /// having to be entered first. There on a header with nothing to fold as
     /// well, beside the fold's empty room, so every + in the column sits at
     /// the same x.
+    /// Between the name and the +: the folder the workspace's AI is held to.
+    /// Open, a click chooses one; shut, a menu changes it or lets the AI go.
+    @ViewBuilder
+    private func confinementButton(_ row: SessionSnapshot.SidebarRow) -> some View {
+        let hovering = hoveredLock == row.name
+        let glyph = Image(systemName: row.confinedTo == nil ? "lock.open" : "lock.fill")
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(row.confinedTo != nil || hovering ? Palette.inkResting : Palette.inkFaint)
+            .frame(width: 10)
+            .contentShape(Rectangle().inset(by: -6))
+        Group {
+            if let folder = row.confinedTo {
+                Menu {
+                    Text("A IA só acessa \(folder)")
+                    Button("Trocar a pasta…") { chooseConfinement(for: row) }
+                    Button("Liberar a IA") { dispatch(.confineWorkspace(row.name, to: nil)) }
+                } label: { glyph }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("A IA de \(row.title) só acessa \(folder)")
+            } else {
+                Button { chooseConfinement(for: row) } label: { glyph }
+                    .buttonStyle(.plain)
+                    .help("Restringir a IA de \(row.title) a uma pasta")
+            }
+        }
+        .accessibilityIdentifier("confine-\(row.name)")
+        .onHover { inside in
+            hoveredLock = inside ? row.name : (hoveredLock == row.name ? nil : hoveredLock)
+        }
+    }
+
     private func newTabButton(_ row: SessionSnapshot.SidebarRow) -> some View {
         Button {
             lastClicked = nil
