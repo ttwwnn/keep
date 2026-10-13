@@ -110,6 +110,8 @@ export function CatalogPicker(props: Props) {
           else if (e.key === "PageDown") (e.preventDefault(), move(index + 8));
           else if (e.key === "PageUp") (e.preventDefault(), move(Math.max(0, index) - 8));
           else if (e.key === "Enter") choose(rows[index]);
+          // The list has nowhere else to go: Tab would leave it for the sidebar behind.
+          else if (e.key === "Tab") e.preventDefault();
         }}
       />
       <div class="catalog-list" ref={list}>
