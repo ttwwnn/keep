@@ -154,6 +154,10 @@ foreach ($nome in @('claude', 'codex')) {
 $env:KEEP_E2E_BARRA = $barra
 $env:KEEP_STATUSLINE_TRACE = Join-Path $barra 'statusline-trace.txt'
 
+# A program asking for the Kitty keyboard protocol, for the roteiro to type
+# into a shell and see what the PTY lets through each way (sonda-teclado.mjs).
+$env:KEEP_E2E_SONDA = Join-Path $here 'sonda-teclado.mjs'
+
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 function Save-Screen([string]$path) {
     $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds

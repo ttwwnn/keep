@@ -30,12 +30,15 @@ import {
   stepWorkspace,
   toggleSidebar,
   terminals,
+  workspaces,
   zoom,
   zoomReset,
 } from "./store";
 import { toggleOverlay } from "./palette/overlay";
 import type { TermView } from "./terminals";
-import { cutKeys, quotePaths } from "./text";
+import { keysToCut } from "./cut";
+import { dropText, lightPane, paneAt, shellKind } from "./drop";
+import { kittyKey, watchLayout } from "./kittyKeys";
 
 export function perform(action: Action): void {
   switch (action.kind) {
@@ -154,20 +157,15 @@ function chordOf(event: KeyboardEvent): Action | null {
 
 /**
  * A key on its way into a terminal: true lets xterm.js have it. The window's
- * chords go on to the window; Shift+Enter becomes what Claude Code reads as a
- * new line; Ctrl+C with something selected copies it rather than
- * interrupting the program.
+ * chords go on to the window; Ctrl+C with something selected copies it rather
+ * than interrupting the program; with a program speaking the Kitty keyboard
+ * protocol, the keys it asked to be told about are sent as it asked; and
+ * Shift+Enter becomes what Claude Code reads as a new line where the protocol
+ * is not there to say so.
  */
 export function terminalKey(view: TermView, event: KeyboardEvent): boolean {
   const mac = isMac.value;
   if (chordOf(event)) return false;
-  if (isShiftEnter(event)) {
-    if (event.type === "keydown") {
-      event.preventDefault();
-      void view.type(SHIFT_ENTER_SEQUENCE).catch(() => {});
-    }
-    return false;
-  }
   if (isPlainCopy(event, mac) && view.term.hasSelection()) {
     if (event.type === "keydown") {
       event.preventDefault();
@@ -177,10 +175,26 @@ export function terminalKey(view: TermView, event: KeyboardEvent): boolean {
     }
     return false;
   }
-  if (isPlainCut(event, mac) && view.term.hasSelection()) {
+  if (isPlainCut(event, mac) && (view.term.hasSelection() || view.selectionTheProgramCopied() !== undefined)) {
     if (event.type === "keydown") {
       event.preventDefault();
       cutSelection(view);
+    }
+    return false;
+  }
+  const flags = view.kittyFlags();
+  if (flags !== 0) {
+    const sequence = kittyKey(event, flags, { mac });
+    if (sequence !== undefined) {
+      if (event.type === "keydown") event.preventDefault();
+      if (sequence !== "") void view.type(sequence).catch(() => {});
+      return false;
+    }
+  }
+  if (isShiftEnter(event)) {
+    if (event.type === "keydown") {
+      event.preventDefault();
+      void view.type(SHIFT_ENTER_SEQUENCE).catch(() => {});
     }
     return false;
   }
@@ -188,15 +202,21 @@ export function terminalKey(view: TermView, event: KeyboardEvent): boolean {
 }
 
 /**
- * Ctrl+X on a selection: copied, and taken out of the line the program is
- * editing when the selection is on the row the cursor is on (see `cutKeys`).
+ * Ctrl+X on a selection: copied, and taken out of what the program is editing
+ * when that can be told (see `keysToCut`): the row of the prompt the cursor is
+ * on, or the rows of Claude Code's prompt box. The selection is the terminal's,
+ * or the text a program that selects with the mouse itself just copied — which
+ * is on the clipboard already.
  */
 function cutSelection(view: TermView): void {
-  const text = view.term.getSelection();
-  void writeText(text).catch(() => navigator.clipboard?.writeText(text));
+  const own = view.term.hasSelection() ? view.term.getSelection() : undefined;
+  const selected = own ?? view.selectionTheProgramCopied();
+  if (!selected) return;
+  if (own !== undefined) void writeText(own).catch(() => navigator.clipboard?.writeText(own));
+  // Taken: the next Ctrl+X is the program's again.
+  view.programCopied = null;
   const buffer = view.term.buffer.active;
-  const row = buffer.getLine(buffer.baseY + buffer.cursorY)?.translateToString(true) ?? "";
-  const keys = cutKeys(text, row, buffer.cursorX);
+  const keys = keysToCut(selected, view.screenText().split("\n"), buffer.cursorY, buffer.cursorX);
   view.term.clearSelection();
   if (keys) void view.type(keys).catch(() => {});
 }
@@ -235,6 +255,8 @@ const EVERYWHERE = new Set<Action["kind"]>([
 ]);
 
 export function installInput(): void {
+  // What the layout types on each key, for a program that asks for the keys themselves (kittyKeys.ts).
+  watchLayout();
   window.addEventListener("keydown", (event) => {
     // A question on screen has the keyboard to itself.
     if (dialog.value) return;
@@ -278,20 +300,35 @@ export function installInput(): void {
     if (!isFieldTarget(event.target)) event.preventDefault();
   });
 
-  // Files dropped on a terminal arrive as their paths, typed where the
-  // cursor is, as in any terminal.
+  // Files dropped on a terminal arrive as their paths, typed where the cursor
+  // is, as in any terminal, said as the pane's shell reads them. The pane under
+  // the pointer is lit while they are over it: it need not be the one with the
+  // keyboard.
+  let carrying = false;
   void getCurrentWebview()
     .onDragDropEvent((event) => {
-      if (event.payload.type !== "drop" || event.payload.paths.length === 0) return;
-      const ratio = window.devicePixelRatio || 1;
-      const { x, y } = event.payload.position;
-      const under = document.elementFromPoint(x / ratio, y / ratio)?.closest<HTMLElement>(".pane");
+      const payload = event.payload;
+      if (payload.type === "leave") {
+        carrying = false;
+        lightPane(null);
+        return;
+      }
+      if (payload.type === "enter") carrying = payload.paths.length > 0;
+      const under = paneAt(payload.position);
+      if (payload.type !== "drop") {
+        lightPane(carrying ? under : null);
+        return;
+      }
+      carrying = false;
+      lightPane(null);
+      if (payload.paths.length === 0) return;
       const view =
         (under?.dataset.workspace && under.dataset.pane
           ? terminals.existing(under.dataset.workspace, Number(under.dataset.pane))
           : undefined) ?? activeView();
       if (!view) return;
-      view.paste(quotePaths(event.payload.paths) + " ");
+      const command = workspaces.value.find((w) => w.name === view.workspace)?.tabs.find((t) => t.id === view.tab)?.command ?? "";
+      view.paste(dropText(payload.paths, shellKind(command)) + " ");
       view.focus();
     })
     .catch(() => {});

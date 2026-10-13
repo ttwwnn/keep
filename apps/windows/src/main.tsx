@@ -7,6 +7,7 @@ import "./styles-appearance.css";
 import "./styles-confine.css";
 import "./styles-palette.css";
 import "./styles-tabs.css";
+import "./styles-terminal.css";
 import { render } from "preact";
 import { startAppearance } from "./appearance";
 import { startConfinement } from "./confinementStore";

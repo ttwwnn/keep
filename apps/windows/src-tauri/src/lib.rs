@@ -9,6 +9,7 @@ mod confinement;
 mod daemon;
 mod fonts;
 mod ia;
+mod links;
 mod memory;
 mod names;
 mod sessions;
@@ -451,6 +452,31 @@ fn path_exists(path: String) -> bool {
     std::path::Path::new(&path).exists()
 }
 
+/// For each group of spellings of one path the terminal printed, the first
+/// that exists; see `links`.
+#[tauri::command]
+async fn find_paths(groups: Vec<Vec<String>>) -> Answer<Vec<Option<links::Hit>>> {
+    tauri::async_runtime::spawn_blocking(move || links::find(groups)).await.map_err(|e| e.to_string())
+}
+
+/// Open a file or folder the terminal printed, with what the system opens it with.
+#[tauri::command]
+async fn open_path(path: String) -> Answer<()> {
+    tauri::async_runtime::spawn_blocking(move || links::open(&path)).await.map_err(|e| e.to_string())?
+}
+
+/// Show a file the terminal printed in the file manager, selected.
+#[tauri::command]
+async fn reveal_path(path: String) -> Answer<()> {
+    tauri::async_runtime::spawn_blocking(move || links::reveal(&path)).await.map_err(|e| e.to_string())?
+}
+
+/// Open an address the terminal printed: a page, a mail or a phone link.
+#[tauri::command]
+async fn open_url(url: String) -> Answer<()> {
+    tauri::async_runtime::spawn_blocking(move || links::open_url(&url)).await.map_err(|e| e.to_string())?
+}
+
 /// For the scripted check: have the test photograph the screen now, as
 /// `<name>.png` beside the report, and wait until it has.
 #[tauri::command]
@@ -570,6 +596,10 @@ pub fn run() {
             confinement::confinement_all,
             confinement::confinement_set,
             path_exists,
+            find_paths,
+            open_path,
+            reveal_path,
+            open_url,
             e2e_shot,
             e2e_fake,
             e2e_report,
