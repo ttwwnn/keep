@@ -34,6 +34,7 @@ import {
   type CodexModel,
 } from "./aiStatus";
 import { defaultsOf, planStatusLine, restoreDefaults } from "./claudeSettings";
+import { fontPreview, loadSymbolsFont, terminalFontStack } from "./fonts";
 import { chooseClaudeEffort, chooseClaudeModel, chooseCodex, type PickerIO } from "./pickers";
 import { baseName, isPathTitle, rootTabs, type RootTab } from "./layout";
 import { defaultState, normalizeState, tabKey, type GuiState, type RestoreWorkspace } from "./state";
@@ -42,7 +43,8 @@ import { keepShares, moveShares } from "./splits";
 import { listed, neighbour, putAwayWith, putAwayWithout, stillRunning } from "./putAway";
 import { arrangeTabs, heirsOf, insertBefore, memberIds, pruneOrders, substitute } from "./tabOrder";
 import { TerminalManager, viewKey, type TermView } from "./terminals";
-import { DEFAULT_FONT_SIZE, applyPalette, defaultFontFamily, onSystemAppearanceChange, resolvePalette } from "./theme";
+import { DEFAULT_FONT_SIZE, applyPalette, onSystemAppearanceChange, resolvePalette } from "./theme";
+import { loadThemes, themePreview } from "./themes";
 import {
   listingPids,
   readListing,
@@ -77,7 +79,7 @@ export const picking = signal<ReadonlySet<string>>(new Set());
 /** When each pane began waiting on you, in seconds: what its badge breathes from. */
 export const waitingSince = signal<ReadonlyMap<string, number>>(new Map());
 
-export type Overlay = "picker" | "search" | "settings" | null;
+export type Overlay = "picker" | "search" | "settings" | "themes" | "fonts" | null;
 export const overlay = signal<Overlay>(null);
 export const findOpen = signal(false);
 /** Where a tab's name is typed: over its title in the row, or in the sidebar. */
@@ -143,12 +145,23 @@ export function answer(button: string | null, values: Record<string, string> = {
 export const isMac = computed(() => info.value?.platform === "macos");
 export const isWindows = computed(() => info.value?.platform === "windows");
 
+/** What the window and its terminals wear: the theme chosen — or being looked at in a list — else Keep's own. */
 export const palette = computed(() => {
   // Read so the computed follows the system while automatic.
   void systemTheme.value;
-  return resolvePalette(gui.value.appearance);
+  return resolvePalette(gui.value.appearance, themePreview.value ?? gui.value.theme);
 });
 const systemTheme = signal(0);
+
+/**
+ * Whether the terminals' ground is dark as chosen — not as a theme being
+ * looked at in a list shows it: a program that asked is told when the ground
+ * changes, and the person leafing through themes has not changed it yet.
+ */
+const groundIsDark = computed(() => {
+  void systemTheme.value;
+  return resolvePalette(gui.value.appearance, gui.value.theme).dark;
+});
 
 /** The daemon's workspaces in the sidebar's order; ones it has not seen join the end. */
 export const orderedWorkspaces = computed(() => {
@@ -197,7 +210,12 @@ export const activePane = computed<TabInfo | null>(() => {
   return tab.panes.find((p) => p.id === wanted) ?? tab.root;
 });
 
-export const fontFamily = computed(() => gui.value.font.family || defaultFontFamily(info.value?.platform ?? ""));
+export const fontFamily = computed(() =>
+  terminalFontStack(fontPreview.value ?? gui.value.font.family, info.value?.platform ?? ""),
+);
+const cursorShape = computed(() => gui.value.terminal.cursor);
+const cursorBlink = computed(() => gui.value.terminal.blink);
+const scrollback = computed(() => gui.value.terminal.scrollback);
 export const baseFontSize = computed(() => gui.value.font.size || DEFAULT_FONT_SIZE);
 export const fontSize = computed(() => zoomedSize(baseFontSize.value, gui.value.zoom));
 
@@ -259,7 +277,15 @@ export function tabWaitingSince(workspace: string, tab: RootTab): number | undef
 export let terminals: TerminalManager;
 
 function look() {
-  return { fontFamily: fontFamily.value, fontSize: fontSize.value, theme: palette.value.terminal };
+  return {
+    fontFamily: fontFamily.value,
+    fontSize: fontSize.value,
+    theme: palette.value.terminal,
+    cursor: cursorShape.value,
+    blink: cursorBlink.value,
+    scrollback: scrollback.value,
+    dark: groundIsDark.value,
+  };
 }
 
 // ------------------------------------------------------------------ persistence
@@ -267,7 +293,7 @@ function look() {
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let stateLoaded = false;
 
-function update(change: (state: GuiState) => void): void {
+export function update(change: (state: GuiState) => void): void {
   const next = structuredClone(gui.value);
   change(next);
   gui.value = next;
@@ -1395,6 +1421,9 @@ export async function start(options: StartOptions): Promise<void> {
   gui.value = normalizeState(raw);
   stateLoaded = true;
 
+  // Before anything is drawn: the catalogue, if a theme was chosen, and the
+  // symbols font the terminals fall back to for icons.
+  await Promise.all([gui.value.theme ? loadThemes().catch(() => {}) : undefined, loadSymbolsFont()]);
   applyPalette(palette.value);
   onSystemAppearanceChange(() => (systemTheme.value += 1));
 

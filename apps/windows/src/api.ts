@@ -104,6 +104,12 @@ export const loadState = () => invoke<unknown | null>("load_state");
 export const saveState = (state: unknown) => invoke<void>("save_state", { state });
 export const shells = () => invoke<{ chosen: string; available: Shell[] }>("shells");
 export const chooseShell = (command: string) => invoke<void>("choose_shell", { command });
+/**
+ * The font families installed here, named by the fonts' own files: for each
+ * the names it goes by, best first (the typographic family, then the legacy
+ * one). The page keeps the monospaced ones (fonts.ts).
+ */
+export const installedFonts = () => invoke<string[][]>("installed_fonts");
 export const e2eReport = (report: string) => invoke<void>("e2e_report", { report });
 
 /** Whether the core is here for the AI layer, and the home it reads the logins from. */

@@ -13,12 +13,20 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import * as api from "./api";
+import { SchemeReporter } from "./schemeReport";
 import { serializeBuffer } from "./serialize";
+import type { CursorShape } from "./state";
 
 export interface TerminalLook {
   fontFamily: string;
   fontSize: number;
   theme: ITheme;
+  cursor: CursorShape;
+  blink: boolean;
+  /** Lines of history kept. */
+  scrollback: number;
+  /** Whether the ground is dark: what a program that asked is told (mode 2031). */
+  dark: boolean;
 }
 
 export interface TerminalHooks {
@@ -50,6 +58,7 @@ export class TermView {
   readonly element: HTMLDivElement;
   readonly term: Terminal;
   readonly search: SearchAddon;
+  private readonly scheme: SchemeReporter;
   private readonly fit: FitAddon;
   private webgl: WebglAddon | null = null;
   private attachment: api.Attachment | null = null;
@@ -88,12 +97,12 @@ export class TermView {
       fontFamily: look.fontFamily,
       fontSize: look.fontSize,
       theme: look.theme,
-      scrollback: 10000,
+      scrollback: look.scrollback,
       allowProposedApi: true,
-      cursorBlink: false,
-      // A bar, as in a word processor, not a block.
-      cursorStyle: "bar",
-      cursorInactiveStyle: "bar",
+      cursorBlink: look.blink,
+      cursorStyle: look.cursor,
+      // Hollow while the terminal does not have the keyboard, as Ghostty draws it.
+      cursorInactiveStyle: "outline",
       // ConPTY reflows lines itself on a resize; told which build it is,
       // xterm.js leaves the reflowing to it rather than doing it twice.
       windowsPty:
@@ -110,6 +119,8 @@ export class TermView {
     const unicode = new Unicode11Addon();
     this.term.loadAddon(unicode);
     this.term.unicode.activeVersion = "11";
+
+    this.scheme = new SchemeReporter(this.term, look.dark);
 
     this.term.attachCustomKeyEventHandler((event) => this.hooks.key(this, event));
     this.term.onData((data) => void this.attachment?.input(data).catch(() => {}));
@@ -322,6 +333,10 @@ export class TermView {
     if (options.fontFamily !== look.fontFamily) options.fontFamily = look.fontFamily;
     if (options.fontSize !== look.fontSize) options.fontSize = look.fontSize;
     options.theme = look.theme;
+    if (options.cursorStyle !== look.cursor) options.cursorStyle = look.cursor;
+    if (options.cursorBlink !== look.blink) options.cursorBlink = look.blink;
+    if (options.scrollback !== look.scrollback) options.scrollback = look.scrollback;
+    this.scheme.setDark(look.dark);
     this.fitNow();
   }
 

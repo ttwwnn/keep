@@ -1433,8 +1433,12 @@ final class TerminalSurfaceView: NSView {
             guard !word.isEmpty else { return }
             let screen = self.visibleText()
             Trace.log("link", "no link under the click; the word: \(word)")
-            LinkOpener.openRecovered(
+            if !LinkOpener.openRecovered(
                 word, from: self.currentDirectory, screen: screen.lines, near: screen.pointerRow)
+            {
+                LinkOpener.openRecoveredAddress(
+                    word, screen: screen.lines, near: screen.pointerRow, columns: self.columns)
+            }
         }
     }
 
@@ -1463,68 +1467,195 @@ final class TerminalSurfaceView: NSView {
         forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
     ) { _ in windowKeyAt = CACurrentMediaTime() }
 
-    /// A plain click on a path opens it, as ⌘-click does — people click
-    /// what looks like a link. Only a click that is nothing else: one press,
-    /// not dragged (that selects), not the first of two (a double click
-    /// selects the word, so this waits the double-click interval out), with
-    /// no modifier, in a pane that already had the keyboard (the click that
-    /// brings a window or a pane forward opens nothing). And only when the
-    /// word under it, pieced back together from the screen, names a file.
+    /// A plain click on a link or a path opens it, as ⌘-click does —
+    /// people click what looks like a link. Only a click that is nothing
+    /// else: one press, not dragged (that selects), not the first of two (a
+    /// double click selects the word, so this waits the double-click interval
+    /// out), with no modifier, in a pane that already had the keyboard (the
+    /// click that brings a window or a pane forward opens nothing).
+    ///
+    /// What opens is what ⌘-click would have opened — the runtime is asked
+    /// what link it sees there, which covers an address a program put behind
+    /// its text (OSC 8: Claude Code's markdown links) — and failing that the
+    /// word under the pointer pieced back together from the screen, when it
+    /// names a file or holds a web address.
     private func openPathUnderPlainClick(_ event: NSEvent) {
         guard let pressed, pressed.focused, event.clickCount == 1,
             event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
-            hypot(event.locationInWindow.x - pressed.at.x, event.locationInWindow.y - pressed.at.y) < 4,
-            let surface
+            hypot(event.locationInWindow.x - pressed.at.x, event.locationInWindow.y - pressed.at.y) < 4
         else { return }
-        var text = ghostty_text_s()
-        guard ghostty_surface_quicklook_word(surface, &text) else { return }
-        let raw = text.text.map { String(cString: $0) }
-        ghostty_surface_free_text(surface, &text)
-        guard let word = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !word.isEmpty else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let link = linkUnder(point)
         let screen = visibleText()
+        let cell = self.cell(at: point)
+        let word = cell.flatMap { self.word(at: $0) }
+        guard link != nil || word != nil else {
+            Trace.log("link", "plain click on nothing: \(cell.map { "row \($0.row), column \($0.column)" } ?? "off the grid")")
+            return
+        }
+        let row = cell?.row ?? screen.pointerRow
         let directory = currentDirectory
+        let columns = self.columns
         let at = pressed.time
         DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval) { [weak self] in
             guard let self, self.pressed?.time == at else { return }
+            if let link, LinkOpener.plainClickMayOpen(link) {
+                Trace.log("link", "plain click on the link: \(link)")
+                if LinkOpener.open(
+                    link, from: directory, screen: screen.lines, near: row, columns: columns,
+                    whole: !screen.lines.contains { $0.contains(link) })
+                {
+                    return
+                }
+            }
+            guard let word else { return }
             Trace.log("link", "plain click on: \(word)")
-            LinkOpener.openRecovered(word, from: directory, screen: screen.lines, near: screen.pointerRow)
+            if !LinkOpener.openRecovered(word, from: directory, screen: screen.lines, near: row) {
+                LinkOpener.openRecoveredAddress(word, screen: screen.lines, near: row, columns: columns)
+            }
         }
     }
 
-    /// The menu of a right-click: when the word under the pointer names a
-    /// file or folder, open it, show it in the Finder, or copy its path.
-    /// Anywhere else there is no menu, as before.
-    override func menu(for event: NSEvent) -> NSMenu? {
+    /// What the runtime said is under the pointer while `linkUnder` asks.
+    private var linkOver: String?
+    private var askingForLink = false
+
+    func noteLinkOver(_ link: String) {
+        guard askingForLink else { return }
+        linkOver = link.isEmpty ? nil : link
+    }
+
+    /// The link the runtime sees at a point of this view, as ⌘ over it
+    /// would show it: the address behind an OSC 8 link, or the text it reads
+    /// as a link (an address, a path). The runtime only looks with ⌘ held
+    /// and the pointer just arrived, so the pointer is taken off the surface
+    /// and put back with ⌘ — and Shift too when the program has the mouse,
+    /// as for a real ⌘-click — and then left where it was without them.
+    /// Nothing reaches the program on the way: no button is down, and with
+    /// Shift held the movement is the terminal's own.
+    func linkUnder(_ point: NSPoint) -> String? {
         guard let surface else { return nil }
-        // The cell under the pointer is worked out from the event itself: the
-        // runtime's idea of where the pointer is trails a press by a moment,
-        // and its word was sometimes the one a row or two above.
+        let y = bounds.height - point.y
+        var probe = GHOSTTY_MODS_SUPER.rawValue
+        if ghostty_surface_mouse_captured(surface) { probe |= GHOSTTY_MODS_SHIFT.rawValue }
+        askingForLink = true
+        linkOver = nil
+        ghostty_surface_mouse_pos(surface, -1, -1, ghostty_input_mods_e(probe))
+        ghostty_surface_mouse_pos(surface, point.x, y, ghostty_input_mods_e(probe))
+        let found = linkOver
+        askingForLink = false
+        ghostty_surface_mouse_pos(surface, point.x, y, mouseMods(from: NSEvent.modifierFlags))
+        Trace.log("link", "the runtime sees under the pointer: \(found ?? "no link")")
+        return found
+    }
+
+    /// The word at a cell, read off that row alone: the screen as a whole
+    /// comes back with a row the terminal wrapped joined to the next, so its
+    /// lines are not the rows the pointer is counted in.
+    private func word(at cell: (row: Int, column: Int)) -> String? {
+        guard let surface, cell.row >= 0, cell.column >= 0 else { return nil }
+        let size = ghostty_surface_size(surface)
+        guard cell.row < Int(size.rows), cell.column < Int(size.columns) else { return nil }
+        let selection = ghostty_selection_s(
+            top_left: ghostty_point_s(
+                tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT,
+                x: 0, y: UInt32(cell.row)),
+            bottom_right: ghostty_point_s(
+                tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT,
+                x: UInt32(size.columns) - 1, y: UInt32(cell.row)),
+            rectangle: false)
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_text(surface, selection, &text) else { return nil }
+        defer { ghostty_surface_free_text(surface, &text) }
+        guard let raw = text.text else { return nil }
+        let row = String(cString: raw).components(separatedBy: "\n").first ?? ""
+        return LinkOpener.wordAt([row], row: 0, column: cell.column)
+    }
+
+    /// The cell of the screen under a point of this view, worked out from
+    /// the point itself: the runtime's idea of where the pointer is trails a
+    /// press by a moment.
+    private func cell(at point: NSPoint) -> (row: Int, column: Int)? {
+        guard let surface else { return nil }
         let size = ghostty_surface_size(surface)
         guard size.cell_width_px > 0, size.cell_height_px > 0 else { return nil }
         let scale = window?.backingScaleFactor ?? 2.0
+        return (
+            Int((bounds.height - point.y) * scale / CGFloat(size.cell_height_px)),
+            Int(point.x * scale / CGFloat(size.cell_width_px))
+        )
+    }
+
+    /// How many columns a full row has.
+    var columns: Int {
+        guard let surface else { return 0 }
+        return Int(ghostty_surface_size(surface).columns)
+    }
+
+    /// The menu of a right-click: on a web address, open it or copy it;
+    /// when the word under the pointer names a file or folder, open it, show
+    /// it in the Finder, or copy its path. Anywhere else there is no menu, as
+    /// before.
+    override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
-        let row = Int((bounds.height - point.y) * scale / CGFloat(size.cell_height_px))
-        let column = Int(point.x * scale / CGFloat(size.cell_width_px))
+        guard let cell = cell(at: point) else { return nil }
         let screen = visibleText().lines
-        guard let word = LinkOpener.wordAt(screen, row: row, column: column) else {
-            Trace.log("link", "right-click on no word: row \(row), column \(column)")
+        if let address = webAddressUnder(point, screen: screen, cell: cell) {
+            Trace.log("link", "right-click on the address: \(address.absoluteString)")
+            return menu([
+                ("Abrir link", #selector(openFileFromMenu(_:))),
+                ("Copiar link", #selector(copyLinkFromMenu(_:))),
+            ], for: address)
+        }
+        guard let word = word(at: cell) else {
+            Trace.log("link", "right-click on no word: row \(cell.row), column \(cell.column)")
             return nil
         }
-        Trace.log("link", "right-click on: \(word), row \(row)")
-        guard let url = LinkOpener.file(for: word, from: currentDirectory, screen: screen, near: row)
+        Trace.log("link", "right-click on: \(word), row \(cell.row)")
+        guard let url = LinkOpener.file(for: word, from: currentDirectory, screen: screen, near: cell.row)
         else { return nil }
-        let menu = NSMenu()
-        for (title, action) in [
+        return menu([
             ("Abrir", #selector(openFileFromMenu(_:))),
             ("Mostrar no Finder", #selector(revealFileFromMenu(_:))),
             ("Copiar caminho", #selector(copyFilePathFromMenu(_:))),
-        ] {
+        ], for: url)
+    }
+
+    /// The web address under a point: the one the runtime sees there (behind
+    /// an OSC 8 link, or read off the screen and pieced back together), or
+    /// the one the word under it holds.
+    private func webAddressUnder(
+        _ point: NSPoint, screen: [String], cell: (row: Int, column: Int)
+    ) -> URL? {
+        if let link = linkUnder(point), let url = URL(string: link),
+            let scheme = url.scheme?.lowercased(), scheme.count > 1, scheme != "file"
+        {
+            if screen.contains(where: { $0.contains(link) }),
+                let whole = LinkOpener.webAddress(around: link, in: screen, near: cell.row, columns: columns)
+            {
+                return whole
+            }
+            return url
+        }
+        guard let word = word(at: cell) else { return nil }
+        return LinkOpener.webAddress(around: word, in: screen, near: cell.row, columns: columns)
+    }
+
+    private func menu(_ items: [(String, Selector)], for url: URL) -> NSMenu {
+        let menu = NSMenu()
+        for (title, action) in items {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
             item.target = self
             item.representedObject = url
             menu.addItem(item)
         }
         return menu
+    }
+
+    @objc private func copyLinkFromMenu(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.absoluteString, forType: .string)
     }
 
     @objc private func openFileFromMenu(_ sender: NSMenuItem) {

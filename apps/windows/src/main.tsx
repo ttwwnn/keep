@@ -3,8 +3,10 @@
 
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
+import "./styles-appearance.css";
 import "./styles-tabs.css";
 import { render } from "preact";
+import { startAppearance } from "./appearance";
 import { installInput, terminalKey } from "./input";
 import { startIA } from "./iaStore";
 import { watchSleep } from "./sleepWatch";
@@ -14,6 +16,7 @@ import { App } from "./ui/App";
 async function boot() {
   installInput();
   await start({ onKey: terminalKey });
+  startAppearance();
   render(<App />, document.getElementById("app")!);
   watchSleep();
   await connect();
