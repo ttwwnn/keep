@@ -81,8 +81,15 @@ pub mod ffi {
         unsafe extern "C" fn(terminal: Terminal, userdata: *mut c_void, out: *mut c_int) -> bool;
     pub type DeviceAttributesFn =
         unsafe extern "C" fn(terminal: Terminal, userdata: *mut c_void, out: *mut DeviceAttributes) -> bool;
-    pub type ClipboardWriteFn =
-        unsafe extern "C" fn(terminal: Terminal, userdata: *mut c_void, write: *const ClipboardWrite);
+    /// Returns a `GhosttyClipboardWriteResult`. The libghostty-vt Keep is
+    /// pinned to (a53771a, the CI's) takes the write's result from what the
+    /// callback returns; later ones take it from `ClipboardWrite::reply` and
+    /// declare the callback void, which leaves the returned value unread.
+    pub type ClipboardWriteFn = unsafe extern "C" fn(
+        terminal: Terminal,
+        userdata: *mut c_void,
+        write: *const ClipboardWrite,
+    ) -> c_int;
 
     /// `GhosttyColorRgb`.
     #[repr(C)]
@@ -149,6 +156,7 @@ pub mod ffi {
         pub remember: bool,
     }
     pub const CLIPBOARD_WRITE_SUCCESS: c_int = 0;
+    pub const CLIPBOARD_WRITE_DENIED: c_int = 1;
     /// `GhosttyClipboardLocation`: the clipboard OSC 52 names — `c` (and
     /// whatever it does not know), `s` and `p`.
     pub const CLIPBOARD_LOCATION_STANDARD: c_int = 0;
@@ -194,6 +202,11 @@ pub mod ffi {
         unsafe extern "C" fn(terminal: Terminal, userdata: *mut c_void, read: *const ClipboardRead);
 
     /// `GhosttyClipboardWrite`: a program writing the clipboard (OSC 52).
+    ///
+    /// A sized struct, and sized differently by the libghostty-vt it comes
+    /// from: the pinned one (a53771a) ends at `contents_len`; `name` to
+    /// `reply` came later. Only what `size` covers is read
+    /// (`ClipboardWrite::reply_fn`).
     #[repr(C)]
     pub struct ClipboardWrite {
         pub size: usize,
@@ -205,6 +218,18 @@ pub mod ffi {
         pub can_remember: bool,
         pub ctx: *const c_void,
         pub reply: Option<ClipboardWriteReplyFn>,
+    }
+
+    impl ClipboardWrite {
+        /// The reply function, when the struct the library handed over is
+        /// long enough to hold one: past `size` lies whatever the library
+        /// put after a shorter struct, and calling it crashes (SIGBUS on
+        /// macOS, an access violation on Windows: CI, 13/10/2026).
+        pub fn reply_fn(&self) -> Option<ClipboardWriteReplyFn> {
+            let end = std::mem::offset_of!(ClipboardWrite, reply)
+                + std::mem::size_of::<Option<ClipboardWriteReplyFn>>();
+            if self.size >= end { self.reply } else { None }
+        }
     }
 
     /// `GhosttyTerminalData` values we read.
