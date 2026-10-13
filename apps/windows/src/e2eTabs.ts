@@ -28,6 +28,7 @@ import {
   focusPane,
   gui,
   log,
+  moveWorkspace,
   newTab,
   putAway,
   refresh,
@@ -184,10 +185,14 @@ async function drag(from: Element, via: Point[], label: string, held?: () => Pro
     `${label}: segurado em ${place(end)}; sob o ponteiro: ${describe(document.elementFromPoint(end.x, end.y))}; ${listInfo()}; ` +
       `movimento: ${JSON.stringify(sidebarMove.value ?? stripMove.value)}`,
   );
-  if (held) await held();
-  fire(window, "pointerup", end, 0);
-  await sleep(200);
-  diag(`${label}: solto; ${listInfo()}`);
+  try {
+    if (held) await held();
+  } finally {
+    // Let go even when what was looked at while holding failed: a press left down would hold the next step's.
+    fire(window, "pointerup", end, 0);
+    await sleep(200);
+    diag(`${label}: solto; ${listInfo()}`);
+  }
 }
 
 const one = <T extends Element>(selector: string): T => {
@@ -325,6 +330,34 @@ export async function tabsSteps(runStep: StepRunner, windows: boolean, home: str
     check(same.allText().includes("marcador-aba-movida"), "o terminal perdeu o que tinha");
     check(!terminals.existing(A, b), "o terminal ficou com o nome antigo");
     return `aba ${b} de ${A} agora é ${moved} em ${B}, com o mesmo terminal`;
+  });
+
+  await step("workspaces: arrastar o cabeçalho pela barra lateral reordena a lista", async () => {
+    const names = () => all<HTMLElement>(".sidebar .workspace").map((e) => e.dataset.workspace);
+    const headerOf = (name: string) => one<HTMLElement>(`.sidebar .workspace[data-workspace="${CSS.escape(name)}"] .workspace-row`);
+    const before = names();
+    const at = before.indexOf(A);
+    check(at >= 0 && before.indexOf(B) > at, `${A} devia vir antes de ${B}: ${before}`);
+    // Short groups, two tabs each: both headers are in view together, the way a person drags one over the other.
+    await reveal(headerOf(A), headerOf(B));
+    const above = middle(headerOf(A));
+    await drag(headerOf(B), line(middle(headerOf(B)), { x: above.x, y: above.y - 8 }, 10), "barra lateral: o cabeçalho para cima de outro", () =>
+      photo("workspaces-arrasto", windows),
+    );
+    await waitFor(() => names().indexOf(B) === at, 3000, "a nova ordem dos workspaces").catch(() => {
+      throw new Error(`a ordem é ${names()}, e ${B} devia ter tomado o lugar ${at} de ${A}`);
+    });
+    check(names().indexOf(A) === at + 1, `${A} devia ter descido para o lugar ${at + 1}: ${names()}`);
+    check(gui.value.order.indexOf(B) < gui.value.order.indexOf(A), "o estado não guarda a ordem");
+    // And back.
+    await reveal(headerOf(A), headerOf(B));
+    const below = middle(headerOf(B));
+    await drag(headerOf(A), line(middle(headerOf(A)), { x: below.x, y: below.y + 8 }, 10), "barra lateral: o cabeçalho de volta");
+    await waitFor(() => names().indexOf(A) === at, 3000, "a ordem de volta").catch(() => {
+      throw new Error(`a ordem é ${names()}, e ${A} devia ter voltado ao lugar ${at}`);
+    });
+    check(names().indexOf(B) === at + 1, `${B} devia ter voltado ao lugar ${at + 1}: ${names()}`);
+    return `${B} tomou o lugar ${at} e ${A} voltou a ele`;
   });
 
   await step("painéis: a alça troca dois painéis de lugar, e o nome da aba segue", async () => {
@@ -471,32 +504,6 @@ export async function tabsSteps(runStep: StepRunner, windows: boolean, home: str
     return `o painel ${heir} é a aba ${x} agora, no lugar ${place}, com o nome`;
   });
 
-  await step("workspaces: arrastar o cabeçalho pela barra lateral reordena a lista", async () => {
-    const names = () => all<HTMLElement>(".sidebar .workspace").map((e) => e.dataset.workspace);
-    check(names().indexOf(A) < names().indexOf(B), `${A} devia vir antes de ${B}: ${names()}`);
-    await reveal(
-      one<HTMLElement>(`.sidebar .workspace[data-workspace="${A}"] .workspace-row`),
-      one<HTMLElement>(`.sidebar .workspace[data-workspace="${B}"] .workspace-row`),
-    );
-    const header = one<HTMLElement>(`.sidebar .workspace[data-workspace="${B}"] .workspace-row`);
-    const above = middle(one<HTMLElement>(`.sidebar .workspace[data-workspace="${A}"] .workspace-row`));
-    await drag(header, line(middle(header), { x: above.x, y: above.y - 8 }, 10), "barra lateral: o cabeçalho para cima de outro", () =>
-      photo("workspaces-arrasto", windows),
-    );
-    await waitFor(() => names().indexOf(B) < names().indexOf(A), 3000, "a nova ordem dos workspaces");
-    check(gui.value.order.indexOf(B) < gui.value.order.indexOf(A), "o estado não guarda a ordem");
-    // And back.
-    await reveal(
-      one<HTMLElement>(`.sidebar .workspace[data-workspace="${A}"] .workspace-row`),
-      one<HTMLElement>(`.sidebar .workspace[data-workspace="${B}"] .workspace-row`),
-    );
-    const again = one<HTMLElement>(`.sidebar .workspace[data-workspace="${A}"] .workspace-row`);
-    const below = middle(one<HTMLElement>(`.sidebar .workspace[data-workspace="${B}"] .workspace-row`));
-    await drag(again, line(middle(again), { x: below.x, y: below.y + 8 }, 10), "barra lateral: o cabeçalho de volta");
-    await waitFor(() => names().indexOf(A) < names().indexOf(B), 3000, "a ordem de volta");
-    return `${B} subiu e ${A} voltou a subir`;
-  });
-
   await step("renomear: Enter sem mudar não fixa o título, e há um só campo", async () => {
     const root = activeTab.value!.root.id;
     const key = tabKey(A, root);
@@ -616,6 +623,59 @@ export async function tabsSteps(runStep: StepRunner, windows: boolean, home: str
     check(awake.value.has(tabKey(H, first)), "a aba acordada não consta como acordada");
     await photo("hibernacao", windows);
     return `${chosen.length} abas dormiram; a mais antiga voltou com a rolagem; ${awake.value.size} acordadas`;
+  });
+
+  await step("barra lateral: perto da borda a lista rola sozinha, e o pouso segue o que passa sob o ponteiro parado", async () => {
+    const list = one<HTMLElement>(".sidebar-list");
+    const room = () => list.scrollHeight - list.clientHeight;
+    // Enough below the fold for the list to have somewhere to go.
+    for (let i = 0; i < 20 && room() < 160; i++) {
+      await newTab(A);
+      await sleep(120);
+    }
+    check(room() >= 160, `a lista só tem ${room()} px para rolar`);
+    list.scrollTop = 0;
+    await sleep(150);
+    const names = () => all<HTMLElement>(".sidebar .workspace").map((e) => e.dataset.workspace!);
+    const order = names();
+    check(order.length >= 3, `só ${order.length} workspaces na lista`);
+    const moved = order[0];
+    const header = one<HTMLElement>(`.sidebar .workspace[data-workspace="${CSS.escape(moved)}"] .workspace-row`);
+    const box = list.getBoundingClientRect();
+    // Eight pixels inside the bottom edge: where the list scrolls on its own toward what is below.
+    const edge = { x: box.left + box.width / 2, y: box.bottom - 8 };
+    let shown = -1;
+    let scrolled = 0;
+    await drag(header, line(middle(header), edge, 12), "barra lateral: o cabeçalho de cima parado na borda de baixo", async () => {
+      // The pointer does not move from here on: the list goes to its end by itself and stops.
+      let last = -1;
+      let still = 0;
+      await waitFor(
+        () => {
+          still = list.scrollTop === last ? still + 1 : 0;
+          last = list.scrollTop;
+          return still >= 4;
+        },
+        10000,
+        () => `a lista não parou de rolar (${listInfo()})`,
+      );
+      scrolled = Math.round(list.scrollTop);
+      check(list.scrollTop >= room() - 2, `a lista parou antes do fim (${listInfo()})`);
+      const move = sidebarMove.value;
+      check(move?.kind === "workspace", `o arrasto não está de pé: ${JSON.stringify(move)}`);
+      shown = move.to;
+      // What is under a pointer that has not moved is the last group now, and the landing place says so.
+      check(shown === order.length - 1, `o pouso é ${shown}, devia ser ${order.length - 1} com a lista no fim (${listInfo()})`);
+    });
+    // It is let go where the landing place was shown.
+    await waitFor(() => names().at(-1) === moved, 3000, "o workspace levado ao fim").catch(() => {
+      throw new Error(`a ordem é ${names()}, e ${moved} devia ter ido para o fim`);
+    });
+    check(gui.value.order.indexOf(moved) > gui.value.order.indexOf(order[1]), "o estado não guarda a ordem");
+    // Put back where it was.
+    moveWorkspace(moved, order[1]);
+    await waitFor(() => names()[0] === moved, 3000, "o workspace de volta ao começo");
+    return `a lista rolou ${scrolled} px sozinha e ${moved} foi para o lugar ${shown}, o último`;
   });
 
   traceDrags(undefined);
