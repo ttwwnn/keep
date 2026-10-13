@@ -184,7 +184,7 @@ export const findPaths = (groups: string[][]) => invoke<(PathHit | null)[]>("fin
 export const openPath = (path: string) => invoke<void>("open_path", { path });
 /** Show a file in the file manager, selected. */
 export const revealPath = (path: string) => invoke<void>("reveal_path", { path });
-/** Open an address in the browser, or the mail or phone program; only pages, mail and phone numbers are. */
+/** Open an address in the browser, or the mail program; only pages, mail and FTP are. */
 export const openUrl = (url: string) => invoke<void>("open_url", { url });
 export const e2eShot = (name: string) => invoke<void>("e2e_shot", { name });
 export const e2eFake = (state: unknown) => invoke<void>("e2e_fake", { state });

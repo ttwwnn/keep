@@ -96,15 +96,14 @@ pub fn reveal(path: &str) -> Result<(), String> {
 }
 
 /// What a web address may begin with to be opened from the terminal's text:
-/// pages, mail and phone numbers. The system would hand any other scheme to
-/// whatever program registered it, and text a program printed is not to start
-/// programs.
+/// pages, mail and FTP. The system would hand any other scheme to whatever
+/// program registered it, and text a program printed is not to start programs.
 fn is_openable(url: &str) -> bool {
     let lower = url.to_ascii_lowercase();
-    ["http://", "https://", "mailto:", "tel:"].iter().any(|scheme| lower.starts_with(scheme))
+    ["http://", "https://", "mailto:", "ftp://"].iter().any(|scheme| lower.starts_with(scheme))
 }
 
-/// Open an address in the browser, or the mail or phone program.
+/// Open an address in the browser, or the mail program.
 pub fn open_url(url: &str) -> Result<(), String> {
     if !is_openable(url) {
         return Err(format!("endereço que o Keep não abre: {url}"));
@@ -130,11 +129,11 @@ mod tests {
     }
 
     #[test]
-    fn only_pages_mail_and_phones_are_opened() {
-        for url in ["https://example.com/a", "HTTP://x.org", "mailto:a@b.c", "tel:+5511999990000"] {
+    fn only_pages_mail_and_ftp_are_opened() {
+        for url in ["https://example.com/a", "HTTP://x.org", "mailto:a@b.c", "ftp://files.x.org/a"] {
             assert!(is_openable(url), "{url}");
         }
-        for url in ["file:///C:/x.exe", "ms-msdt:/id", "javascript:alert(1)", "ssh://host", "ftp://x", "C:\\x.exe", ""] {
+        for url in ["file:///C:/x.exe", "ms-msdt:/id", "javascript:alert(1)", "ssh://host", "tel:+5511999990000", "C:\\x.exe", ""] {
             assert!(!is_openable(url), "{url}");
         }
     }

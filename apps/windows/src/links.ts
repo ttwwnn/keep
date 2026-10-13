@@ -1,18 +1,19 @@
 // What can be clicked in a terminal's text: web addresses, and the files and
 // folders it names.
 //
-// The macOS app's terminal does the same (Model/LinkOpener.swift): ⌘-click on
-// an address opens it, a plain click on a path that exists opens that, and a
-// right-click on one offers "Abrir", "Mostrar no Finder" and "Copiar caminho".
-// Here Ctrl takes the place of ⌘. A path is only a link when the file system
-// says it is there, so the words around it are not underlined for nothing.
+// The macOS app's terminal does the same (Model/LinkOpener.swift): a click on
+// an address, or on a path that exists, opens it, and a right-click offers
+// "Abrir link" and "Copiar link" on an address, "Abrir", "Mostrar no Finder"
+// and "Copiar caminho" on a path. Ctrl takes the place of ⌘. A path is only a
+// link when the file system says it is there, so the words around it are not
+// underlined for nothing.
 
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { IBuffer, IBufferCell, IDisposable, ILink, Terminal } from "@xterm/xterm";
 import * as api from "./api";
 import { flatten, pathTokens, runsWhenOpened, tokenAt, type Candidate, type Flavor, type PathToken, type Piece, type Where } from "./paths";
 import type { MenuItem } from "./ui/common";
-import { filePath, findUrls } from "./urls";
+import { addressesIn, filePath, isOpenable } from "./urls";
 
 export interface LinkEnv {
   flavor: Flavor;
@@ -162,11 +163,6 @@ async function openAddress(url: string, env: LinkEnv): Promise<void> {
   }
 }
 
-/** An address clicked in the terminal's text, or in a link the program drew (OSC 8): opened on Ctrl-click only. */
-export function activateAddress(event: MouseEvent, url: string, env: LinkEnv): void {
-  if (event.button === 0 && (env.mac ? event.metaKey : event.ctrlKey) && !event.shiftKey && !event.altKey) void openAddress(url, env);
-}
-
 // ---------------------------------------------------------------- asking the file system
 
 interface Cached {
@@ -212,37 +208,23 @@ async function resolveTokens(tokens: PathToken[]): Promise<Found[]> {
 /** The window's focus, to tell a click that only brought the window forward. */
 let windowFocusedAt = 0;
 
-/** The modifiers last seen held, by the keyboard or by the pointer: what an address under the pointer is underlined by. */
-const mods = { ctrlKey: false, metaKey: false, shiftKey: false, altKey: false };
-const seeMods = (e: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; altKey: boolean }) => {
-  mods.ctrlKey = e.ctrlKey;
-  mods.metaKey = e.metaKey;
-  mods.shiftKey = e.shiftKey;
-  mods.altKey = e.altKey;
-};
-
-if (typeof window !== "undefined") {
-  window.addEventListener("focus", () => (windowFocusedAt = Date.now()));
-  window.addEventListener("keydown", seeMods, true);
-  window.addEventListener("keyup", seeMods, true);
-  window.addEventListener("blur", () => seeMods({ ctrlKey: false, metaKey: false, shiftKey: false, altKey: false }));
-}
+if (typeof window !== "undefined") window.addEventListener("focus", () => (windowFocusedAt = Date.now()));
 
 export interface Links extends IDisposable {
-  /** Items for the menu of a right-click on a path; none where there is none. */
+  /** Items for the menu of a right-click on an address or a path; none where there is none. */
   menu(event: MouseEvent): Promise<(MenuItem | "separator")[]>;
+  /** A link the program drew behind its text (OSC 8) was clicked. */
+  activateDrawn(event: MouseEvent, url: string): void;
 }
 
 /**
- * Link the terminal's addresses and paths. An address opens on Ctrl-click and
- * is underlined while Ctrl is held; a path opens on a plain click that is
- * nothing else — one press, not dragged, not the first of two, in a pane that
- * already had the keyboard — and on Ctrl-click at once.
+ * Link the terminal's addresses and paths. Either opens on a plain click that
+ * is nothing else — one press, not dragged, not the first of two, in a pane
+ * that already had the keyboard — and on Ctrl-click at once.
  */
 export function installLinks(term: Terminal, host: HTMLElement, env: LinkEnv): Links {
   const where = (): Where => ({ flavor: env.flavor, cwd: env.cwd(), home: env.home() });
-  const held = (e: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; altKey: boolean }) =>
-    (env.mac ? e.metaKey : e.ctrlKey) && !e.shiftKey && !e.altKey;
+  const ctrl = (e: MouseEvent) => (env.mac ? e.metaKey : e.ctrlKey) && !e.shiftKey && !e.altKey;
 
   let down: { x: number; y: number; at: number; focused: boolean } | undefined;
   let pending: ReturnType<typeof setTimeout> | undefined;
@@ -257,81 +239,56 @@ export function installLinks(term: Terminal, host: HTMLElement, env: LinkEnv): L
     };
   };
   host.addEventListener("mousedown", onDown, true);
-  // Before the terminal's own handler asks for the links under the pointer.
-  host.addEventListener("mousemove", seeMods, true);
 
-  const activatePath = (e: MouseEvent, path: string, dir: boolean) => {
-    if (held(e)) {
-      void openFound(path, dir, env);
+  /** What a click does with a link: open it at once on Ctrl-click, or after the double-click interval on a plain one. */
+  const activate = (e: MouseEvent, open: () => void) => {
+    if (e.button !== 0) return;
+    if (ctrl(e)) {
+      open();
       return;
     }
-    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.detail !== 1) return;
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.detail !== 1) return;
     if (!down?.focused || term.hasSelection() || Math.hypot(e.clientX - down.x, e.clientY - down.y) >= CLICK_SLOP) return;
     const pressed = down.at;
     clearTimeout(pending);
     // A double click selects the word: wait the interval out, and a press in it cancels.
     pending = setTimeout(() => {
-      if (down?.at === pressed) void openFound(path, dir, env);
+      if (down?.at === pressed) open();
     }, DOUBLE_CLICK_MS);
   };
 
-  /** An address is underlined, and the pointer a hand, only while Ctrl is held — also when it is pressed with the pointer at rest. */
-  const underlineWithModifier = (link: ILink) => {
-    let off: (() => void) | undefined;
-    const set = (on: boolean) => {
-      if (link.decorations) {
-        link.decorations.underline = on;
-        link.decorations.pointerCursor = on;
-      }
-    };
-    link.hover = () => {
-      // The terminal swaps the decorations for ones it tracks once this returns.
-      queueMicrotask(() => set(held(mods)));
-      const follow = (k: KeyboardEvent) => set(held(k));
-      window.addEventListener("keydown", follow);
-      window.addEventListener("keyup", follow);
-      off = () => {
-        window.removeEventListener("keydown", follow);
-        window.removeEventListener("keyup", follow);
-      };
-    };
-    link.leave = () => off?.();
-    link.dispose = () => off?.();
+  /** Whether a row reaches the edge, give or take the margin a program keeps there (Claude Code keeps two columns). */
+  const reachesEdge = (line: Logical) => {
+    const last = line.cells[line.cells.length - 1];
+    return last !== undefined && last.end >= term.cols - 3;
   };
 
   const provider = term.registerLinkProvider({
     provideLinks(y, callback) {
       const buffer = term.buffer.active;
       const { lines, row } = around(buffer, y - 1);
-      const text = lines[row].text;
-      if (text === "") return callback(undefined);
+      if (lines[row].text === "") return callback(undefined);
+      const texts = lines.map((l) => l.text);
 
       const links: ILink[] = [];
-      for (const match of findUrls(text)) {
-        const link: ILink = {
-          range: rangeOf(lines, [{ line: row, start: match.start, end: match.end }]),
-          text: match.url,
-          decorations: { underline: held(mods), pointerCursor: held(mods) },
-          activate: (e, url) => activateAddress(e, url, env),
-        };
-        underlineWithModifier(link);
-        links.push(link);
+      for (const hit of addressesIn(texts, row, (i) => reachesEdge(lines[i]))) {
+        links.push({
+          range: rangeOf(lines, hit.pieces),
+          text: hit.url,
+          decorations: { underline: true, pointerCursor: true },
+          activate: (e) => activate(e, () => void openAddress(hit.url, env)),
+        });
       }
 
-      const tokens = pathTokens(
-        lines.map((l) => l.text),
-        row,
-        where(),
-      );
+      const tokens = pathTokens(texts, row, where());
       if (tokens.length === 0) return callback(links.length > 0 ? links : undefined);
       void resolveTokens(tokens).then((found) => {
         for (const f of found) {
-          const range = rangeOf(lines, f.candidate.pieces);
           links.push({
-            range,
+            range: rangeOf(lines, f.candidate.pieces),
             text: f.path,
             decorations: { underline: true, pointerCursor: true },
-            activate: (e) => activatePath(e, f.path, f.dir),
+            activate: (e) => activate(e, () => void openFound(f.path, f.dir, env)),
           });
         }
         // Where two cover the same cells the first stays: an address wins over a path in it.
@@ -365,12 +322,18 @@ export function installLinks(term: Terminal, host: HTMLElement, env: LinkEnv): L
       const { lines, row } = around(term.buffer.active, at.y);
       const index = indexAt(lines[row], at.y + 1, at.column);
       if (index < 0) return [];
-      const token = tokenAt(
-        lines.map((l) => l.text),
-        row,
-        index,
-        where(),
+      const texts = lines.map((l) => l.text);
+      // On an address: open it, or copy it.
+      const address = addressesIn(texts, row, (i) => reachesEdge(lines[i])).find((hit) =>
+        hit.pieces.some((p) => p.line === row && index >= p.start && index < p.end),
       );
+      if (address) {
+        return [
+          { label: "Abrir link", action: () => void openAddress(address.url, env) },
+          { label: "Copiar link", action: () => void writeText(address.url).catch(() => navigator.clipboard?.writeText(address.url)) },
+        ];
+      }
+      const token = tokenAt(texts, row, index, where());
       if (!token) return [];
       const [found] = await resolveTokens([token]);
       if (!found) return [];
@@ -380,6 +343,12 @@ export function installLinks(term: Terminal, host: HTMLElement, env: LinkEnv): L
         { label: `Mostrar no ${fileManager(env.mac)}`, action: () => void api.revealPath(path).catch((e) => env.say(`Não foi possível mostrar: ${String(e)}`)) },
         { label: "Copiar o caminho", action: () => void writeText(path).catch(() => navigator.clipboard?.writeText(path)) },
       ];
+    },
+    activateDrawn(event, url) {
+      // A program can put any address behind its text: a plain click opens only the kinds a person means to open.
+      activate(event, () => {
+        if (ctrl(event) || isOpenable(url)) void openAddress(url, env);
+      });
     },
     dispose() {
       clearTimeout(pending);

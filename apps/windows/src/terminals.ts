@@ -12,7 +12,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { SearchAddon } from "@xterm/addon-search";
 import * as api from "./api";
-import { activateAddress, installLinks, type LinkEnv, type Links } from "./links";
+import { installLinks, type LinkEnv, type Links } from "./links";
 import { installOsc52 } from "./osc52";
 import { isSafePaste, pasteQuestion, preparePaste, type Question } from "./paste";
 import { SchemeReporter } from "./schemeReport";
@@ -135,7 +135,7 @@ export class TermView {
       macOptionIsMeta: platform.name === "macos",
       rescaleOverlappingGlyphs: true,
       // A link the program drew (OSC 8) opens as an address in the text does.
-      linkHandler: { activate: (event, uri) => activateAddress(event, uri, linkEnv) },
+      linkHandler: { activate: (event, uri) => this.links.activateDrawn(event, uri) },
     });
     this.links = installLinks(this.term, this.element, linkEnv);
     // A program may write the clipboard, and read it once the person says so.
