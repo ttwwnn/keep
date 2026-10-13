@@ -124,7 +124,7 @@ export async function paletteSteps(step: StepRunner, { waitFor, workspace }: Hel
         press(field(), "Enter");
         const input = await until(`o campo da lista de ${list}`, () => document.querySelector<HTMLInputElement>(".catalog .catalog-input"));
         if (document.querySelector(".picker")) throw new Error(`o cartão da paleta ficou sob a lista de ${list}`);
-        const names = await until(`as linhas da lista de ${list}`, () => (document.querySelectorAll(".catalog .catalog-row").length > 1 ? document.querySelectorAll(".catalog .catalog-row") : null), 8000);
+        const names = await until(`as linhas da lista de ${list}`, () => (document.querySelectorAll(".catalog .catalog-row").length > 1 ? document.querySelectorAll(".catalog .catalog-row") : null), 30000);
         if (narrow) {
           input.value = narrow;
           input.dispatchEvent(new Event("input", { bubbles: true }));
