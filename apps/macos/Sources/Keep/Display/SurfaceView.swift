@@ -743,6 +743,7 @@ final class TerminalSurfaceView: NSView {
             dark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT
         )
         schemeIsDark = dark
+        Trace.log("scheme", "\(workspace)/\(tab) surface set \(dark ? "dark" : "light")")
     }
 
     override func viewDidChangeEffectiveAppearance() {

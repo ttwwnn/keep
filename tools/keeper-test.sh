@@ -117,6 +117,10 @@ unit "the blank rows at the bottom left out of the daemon's repaint" keep-vt cra
     's/let below = b"\\r\\n".repeat(self.total_rows().saturating_sub(written));/let below: Vec<u8> = { let _ = written; Vec::new() };/'
 unit "an image split between two writes goes unseen" keep crates/keep/src/keeper.rs \
     's/if contains_image(\&seen) || contains_image(bytes) {/if contains_image(bytes) {/'
+unit "the surface's word on dark and light not heard" keep crates/keep/src/keeper.rs \
+    's/self.heard.store(report\[7\] - b.0., Ordering::Release);/let _ = report;/'
+unit "the answer to the client's own question passed on to the program" keep crates/keep/src/keeper.rs \
+    's/if owed > 0 \&\& self.owed.compare_exchange/if false \&\& owed > 0 \&\& self.owed.compare_exchange/'
 unit "the attach file's options not read" keep crates/keep/src/keeper.rs \
     's/"mirror" => options.mirror = value.parse().ok().filter(|\&n: \&usize| n > 0),/"mirror" => {}/'
 

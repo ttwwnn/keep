@@ -92,10 +92,16 @@ let session = CGSessionCopyCurrentDictionary() as? [String: Any] ?? [:]
 print((session["CGSSessionScreenIsLocked"] as? Bool) == true ? "locked" : "open")
 SWIFT
 swiftc -O "$WORK/locked.swift" -o "$WORK/locked" 2>/dev/null || { say "could not build the lock check"; exit 1; }
+# Locked, what the accessibility tree says of the windows (the strip's text)
+# and full screen are left out, and said to be; the rest runs, keys and menus
+# reaching the app all the same. Only a run on an open screen is complete.
+LOCKED=
 if [ "$("$WORK/locked")" = locked ]; then
-    say "the screen is locked: windows cannot be asked about or put in full screen. not run"
-    exit 3
+    LOCKED=1
+    [ -n "${KEEP_TEST_COMPLETE:-}" ] && { say "the screen is locked and a complete run was asked for. not run"; exit 3; }
 fi
+skip() { say "  skip  $1 (the screen is locked)"; SKIPPED=$((SKIPPED + 1)); }
+SKIPPED=0
 
 export KEEP_SOCKET=$SOCKET
 export KEEP_STATE_DIR=$WORK/state
@@ -103,6 +109,8 @@ export KEEP_STATUS_DIR=$WORK/status
 export KEEP_HIB_WORK=$WORK
 export KEEP_TRACE_SCREEN=1
 export KEEP_SCREEN_DUMP=$WORK/dump
+# What each client did: kept, handed over, took over (crates/keep/src/keeper.rs).
+export KEEP_CLIENT_LOG=$WORK/client.log
 mkdir -p "$KEEP_STATE_DIR" "$KEEP_STATUS_DIR" "$WORK/tabs" "$WORK/dump"
 require_scratch_socket
 rm -f "$SOCKET"
@@ -155,6 +163,33 @@ tell() {  # tell <tab> <command>...
     printf '%s\n' "$@" >"$WORK/cmd-$pid.tmp"
     mv "$WORK/cmd-$pid.tmp" "$WORK/cmd-$pid"
     wait_for 60 test -f "$WORK/done-$pid" || say "  (tab $1's program did not answer)"
+}
+# Print <count> lines in tab <n> a few hundred at a time, each lot seen on
+# its surface before the next is printed. A program that pours thousands of
+# lines out at once can outrun a surface: the daemon stops queueing for a
+# client that far behind and repaints it from its own page or two, and what
+# fell off that page in between is gone from the surface too — the daemon's
+# own limit (crates/keepd/src/tab.rs, CLIENT_BACKLOG), the same whether or
+# not anything is hibernated, and not what this test is about.
+print_seen() {  # print_seen <tab> <count> <first line number>
+    local tab=$1 count=$2 from=$3 lot
+    while [ "$count" -gt 0 ]; do
+        lot=$(( count < 250 ? count : 250 ))
+        tell "$tab" "print $lot"
+        from=$((from + lot)); count=$((count - lot))
+        wait_for 30 dump_has "$tab" "$(printf 'P%s-L%07d' "${PID[$tab]}" $((from - 1)))"
+    done
+}
+# The same, into a tab kept by its client: no surface to see it on, a moment
+# between lots instead.
+print_kept() {  # print_kept <tab> <count>
+    local count=$2 lot
+    while [ "$count" -gt 0 ]; do
+        lot=$(( count < 250 ? count : 250 ))
+        tell "$1" "print $lot"
+        count=$((count - lot))
+        sleep 0.5
+    done
 }
 SILENCE_S=30
 ask_ax() {  # ask_ax <axpress arguments...>
@@ -238,7 +273,7 @@ JSON
     sleep 1.5
     give_back_front
     sleep 4
-    if [ "$(present "strip-tab-$WS/1")" != yes ]; then
+    if [ -z "$LOCKED" ] && [ "$(present "strip-tab-$WS/1")" != yes ]; then
         say "the test's window cannot be seen: is another app in full screen? not run"
         exit 3
     fi
@@ -271,8 +306,9 @@ launch KEEP_HYDRATED_LIMIT=$LIMIT
 
 say ""
 say "a tab's history and its program's answers, through hibernation"
-tell 1 "title tab-1" "print 3000"
-wait_for 60 dump_has 1 "P${PID[1]}-L0003000"
+tell 1 "title tab-1"
+wait_for 30 test -s "$WORK/dump/$WS-1.txt"
+print_seen 1 3000 1
 check "tab 1 shows the 3000 lines it printed" "yes" "$(lines_whole 1 3000)"
 show 2 || say "  (tab 2 would not come up)"
 tell 2 "title tab-2" "print 50"
@@ -296,14 +332,19 @@ check "the daemon still counts a hibernated tab as watched" "attached" "$(watche
 
 say ""
 say "while they are hibernated"
-tell 1 "print 2000" "title renamed-while-hibernated"
+print_kept 1 2000
+tell 1 "title renamed-while-hibernated"
 tell 2 "ask"
 tell 3 "claude count 7"
 wait_for 20 grep -aqE "keeper .* title: renamed-while-hibernated" "$WORK/app.log"
 check "the title set while hibernated reached the app at once" "yes" \
     "$(grep -aqE "keeper .* title: renamed-while-hibernated" "$WORK/app.log" && echo yes || echo no)"
-wait_for 20 test "$(ask_ax value "strip-title-$WS/1")" = "renamed-while-hibernated"
-check "and the strip" "renamed-while-hibernated" "$(ask_ax value "strip-title-$WS/1")"
+if [ -n "$LOCKED" ]; then
+    skip "and the strip"
+else
+    wait_for 20 test "$(ask_ax value "strip-title-$WS/1")" = "renamed-while-hibernated"
+    check "and the strip" "renamed-while-hibernated" "$(ask_ax value "strip-title-$WS/1")"
+fi
 SHOWN_ANSWERS=$(cat "$WORK/answers-${PID[2]}-1" 2>/dev/null)
 KEPT_ANSWERS=$(cat "$WORK/answers-${PID[2]}-2" 2>/dev/null)
 QUESTIONS=$(printf '%s\n' "$SHOWN_ANSWERS" | grep -c .)
@@ -336,12 +377,13 @@ check "when it leaves, the shell's 200 lines are under it" "yes" "$(lines_whole 
 
 say ""
 say "the zoom, changed while tabs are hibernated"
-# Kept now: 3, 1, 7. Hibernated: 2, 4, 5, 6.
-BEFORE=$(grid 3)
+# Kept now: 3, 1, 7. Hibernated: 2, 4, 5, 6. The tab on screen takes the
+# zoom at once, and its client tells the daemon: the grid read there.
+BEFORE=$(daemon_grid 3)
 "$AXPRESS" "$APP_NAME" menu View "Zoom In" >/dev/null 2>&1
-wait_for 20 test "$(grid 3)" != "$BEFORE"
+wait_for 20 test "$(daemon_grid 3)" != "$BEFORE"
 sleep 2
-ZOOMED=$(grid 3)
+ZOOMED=$(daemon_grid 3)
 check "the zoom changed the grid of the tab on screen" "yes" "$([ "$ZOOMED" != "$BEFORE" ] && echo yes || echo no)"
 show 2 || say "  (tab 2 would not come up)"
 wait_for 30 dump_has 2 "P${PID[2]}-L0000050"
@@ -358,15 +400,15 @@ say ""
 say "⌘P to a hibernated tab"
 # Kept now: 2, 3, 1. Hibernated: 4, 5, 6, 7.
 MADE4=$(made 4)
-"$AXPRESS" "$APP_NAME" menu Go "Go To…" >/dev/null 2>&1
-sleep 1.5
+"$SENDKEY" "$APP_PID" key 35 cmd >/dev/null 2>&1
+sleep 2
 "$SENDKEY" "$APP_PID" text "tab-4" >/dev/null 2>&1
 sleep 1.5
 "$SENDKEY" "$APP_PID" key 36 >/dev/null 2>&1
 wait_for 20 shown 4
 wait_for 30 dump_has 4 "P${PID[4]}-L0000020"
 sleep 1.5
-check "it is the tab on screen" "selecionada" "$(ask_ax value "strip-tab-$WS/4")"
+check "it is the tab on screen" "yes" "$(shown 4 && echo yes || echo no)"
 check "taken over from its client" "$((MADE4 + 1)) 1" "$(made 4) $(taken 4)"
 check "with its lines" "yes" "$(lines_whole 4 20)"
 give_back_front
@@ -375,41 +417,55 @@ give_back_front
 
 say ""
 say "a tab on screen in another window"
-# The first window shows tab 2; a second window goes to it too, and then on
-# through three others. In the second window tab 2 is soon the tab used
-# least recently — but it is on screen in the first, and is not let go of.
+if [ -n "$LOCKED" ]; then
+    # Behind the lock the app cannot be put in front, and with it behind, a
+    # key the menu answers goes to one window and the return after it to
+    # the other.
+    skip "a second window: the app cannot be put in front behind the lock"
+else
+# The first window shows tab 2; a second window, made now, is shown the tab
+# the first one shows (⌘P and return, as tools/windows-test.sh does) and
+# then goes on through three others. In the second window tab 2 is soon the
+# tab used least recently — but it is on screen in the first, and is not let
+# go of.
 show 2 || say "  (tab 2 would not come up)"
 HIB2=$(trace_count "pool +hibernating w[0-9]+ $WS/2 ")
-"$AXPRESS" "$APP_NAME" menu File "New Window" >/dev/null 2>&1
+# In front for this: with the app behind, a key the menu answers (⌘P) goes
+# to one window and the return after it to the other.
+osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" \
+    >/dev/null 2>&1
+sleep 1
+"$SENDKEY" "$APP_PID" key 45 cmd shift >/dev/null 2>&1        # ⌘⇧N
 sleep 3
-picker_to() {  # picker_to <tab title>: ⌘P, the title, return
-    "$AXPRESS" "$APP_NAME" menu Go "Go To…" >/dev/null 2>&1
-    sleep 1.5
-    "$SENDKEY" "$APP_PID" text "$1" >/dev/null 2>&1
-    sleep 1.5
-    "$SENDKEY" "$APP_PID" key 36 >/dev/null 2>&1
-    sleep 3
-}
-picker_to "tab-2"
+"$SENDKEY" "$APP_PID" key 35 cmd >/dev/null 2>&1              # ⌘P
+sleep 2
+"$SENDKEY" "$APP_PID" key 36 >/dev/null 2>&1                  # return
+wait_for 20 test "$(watched 2 | tr -d ' ')" = "attached×2"
 check "the daemon counts two viewers of tab 2" "attached×2" "$(watched 2 | tr -d ' ')"
 SECOND=$(grep -aoE "pool +made (w[0-9]+) $WS/2 " "$WORK/app.log" | tail -1 | awk '{print $3}')
-for n in 5 6 7; do picker_to "tab-$n"; done
+for n in 5 6 7; do
+    show "$n" || say "  (tab $n would not come up in the second window)"
+    sleep 1
+done
 sleep 4
 check "the second window went on through three other tabs" "yes" \
-    "$(grep -aqE "switch +→ $WS/7" "$WORK/app.log" && echo yes || echo no)"
+    "$(grep -aqE "switch +→ $WS/7 from=$WS/6" "$WORK/app.log" && echo yes || echo no)"
 check "neither window let go of tab 2 while the first shows it" "$HIB2" \
     "$(trace_count "pool +hibernating w[0-9]+ $WS/2 ")"
 check "while tabs out of sight in the second window were let go of" "yes" \
     "$([ -n "$SECOND" ] && grep -aqE "pool +hibernating $SECOND $WS/[56] " "$WORK/app.log" && echo yes || echo no)"
-"$AXPRESS" "$APP_NAME" menu File "Close Window" >/dev/null 2>&1
+"$SENDKEY" "$APP_PID" key 13 cmd alt >/dev/null 2>&1          # ⌥⌘W
 sleep 3
 give_back_front
+fi
 
 # --- full screen -------------------------------------------------------------------------
 
 say ""
 say "full screen"
-if [ "$("$FULLSCREEN" "$APP_NAME" state 2>/dev/null)" = "" ]; then
+if [ -n "$LOCKED" ]; then
+    skip "full screen: a window does not go full screen behind the lock"
+elif [ "$("$FULLSCREEN" "$APP_NAME" state 2>/dev/null)" = "" ]; then
     say "  skip  the window cannot be put in full screen from here"
 else
     WINDOWED=$(grid 7)
@@ -451,6 +507,12 @@ sleep 2
 KEEPERS=$("$KEEP" ls 2>/dev/null | grep -cE '^ +tab .* attached')
 check "with the app gone, its clients let go of every tab" "0" "$KEEPERS"
 
+if [ "$FAILED" -gt 0 ] && [ -z "$SABOTAGE" ]; then
+    say ""
+    say "what the clients did:"
+    sed 's/^/  /' "$WORK/client.log" 2>/dev/null | tail -40
+fi
+
 say ""
 if [ -n "$SABOTAGE" ]; then
     say "sabotage: $FAILED check(s) failed, $PASSED passed"
@@ -458,5 +520,5 @@ if [ -n "$SABOTAGE" ]; then
     say "NOT CAUGHT"
     exit 1
 fi
-say "passed $PASSED, failed $FAILED"
+say "passed $PASSED, failed $FAILED${SKIPPED:+, skipped $SKIPPED}"
 [ "$FAILED" -eq 0 ]

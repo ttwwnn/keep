@@ -969,6 +969,7 @@ final class GhosttyApp {
         guard let app else { return }
         let dark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         ghostty_app_set_color_scheme(app, dark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT)
+        Trace.log("scheme", "app set \(dark ? "dark" : "light")")
     }
 
     func tick() {

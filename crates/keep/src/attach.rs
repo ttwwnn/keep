@@ -120,7 +120,13 @@ pub fn attach(
         None => (cols, rows),
     };
     #[cfg(unix)]
-    let handed = options.take.as_deref().and_then(|dir| crate::keeper::take(dir, cols, rows).ok());
+    let handed = options.take.as_deref().and_then(|dir| match crate::keeper::take(dir, cols, rows) {
+        Ok(handed) => Some(handed),
+        Err(error) => {
+            crate::keeper::note(format_args!("could not take over {}: {error}", dir.display()));
+            None
+        }
+    });
     #[cfg(not(unix))]
     let handed: Option<(Stream, Vec<u8>)> = None;
     let (mut sock, handed_screen) = match handed {
@@ -151,6 +157,9 @@ pub fn attach(
     };
     #[cfg(not(unix))]
     let _ = &options;
+    // Dark or light as the surface says it; see `keeper::Scheme`.
+    #[cfg(unix)]
+    let scheme = Arc::new(crate::keeper::Scheme::default());
 
     // The keyboard protocol the terminal we run in is speaking, and which of
     // its screens it is on, as followed from what we write to it; see
@@ -165,6 +174,8 @@ pub fn attach(
     let mut input_sock = sock.try_clone().context("clone socket")?;
     let input_flag = Arc::clone(&detached);
     let input_kitty = Arc::clone(&kitty);
+    #[cfg(unix)]
+    let input_scheme = mirror.as_ref().map(|_| Arc::clone(&scheme));
     std::thread::Builder::new()
         .name("keep-stdin".into())
         .spawn(move || {
@@ -174,6 +185,8 @@ pub fn attach(
             let mut stdin = crate::console::Input::stdin();
             let mut buf = [0u8; 4096];
             let mut legacy = Legacy::new();
+            #[cfg(unix)]
+            let mut held = Vec::new();
             loop {
                 let read = match stdin.read(&mut buf) {
                     Ok(0) | Err(_) => {
@@ -191,10 +204,16 @@ pub fn attach(
                 // protocol. When it did — Claude Code, an editor — the keys
                 // are already in the form it wants, and decoding them is what
                 // turned shift-return into a bare return.
+                #[cfg(unix)]
+                let heard = input_scheme.as_ref().map(|scheme| scheme.filter(&mut held, &buf[..read]));
+                #[cfg(unix)]
+                let raw: &[u8] = heard.as_deref().unwrap_or(&buf[..read]);
+                #[cfg(not(unix))]
+                let raw: &[u8] = &buf[..read];
                 let decoded = if input_kitty.load(Ordering::Acquire) == 0 {
-                    legacy.decode(&buf[..read])
+                    legacy.decode(raw)
                 } else {
-                    legacy.pass(&buf[..read])
+                    legacy.pass(raw)
                 };
                 let n = decoded.len();
                 if n == 0 {
@@ -218,6 +237,9 @@ pub fn attach(
             }
         })
         .context("spawn stdin thread")?;
+
+    #[cfg(unix)]
+    let watching_now = watching.clone();
 
     // Window size changes. Polling instead of SIGWINCH keeps this portable
     // and costs one cheap syscall every 200ms.
@@ -281,6 +303,14 @@ pub fn attach(
     #[cfg(not(unix))]
     let hung_up = false;
 
+    // Whether the surface has been asked its scheme since it was made, and
+    // whether it was on screen when last looked at: each time it goes out of
+    // sight, it is asked again (`keeper::Scheme`).
+    #[cfg(unix)]
+    let mut asked_scheme = false;
+    #[cfg(unix)]
+    let mut was_showing = true;
+
     // What a keeper handed over is the whole screen, written first.
     if let Some(screen) = handed_screen.as_deref() {
         flags.observe(screen);
@@ -295,6 +325,11 @@ pub fn attach(
         if written.is_err() && mirror.is_some() {
             hung_up = true;
         }
+        #[cfg(unix)]
+        if !hung_up && mirror.is_some() {
+            let _ = out.write_all(scheme.ask()).and_then(|_| out.flush());
+            asked_scheme = true;
+        }
         #[cfg(not(unix))]
         written?;
     }
@@ -306,10 +341,20 @@ pub fn attach(
                 break Outcome::Ended;
             }
             if mirror.is_some() {
-                let (ready, woke) = crate::keeper::wait(sock.as_raw_fd(), wake_read);
+                let (ready, woke) = crate::keeper::wait(sock.as_raw_fd(), wake_read, 1000);
                 if woke && !ready {
                     hung_up = true;
                     break Outcome::Ended;
+                }
+                // The surface going out of sight is the moment before it may
+                // be let go of: what it says of dark and light, asked now.
+                let showing = watching_now.as_ref().map(|p| is_showing(p)).unwrap_or(true);
+                if was_showing && !showing && asked_scheme {
+                    let _ = out.write_all(scheme.ask()).and_then(|_| out.flush());
+                }
+                was_showing = showing;
+                if !ready {
+                    continue;
                 }
             }
         }
@@ -372,6 +417,13 @@ pub fn attach(
             break Outcome::Ended;
         }
         written?;
+        // Once the first screen is there, the surface is asked what it says
+        // of dark and light.
+        #[cfg(unix)]
+        if !asked_scheme && mirror.is_some() {
+            let _ = out.write_all(scheme.ask()).and_then(|_| out.flush());
+            asked_scheme = true;
+        }
     };
     drop(out);
 
@@ -389,6 +441,7 @@ pub fn attach(
                     flags,
                     dir,
                     app: options.app,
+                    dark: scheme.dark(),
                 });
             }
         }

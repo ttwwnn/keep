@@ -51,6 +51,20 @@ pub const KEPT: &str = "kept";
 /// better not let go of the surface.
 pub const UNKEEPABLE: &str = "unkeepable";
 
+/// A line for the tests' record of what a client did (`KEEP_CLIENT_LOG`
+/// names the file); nothing at all otherwise. Never the terminal: that is
+/// the surface's.
+pub fn note(what: std::fmt::Arguments) {
+    let Ok(path) = std::env::var("KEEP_CLIENT_LOG") else { return };
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{stamp} {} {what}", std::process::id());
+    }
+}
+
 const HELLO: &[u8; 4] = b"KEEP";
 const HANDED: &[u8; 4] = b"KEPT";
 
@@ -169,6 +183,79 @@ fn contains_image(bytes: &[u8]) -> bool {
     bytes.windows(3).any(|w| w == b"\x1b_G")
 }
 
+/// Dark or light, as the surface itself answers CSI ? 996 n.
+///
+/// The app cannot say: a Ghostty surface's answer does not follow what the
+/// app tells it of the colour scheme (it answered light, `997;2`, in a dark
+/// window on a dark system, measured). So the client asks the surface, with
+/// a question of its own written before the tab's output, and again each
+/// time the surface goes out of sight; and it listens to the surface telling
+/// the program — answers and the reports of mode 2031 alike — on their way
+/// back. A keeper answers with what it last heard.
+#[derive(Default)]
+pub struct Scheme {
+    /// 0 not heard, 1 dark, 2 light: as CSI ? 997 says it.
+    heard: std::sync::atomic::AtomicU8,
+    /// Answers to the client's own questions still to come, not to be passed
+    /// on to the program, which asked nothing.
+    owed: std::sync::atomic::AtomicU32,
+}
+
+impl Scheme {
+    /// The question, for the surface; its answer is not the program's.
+    pub fn ask(&self) -> &'static [u8] {
+        self.owed.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        b"\x1b[?996n"
+    }
+
+    /// Dark, light, or nothing heard yet.
+    pub fn dark(&self) -> Option<bool> {
+        match self.heard.load(std::sync::atomic::Ordering::Acquire) {
+            1 => Some(true),
+            2 => Some(false),
+            _ => None,
+        }
+    }
+
+    /// Input from the surface, with every scheme report in it heard, and the
+    /// answers owed to the client's own questions taken out. A report split
+    /// between two reads is passed on whole and goes unheard: holding the
+    /// start of an escape sequence back would hold back the escape key too,
+    /// and nothing but a report starts the way `ESC [ ? 9` does, so only that
+    /// much is ever held.
+    pub fn filter(&self, held: &mut Vec<u8>, input: &[u8]) -> Vec<u8> {
+        use std::sync::atomic::Ordering;
+        let mut source = std::mem::take(held);
+        source.extend_from_slice(input);
+        let mut out = Vec::with_capacity(source.len());
+        let mut at = 0;
+        while at < source.len() {
+            let rest = &source[at..];
+            let report = [&b"\x1b[?997;1n"[..], &b"\x1b[?997;2n"[..]]
+                .into_iter()
+                .find(|r| rest.starts_with(r));
+            if let Some(report) = report {
+                self.heard.store(report[7] - b'0', Ordering::Release);
+                let owed = self.owed.load(Ordering::Acquire);
+                if owed > 0 && self.owed.compare_exchange(owed, owed - 1, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+                    at += report.len();
+                    continue;
+                }
+                out.extend_from_slice(report);
+                at += report.len();
+                continue;
+            }
+            if rest.len() < 9 && rest.len() >= 4 && b"\x1b[?997;".starts_with(&rest[..rest.len().min(7)]) {
+                *held = rest.to_vec();
+                return out;
+            }
+            out.push(source[at]);
+            at += 1;
+        }
+        out
+    }
+}
+
 /// What the surface would answer, as the app wrote it: `key=value` lines,
 /// colours as six hex digits.
 pub fn read_facts(dir: &Path) -> Facts {
@@ -262,6 +349,7 @@ pub fn take(dir: &Path, cols: u16, rows: u16) -> io::Result<(UnixStream, Vec<u8>
     let mut snapshot = vec![0u8; len];
     conn.read_exact(&mut snapshot)?;
     daemon.set_read_timeout(None)?;
+    note(format_args!("took over {} at {cols}x{rows}: {len} bytes", dir.display()));
     Ok((daemon, snapshot))
 }
 
@@ -272,14 +360,25 @@ pub struct Kept {
     pub flags: KittyFlags,
     pub dir: PathBuf,
     pub app: Option<i32>,
+    /// What the surface last said of dark and light.
+    pub dark: Option<bool>,
+}
+
+/// The facts the app wrote, with dark or light as the surface said it.
+fn facts_for(dir: &Path, dark: Option<bool>) -> Facts {
+    let mut facts = read_facts(dir);
+    if dark.is_some() {
+        facts.dark = dark;
+    }
+    facts
 }
 
 /// Carry on without a surface, until one comes for the tab or the app lets
 /// it go. Never returns.
 pub fn keep(kept: Kept) -> ! {
-    let Kept { mut daemon, mut mirror, mut flags, dir, app } = kept;
+    let Kept { mut daemon, mut mirror, mut flags, dir, app, dark } = kept;
     let mut facts_seen = modified(&dir.join(FACTS));
-    let _ = mirror.terminal.act_as_terminal(read_facts(&dir));
+    let _ = mirror.terminal.act_as_terminal(facts_for(&dir, dark));
     // Nobody is looking: the app hid the surface before letting it go, and
     // its last word to the daemon said so. Said again, in case it did not.
     let _ = ClientMsg::Resize { cols: 0, rows: 0 }.write(&mut daemon);
@@ -295,6 +394,7 @@ pub fn keep(kept: Kept) -> ! {
         let _ = listener.set_nonblocking(true);
     }
     publish(&dir, KEPT, format!("{}\n", std::process::id()).as_bytes());
+    note(format_args!("keeping {} at {}x{}, dark {:?}", dir.display(), mirror.size.0, mirror.size.1, dark));
     let mut background = mirror.terminal.background_colour();
     let mut checked = Instant::now();
 
@@ -353,7 +453,7 @@ pub fn keep(kept: Kept) -> ! {
                         // from what was to be handed over.
                         Err(Failed(Some(snapshot))) => {
                             if let Some(mut again) = mirror.remade(&snapshot) {
-                                let _ = again.terminal.act_as_terminal(read_facts(&dir));
+                                let _ = again.terminal.act_as_terminal(facts_for(&dir, dark));
                                 mirror = again;
                             }
                         }
@@ -370,7 +470,7 @@ pub fn keep(kept: Kept) -> ! {
             let seen = modified(&dir.join(FACTS));
             if seen != facts_seen {
                 facts_seen = seen;
-                let _ = mirror.terminal.act_as_terminal(read_facts(&dir));
+                let _ = mirror.terminal.act_as_terminal(facts_for(&dir, dark));
             }
         }
     }
@@ -390,8 +490,13 @@ fn hand_over(mut conn: UnixStream, daemon: &UnixStream, mirror: &mut Mirror, key
     }
     let cols = u16::from_be_bytes([hello[4], hello[5]]);
     let rows = u16::from_be_bytes([hello[6], hello[7]]);
+    let before = mirror.size;
     mirror.follow((cols, rows));
     let snapshot = mirror.terminal.handover(Some(keyboard));
+    note(format_args!(
+        "handing over at {cols}x{rows} (kept at {}x{}): {} bytes, {} rows",
+        before.0, before.1, snapshot.len(), mirror.terminal.total_rows()
+    ));
     let mut header = HANDED.to_vec();
     header.extend_from_slice(&(snapshot.len() as u32).to_be_bytes());
     if send_with_fd(&conn, &header, daemon.as_raw_fd()).is_err() {
@@ -405,6 +510,7 @@ fn hand_over(mut conn: UnixStream, daemon: &UnixStream, mirror: &mut Mirror, key
 
 /// Stop keeping: the socket and the directory go with this process.
 fn leave(dir: &Path) -> ! {
+    note(format_args!("leaving {}", dir.display()));
     let _ = std::fs::remove_file(SOCKET);
     let _ = std::fs::remove_dir_all(dir);
     std::process::exit(0)
@@ -435,15 +541,10 @@ fn readable(a: RawFd, b: Option<RawFd>, ms: i32) -> (bool, bool) {
     (hit(&fds[0]), count == 2 && hit(&fds[1]))
 }
 
-/// Wait until the daemon's socket can be read, or `wake` can: the latter is
-/// the client's own surface going away.
-pub fn wait(daemon: RawFd, wake: RawFd) -> (bool, bool) {
-    loop {
-        let ready = readable(daemon, Some(wake), -1);
-        if ready.0 || ready.1 {
-            return ready;
-        }
-    }
+/// Wait until the daemon's socket can be read, or `wake` can — the latter
+/// is the client's own surface going away — or `ms` have gone by.
+pub fn wait(daemon: RawFd, wake: RawFd, ms: i32) -> (bool, bool) {
+    readable(daemon, Some(wake), ms)
 }
 
 fn send_with_fd(sock: &UnixStream, data: &[u8], fd: RawFd) -> io::Result<()> {
@@ -563,6 +664,27 @@ mod tests {
             assert!(dir.join(UNKEEPABLE).exists());
             std::fs::remove_dir_all(&dir).ok();
         }
+    }
+
+    /// The surface's word on dark and light is heard; the answers to the
+    /// client's own questions go no further; the program's own pass through.
+    #[test]
+    fn the_scheme_is_heard_and_the_answers_owed_are_kept() {
+        let scheme = Scheme::default();
+        let mut held = Vec::new();
+        assert_eq!(scheme.dark(), None);
+        assert_eq!(scheme.ask(), b"\x1b[?996n");
+        assert_eq!(scheme.filter(&mut held, b"ab\x1b[?997;2ncd"), b"abcd", "owed: taken out");
+        assert_eq!(scheme.dark(), Some(false));
+        assert_eq!(scheme.filter(&mut held, b"\x1b[?997;1n"), b"\x1b[?997;1n", "the program's: passed on");
+        assert_eq!(scheme.dark(), Some(true));
+        // Split after ESC [ ? 9: held and heard; split earlier: passed on.
+        scheme.ask();
+        assert_eq!(scheme.filter(&mut held, b"x\x1b[?99"), b"x");
+        assert_eq!(scheme.filter(&mut held, b"7;2ny"), b"y");
+        assert_eq!(scheme.dark(), Some(false));
+        assert_eq!(scheme.filter(&mut held, b"\x1b"), b"\x1b", "an escape key is never held");
+        assert_eq!(scheme.filter(&mut held, b"[A"), b"[A");
     }
 
     /// The connection goes across with the bytes, still connected.
