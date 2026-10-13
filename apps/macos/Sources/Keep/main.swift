@@ -306,14 +306,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         rememberWindows()
         quitting = true
         session.prepareToQuit()
-        // Worktrees on their way to the Trash finish going first: a folder
-        // half moved, or moved with its repository never told, is worse
-        // than a quit that takes a few seconds.
-        if session.isTrashing {
-            session.onTrashDone = { NSApp.reply(toApplicationShouldTerminate: true) }
-            return .terminateLater
+        // Worktrees on their way to the Trash finish going first — the
+        // question's and the sweep's: a folder half moved, or moved with its
+        // repository never told, is worse than a quit that takes a few
+        // seconds.
+        var waiting = 0
+        let finished = {
+            waiting -= 1
+            if waiting == 0 { NSApp.reply(toApplicationShouldTerminate: true) }
         }
-        return .terminateNow
+        if session.isTrashing {
+            waiting += 1
+            session.onTrashDone = finished
+        }
+        if Worktrees.stopSweeping(then: { DispatchQueue.main.async(execute: finished) }) {
+            waiting += 1
+        }
+        return waiting > 0 ? .terminateLater : .terminateNow
     }
 
     func applicationWillTerminate(_ notification: Notification) {

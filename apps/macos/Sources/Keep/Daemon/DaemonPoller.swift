@@ -127,7 +127,9 @@ final class AITabWatcher {
 /// sincronizar`, every thirty seconds), and the births of the worktrees
 /// conversations make written down while the conversations are still there
 /// to be asked (`keep worktrees indexar`, every two minutes) — what tells,
-/// when a tab closes, which worktrees were its — and the logins of Claude
+/// when a tab closes, which worktrees were its; right after it, the
+/// worktrees of tabs that closed without the question go to the Trash
+/// (`Worktrees.sweep`) — and the logins of Claude
 /// renewed before they run out (`keep ia renovar`, every minute), the
 /// account at rest included, so that no tab finds its account signed out.
 ///
@@ -254,9 +256,14 @@ final class AIChores {
         indexing = true
         DispatchQueue.global(qos: .background).async { [weak self] in
             let problem = Worktrees.index()
+            // A tab that closed without the question left its worktrees
+            // behind: they go now, by the core's say (it waits twenty minutes
+            // for each, and keeps anything in doubt).
+            let left = problem == nil ? Worktrees.sweep() : []
             DispatchQueue.main.async {
                 self?.indexing = false
                 if let problem { Trace.log("worktree", "indexar: \(problem)") }
+                for line in left { Trace.log("worktree", "varredura: \(line)") }
             }
         }
     }
