@@ -7,6 +7,7 @@ import "./styles-tabs.css";
 import { render } from "preact";
 import { installInput, terminalKey } from "./input";
 import { startIA } from "./iaStore";
+import { watchSleep } from "./sleepWatch";
 import { connect, info, start } from "./store";
 import { App } from "./ui/App";
 
@@ -14,6 +15,7 @@ async function boot() {
   installInput();
   await start({ onKey: terminalKey });
   render(<App />, document.getElementById("app")!);
+  watchSleep();
   await connect();
   // The AI layer after the daemon: its tabs' AI is asked of the daemon the window found.
   await startIA();

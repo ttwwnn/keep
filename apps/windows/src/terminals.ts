@@ -13,6 +13,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import * as api from "./api";
+import { serializeBuffer } from "./serialize";
 
 export interface TerminalLook {
   fontFamily: string;
@@ -31,6 +32,11 @@ export interface TerminalHooks {
 }
 
 export const viewKey = (workspace: string, tab: number) => `${workspace}\u0000${tab}`;
+
+/** How long after a pane is made, or shown, its grid is taken as settling: mounting walks through two or three sizes as the layout resolves. */
+const SETTLING_MS = 700;
+/** How long the grid stays said, and how long it takes to fade. */
+const BADGE_MS = 900;
 
 /** What a repaint is written after: home and clear, as the terminal client does. */
 const CLEAR_FOR_REPAINT = "\x1b[H\x1b[2J";
@@ -54,6 +60,13 @@ export class TermView {
   private sent = { cols: 0, rows: 0 };
   private host: HTMLElement | null = null;
   private readonly observer: ResizeObserver;
+  /** Says "cols × rows" over the pane while its box is being changed. */
+  private readonly badge: HTMLDivElement;
+  private badgeTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The grid last seen: a change of it, not the first, is what the badge speaks of. */
+  private grid: { cols: number; rows: number };
+  /** Until when a change of grid is settling rather than being asked for. */
+  private settlingUntil = performance.now() + SETTLING_MS;
   /** The shell ended; nothing will come back on this tab. */
   ended = false;
   /** Why the last attach failed, while it has not been retried. */
@@ -65,6 +78,8 @@ export class TermView {
     look: TerminalLook,
     private readonly hooks: TerminalHooks,
     platform: { name: string; windowsBuild: number },
+    /** What the terminal held when it was put to sleep (see serialize.ts): written before the daemon's repaint. */
+    private history = "",
   ) {
     this.key = viewKey(workspace, tab);
     this.element = document.createElement("div");
@@ -102,7 +117,14 @@ export class TermView {
       const bytes = Uint8Array.from(data, (c) => c.charCodeAt(0) & 0xff);
       void this.attachment?.inputBytes(bytes).catch(() => {});
     });
-    this.term.onResize(() => this.sendSize());
+    this.grid = { cols: this.term.cols, rows: this.term.rows };
+    this.badge = document.createElement("div");
+    this.badge.className = "size-badge";
+    this.element.appendChild(this.badge);
+    this.term.onResize(({ cols, rows }) => {
+      this.sendSize();
+      this.sayGrid(cols, rows);
+    });
     this.observer = new ResizeObserver(() => this.fitNow());
   }
 
@@ -132,13 +154,34 @@ export class TermView {
       this.opened = true;
     }
     this.fitNow();
+    // The lines that had scrolled off, as they were; the repaint that follows clears the screen and draws what is there now.
+    if (this.history) {
+      this.term.write(this.history);
+      this.history = "";
+    }
     this.term.refresh(0, this.term.rows - 1);
     if (this.visible) this.enableWebgl();
     this.attachIfNeeded();
   }
 
+  /** The terminal's text, scrollback and colours, as the sequences that draw it again. */
+  snapshot(): string {
+    return serializeBuffer(this.term.buffer.normal, this.term.cols);
+  }
+
   get isAttached(): boolean {
     return this.attachment !== null;
+  }
+
+  /**
+   * Whether letting go of this terminal would lose something the daemon
+   * cannot give back: a selection, a composition under way, or the keyboard
+   * itself.
+   */
+  holdsUnsavedState(): boolean {
+    if (this.term.hasSelection()) return true;
+    if (this.element.contains(document.activeElement)) return true;
+    return this.element.querySelector(".composition-view.active") !== null;
   }
 
   /** Attach again after a failure, or for the first time. */
@@ -201,6 +244,22 @@ export class TermView {
     void this.attachment.resize(cols, rows).catch(() => {});
   }
 
+  /**
+   * Say how big the pane is now, if its box really changed the grid: points
+   * are not the unit that matters, and a few pixels of divider often leave the
+   * columns and rows as they were. Not while the pane is settling, and not out
+   * of sight.
+   */
+  private sayGrid(cols: number, rows: number): void {
+    const changed = cols !== this.grid.cols || rows !== this.grid.rows;
+    this.grid = { cols, rows };
+    if (!changed || !this.visible || performance.now() < this.settlingUntil) return;
+    this.badge.textContent = `${cols} × ${rows}`;
+    this.badge.classList.add("shown");
+    clearTimeout(this.badgeTimer);
+    this.badgeTimer = setTimeout(() => this.badge.classList.remove("shown"), BADGE_MS);
+  }
+
   /** Fit the grid to the host. A host with no size yet is left for later. */
   fitNow(): void {
     if (!this.opened || !this.host) return;
@@ -222,6 +281,8 @@ export class TermView {
     if (this.visible === visible) return;
     this.visible = visible;
     if (visible) {
+      // A pane catching up after being revealed is not being resized in front of anyone.
+      this.settlingUntil = performance.now() + SETTLING_MS;
       this.enableWebgl();
       this.fitNow();
       this.term.refresh(0, this.term.rows - 1);
@@ -310,6 +371,7 @@ export class TermView {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    clearTimeout(this.badgeTimer);
     this.observer.disconnect();
     this.release();
     this.disableWebgl();
@@ -321,6 +383,8 @@ export class TermView {
 /** Every terminal the window has, by tab. */
 export class TerminalManager {
   private readonly views = new Map<string, TermView>();
+  /** What the terminals of tabs asleep held, by view: given back to the terminal that takes theirs. */
+  private readonly sleeping = new Map<string, string>();
 
   constructor(
     private look: TerminalLook,
@@ -332,7 +396,8 @@ export class TerminalManager {
     const key = viewKey(workspace, tab);
     let view = this.views.get(key);
     if (!view) {
-      view = new TermView(workspace, tab, this.look, this.hooks, this.platform);
+      view = new TermView(workspace, tab, this.look, this.hooks, this.platform, this.sleeping.get(key));
+      this.sleeping.delete(key);
       this.views.set(key, view);
     }
     return view;
@@ -361,6 +426,29 @@ export class TerminalManager {
       view.rekey(...to);
       this.views.set(view.key, view);
     }
+    // What tabs asleep held goes with them.
+    const kept = moves.flatMap((m) => {
+      const history = this.sleeping.get(viewKey(...m.from));
+      return history === undefined ? [] : [{ from: viewKey(...m.from), to: viewKey(...m.to), history }];
+    });
+    for (const { from } of kept) this.sleeping.delete(from);
+    for (const { to, history } of kept) this.sleeping.set(to, history);
+  }
+
+  /**
+   * Put a tab's terminal to sleep: its screen, its scrollback and its
+   * connection are let go of. The shell is the daemon's and runs on; showing
+   * the tab builds the terminal again, repainted from the daemon.
+   */
+  sleep(workspace: string, tab: number): void {
+    const key = viewKey(workspace, tab);
+    const view = this.views.get(key);
+    if (!view) return;
+    // The daemon repaints the screen and no more: the scrollback goes with the terminal unless it is kept.
+    if (view.ended) this.sleeping.delete(key);
+    else this.sleeping.set(key, view.snapshot());
+    this.views.delete(key);
+    view.dispose();
   }
 
   /** Let go of the terminals whose tabs the daemon no longer has. */
@@ -371,6 +459,7 @@ export class TerminalManager {
         this.views.delete(key);
       }
     }
+    for (const key of [...this.sleeping.keys()]) if (!alive.has(key)) this.sleeping.delete(key);
   }
 
   setLook(look: TerminalLook): void {
@@ -386,5 +475,6 @@ export class TerminalManager {
   disposeAll(): void {
     for (const view of this.views.values()) view.dispose();
     this.views.clear();
+    this.sleeping.clear();
   }
 }

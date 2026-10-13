@@ -6,6 +6,7 @@
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { PaneTree } from "../layout";
+import { awake } from "../hibernation";
 import { shareOf, splitKey } from "../splits";
 import { tabKey } from "../state";
 import {
@@ -37,15 +38,31 @@ import { centreDivider, startDividerDrag } from "./divider";
 import * as icon from "./icons";
 import { PaneCarryOverlay, PaneGrip } from "./PaneCarry";
 
-function PaneHost(props: { workspace: string; root: number; pane: number; visible: boolean; focused: boolean; multi: boolean }) {
-  const { workspace, root, pane, visible, focused, multi } = props;
+function PaneHost(props: {
+  workspace: string;
+  root: number;
+  pane: number;
+  visible: boolean;
+  focused: boolean;
+  multi: boolean;
+  asleep: boolean;
+}) {
+  const { workspace, root, pane, visible, focused, multi, asleep } = props;
   const host = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    if (host.current) terminals.view(workspace, pane).mount(host.current);
-  }, [workspace, pane]);
+    // Asleep, the pane has no terminal (hibernation.ts); showing the tab builds one, repainted from the daemon.
+    if (asleep) {
+      terminals.sleep(workspace, pane);
+      return;
+    }
+    const woke = terminals.existing(workspace, pane) === undefined;
+    const view = terminals.view(workspace, pane);
+    if (host.current) view.mount(host.current);
+    if (woke && visible && focused) view.focus();
+  }, [workspace, pane, asleep]);
   useEffect(() => {
     terminals.existing(workspace, pane)?.setVisible(visible);
-  }, [workspace, pane, visible]);
+  }, [workspace, pane, visible, asleep]);
   // The bar under a Claude Code or Codex conversation takes its height from
   // the pane only while it has something to say.
   const status = statuses.value.get(viewKey(workspace, pane));
@@ -96,7 +113,15 @@ function PaneHost(props: { workspace: string; root: number; pane: number; visibl
   );
 }
 
-function TreeView(props: { workspace: string; root: number; tree: PaneTree; visible: boolean; focused: number; multi: boolean }) {
+function TreeView(props: {
+  workspace: string;
+  root: number;
+  tree: PaneTree;
+  visible: boolean;
+  focused: number;
+  multi: boolean;
+  asleep: boolean;
+}) {
   const { tree } = props;
   if (tree.kind === "leaf") {
     return (
@@ -108,6 +133,7 @@ function TreeView(props: { workspace: string; root: number; tree: PaneTree; visi
         visible={props.visible}
         focused={props.focused === tree.id}
         multi={props.multi}
+        asleep={props.asleep}
       />
     );
   }
@@ -217,6 +243,7 @@ export function TerminalArea() {
                 visible={visible}
                 focused={visible && focused ? focused.id : tab.root.id}
                 multi={tab.panes.length > 1}
+                asleep={!visible && !awake.value.has(tabKey(w.name, tab.root.id))}
               />
             </div>
           );

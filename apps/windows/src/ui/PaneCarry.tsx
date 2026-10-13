@@ -13,10 +13,11 @@
 import { signal } from "@preact/signals";
 import * as api from "../api";
 import { trackDrag, type Point } from "../drag";
+import { holds } from "../hibernation";
 import { anchorPane, detachPane, movePane } from "../paneActions";
 import { dropSide, landingRect, type DropSide, type Rect } from "../paneMoves";
 import { tabKey } from "../state";
-import { activeTab, focusedPane, select } from "../store";
+import { activeTab, focusedPane, gui, select } from "../store";
 import { GripDots } from "./paneIcons";
 
 /** What is being carried: where the pointer is, the pane's text, and where it would land. */
@@ -43,9 +44,10 @@ function aim(at: Point, carried: number | null): { target: number; side: DropSid
   return null;
 }
 
-/** The tab of the workspace under a point, in the row above the terminal or, with vertical tabs, in the sidebar. */
+/** The tab of the workspace under a point: in the row above the terminal or, with the tabs in the sidebar alone, in the sidebar. */
 function tabUnder(at: Point, workspace: string): number | null {
-  for (const element of document.querySelectorAll<HTMLElement>(".strip .tab[data-tab], .sidebar .tab-row[data-row]")) {
+  const rows = gui.value.verticalTabs ? ".sidebar .tab-row[data-row]" : ".strip .tab[data-tab]";
+  for (const element of document.querySelectorAll<HTMLElement>(rows)) {
     if (!contains(element.getBoundingClientRect(), at)) continue;
     const [name, root] = (element.dataset.tab ?? element.dataset.row ?? "").split("\u0000");
     return name === workspace ? Number(root) : null;
@@ -63,6 +65,8 @@ function carry(event: PointerEvent, workspace: string, root: number, pane: numbe
   };
   trackDrag(event, {
     start(at) {
+      // The drag can land on any tab: none is put to sleep meanwhile.
+      holds.value += 1;
       paneCarry.value = { pane, x: at.x, y: at.y, text: "", landing: null };
       // The card shows the pane's text rather than a picture of it: the daemon already holds it.
       void api
@@ -87,6 +91,7 @@ function carry(event: PointerEvent, workspace: string, root: number, pane: numbe
       paneCarry.value = { pane, x: at.x, y: at.y, text: paneCarry.value?.text ?? "", landing: landing?.rect ?? null };
     },
     end(at, dropped) {
+      holds.value -= 1;
       cancelSpring();
       const target = landing;
       landing = null;

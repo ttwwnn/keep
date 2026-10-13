@@ -181,3 +181,51 @@ body.resizing-rows * {
   font: 7px/1.25 var(--mono);
   white-space: pre;
 }
+
+/* ------------------------------------------------------------ the size of a pane, said while it changes */
+
+.size-badge {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 5;
+  padding: 4px 8px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font: 500 12px var(--ui-font);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 250ms ease-out;
+}
+
+.size-badge.shown {
+  opacity: 1;
+  transition-duration: 80ms;
+}
+
+/* The panes not holding the keyboard step back under a veil of the terminal's
+   own ground rather than by fading the terminal itself, so the size and the
+   handle stay as bright as they are. */
+.split .pane:not(.focused) .term-root {
+  opacity: 1;
+}
+
+.split .pane::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: var(--ground);
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.split .pane:not(.focused)::after {
+  opacity: 0.5;
+}

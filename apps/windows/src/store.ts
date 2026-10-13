@@ -37,6 +37,7 @@ import { defaultsOf, planStatusLine, restoreDefaults } from "./claudeSettings";
 import { chooseClaudeEffort, chooseClaudeModel, chooseCodex, type PickerIO } from "./pickers";
 import { baseName, isPathTitle, rootTabs, type RootTab } from "./layout";
 import { defaultState, normalizeState, tabKey, type GuiState, type RestoreWorkspace } from "./state";
+import { refile } from "./hibernation";
 import { arrangeTabs, heirsOf, insertBefore, memberIds, pruneOrders, substitute } from "./tabOrder";
 import { TerminalManager, viewKey, type TermView } from "./terminals";
 import { DEFAULT_FONT_SIZE, applyPalette, defaultFontFamily, onSystemAppearanceChange, resolvePalette } from "./theme";
@@ -361,6 +362,7 @@ function reconcile(list: WorkspaceInfo[], previous: WorkspaceInfo[]): void {
   for (const [workspace, found] of heirs) {
     for (const [root, heir] of found) {
       const from = tabKey(workspace, root);
+      refile(from, tabKey(workspace, heir));
       if (named[from] === undefined) continue;
       named[tabKey(workspace, heir)] ??= named[from];
       delete named[from];
@@ -528,8 +530,38 @@ function guessSize(): { cols: number; rows: number } {
 
 // ------------------------------------------------------------------ reading Claude Code
 
-/** Read the screens of the panes running Claude Code or Codex. */
-function readScreens(): void {
+let readingScreens = false;
+
+/**
+ * Read the screens of the panes running Claude Code or Codex. A pane with no
+ * terminal — its tab is asleep (hibernation.ts) — is read off the daemon's
+ * own copy of its screen, so a conversation waiting on you is still seen
+ * waiting.
+ */
+async function readScreens(): Promise<void> {
+  if (readingScreens) return;
+  readingScreens = true;
+  try {
+    const unseen = new Map<string, string>();
+    await Promise.all(
+      workspaces.value.flatMap((w) =>
+        w.tabs
+          .filter((t) => !t.finished && isAiProgram(programOf(t.command, t.title)) && !terminals.existing(w.name, t.id))
+          .map((t) =>
+            api.preview(w.name, t.id).then(
+              (text) => void unseen.set(viewKey(w.name, t.id), text),
+              () => {},
+            ),
+          ),
+      ),
+    );
+    readScreensFrom(unseen);
+  } finally {
+    readingScreens = false;
+  }
+}
+
+function readScreensFrom(unseen: ReadonlyMap<string, string>): void {
   const nextActivities = new Map<string, ClaudeActivity>();
   const nextModes = new Map<string, ClaudeMode | null>();
   const forBar: BarInput[] = [];
@@ -542,7 +574,7 @@ function readScreens(): void {
       if (!isAiProgram(program)) continue;
       const key = viewKey(w.name, pane.id);
       const view = terminals.existing(w.name, pane.id);
-      const text = view?.screenText() ?? "";
+      const text = view ? view.screenText() : (unseen.get(key) ?? "");
       if (program === "codex") {
         const a = text ? readCodexActivity(text) : undefined;
         const kept = a ?? previousActivities.get(key);
@@ -1120,14 +1152,19 @@ async function renameByQuestion(workspace: string, tab: number): Promise<void> {
 export function finishTabName(workspace: string, tab: number, value: string | null, keyboard: "back" | "elsewhere"): void {
   editing.value = null;
   if (value !== null) renameTab(workspace, tab, value);
-  if (keyboard === "back") requestAnimationFrame(() => focusActive());
+  giveKeyboardBack(keyboard);
 }
 
 /** The same for a workspace's name. */
 export function finishWorkspaceName(workspace: string, value: string | null, keyboard: "back" | "elsewhere"): void {
   editing.value = null;
   if (value !== null) renameWorkspace(workspace, value);
-  if (keyboard === "back") requestAnimationFrame(() => focusActive());
+  giveKeyboardBack(keyboard);
+}
+
+/** A frame later, and not if another name was opened meanwhile: it has the keyboard now. */
+function giveKeyboardBack(keyboard: "back" | "elsewhere"): void {
+  if (keyboard === "back") requestAnimationFrame(() => editing.value === null && focusActive());
 }
 
 // ------------------------------------------------------------------ where tabs are
@@ -1198,6 +1235,7 @@ export async function moveTabTo(workspace: string, tab: RootTab, to: string, bef
     const pairs = oldIds.length === newIds.length ? oldIds.map((id, i) => [id, newIds[i]] as const) : [];
     terminals.rekey(pairs.map(([from, now]) => ({ from: [workspace, from], to: [to, now] })));
     const keys = new Map(pairs.map(([from, now]) => [viewKey(workspace, from), viewKey(to, now)]));
+    refile(tabKey(workspace, root), tabKey(to, newRoot));
     const panes = new Map(pairs);
     batch(() => {
       activities.value = refiled(activities.value, keys);
@@ -1397,5 +1435,5 @@ export async function connect(): Promise<void> {
   if (active) select(active, activeTab.value?.root.id);
 
   setInterval(() => void refresh(), 1000);
-  setInterval(readScreens, 1000);
+  setInterval(() => void readScreens(), 1000);
 }
