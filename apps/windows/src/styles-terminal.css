@@ -1,0 +1,30 @@
+/* What the terminal's behaviours show (docs/paridade-windows.md, fatia
+   `terminal`): the box a question shows the text it is about in, and the pane
+   a file is about to be dropped on. */
+
+.dialog-preview {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  max-height: 30vh;
+  overflow: auto;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--wash);
+  color: var(--ink);
+  font: 12px/1.4 var(--mono);
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
+
+/* The pane under a dragged file, which is where its path will be typed: a
+   ring in the ink, and the faintest wash, so the text stays readable. */
+.pane.drop-target::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 2px rgba(var(--ink-rgb), 0.5);
+  background: rgba(var(--ink-rgb), 0.04);
+}

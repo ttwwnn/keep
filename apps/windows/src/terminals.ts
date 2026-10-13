@@ -9,10 +9,10 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
-import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import * as api from "./api";
+import { activateAddress, installLinks, type LinkEnv, type Links } from "./links";
+import { isSafePaste, pasteQuestion, preparePaste, type Question } from "./paste";
 
 export interface TerminalLook {
   fontFamily: string;
@@ -28,6 +28,14 @@ export interface TerminalHooks {
   /** A key reached the terminal: false keeps it from the program. */
   key(view: TermView, event: KeyboardEvent): boolean;
   focused(view: TermView): void;
+  /** Where the pane's program works, for the paths it prints; empty when unknown. */
+  cwd(view: TermView): string;
+  /** The person's home folder. */
+  home(): string;
+  /** A quiet line for the person. */
+  say(message: string): void;
+  /** A question the person answers before something goes on: true on the yes. */
+  confirm(question: Question): Promise<boolean>;
 }
 
 export const viewKey = (workspace: string, tab: number) => `${workspace}\u0000${tab}`;
@@ -35,15 +43,13 @@ export const viewKey = (workspace: string, tab: number) => `${workspace}\u0000${
 /** What a repaint is written after: home and clear, as the terminal client does. */
 const CLEAR_FOR_REPAINT = "\x1b[H\x1b[2J";
 
-function openLink(uri: string) {
-  void openUrl(uri).catch(() => {});
-}
-
 export class TermView {
   readonly key: string;
   readonly element: HTMLDivElement;
   readonly term: Terminal;
   readonly search: SearchAddon;
+  /** The addresses and paths in its text that can be clicked. */
+  readonly links: Links;
   private readonly fit: FitAddon;
   private webgl: WebglAddon | null = null;
   private attachment: api.Attachment | null = null;
@@ -69,6 +75,13 @@ export class TermView {
     this.key = viewKey(workspace, tab);
     this.element = document.createElement("div");
     this.element.className = "term-root";
+    const linkEnv: LinkEnv = {
+      flavor: platform.name === "windows" ? "windows" : "posix",
+      mac: platform.name === "macos",
+      cwd: () => hooks.cwd(this),
+      home: () => hooks.home(),
+      say: (message) => hooks.say(message),
+    };
     this.term = new Terminal({
       fontFamily: look.fontFamily,
       fontSize: look.fontSize,
@@ -85,16 +98,28 @@ export class TermView {
         platform.name === "windows" ? { backend: "conpty", buildNumber: platform.windowsBuild || undefined } : undefined,
       macOptionIsMeta: platform.name === "macos",
       rescaleOverlappingGlyphs: true,
-      linkHandler: { activate: (_event, uri) => openLink(uri) },
+      // A link the program drew (OSC 8) opens as an address in the text does.
+      linkHandler: { activate: (event, uri) => activateAddress(event, uri, linkEnv) },
     });
+    this.links = installLinks(this.term, this.element, linkEnv);
     this.fit = new FitAddon();
     this.search = new SearchAddon({ highlightLimit: 2000 });
     this.term.loadAddon(this.fit);
     this.term.loadAddon(this.search);
-    this.term.loadAddon(new WebLinksAddon((_event, uri) => openLink(uri)));
     const unicode = new Unicode11Addon();
     this.term.loadAddon(unicode);
     this.term.unicode.activeVersion = "11";
+
+    // The browser's own paste (Ctrl+V, Shift+Insert) goes the way any paste does.
+    this.element.addEventListener(
+      "paste",
+      (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.paste(event.clipboardData?.getData("text/plain") ?? "");
+      },
+      true,
+    );
 
     this.term.attachCustomKeyEventHandler((event) => this.hooks.key(this, event));
     this.term.onData((data) => void this.attachment?.input(data).catch(() => {}));
@@ -279,9 +304,25 @@ export class TermView {
     return lines.join("\n");
   }
 
-  /** Text as if pasted: bracketed when the program asked for it. */
+  /**
+   * Text as if pasted: bracketed when the program asked for it, stripped of
+   * the control characters a tty acts on, and asked about first when it would
+   * run itself (a line break where the program did not ask for bracketed
+   * paste — see paste.ts).
+   */
   paste(text: string): void {
-    this.term.paste(text);
+    if (text === "") return;
+    if (isSafePaste(text, this.term.modes.bracketedPasteMode)) {
+      this.term.paste(preparePaste(text));
+      return;
+    }
+    void this.hooks.confirm(pasteQuestion(text)).then((yes) => {
+      if (yes) this.term.paste(preparePaste(text));
+      // A beat later: the key that answered is still being delivered, and
+      // WebKit hands its keypress to whatever has the focus by then — the
+      // terminal, which would send an Escape to the program.
+      setTimeout(() => this.focus(), 50);
+    });
   }
 
   /** Bytes as if typed. */
@@ -300,6 +341,7 @@ export class TermView {
     if (this.disposed) return;
     this.disposed = true;
     this.observer.disconnect();
+    this.links.dispose();
     this.release();
     this.disableWebgl();
     this.term.dispose();

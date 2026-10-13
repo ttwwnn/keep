@@ -30,7 +30,7 @@ import { SPLIT_DOWN, SPLIT_RIGHT } from "../api";
 import { imagePasteSequence } from "../keys";
 import { viewKey } from "../terminals";
 import { AiStatusBar } from "./AiStatusBar";
-import { openMenu } from "./common";
+import { openMenuAt, type MenuItem } from "./common";
 import * as icon from "./icons";
 
 function PaneHost(props: { workspace: string; root: number; pane: number; visible: boolean; focused: boolean; multi: boolean }) {
@@ -56,7 +56,7 @@ function PaneHost(props: { workspace: string; root: number; pane: number; visibl
         onContextMenu={(e) => {
           const view = terminals.existing(workspace, pane);
           const selection = view?.term.hasSelection() ?? false;
-          openMenu(e, [
+          const items: (MenuItem | "separator")[] = [
             { label: "Copiar", hint: "Ctrl+C", disabled: !selection, action: () => void copySelection() },
             {
               label: "Colar",
@@ -76,7 +76,13 @@ function PaneHost(props: { workspace: string; root: number; pane: number; visibl
             ...(multi
               ? (["separator", { label: "Fechar este painel…", danger: true, action: () => void closePane(workspace, pane) }] as const)
               : []),
-          ]);
+          ];
+          // A file or folder under the pointer has its own items, in front, once the file system says it is there.
+          e.preventDefault();
+          e.stopPropagation();
+          const { clientX, clientY } = e;
+          const ofPath = view ? Promise.race([view.links.menu(e), new Promise<[]>((resolve) => setTimeout(() => resolve([]), 400))]) : Promise.resolve([]);
+          void ofPath.then((path) => openMenuAt(clientX, clientY, path.length > 0 ? [...path, "separator", ...items] : items));
         }}
       />
       {status && <AiStatusBar workspace={workspace} root={root} pane={pane} status={status} />}

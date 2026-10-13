@@ -404,6 +404,7 @@ function DialogView() {
       >
         <h2>{current.title}</h2>
         {current.message && <p>{current.message}</p>}
+        {current.preview !== undefined && <pre class="dialog-preview">{current.preview}</pre>}
         {current.fields?.map((field, i) => (
           <FieldInput
             key={field.name}

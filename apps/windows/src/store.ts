@@ -108,6 +108,8 @@ export interface DialogField {
 export interface Dialog {
   title: string;
   message?: string;
+  /** Text the question is about, shown as it is in a box under the message. */
+  preview?: string;
   fields?: DialogField[];
   buttons: DialogButton[];
   resolve: (result: { button: string; values: Record<string, string> } | null) => void;
@@ -1050,6 +1052,23 @@ export async function start(options: StartOptions): Promise<void> {
       focused: (view) => {
         const tab = (tabsByWorkspace.value.get(view.workspace) ?? []).find((t) => t.panes.some((p) => p.id === view.tab));
         if (tab) focusPane(view.workspace, tab.root.id, view.tab);
+      },
+      cwd: (view) => workspaces.value.find((w) => w.name === view.workspace)?.tabs.find((t) => t.id === view.tab)?.cwd ?? "",
+      home: () => info.value?.home ?? "",
+      say: (message) => say(message),
+      // A second question waits for no one: it is a no.
+      confirm: async (q) => {
+        if (dialog.value) return false;
+        const answered = await ask({
+          title: q.title,
+          message: q.message,
+          preview: q.preview,
+          buttons: [
+            { label: q.no, value: "no" },
+            { label: q.yes, value: "yes", primary: true },
+          ],
+        });
+        return answered?.button === "yes";
       },
     },
     { name: startup.platform, windowsBuild: startup.windowsBuild },
