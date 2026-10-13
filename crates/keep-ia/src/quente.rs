@@ -774,18 +774,18 @@ const RECONECTAR_CHROME: &str = "/mcp reconnect claude-in-chrome";
 const CACHE_LOGIN_MS: u64 = 32_000;
 
 fn comando_na_caixa(tela: &str, comando: &str) -> bool {
-    let linhas: Vec<_> = tela.lines().collect();
+    let (linhas, limpas) = crate::tela::as_duas(tela);
     let Some(i) = linhas.iter().rposition(|l| l.trim().starts_with('❯')) else { return false };
-    if linhas[i].trim().strip_prefix('❯').map(str::trim) != Some(comando) {
+    if limpas[i].trim().strip_prefix('❯').map(str::trim) != Some(comando) {
         return false;
     }
     // Uma primeira linha vazia não significa que um rascunho multilinha está vazio.
-    for linha in &linhas[i + 1..] {
+    for (linha, limpa) in linhas[i + 1..].iter().zip(&limpas[i + 1..]) {
         let linha = linha.trim();
         if linha.chars().take_while(|c| matches!(c, '─' | '▔' | '━')).count() >= 8 {
             return true;
         }
-        if !linha.is_empty() {
+        if !limpa.trim().is_empty() {
             return false;
         }
     }
@@ -810,6 +810,14 @@ fn concluir_reconexao(chave: &str, dono: &str, desde: u64) -> Result<(), String>
 /// Claude para renovar somente essa conexão, sem inferência, /exit ou login.
 /// Nunca digita em aba trabalhando, diálogo, rascunho ou vínculo deduzido.
 pub fn reconectar_chrome() -> Vec<(String, String)> {
+    // A rodada periódica e o diagnóstico podem chegar juntos. Só um deles
+    // pode digitar; a trava se solta inclusive quando o processo termina.
+    let Ok(trava) = std::fs::OpenOptions::new().create(true).truncate(false).write(true)
+        .open(caminhos::abas().join("chrome-reconexao.trava")) else { return vec![] };
+    if trava.try_lock().is_err() {
+        return vec![];
+    }
+    let _trava = TravaDoEstado(trava);
     let pendentes: Vec<_> = le_estado()
         .abas
         .into_iter()
@@ -865,7 +873,7 @@ pub fn reconectar_chrome() -> Vec<(String, String)> {
         else {
             continue;
         };
-        let Ok(tela) = crate::daemon::tela(&r.ws, r.aba) else {
+        let Ok(tela) = crate::daemon::tela_vt(&r.ws, r.aba) else {
             continue;
         };
         if !comando_na_caixa(&tela, "") {
@@ -879,7 +887,7 @@ pub fn reconectar_chrome() -> Vec<(String, String)> {
         }
         let visto =
             crate::daemon::espera(Duration::from_secs(3), Duration::from_millis(100), || {
-                let tela = crate::daemon::tela(&r.ws, r.aba).ok()?;
+                let tela = crate::daemon::tela_vt(&r.ws, r.aba).ok()?;
                 comando_na_caixa(&tela, RECONECTAR_CHROME).then_some(())
             });
         if visto.is_some() && teclado.manda(b"\r").is_ok() {

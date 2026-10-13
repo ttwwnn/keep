@@ -411,6 +411,7 @@ fn confirmar_uma_reconexao_nao_apaga_outra_troca() {
 fn comando_precisa_estar_na_caixa_sem_rascunho_junto() {
     let regua = "────────────────";
     assert!(comando_na_caixa(&format!("histórico\n❯ \n{regua}\nrodapé"), ""));
+    assert!(comando_na_caixa(&format!("❯ \x1b[2mTry edit\x1b[0m\n\x1b[2m{regua}\x1b[0m"), ""));
     assert!(comando_na_caixa(&format!("histórico\n❯ {RECONECTAR_CHROME}\n{regua}\nrodapé"), RECONECTAR_CHROME));
     assert!(!comando_na_caixa(&format!("❯ {RECONECTAR_CHROME}\nresposta\n❯ meu rascunho\n{regua}"), RECONECTAR_CHROME));
     assert!(!comando_na_caixa(&format!("❯ \nsegunda linha do rascunho\n{regua}"), ""));
