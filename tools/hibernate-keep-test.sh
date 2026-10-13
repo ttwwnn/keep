@@ -598,8 +598,14 @@ else
             break
         fi
     done
-    say "  (full screen entered: ${WAY:-by no way})"
-    sleep 4
+    # How it holds, half a second at a time: a window the system takes out
+    # of full screen again says so here.
+    HELD=
+    for _ in 1 2 3 4 5 6 7 8; do
+        HELD="$HELD$("$FULLSCREEN" "$APP_NAME" state 2>/dev/null)"
+        sleep 0.5
+    done
+    say "  (full screen entered: ${WAY:-by no way}; held: $HELD)"
     FULL=$(grep -aoE "layout +$WS/[0-9]+ grid [0-9]+x[0-9]+" "$WORK/app.log" | tail -1 | awk '{print $NF}')
     check "the window is in full screen" "1" "$("$FULLSCREEN" "$APP_NAME" state 2>/dev/null)"
     check "with a bigger grid" "yes" "$([ "$FULL" != "$WINDOWED" ] && echo yes || echo no)"
@@ -716,6 +722,8 @@ left_by() { grep -lx "$1" "$ORPHANS"/*/app 2>/dev/null | wc -l | tr -d ' '; }
 LEFT=$(left_by "$GONE_APP")
 check "the clients it showed left their directories, saying whose they were" "yes" \
     "$([ "$LEFT" -gt 0 ] && echo yes || echo no)"
+# The first app's trace kept: the next launch starts the log afresh.
+cp "$WORK/app.log" "$WORK/app-first.log" 2>/dev/null
 launch KEEP_HYDRATED_LIMIT=$LIMIT
 until_true 20 '[ "$(left_by "$GONE_APP")" = 0 ]'
 check "the next Keep sweeps them ($LEFT) at launch" "0" "$(left_by "$GONE_APP")"
