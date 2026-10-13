@@ -55,8 +55,23 @@ const SLIDE_OUT: Duration = Duration::from_millis(150);
 const STEP: Duration = Duration::from_millis(8);
 /// The longest the first show waits for the page to have drawn, so that the panel does not come in blank.
 const PAGE_WAIT: Duration = Duration::from_secs(3);
+/// How many times, and how far apart, the panel asks again for the keyboard when the system has not given it.
+const FOCUS_TRIES: u32 = 4;
+const FOCUS_EVERY: Duration = Duration::from_millis(80);
 /// The window's colour before the page has painted: Keep's dark ground, as the main window's.
 const GROUND: Color = Color(0x28, 0x2c, 0x34, 0xff);
+
+/// A line in the app's log about the panel, for what is worth finding there afterwards.
+fn note(line: &str) {
+    crate::settings::log(&format!("janela rápida: {line}"));
+}
+
+/// The same, only while somebody is looking into how the panel moves: one line a step would fill the log.
+fn trace(line: &str) {
+    if std::env::var_os("KEEP_QUICK_TRACE").is_some() {
+        note(line);
+    }
+}
 
 // ------------------------------------------------------------------ where the panel goes
 
@@ -235,6 +250,165 @@ pub fn parse(text: &str) -> Result<Shortcut, String> {
     Ok(shortcut)
 }
 
+// ------------------------------------------------------------------ the key where it was seen
+
+/// The scancode — what every PC keyboard sends from a key, whatever the layout — of the keys whose virtual key is
+/// the layout's to say: the letters, the digits and the punctuation. The rest (the function keys, the arrows, the
+/// space) are one virtual key on every layout.
+fn scancode(code: Code) -> Option<u32> {
+    Some(match code {
+        Code::Backquote => 0x29,
+        Code::Minus => 0x0C,
+        Code::Equal => 0x0D,
+        Code::BracketLeft => 0x1A,
+        Code::BracketRight => 0x1B,
+        Code::Backslash => 0x2B,
+        Code::Semicolon => 0x27,
+        Code::Quote => 0x28,
+        Code::Comma => 0x33,
+        Code::Period => 0x34,
+        Code::Slash => 0x35,
+        Code::Digit1 => 0x02,
+        Code::Digit2 => 0x03,
+        Code::Digit3 => 0x04,
+        Code::Digit4 => 0x05,
+        Code::Digit5 => 0x06,
+        Code::Digit6 => 0x07,
+        Code::Digit7 => 0x08,
+        Code::Digit8 => 0x09,
+        Code::Digit9 => 0x0A,
+        Code::Digit0 => 0x0B,
+        Code::KeyQ => 0x10,
+        Code::KeyW => 0x11,
+        Code::KeyE => 0x12,
+        Code::KeyR => 0x13,
+        Code::KeyT => 0x14,
+        Code::KeyY => 0x15,
+        Code::KeyU => 0x16,
+        Code::KeyI => 0x17,
+        Code::KeyO => 0x18,
+        Code::KeyP => 0x19,
+        Code::KeyA => 0x1E,
+        Code::KeyS => 0x1F,
+        Code::KeyD => 0x20,
+        Code::KeyF => 0x21,
+        Code::KeyG => 0x22,
+        Code::KeyH => 0x23,
+        Code::KeyJ => 0x24,
+        Code::KeyK => 0x25,
+        Code::KeyL => 0x26,
+        Code::KeyZ => 0x2C,
+        Code::KeyX => 0x2D,
+        Code::KeyC => 0x2E,
+        Code::KeyV => 0x2F,
+        Code::KeyB => 0x30,
+        Code::KeyN => 0x31,
+        Code::KeyM => 0x32,
+        _ => return None,
+    })
+}
+
+const DIGITS: [Code; 10] = [
+    Code::Digit0,
+    Code::Digit1,
+    Code::Digit2,
+    Code::Digit3,
+    Code::Digit4,
+    Code::Digit5,
+    Code::Digit6,
+    Code::Digit7,
+    Code::Digit8,
+    Code::Digit9,
+];
+
+const LETTERS: [Code; 26] = [
+    Code::KeyA,
+    Code::KeyB,
+    Code::KeyC,
+    Code::KeyD,
+    Code::KeyE,
+    Code::KeyF,
+    Code::KeyG,
+    Code::KeyH,
+    Code::KeyI,
+    Code::KeyJ,
+    Code::KeyK,
+    Code::KeyL,
+    Code::KeyM,
+    Code::KeyN,
+    Code::KeyO,
+    Code::KeyP,
+    Code::KeyQ,
+    Code::KeyR,
+    Code::KeyS,
+    Code::KeyT,
+    Code::KeyU,
+    Code::KeyV,
+    Code::KeyW,
+    Code::KeyX,
+    Code::KeyY,
+    Code::KeyZ,
+];
+
+/// The key `global-hotkey` registers as a given Windows virtual key. Its table is the US layout's: `Backquote` is
+/// `VK_OEM_3`, `KeyQ` is `VK_Q`, whichever keys those are on the keyboard at hand.
+fn code_of_virtual_key(vk: u32) -> Option<Code> {
+    Some(match vk {
+        0x30..=0x39 => DIGITS[(vk - 0x30) as usize],
+        0x41..=0x5A => LETTERS[(vk - 0x41) as usize],
+        0xBA => Code::Semicolon,
+        0xBB => Code::Equal,
+        0xBC => Code::Comma,
+        0xBD => Code::Minus,
+        0xBE => Code::Period,
+        0xBF => Code::Slash,
+        0xC0 => Code::Backquote,
+        0xDB => Code::BracketLeft,
+        0xDC => Code::Backslash,
+        0xDD => Code::BracketRight,
+        0xDE => Code::Quote,
+        _ => return None,
+    })
+}
+
+/// The shortcut as the layout in use has its key. What the page records is the key's place on the keyboard (the
+/// Mac's `kVK_ANSI_Grave` is the same: the place, not the character), and Windows registers a virtual key, which is
+/// the layout's: the key left of the 1 is `VK_OEM_3` on a US keyboard and another on a German one, and the key that
+/// `global-hotkey`'s table calls `Backquote` is the Ö of a German keyboard. So the place is turned into the virtual
+/// key the layout gives it (`virtual_key_at`, by scancode) and that into the key of the table that stands for it.
+/// A key the layout gives no virtual key the table knows is left as it was.
+fn on_layout(shortcut: Shortcut, virtual_key_at: impl Fn(u32) -> Option<u32>) -> Shortcut {
+    let key = scancode(shortcut.key)
+        .and_then(virtual_key_at)
+        .and_then(code_of_virtual_key)
+        .unwrap_or(shortcut.key);
+    if key == shortcut.key {
+        shortcut
+    } else {
+        Shortcut::new(Some(shortcut.mods), key)
+    }
+}
+
+/// The virtual key the keyboard layout in use gives to a scancode.
+#[cfg(windows)]
+fn virtual_key_at(scancode: u32) -> Option<u32> {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{MapVirtualKeyW, MAPVK_VSC_TO_VK};
+    // SAFETY: a plain query of the system with two numbers.
+    let vk = unsafe { MapVirtualKeyW(scancode, MAPVK_VSC_TO_VK) };
+    (vk != 0).then_some(vk)
+}
+
+/// Where the keys are registered by the key's place already (the Mac's), there is nothing to turn.
+#[cfg(not(windows))]
+fn virtual_key_at(_scancode: u32) -> Option<u32> {
+    None
+}
+
+/// What the system is handed for a shortcut.
+fn registerable(shortcut: Shortcut) -> Shortcut {
+    on_layout(shortcut, virtual_key_at)
+}
+
 // ------------------------------------------------------------------ what is kept
 
 /// `quick.json`: what the person chose, and only that, so that a default that changes later reaches
@@ -298,6 +472,8 @@ pub struct Quick {
     slide: AtomicU64,
     /// The panel has had the focus since it came in, so that losing it is a click away and not the noise of arriving.
     focused: AtomicBool,
+    /// Where the panel was last sent to rest, for the scripted check to compare with where it is.
+    rest: Mutex<Option<Rect>>,
     /// The page has drawn (`quick_ready`).
     page: Mutex<bool>,
     page_ready: Condvar,
@@ -329,6 +505,8 @@ impl Quick {
 #[serde(rename_all = "camelCase")]
 pub struct Placement {
     pub frame: Rect,
+    /// Where it was last sent to rest: the frame, once it has got there.
+    pub rest: Option<Rect>,
     pub always_on_top: bool,
     pub focused: bool,
     pub shown: bool,
@@ -373,6 +551,7 @@ pub fn status(app: &AppHandle) -> Status {
                 width: size.width,
                 height: size.height,
             },
+            rest: quick.rest.lock().ok().and_then(|rest| *rest),
             always_on_top: w.is_always_on_top().unwrap_or(false),
             focused: w.is_focused().unwrap_or(false),
             shown: w.is_visible().unwrap_or(false),
@@ -414,7 +593,7 @@ const REFUSED: &str = "O sistema não liberou esse atalho; em geral outro progra
 /// A shortcut free right now, from the list: tried by taking it and giving it back.
 fn free_alternative(app: &AppHandle, not: &str) -> Option<String> {
     ALTERNATIVES.iter().filter(|text| **text != not).find_map(|text| {
-        let shortcut = parse(text).ok()?;
+        let shortcut = registerable(parse(text).ok()?);
         let global = app.global_shortcut();
         if global.on_shortcut(shortcut, |_, _, _| {}).is_err() {
             return None;
@@ -440,6 +619,7 @@ fn apply(app: &AppHandle, text: &str) {
         }
     };
     let wanted = canonical(&shortcut);
+    let shortcut = registerable(shortcut);
     let outcome = register(app, shortcut);
     let suggestion = if outcome.is_err() {
         free_alternative(app, &wanted)
@@ -476,7 +656,8 @@ pub fn setup(app: &AppHandle) {
 /// Change the shortcut. The new one is taken before the old one is let go, so that one the system refuses leaves
 /// things as they were.
 pub fn set_shortcut(app: &AppHandle, text: &str) -> Result<Status, String> {
-    let shortcut = parse(text)?;
+    let chosen = parse(text)?;
+    let shortcut = registerable(chosen);
     let quick = app.state::<Quick>();
     {
         let _choosing = quick
@@ -490,10 +671,7 @@ pub fn set_shortcut(app: &AppHandle, text: &str) -> Result<Status, String> {
             .registered;
         if held != Some(shortcut) {
             register(app, shortcut).map_err(|why| {
-                crate::settings::log(&format!(
-                    "janela rápida: atalho {} recusado: {why}",
-                    canonical(&shortcut)
-                ));
+                crate::settings::log(&format!("janela rápida: atalho {} recusado: {why}", canonical(&chosen)));
                 REFUSED.to_string()
             })?;
             if let Some(old) = held {
@@ -504,7 +682,7 @@ pub fn set_shortcut(app: &AppHandle, text: &str) -> Result<Status, String> {
             .setting
             .lock()
             .map_err(|_| "o atalho está sendo trocado".to_string())?;
-        setting.wanted = canonical(&shortcut);
+        setting.wanted = canonical(&chosen);
         setting.registered = Some(shortcut);
         setting.problem = None;
         setting.suggestion = None;
@@ -512,7 +690,7 @@ pub fn set_shortcut(app: &AppHandle, text: &str) -> Result<Status, String> {
     }
     if let Some(path) = config_file(app) {
         let config = Config {
-            shortcut: Some(canonical(&shortcut)),
+            shortcut: Some(canonical(&chosen)),
         };
         write_config(&path, &config).map_err(|e| format!("{e:#}"))?;
     }
@@ -527,7 +705,7 @@ fn window(app: &AppHandle) -> Result<WebviewWindow, String> {
     if let Some(window) = app.get_webview_window(LABEL) {
         return Ok(window);
     }
-    WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("index.html?quick=1".into()))
+    let window = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("index.html?quick=1".into()))
         .title("Keep — janela rápida")
         .decorations(false)
         .resizable(false)
@@ -543,7 +721,9 @@ fn window(app: &AppHandle) -> Result<WebviewWindow, String> {
         .visible(false)
         .focused(false)
         .build()
-        .map_err(|e| format!("não deu para criar a janela rápida: {e}"))
+        .map_err(|e| format!("não deu para criar a janela rápida: {e}"))?;
+    soften_the_frame(&window);
+    Ok(window)
 }
 
 /// The screens of the computer, the primary one first.
@@ -580,6 +760,84 @@ fn pointer_screen(app: &AppHandle) -> Result<Screen, String> {
     screen_at(&list, pointer.x, pointer.y).ok_or_else(|| "sem monitor para a janela rápida".to_string())
 }
 
+// ------------------------------------------------------------------ what only Windows does
+
+/// The system's frame around a borderless window with a shadow (which is how the panel gets its edge, as on the
+/// Mac): Windows 11 rounds its corners and draws a hairline round it. The Mac's panel is flush with the top of the
+/// screen, which a rounded top corner would leave a gap at, and the shadow is edge enough: no rounding, no hairline.
+/// Where the system does not know these (before Windows 11) it says no, which is no matter.
+#[cfg(windows)]
+fn soften_the_frame(window: &WebviewWindow) {
+    use windows_sys::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
+    };
+    let Ok(hwnd) = window.hwnd() else { return };
+    let size = std::mem::size_of::<u32>() as u32;
+    let corners = DWMWCP_DONOTROUND as u32;
+    let border = DWMWA_COLOR_NONE;
+    // SAFETY: the handle is the panel's own, and each value is a `u32` of the size said.
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd.0,
+            DWMWA_WINDOW_CORNER_PREFERENCE as u32,
+            (&raw const corners).cast(),
+            size,
+        );
+        DwmSetWindowAttribute(hwnd.0, DWMWA_BORDER_COLOR as u32, (&raw const border).cast(), size);
+    }
+}
+
+#[cfg(not(windows))]
+fn soften_the_frame(_window: &WebviewWindow) {}
+
+/// The panel on the virtual desktop the person is on (the Mac's `canJoinAllSpaces`). A window belongs to one
+/// desktop, the one it was made on; shown again from another it would come up there, out of sight, and the keyboard
+/// shortcut would seem to do nothing. The person is where the window in front is, so the panel is moved to that
+/// window's desktop. Nothing happens, and nothing is lost, where there is no such thing (one desktop, an older
+/// Windows) or the window in front is the shell's own.
+#[cfg(windows)]
+fn follow_the_desktop(window: &WebviewWindow) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED,
+    };
+    use windows::Win32::UI::Shell::{IVirtualDesktopManager, VirtualDesktopManager};
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+    let Ok(own) = window.hwnd() else { return };
+    // SAFETY: calls into the system with handles that came from it. COM is started on this thread for the call, and
+    // the object is let go of before it is stopped.
+    unsafe {
+        // Started already on this thread, in another way, is no reason not to go on: only what was started here is stopped.
+        let started = CoInitializeEx(None, COINIT_MULTITHREADED).is_ok();
+        let moved = (|| -> windows::core::Result<()> {
+            let manager: IVirtualDesktopManager = CoCreateInstance(&VirtualDesktopManager, None, CLSCTX_ALL)?;
+            let desktop = manager.GetWindowDesktopId(HWND(GetForegroundWindow()))?;
+            manager.MoveWindowToDesktop(own, &desktop)
+        })();
+        if let Err(error) = moved {
+            trace(&format!("não levou a janela para a área de trabalho em uso: {error}"));
+        }
+        if started {
+            CoUninitialize();
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn follow_the_desktop(_window: &WebviewWindow) {}
+
+/// Put the panel at a place and a size, in that order. A window moved to a screen of another pixel density is
+/// resized by the system to keep its logical size, and it is the physical size asked for that has to stay.
+fn place(window: &WebviewWindow, x: i32, y: i32, size: Rect) -> Result<(), String> {
+    window
+        .set_position(PhysicalPosition::new(x, y))
+        .map_err(|e| e.to_string())?;
+    window
+        .set_size(PhysicalSize::new(size.width, size.height))
+        .map_err(|e| e.to_string())
+}
+
 /// A move of the panel's top edge from `from` to `to`, at the column `x`.
 struct Motion {
     x: i32,
@@ -587,6 +845,9 @@ struct Motion {
     to: i32,
     duration: Duration,
     curve: Curve,
+    /// Where the panel is to be once it has got there, size included: a screen of another density on the way
+    /// may have changed it.
+    rest: Option<Rect>,
     /// A panel that goes out ends with its window hidden.
     then_hide: bool,
 }
@@ -603,13 +864,19 @@ fn slide(app: AppHandle, window: WebviewWindow, id: u64, motion: Motion) {
                 break;
             }
             let y = lerp(motion.from, motion.to, motion.curve.at(t));
+            trace(&format!("passo t={t:.2} y={y}"));
             let _ = window.set_position(PhysicalPosition::new(motion.x, y));
             std::thread::sleep(STEP);
         }
         if !current() {
             return;
         }
-        let _ = window.set_position(PhysicalPosition::new(motion.x, motion.to));
+        let _ = match motion.rest {
+            Some(rest) => place(&window, rest.x, rest.y, rest),
+            None => window
+                .set_position(PhysicalPosition::new(motion.x, motion.to))
+                .map_err(|e| e.to_string()),
+        };
         if motion.then_hide {
             let _ = window.hide();
             let _ = window.emit_to(LABEL, "quick-hidden", ());
@@ -621,11 +888,20 @@ fn show_now(app: &AppHandle) -> Result<(), String> {
     let quick = app.state::<Quick>();
     let made = app.get_webview_window(LABEL).is_none();
     let window = window(app)?;
-    // The first time the page has to load; coming in blank and filling in is worse than a moment more.
+    let mut rest = resting(&pointer_screen(app)?);
+    // The first time the page has to load, and it lays itself out at the size it finds: so it finds the panel's,
+    // and the panel does not come in blank and then fill in — which is worse than a moment more.
     if made {
+        place(&window, rest.x, above(rest), rest)?;
+        let asked = Instant::now();
         quick.wait_for_page();
+        note(&format!(
+            "aberta pela primeira vez; a página ficou pronta em {} ms",
+            asked.elapsed().as_millis()
+        ));
+        // The pointer may have gone to another screen meanwhile.
+        rest = resting(&pointer_screen(app)?);
     }
-    let rest = resting(&pointer_screen(app)?);
     // A panel still on its way out turns round where it is, if it is on the same screen.
     let from = match window.outer_position() {
         Ok(at) if window.is_visible().unwrap_or(false) && at.x == rest.x => at.y,
@@ -635,27 +911,50 @@ fn show_now(app: &AppHandle) -> Result<(), String> {
     // Before the window can be heard from: the focus it is about to be given is not yet a click away.
     quick.focused.store(false, Ordering::SeqCst);
     quick.visible.store(true, Ordering::SeqCst);
-    let fail = |e: tauri::Error| e.to_string();
-    window
-        .set_size(PhysicalSize::new(rest.width, rest.height))
-        .map_err(fail)?;
-    window.set_position(PhysicalPosition::new(rest.x, from)).map_err(fail)?;
-    window.show().map_err(fail)?;
+    if let Ok(mut last) = quick.rest.lock() {
+        *last = Some(rest);
+    }
+    place(&window, rest.x, from, rest)?;
+    follow_the_desktop(&window);
+    window.show().map_err(|e| e.to_string())?;
     // Again after showing: a window shown again can come back on the taskbar, or off the top.
     let _ = window.set_skip_taskbar(true);
     let _ = window.set_always_on_top(true);
     let _ = window.set_focus();
+    trace(&format!(
+        "entra em {rest:?}; com o foco logo depois: {}",
+        window.is_focused().unwrap_or(false)
+    ));
     let _ = window.emit_to(LABEL, "quick-shown", ());
+    ask_again_for_focus(app.clone(), window.clone(), id);
     let motion = Motion {
         x: rest.x,
         from,
         to: rest.y,
         duration: SLIDE_IN,
         curve: Curve::EASE_OUT,
+        rest: Some(rest),
         then_hide: false,
     };
     slide(app.clone(), window, id, motion);
     Ok(())
+}
+
+/// A system that is slow to give the keyboard — Windows will not hand it to a process that was not the last to be
+/// given input — is asked again a few times, rather than leaving a panel in view that cannot be typed into.
+fn ask_again_for_focus(app: AppHandle, window: WebviewWindow, id: u64) {
+    std::thread::spawn(move || {
+        let quick = app.state::<Quick>();
+        for _ in 0..FOCUS_TRIES {
+            std::thread::sleep(FOCUS_EVERY);
+            // Given, or the panel has been shown or put away since: nothing to ask.
+            if quick.focused.load(Ordering::SeqCst) || quick.slide.load(Ordering::SeqCst) != id {
+                return;
+            }
+            trace("pede o foco de novo");
+            let _ = window.set_focus();
+        }
+    });
 }
 
 fn hide_now(app: &AppHandle) {
@@ -674,6 +973,7 @@ fn hide_now(app: &AppHandle) {
                 to: gone,
                 duration: SLIDE_OUT,
                 curve: Curve::EASE_IN,
+                rest: None,
                 then_hide: true,
             };
             slide(app.clone(), window, id, motion);
@@ -691,6 +991,7 @@ pub fn toggle(app: &AppHandle) -> Result<bool, String> {
         .turn
         .lock()
         .map_err(|_| "a janela rápida está ocupada".to_string())?;
+    trace(&format!("alternar: em vista {}", quick.visible.load(Ordering::SeqCst)));
     if quick.visible.load(Ordering::SeqCst) {
         hide_now(app);
         Ok(false)
@@ -704,6 +1005,7 @@ pub fn toggle(app: &AppHandle) -> Result<bool, String> {
 fn dismiss(app: &AppHandle) {
     let quick = app.state::<Quick>();
     let Ok(_turn) = quick.turn.lock() else { return };
+    trace(&format!("dispensar: em vista {}", quick.visible.load(Ordering::SeqCst)));
     if quick.visible.load(Ordering::SeqCst) {
         hide_now(app);
     }
@@ -728,8 +1030,16 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
     let app = window.app_handle();
     let quick = app.state::<Quick>();
     match event {
-        WindowEvent::Focused(true) => quick.focused.store(true, Ordering::SeqCst),
+        WindowEvent::Focused(true) => {
+            trace("recebeu o foco");
+            quick.focused.store(true, Ordering::SeqCst);
+        }
         WindowEvent::Focused(false) => {
+            trace(&format!(
+                "perdeu o foco (em vista: {}, tinha o foco: {})",
+                quick.visible.load(Ordering::SeqCst),
+                quick.focused.load(Ordering::SeqCst)
+            ));
             // Not the focus that never came (a system that would not give it) but one that was had and is gone.
             if quick.visible.load(Ordering::SeqCst) && quick.focused.swap(false, Ordering::SeqCst) {
                 let app = app.clone();
@@ -1011,6 +1321,148 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A layout as the virtual keys it gives to scancodes, the rest as the US layout has them.
+    fn layout(changes: &'static [(u32, u32)]) -> impl Fn(u32) -> Option<u32> {
+        move |sc| {
+            if let Some((_, vk)) = changes.iter().find(|(s, _)| *s == sc) {
+                return Some(*vk);
+            }
+            // The US layout, for the keys these tests ask about.
+            Some(match sc {
+                0x29 => 0xC0,
+                0x15 => 0x59,
+                0x2C => 0x5A,
+                0x10 => 0x51,
+                0x1E => 0x41,
+                0x02 => 0x31,
+                0x0C => 0xBD,
+                _ => return None,
+            })
+        }
+    }
+
+    #[test]
+    fn on_the_layout_the_default_is_the_key_left_of_the_one() {
+        let default = parse(DEFAULT_SHORTCUT).unwrap();
+        // US, and ABNT2 as far as is known: the key at that place is the table's `Backquote`.
+        assert_eq!(on_layout(default, layout(&[])), default);
+        // German: the key at that place is `VK_OEM_5`, which the table calls `Backslash`; `Backquote` there would
+        // be the Ö.
+        let german = on_layout(default, layout(&[(0x29, 0xDC)]));
+        assert_eq!(canonical(&german), "Control+Backslash");
+    }
+
+    #[test]
+    fn on_the_layout_a_letter_is_the_one_at_its_place_not_the_one_it_types() {
+        let q = parse("Alt+KeyQ").unwrap();
+        // AZERTY: the key at the Q's place types A.
+        let azerty = layout(&[(0x10, 0x41), (0x1E, 0x51)]);
+        assert_eq!(canonical(&on_layout(q, &azerty)), "Alt+KeyA");
+        assert_eq!(canonical(&on_layout(parse("Alt+KeyA").unwrap(), &azerty)), "Alt+KeyQ");
+        // QWERTZ: Y and Z trade places.
+        let qwertz = layout(&[(0x15, 0x5A), (0x2C, 0x59)]);
+        assert_eq!(
+            canonical(&on_layout(parse("Control+KeyY").unwrap(), &qwertz)),
+            "Control+KeyZ"
+        );
+        assert_eq!(
+            canonical(&on_layout(parse("Control+KeyZ").unwrap(), &qwertz)),
+            "Control+KeyY"
+        );
+    }
+
+    #[test]
+    fn on_the_layout_the_modifiers_and_the_unremapped_keys_stay() {
+        let by_layout = layout(&[(0x29, 0xDC)]);
+        let shortcut = parse("Control+Alt+Shift+Super+Backquote").unwrap();
+        let turned = on_layout(shortcut, &by_layout);
+        assert_eq!(turned.mods, shortcut.mods);
+        // Function keys, the space and the arrows are one virtual key on every layout.
+        for text in ["F12", "Control+Space", "Alt+ArrowUp", "Control+Enter"] {
+            let shortcut = parse(text).unwrap();
+            assert_eq!(on_layout(shortcut, &by_layout), shortcut, "{text}");
+        }
+        // A key the layout does not say, or says as one the table has no key for, is left as it was.
+        let digit = parse("Control+Digit2").unwrap();
+        assert_eq!(on_layout(digit, layout(&[])), digit);
+        let odd = parse("Control+Backquote").unwrap();
+        assert_eq!(on_layout(odd, layout(&[(0x29, 0xDF)])), odd);
+        assert_eq!(on_layout(odd, |_| None), odd);
+    }
+
+    #[test]
+    fn every_key_that_has_a_scancode_comes_back_as_itself_on_the_us_layout() {
+        // The two tables are inverse where the US layout has them: no key is turned into another by a layout that
+        // changes nothing.
+        let us = |sc: u32| {
+            [
+                Code::Backquote,
+                Code::Minus,
+                Code::Equal,
+                Code::BracketLeft,
+                Code::BracketRight,
+                Code::Backslash,
+            ]
+            .into_iter()
+            .chain([Code::Semicolon, Code::Quote, Code::Comma, Code::Period, Code::Slash])
+            .chain(DIGITS)
+            .chain(LETTERS)
+            .find(|code| scancode(*code) == Some(sc))
+            .and_then(|code| {
+                Some(match code {
+                    Code::Backquote => 0xC0,
+                    Code::Minus => 0xBD,
+                    Code::Equal => 0xBB,
+                    Code::BracketLeft => 0xDB,
+                    Code::BracketRight => 0xDD,
+                    Code::Backslash => 0xDC,
+                    Code::Semicolon => 0xBA,
+                    Code::Quote => 0xDE,
+                    Code::Comma => 0xBC,
+                    Code::Period => 0xBE,
+                    Code::Slash => 0xBF,
+                    digit if DIGITS.contains(&digit) => 0x30 + DIGITS.iter().position(|d| *d == digit)? as u32,
+                    letter => 0x41 + LETTERS.iter().position(|l| *l == letter)? as u32,
+                })
+            })
+        };
+        for code in [
+            Code::Backquote,
+            Code::Slash,
+            Code::Quote,
+            Code::Digit0,
+            Code::Digit7,
+            Code::KeyA,
+            Code::KeyZ,
+            Code::KeyM,
+        ] {
+            let shortcut = Shortcut::new(Some(Modifiers::CONTROL), code);
+            assert_eq!(on_layout(shortcut, us), shortcut, "{code}");
+        }
+    }
+
+    #[test]
+    fn no_two_keys_share_a_scancode() {
+        let mut seen = std::collections::HashSet::new();
+        for code in [
+            Code::Backquote,
+            Code::Minus,
+            Code::Equal,
+            Code::BracketLeft,
+            Code::BracketRight,
+            Code::Backslash,
+        ]
+        .into_iter()
+        .chain([Code::Semicolon, Code::Quote, Code::Comma, Code::Period, Code::Slash])
+        .chain(DIGITS)
+        .chain(LETTERS)
+        {
+            let sc = scancode(code).unwrap_or_else(|| panic!("{code} sem scancode"));
+            assert!(seen.insert(sc), "{code} repete o scancode {sc:#x}");
+        }
+        assert_eq!(seen.len(), 11 + 10 + 26);
+    }
+
     #[test]
     fn the_state_is_read_as_it_is_and_never_touched() {
         let dir = std::env::temp_dir().join(format!("keep-quick-look-{}", std::process::id()));
@@ -1045,6 +1497,7 @@ mod tests {
             visible: false,
             window: Some(Placement {
                 frame: rect(0, 0, 10, 4),
+                rest: Some(rect(0, 0, 10, 6)),
                 always_on_top: true,
                 focused: false,
                 shown: true,
@@ -1053,6 +1506,7 @@ mod tests {
         let json = serde_json::to_value(&status).unwrap();
         assert_eq!(json["window"]["alwaysOnTop"], true);
         assert_eq!(json["window"]["frame"]["width"], 10);
+        assert_eq!(json["window"]["rest"]["height"], 6);
         assert_eq!(json["problem"], "x");
         assert!(json["suggestion"].is_null());
     }

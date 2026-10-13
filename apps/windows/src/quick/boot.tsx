@@ -26,10 +26,10 @@ import { ContextMenu } from "../ui/common";
 import { quickLook, quickReady } from "./api";
 import { installQuickInput, openQuickMenu, quickKey } from "./keys";
 import { wearTheState } from "./look";
-import { guessGrid, quickTabOf } from "./tab";
+import { guessGrid, nextShell, quickTabOf, type Shell } from "./tab";
 
-/** The tab of the daemon's quick workspace the panel shows; null until the daemon has said. */
-const tab = signal<number | null>(null);
+/** The shell the panel shows, a tab of the daemon's quick workspace; null until the daemon has said. */
+const shell = signal<Shell | null>(null);
 /** Whether the panel is in view: one that is not draws nothing and does not keep asking the daemon. */
 const shown = signal(false);
 /** What to say over the terminal when the daemon does not answer. */
@@ -50,7 +50,8 @@ function look(): TerminalLook {
   };
 }
 
-const current = (): TermView | undefined => (tab.value === null ? undefined : terminals.existing(QUICK_WORKSPACE, tab.value));
+const current = (): TermView | undefined =>
+  shell.value === null ? undefined : terminals.existing(QUICK_WORKSPACE, shell.value.id);
 
 /** The terminal gets the keyboard once the panel has its own: a frame later, after the layout. */
 function focusTerminal(): void {
@@ -91,9 +92,12 @@ async function settleOnce(): Promise<void> {
     const id = quickTabOf(await api.listAll()) ?? (await makeTab());
     const wasDown = trouble.value !== null;
     trouble.value = null;
-    if (tab.value !== id) tab.value = id;
-    // Only the panel's tab keeps a terminal: the one whose shell ended is let go.
-    terminals.prune(new Set([viewKey(QUICK_WORKSPACE, id)]));
+    // A terminal whose shell ended is let go, even where the daemon gave its number to the shell that took its place.
+    const deadHere = terminals.existing(QUICK_WORKSPACE, id)?.ended ?? false;
+    // Only the panel's tab keeps a terminal.
+    terminals.prune(deadHere ? new Set() : new Set([viewKey(QUICK_WORKSPACE, id)]));
+    const next = nextShell(shell.value, id, deadHere);
+    if (next !== shell.value) shell.value = next;
     if (wasDown) terminals.reattach();
   } catch (error) {
     trouble.value = String(error);
@@ -103,19 +107,20 @@ async function settleOnce(): Promise<void> {
 }
 
 function QuickApp() {
-  const id = tab.value;
+  const id = shell.value?.id ?? null;
+  const born = shell.value?.born ?? 0;
   const visible = shown.value;
   const host = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     if (id === null || !host.current) return;
     terminals.view(QUICK_WORKSPACE, id).mount(host.current);
-  }, [id]);
+  }, [id, born]);
   useEffect(() => {
     if (id === null) return;
     // Out of view it gives up its WebGL context, as a tab out of sight does.
     terminals.existing(QUICK_WORKSPACE, id)?.setVisible(visible);
     if (visible) focusTerminal();
-  }, [id, visible]);
+  }, [id, born, visible]);
   return (
     <div class="quick-shell">
       <div ref={host} class="quick-host" onContextMenu={(event) => openQuickMenu(event, current())} />
@@ -128,8 +133,6 @@ function QuickApp() {
     </div>
   );
 }
-
-const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
 export async function bootQuick(): Promise<void> {
   const root = document.getElementById("app")!;
@@ -179,9 +182,8 @@ export async function bootQuick(): Promise<void> {
     setInterval(() => {
       if (shown.value) void settle();
     }, 1000);
-    // Drawn: the first showing was waiting for this, so that the panel does not come in blank.
-    await nextFrame();
-    await nextFrame();
+    // The first showing was waiting for this, so that the panel does not come in blank. Not for a frame to be drawn:
+    // a window out of view draws none, and waiting for one would wait for the showing itself.
     await quickReady();
   } catch (error) {
     root.className = "fatal";

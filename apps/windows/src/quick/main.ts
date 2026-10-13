@@ -7,7 +7,7 @@ import { signal } from "@preact/signals";
 import { registerCommand } from "../commands";
 import { isMac, log, say } from "../store";
 import { quickSetShortcut, quickStatus, quickToggle, type QuickStatus } from "./api";
-import { quickShortcut } from "./chord";
+import { quickAsMac, quickShortcut } from "./chord";
 import { refusalNotice } from "./shortcut";
 
 /** The drop-down terminal as the app last told it. */
@@ -46,6 +46,7 @@ export function toggleQuick(): void {
 
 /** Once, as the window opens: the palette's command, and a word if the shortcut did not come through. */
 export function bindQuick(): void {
+  quickAsMac.value = isMac.value;
   registerCommand("quickWindow", { run: toggleQuick });
   void refreshQuick().then((status) => {
     if (status && !status.registered) say(refusalNotice(status, isMac.value), 25);

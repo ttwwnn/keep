@@ -18,6 +18,8 @@ export interface QuickStatus {
   /** The window as it stands; null until it is first asked for. */
   window: {
     frame: { x: number; y: number; width: number; height: number };
+    /** Where it was last sent to rest: the frame, once it has got there. */
+    rest: { x: number; y: number; width: number; height: number } | null;
     alwaysOnTop: boolean;
     focused: boolean;
     shown: boolean;

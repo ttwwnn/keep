@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TabInfo, WorkspaceInfo } from "../api";
-import { guessGrid, quickTabOf } from "./tab";
+import { guessGrid, nextShell, quickTabOf } from "./tab";
 
 const tab = (id: number, finished = false): TabInfo => ({
   id,
@@ -47,5 +47,26 @@ describe("the grid a new tab starts at", () => {
 
   it("has room for a shell in a box not measured yet", () => {
     expect(guessGrid(0, 0, 16)).toEqual({ cols: 20, rows: 5 });
+  });
+});
+
+describe("which terminal the panel shows", () => {
+  it("builds the first one for the first tab", () => {
+    expect(nextShell(null, 3, false)).toEqual({ id: 3, born: 1 });
+  });
+
+  it("keeps the terminal it has while the tab is the same and alive", () => {
+    const shell = { id: 3, born: 1 };
+    expect(nextShell(shell, 3, false)).toBe(shell);
+  });
+
+  it("builds another for another tab", () => {
+    expect(nextShell({ id: 3, born: 1 }, 4, false)).toEqual({ id: 4, born: 2 });
+  });
+
+  it("builds another when the number came back with a dead terminal on it", () => {
+    // The shell ended, the daemon emptied the workspace and counted from one again: the new tab is number 1, as the old one was.
+    expect(nextShell({ id: 1, born: 1 }, 1, true)).toEqual({ id: 1, born: 2 });
+    expect(nextShell({ id: 1, born: 7 }, 1, true)).toEqual({ id: 1, born: 8 });
   });
 });
