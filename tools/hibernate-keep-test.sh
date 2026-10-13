@@ -572,8 +572,26 @@ elif [ "$("$FULLSCREEN" "$APP_NAME" state 2>/dev/null)" = "" ]; then
     say "  skip  the window cannot be put in full screen from here"
 else
     WINDOWED=$(grid 7)
-    "$FULLSCREEN" "$APP_NAME" on >/dev/null 2>&1
-    until_true 20 '[ "$("$FULLSCREEN" "$APP_NAME" state 2>/dev/null)" = 1 ]'
+    # In front for this, as a person's own window is when it goes full
+    # screen: the window server leaves one behind where it is. Through the
+    # accessibility tree, then View > Enter Full Screen, then ⌃⌘F, until one
+    # takes; the way that did is said.
+    osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" \
+        >/dev/null 2>&1
+    sleep 1
+    WAY=
+    for way in ax menu keys; do
+        case $way in
+            ax) "$FULLSCREEN" "$APP_NAME" on >/dev/null 2>&1 ;;
+            menu) "$AXPRESS" "$APP_NAME" menu View "Enter Full Screen" >/dev/null 2>&1 ;;
+            keys) "$SENDKEY" "$APP_PID" key 3 cmd ctrl >/dev/null 2>&1 ;;      # ⌃⌘F
+        esac
+        if until_true 10 '[ "$("$FULLSCREEN" "$APP_NAME" state 2>/dev/null)" = 1 ]'; then
+            WAY=$way
+            break
+        fi
+    done
+    say "  (full screen entered: ${WAY:-by no way})"
     sleep 4
     FULL=$(grep -aoE "layout +$WS/[0-9]+ grid [0-9]+x[0-9]+" "$WORK/app.log" | tail -1 | awk '{print $NF}')
     check "the window is in full screen" "1" "$("$FULLSCREEN" "$APP_NAME" state 2>/dev/null)"
@@ -593,7 +611,13 @@ else
     check "tabs are let go of in full screen too" "yes" \
         "$([ "$(trace_count "pool +hibernating w[0-9]+ $WS/")" -gt "$HIB_BEFORE" ] && echo yes || echo no)"
     check "still $LIMIT clients under the app" "$LIMIT" "$(clients)"
-    "$FULLSCREEN" "$APP_NAME" off >/dev/null 2>&1
+    case $WAY in
+        menu) "$AXPRESS" "$APP_NAME" menu View "Exit Full Screen" >/dev/null 2>&1 ;;
+        keys) "$SENDKEY" "$APP_PID" key 3 cmd ctrl >/dev/null 2>&1 ;;
+        *) "$FULLSCREEN" "$APP_NAME" off >/dev/null 2>&1 ;;
+    esac
+    until_true 20 '[ "$("$FULLSCREEN" "$APP_NAME" state 2>/dev/null)" = 0 ]' ||
+        "$FULLSCREEN" "$APP_NAME" off >/dev/null 2>&1
     until_true 20 '[ "$("$FULLSCREEN" "$APP_NAME" state 2>/dev/null)" = 0 ]'
     sleep 3
 fi
