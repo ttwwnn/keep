@@ -122,6 +122,11 @@ while True:
     data = os.read(0, 256)
     if not data:
         break
+    # The test empties the file to start a new count; what came before is
+    # not carried into the next check.
+    mark = os.path.join(WORK, "bytes")
+    if raw and os.path.exists(mark) and os.path.getsize(mark) == 0:
+        raw = b""
     raw += data
     with open(os.path.join(WORK, "bytes"), "w") as f:
         f.write(raw.decode("utf-8", "replace").replace("\r", "<CR>").replace("\x1b", "<ESC>"))

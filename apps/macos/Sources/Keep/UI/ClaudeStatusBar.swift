@@ -12,8 +12,8 @@ import AppKit
 final class ClaudeStatusBar: NSView {
     /// Tall enough for its text at the terminal's zoom.
     static var height: CGFloat { (ClaudeStatusBar.fontSize + 13).rounded() }
-    /// Readable: the size of the terminal's own text, zoom included.
-    static var fontSize: CGFloat { 13 * CGFloat(GhosttyApp.shared.zoomLevel) }
+    /// The size and face of a tab's name in the sidebar, zoom included.
+    static var fontSize: CGFloat { 12.5 * CGFloat(GhosttyApp.shared.zoomLevel) }
 
     /// A level was picked from the effort menu (`low` … `max`).
     var onEffort: ((String) -> Void)?
@@ -61,7 +61,7 @@ final class ClaudeStatusBar: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not supported") }
 
-    private static var font: NSFont { NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular) }
+    private static var font: NSFont { GhosttyApp.shared.tabNameFont }
 
     private static func chip(id: String) -> NSButton {
         let button = NSButton(title: "", target: nil, action: nil)

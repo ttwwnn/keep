@@ -12,6 +12,8 @@
 		1A4DF695AB0229E7D445A48A /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ADD16A5C6AADA495B3C279A /* main.swift */; };
 		1D448336142D0DABA8D8D0A8 /* SidebarHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21F9A16ACB41B05219BCFCA5 /* SidebarHost.swift */; };
 		A1C0FFEE0000000000000003 /* UsageFooter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0FFEE0000000000000004 /* UsageFooter.swift */; };
+		A1C0FFEE0000000000000005 /* MemoryMeter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0FFEE0000000000000006 /* MemoryMeter.swift */; };
+		A1C0FFEE0000000000000007 /* BatteryIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0FFEE0000000000000008 /* BatteryIndicator.swift */; };
 		1DB5C2ADB8A13CF62A60771D /* TerminalText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B045B3D1F2B2D78B7D298AB /* TerminalText.swift */; };
 		301FC7FCBC5FCEE57D947FFA /* Daemon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B1FC2433A269BA7AA8510FD /* Daemon.swift */; };
 		37E566353DB718B0FE901831 /* WorkspaceSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05581E4C489CBFCB9EE0FC63 /* WorkspaceSidebar.swift */; };
@@ -62,6 +64,8 @@
 		1FDC62FD5F9E5BB0275F688A /* TabContentContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabContentContainer.swift; sourceTree = "<group>"; };
 		21F9A16ACB41B05219BCFCA5 /* SidebarHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarHost.swift; sourceTree = "<group>"; };
 		A1C0FFEE0000000000000004 /* UsageFooter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageFooter.swift; sourceTree = "<group>"; };
+		A1C0FFEE0000000000000006 /* MemoryMeter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryMeter.swift; sourceTree = "<group>"; };
+		A1C0FFEE0000000000000008 /* BatteryIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatteryIndicator.swift; sourceTree = "<group>"; };
 		26C7493E188242FF1E50B5D4 /* KeepWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepWindow.swift; sourceTree = "<group>"; };
 		2C6200092D4D21F2BB040D2A /* DaemonPoller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DaemonPoller.swift; sourceTree = "<group>"; };
 		3519A6ACCC0D876A65383EF4 /* TabStripView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabStripView.swift; sourceTree = "<group>"; };
@@ -128,6 +132,8 @@
 				B6571C8EA2DC4DE2201268BA /* QuickTerminal.swift */,
 				21F9A16ACB41B05219BCFCA5 /* SidebarHost.swift */,
 				A1C0FFEE0000000000000004 /* UsageFooter.swift */,
+				A1C0FFEE0000000000000006 /* MemoryMeter.swift */,
+				A1C0FFEE0000000000000008 /* BatteryIndicator.swift */,
 				C3E0FFEE0000000000000006 /* AccountMenu.swift */,
 				1FDC62FD5F9E5BB0275F688A /* TabContentContainer.swift */,
 				D4F0FFEF0000000000000104 /* ClaudeStatusBar.swift */,
@@ -298,6 +304,8 @@
 				455019EEBA12AFF62782ABC6 /* Session.swift in Sources */,
 				1D448336142D0DABA8D8D0A8 /* SidebarHost.swift in Sources */,
 				A1C0FFEE0000000000000003 /* UsageFooter.swift in Sources */,
+				A1C0FFEE0000000000000005 /* MemoryMeter.swift in Sources */,
+				A1C0FFEE0000000000000007 /* BatteryIndicator.swift in Sources */,
 				D10C70635824F4B9A739338F /* SidebarStateStore.swift in Sources */,
 				F320A7F6CECB057B2CB6333F /* Snapshots.swift in Sources */,
 				A1C0FFEE0000000000000001 /* AIUsage.swift in Sources */,

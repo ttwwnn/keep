@@ -22,6 +22,10 @@ fn main() {
 
 fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // Chamado como ~/Applications/Ghostty.app (keep links): um link claude-cli:// para uma aba do Keep.
+    if keep_restauro::links::e_o_desvio() {
+        std::process::exit(keep_restauro::links::desvio(&args));
+    }
     let socket = keep_proto::socket_path();
 
     match args.first().map(String::as_str) {
@@ -93,6 +97,9 @@ fn run() -> Result<()> {
         // conversation left: see docs/ia.md. Answered in JSON, for the apps.
         Some("ia") => std::process::exit(keep_ia::cli::ia(&args[1..])),
         Some("worktrees") => std::process::exit(keep_ia::cli::worktrees(&args[1..])),
+        Some("restauro") => std::process::exit(keep_restauro::cli::main(&args[1..])),
+        Some("nova") => std::process::exit(keep_restauro::nova::cli(&args[1..])),
+        Some("links") => std::process::exit(keep_restauro::links::cli(&args[1..])),
         Some("-h" | "--help" | "help") => {
             print_help();
             Ok(())
@@ -327,6 +334,8 @@ USAGE
   keep new <name>      open a tab in <name>, without attaching
   keep ls              list workspaces and their tabs
   keep kill <name>     end a workspace
+  keep restauro …      the tabs back after a restart (the app runs it)
+  keep nova …          a new Claude conversation in a new tab (keep nova --help)
 
 IN A TAB
   ctrl-\\               detach, leaving everything running

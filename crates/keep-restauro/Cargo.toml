@@ -1,0 +1,20 @@
+[package]
+name = "keep-restauro"
+description = "As abas do Keep de volta depois de reiniciar o computador: workspaces, pastas, painéis, nomes e as conversas do Claude e do Codex"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+keep-ia = { version = "0.0.1", path = "../keep-ia" }
+keep-proto = { version = "0.0.1", path = "../keep-proto" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+keepd = { path = "../keepd" }
+tempfile = "3"

@@ -583,6 +583,7 @@ dependencies = [
  "crossterm",
  "keep-ia",
  "keep-proto",
+ "keep-restauro",
  "keep-vt",
  "portable-pty",
  "windows-sys",
@@ -616,6 +617,19 @@ name = "keep-proto"
 version = "0.0.1"
 dependencies = [
  "windows-sys",
+]
+
+[[package]]
+name = "keep-restauro"
+version = "0.0.1"
+dependencies = [
+ "keep-ia",
+ "keep-proto",
+ "keepd",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
