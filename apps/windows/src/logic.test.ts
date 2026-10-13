@@ -58,6 +58,13 @@ describe("chords", () => {
     expect(shortcut(key("Minus", { ctrlKey: true }))).toEqual({ kind: "zoomOut" });
     expect(shortcut(key("Digit0", { ctrlKey: true }))).toEqual({ kind: "zoomReset" });
     expect(shortcut(key("KeyD", { ctrlKey: true, shiftKey: true }))).toEqual({ kind: "splitRight" });
+    expect(shortcut(key("KeyB", { ctrlKey: true, shiftKey: true }))).toEqual({ kind: "toggleSidebar" });
+    expect(shortcut(key("KeyA", { ctrlKey: true, shiftKey: true }))).toEqual({ kind: "selectAll" });
+    expect(shortcut(key("KeyL", { ctrlKey: true, shiftKey: true }))).toEqual({ kind: "clearScreen" });
+    expect(shortcut(key("F11"))).toEqual({ kind: "fullscreen" });
+    expect(shortcut(key("Comma", { ctrlKey: true }))).toEqual({ kind: "settings" });
+    expect(shortcut(key("PageDown", { ctrlKey: true, altKey: true }))).toEqual({ kind: "nextWorkspace" });
+    expect(shortcut(key("PageUp", { ctrlKey: true, altKey: true }))).toEqual({ kind: "previousWorkspace" });
     expect(shortcut(key("KeyE", { ctrlKey: true, shiftKey: true }))).toEqual({ kind: "splitDown" });
     expect(shortcut(key("F2"))).toEqual({ kind: "rename" });
     expect(shortcut(key("KeyV", { ctrlKey: true }))).toEqual({ kind: "paste" });

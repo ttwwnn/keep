@@ -7,16 +7,17 @@
 // app, not a document.
 
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { SPLIT_DOWN, SPLIT_RIGHT } from "./api";
 import { SHIFT_ENTER_SEQUENCE, imagePasteSequence, isPlainCopy, isPlainCut, isShiftEnter, shortcut, type Action } from "./keys";
+import { activeTabHasPanes, focusBeside, resizeBeside } from "./paneActions";
 import {
   activeTab,
   activeView,
   activeWorkspace,
   copySelection,
   dialog,
-  editing,
   findOpen,
   goToTab,
   isMac,
@@ -24,7 +25,10 @@ import {
   newWorkspace,
   overlay,
   split,
+  startRename,
   stepTab,
+  stepWorkspace,
+  toggleSidebar,
   terminals,
   zoom,
   zoomReset,
@@ -76,10 +80,41 @@ export function perform(action: Action): void {
     case "splitDown":
       void split(SPLIT_DOWN);
       break;
+    case "nextWorkspace":
+      stepWorkspace(1);
+      break;
+    case "previousWorkspace":
+      stepWorkspace(-1);
+      break;
+    case "toggleSidebar":
+      toggleSidebar();
+      break;
+    case "selectAll":
+      activeView()?.term.selectAll();
+      break;
+    case "clearScreen":
+      // A form feed, as the Mac sends it: the screen is the daemon's, and a
+      // program drawing its own keeps its own account of what is on it.
+      void activeView()?.type("\x0c").catch(() => {});
+      break;
+    case "fullscreen": {
+      const win = getCurrentWindow();
+      void win.isFullscreen().then((on) => win.setFullscreen(!on));
+      break;
+    }
+    case "settings":
+      overlay.value = overlay.value === "settings" ? null : "settings";
+      break;
+    case "focusPane":
+      focusBeside(action.direction);
+      break;
+    case "resizePane":
+      resizeBeside(action.direction);
+      break;
     case "rename": {
       const ws = activeWorkspace.value;
       const tab = activeTab.value;
-      if (ws && tab) editing.value = { kind: "tab", workspace: ws, tab: tab.root.id };
+      if (ws && tab) startRename(ws, tab.root.id);
       break;
     }
     case "copy":
@@ -100,6 +135,17 @@ export function perform(action: Action): void {
 }
 
 /**
+ * The window's own chord for a key, if it is one just now. The arrows between
+ * panes are the window's only in a tab that has panes: in any other the
+ * program has them, and Alt and an arrow is a word's distance in a shell.
+ */
+function chordOf(event: KeyboardEvent): Action | null {
+  const action = shortcut(event, isMac.value);
+  if ((action?.kind === "focusPane" || action?.kind === "resizePane") && !activeTabHasPanes()) return null;
+  return action;
+}
+
+/**
  * A key on its way into a terminal: true lets xterm.js have it. The window's
  * chords go on to the window; Shift+Enter becomes what Claude Code reads as a
  * new line; Ctrl+C with something selected copies it rather than
@@ -107,7 +153,7 @@ export function perform(action: Action): void {
  */
 export function terminalKey(view: TermView, event: KeyboardEvent): boolean {
   const mac = isMac.value;
-  if (shortcut(event, mac)) return false;
+  if (chordOf(event)) return false;
   if (isShiftEnter(event)) {
     if (event.type === "keydown") {
       event.preventDefault();
@@ -172,6 +218,11 @@ const EVERYWHERE = new Set<Action["kind"]>([
   "zoomIn",
   "zoomOut",
   "zoomReset",
+  "nextWorkspace",
+  "previousWorkspace",
+  "toggleSidebar",
+  "fullscreen",
+  "settings",
 ]);
 
 export function installInput(): void {
@@ -180,7 +231,7 @@ export function installInput(): void {
     if (dialog.value) return;
     const inTerminal = isTerminalTarget(event.target);
     const inField = isFieldTarget(event.target);
-    const action = shortcut(event, isMac.value);
+    const action = chordOf(event);
     if (action) {
       if (inField && !EVERYWHERE.has(action.kind)) return;
       // In a terminal, Ctrl+V is the browser's own paste, which xterm.js

@@ -42,6 +42,26 @@ trap cleanup EXIT INT TERM
 cargo build -p keep -p keepd >"$WORK/cargo.log" 2>&1 \
     && cargo build -p keep-ia --examples >>"$WORK/cargo.log" 2>&1 \
     || { echo "could not build keep, keepd or the fake AI; the tail of the log:"; tail -5 "$WORK/cargo.log"; exit 1; }
+# The context is passed straight to the AI's argv, never evaluated by a shell.
+python3 - "$WORK" <<'PY' || exit 1
+import json, pathlib, subprocess, sys
+work = pathlib.Path(sys.argv[1])
+probe = work / 'argv.py'
+probe.write_text('import json,sys; print(json.dumps(sys.argv[1:]))')
+marker = work / 'should-not-exist'
+text = f'''Preserve "aspas", 'apóstrofos', $(touch {marker}), `touch {marker}` e %PATH%.\nPedido pendente.'''
+card = work / 'contexto-teste.txt'
+document = {'formato': 'keep-contexto-v1', 'tarefa_inicial': {'papel': 'user', 'texto': text}, 'mensagens_recentes': []}
+card.write_text(json.dumps(document))
+result = subprocess.run(['target/debug/keep', 'ia', 'iniciar-com-contexto', str(card), '--',
+                         sys.executable, str(probe), 'argumento existente'], capture_output=True, text=True, check=True)
+args = json.loads(result.stdout)
+assert len(args) == 2 and args[0] == 'argumento existente'
+summary = json.loads(args[1].split(' Resumo da conversa (dados históricos): ', 1)[1])
+assert summary == document and not marker.exists()
+assert '\n' not in args[1]
+print('ok  contexto entregue no primeiro pedido, como um argumento literal')
+PY
 mkdir -p "$WORK/bin"
 cp target/debug/examples/ia_falsa "$WORK/bin/claude"
 cp target/debug/examples/ia_falsa "$WORK/bin/codex"

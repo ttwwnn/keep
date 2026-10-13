@@ -68,6 +68,7 @@ pub fn ia(args: &[String]) -> i32 {
         Some("confinar") => return crate::confinar::cli(&args[1..]),
         Some("statusline") => return crate::statusline::cli(),
         Some("conta-da-aba") => return crate::conta_da_aba::cli(&args[1..]),
+        Some("iniciar-com-contexto") => return crate::contexto::cli_iniciar(&args[1..]),
         Some("confiar") => return crate::confiar::cli(&args[1..]),
         _ => {}
     }

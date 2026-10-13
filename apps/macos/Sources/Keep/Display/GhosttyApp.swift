@@ -684,6 +684,10 @@ final class GhosttyApp {
                         start: UnsafeRawPointer(raw).assumingMemoryBound(to: UInt8.self),
                         count: Int(action.action.open_url.len)),
                     as: UTF8.self)
+                // An address the program put behind its text (OSC 8) is
+                // whole; one read off the screen may be the clicked row's
+                // part of it.
+                let whole = action.action.open_url.kind == GHOSTTY_ACTION_OPEN_URL_KIND_OSC8
                 var surface: ghostty_surface_t?
                 if target.tag == GHOSTTY_TARGET_SURFACE { surface = target.target.surface }
                 DispatchQueue.main.async {
@@ -692,7 +696,30 @@ final class GhosttyApp {
                     let screen = view?.visibleText() ?? (lines: [], pointerRow: nil)
                     LinkOpener.open(
                         text, from: view?.currentDirectory,
-                        screen: screen.lines, near: screen.pointerRow)
+                        screen: screen.lines, near: screen.pointerRow,
+                        columns: view?.columns ?? 0, whole: whole)
+                }
+                return true
+
+            case GHOSTTY_ACTION_MOUSE_OVER_LINK:
+                // The link under the pointer, which the runtime names only
+                // while ⌘ is held over it. A plain click asks on purpose
+                // (`TerminalSurfaceView.linkUnder`), and the answer comes
+                // back inside that call, on the main thread; an empty one
+                // means the pointer left the link.
+                guard Thread.isMainThread, target.tag == GHOSTTY_TARGET_SURFACE,
+                    let surface = target.target.surface
+                else { return false }
+                let over = action.action.mouse_over_link
+                let link = over.url.map {
+                    String(
+                        decoding: UnsafeBufferPointer(
+                            start: UnsafeRawPointer($0).assumingMemoryBound(to: UInt8.self),
+                            count: Int(over.len)),
+                        as: UTF8.self)
+                } ?? ""
+                MainActor.assumeIsolated {
+                    GhosttyApp.shared.view(for: surface)?.noteLinkOver(link)
                 }
                 return true
 
@@ -989,6 +1016,7 @@ final class GhosttyApp {
         let body = """
             command = \(clientBinary)
             window-padding-y = 0
+            cursor-style = bar
             \(chosen)
             keybind = alt+backspace=text:\\x1b\\x7f
             keybind = shift+tab=text:\\x1b[Z

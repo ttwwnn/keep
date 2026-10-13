@@ -3,6 +3,9 @@ import Foundation
 enum Trace { static func log(_ a: String, _ b: String) {} }
 
 var failures = 0
+let log = (NSTemporaryDirectory() as NSString).appendingPathComponent("keep-link-log-\(getpid())")
+setenv("KEEP_LINK_LOG", log, 1)
+defer { try? FileManager.default.removeItem(atPath: log) }
 func check(_ name: String, _ got: String?, _ want: String?) {
     if got == want { print("ok   \(name)") } else {
         failures += 1
@@ -75,5 +78,64 @@ check("inside backticks, a full stop after", recovered(root + "/a.txt", ["Gravei
 check("relative, with the gutter", recovered("sub\\ dir/b.md:3", ["  ⎿  sub\\ dir/b.md:3"], nil, root), root + "/sub dir/b.md")
 check("nothing on screen", recovered(head, []), nil)
 check("nothing there to piece together", recovered("nope/x.txt", ["  nope/x.txt", "  y"], nil, root), nil)
+
+// Web addresses: a word read off the screen, and one Claude Code broke
+// across rows (it fills a row to two columns short of the edge and goes on,
+// indented, on the next).
+func address(_ word: String) -> String? { LinkOpener.webAddress(in: word)?.absoluteString }
+check("an address, the full stop after it left off", address("https://example.com/a."), "https://example.com/a")
+check("inside a markdown link", address("[docs](https://example.com/x)"), "https://example.com/x")
+check("brackets that belong to it", address("https://en.wikipedia.org/wiki/Foo_(bar)"), "https://en.wikipedia.org/wiki/Foo_(bar)")
+check("in quotes, a comma after", address("\"https://example.com/?q=1&b=2\","), "https://example.com/?q=1&b=2")
+check("www without a scheme", address("www.example.com.br/x"), "https://www.example.com.br/x")
+check("mail", address("mailto:alguem@example.com"), "mailto:alguem@example.com")
+check("a word that ends in a colon is no address", address("Nota:"), nil)
+check("a scheme with nothing after", address("https://"), nil)
+check("a host without a dot", address("http://foo"), nil)
+
+let columns = 60
+let link = "https://github.com/ttwwnn/keep/blob/main/apps/macos/Sources/Keep/Model/LinkOpener.swift?plain=1&utm_source=keep&utm_medium=terminal&utm_campaign=links#L120"
+let lead = "  o link é "
+let first = String(link.prefix(columns - 2 - lead.count))
+let second = String(link.dropFirst(first.count).prefix(columns - 4))
+let third = String(link.dropFirst(first.count + second.count))
+let broken = ["⏺ Pronto.", "", lead + first, "  " + second, "  " + third + " e também", "", "  Fim."]
+func around(_ text: String, _ lines: [String], _ row: Int? = nil) -> String? {
+    LinkOpener.webAddress(around: text, in: lines, near: row, columns: columns)?.absoluteString
+}
+check("an address over three rows, clicked on the first", around(first, broken, 2), link)
+check("the same, clicked on the middle row", around(second, broken, 3), link)
+check("the same, clicked on the last", around(third, broken, 4), link)
+check(
+    "an address that ends a row not full keeps clear of the next",
+    around("https://example.com/a", ["  veja https://example.com/a", "  Isso aqui"]),
+    "https://example.com/a")
+check(
+    "a full row before it, the address alone",
+    around("https://example.com/a", [String(repeating: "x", count: 58), "https://example.com/a"]),
+    "https://example.com/a")
+check("a word with no address near", around("Fim.", broken, 6), nil)
+check("without the width nothing is joined", LinkOpener.webAddress(around: second, in: broken, near: 3, columns: 0)?.absoluteString, nil)
+
+// What a click opens: the runtime's piece of the address made whole, unless
+// the program put the address behind its text and it arrived whole.
+func opened(_ body: () -> Bool) -> String? {
+    try? "".write(toFile: log, atomically: false, encoding: .utf8)
+    guard body() else { return nil }
+    return (try? String(contentsOfFile: log, encoding: .utf8))?.trimmingCharacters(in: .newlines)
+}
+check("the runtime's piece, made whole", opened { LinkOpener.open(first, from: nil, screen: broken, near: 2, columns: columns) }, link)
+check("an address that arrived whole, though the screen goes on past it", opened { LinkOpener.open(first, from: nil, screen: broken, near: 2, columns: columns, whole: true) }, first)
+check("a word the runtime missed, under a plain click", opened { LinkOpener.openRecoveredAddress(third, screen: broken, near: 4, columns: columns) }, link)
+check("a word with no address under a plain click", opened { LinkOpener.openRecoveredAddress("também", screen: broken, near: 4, columns: columns) }, nil)
+func plain(_ text: String, _ programHasMouse: Bool = false) -> String {
+    String(LinkOpener.plainClickMayOpen(text, programHasMouse: programHasMouse))
+}
+check("a plain click opens a web address", plain("https://example.com"), "true")
+check("a plain click opens a path", plain("/tmp/a.txt:3"), "true")
+check("a plain click opens a file address", plain("file:///tmp/a.txt"), "true")
+check("a plain click does not start an app by its address", plain("vscode://file/tmp/a"), "false")
+check("an address is the program's when it has the mouse", plain("https://example.com", true), "false")
+check("a path is still opened when the program has the mouse", plain("/tmp/a.txt:3", true), "true")
 _ = real
 exit(failures == 0 ? 0 : 1)

@@ -67,7 +67,7 @@ final class Session {
     private var aiHelperPresent = AIHelper.path != nil
     /// Tabs whose account the core is changing now: a second choice made
     /// meanwhile — a double click — is dropped rather than sent after it.
-    private var switching: Set<TabID> = []
+    private var switching: [TabID: String] = [:]
     /// Windows a login is being opened from, for the same reason.
     private var signingIn: Set<WindowID> = []
 
@@ -1109,21 +1109,25 @@ final class Session {
     private func switchAccount(
         _ id: TabID, to key: String, label: String, interrupting: Bool, from window: WindowID
     ) {
-        guard !switching.contains(id) else {
+        guard switching[id] == nil else {
             Trace.log("ia", "\(id) is being switched already; \(key) dropped")
             return
         }
-        switching.insert(id)
+        let title = tabName(id)
+        switching[id] = title
+        publish()
         Trace.log("ia", "switching \(id) to \(key)\(interrupting ? ", interrupting it" : "")")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let answer = AIHelper.switchAccount(
                 workspace: id.workspace, tab: id.root, to: key, interrupt: interrupting)
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.switching.remove(id)
+                self.switching.removeValue(forKey: id)
                 switch answer {
                 case .success(let done):
                     Trace.log("ia", "\(id) on \(key): \(done)")
+                    self.nameStore.preserveTab(id, title: title)
+                    self.refreshOpenLists()
                     self.aiAccounts.note(workspace: id.workspace, tab: id.root, key: key)
                     self.publish()
                     // What the tab runs on now — the account following the
@@ -1141,6 +1145,7 @@ final class Session {
                         self?.switchAccount(id, to: key, label: label, interrupting: true, from: window)
                     }
                 case .failure(let problem) where problem.reason == "precisa-login":
+                    self.nameStore.preserveTab(id, title: title)
                     // Not a failure: the core is waiting on a login of the
                     // account's own, in a tab it opened, and switches this
                     // one when that is through. That tab is where the person
@@ -1284,7 +1289,7 @@ final class Session {
     /// A tab's name as its row shows it, for a question about it.
     private func tabName(_ id: TabID) -> String {
         let tab = workspaces.first { $0.name == id.workspace }?.tabs.first { $0.id == id }
-        let title = nameStore.tab(id) ?? tab?.title ?? ""
+        let title = nameStore.tab(id) ?? switching[id] ?? tab?.title ?? ""
         return Self.plainTitle(title, fallback: "tab \(id.root)")
     }
 
@@ -1662,7 +1667,7 @@ final class Session {
     /// underneath — where a workspace is and what is running are read from
     /// it — so clearing the name hands the tab straight back to it.
     private func displayTitle(of tab: TabEntity) -> String {
-        nameStore.tab(tab.id) ?? tab.title
+        nameStore.tab(tab.id) ?? switching[tab.id] ?? tab.title
     }
 
     /// A typed name as it is kept: trimmed, and nothing at all when nothing

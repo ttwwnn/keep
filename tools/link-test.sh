@@ -4,7 +4,8 @@
 # LinkOpener.swift): absolute, relative to the shell's directory, `~`, a name
 # with a space, a trailing :line or :line:col, a folder, a file that is not
 # there, and a path pieced back from the screen when the runtime found only
-# part of it (broken across rows, spaces escaped). Built from that file alone: no app. Seconds.
+# part of it (broken across rows, spaces escaped); web addresses, pieced back
+# from rows Claude Code broke them across. Built from that file alone: no app. Seconds.
 #
 #   tools/link-test.sh             the check
 #   tools/link-test.sh --sabotage  and then the line suffix left in, rows
@@ -42,6 +43,31 @@ if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; 
 echo "sabotage: an escaped space ends the word"
 sed 's/|| (low >= 2 \&\& chars\[low - 2\] == "\\\\")//; s/|| (high > 0 \&\& chars\[high - 1\] == "\\\\")//' \
     "$SOURCE" > "$WORK/Sabotaged.swift"
+cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage did not apply"; exit 1; }
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
+echo "sabotage: an address broken across rows is never joined"
+sed 's/hit.line - index < 3 {/hit.line - index < 0 {/; s/index - hit.line < 3, isFull/index - hit.line < 0, isFull/' \
+    "$SOURCE" > "$WORK/Sabotaged.swift"
+cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage did not apply"; exit 1; }
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
+echo "sabotage: any row counts as full, so an address runs into the next sentence"
+sed 's/columns > 0 \&\& row.count >= columns - 3/columns > 0/' "$SOURCE" > "$WORK/Sabotaged.swift"
+cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage did not apply"; exit 1; }
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
+echo "sabotage: an address the program put behind its text is pieced together anyway"
+sed 's/if !whole, let longer/if let longer/' "$SOURCE" > "$WORK/Sabotaged.swift"
+cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage did not apply"; exit 1; }
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
+echo "sabotage: an address opened by a plain click though the program has the mouse"
+sed 's/return !programHasMouse \&\& \[/return [/' "$SOURCE" > "$WORK/Sabotaged.swift"
 cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage did not apply"; exit 1; }
 build "$WORK/Sabotaged.swift" || exit 1
 if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi

@@ -49,24 +49,7 @@ enum LinkOpener {
     static func recover(
         _ text: String, in lines: [String], near row: Int?, from directory: String?
     ) -> URL? {
-        guard !text.isEmpty else { return nil }
-        var hits: [(line: Int, start: Int, end: Int)] = []
-        for (index, line) in lines.enumerated() {
-            let chars = Array(line)
-            let wanted = Array(text)
-            guard chars.count >= wanted.count else { continue }
-            for start in 0...(chars.count - wanted.count)
-            where chars[start..<(start + wanted.count)].elementsEqual(wanted) {
-                hits.append((index, start, start + wanted.count))
-            }
-        }
-        if let row {
-            hits = hits.enumerated().sorted {
-                let a = abs($0.element.line - row), b = abs($1.element.line - row)
-                return a != b ? a < b : $0.offset < $1.offset
-            }.map(\.element)
-        }
-        for hit in hits {
+        for hit in hits(of: text, in: lines, near: row) {
             for candidate in candidates(lines, hit.line, hit.start, hit.end) {
                 if let url = resolve(candidate, from: directory) { return url }
             }
@@ -222,9 +205,18 @@ enum LinkOpener {
         return hand(file)
     }
 
+    /// What the runtime found under a click, opened: an address goes to the
+    /// app for it, anything else is a path looked for as above.
+    ///
+    /// An address the runtime read off the screen may be only the part of it
+    /// on the clicked row, Claude Code having carried the rest onto the next
+    /// one, so it is pieced back together from the screen first (`columns`
+    /// says how wide a full row is). One the program put behind its text
+    /// (OSC 8) arrives `whole` and is opened as it is.
     @discardableResult
     static func open(
-        _ text: String, from directory: String?, screen: [String] = [], near row: Int? = nil
+        _ text: String, from directory: String?, screen: [String] = [], near row: Int? = nil,
+        columns: Int = 0, whole: Bool = false
     ) -> Bool {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return false }
@@ -232,6 +224,9 @@ enum LinkOpener {
         if let url = URL(string: text), let scheme = url.scheme, scheme.count > 1 {
             if url.isFileURL {
                 return open(url.path, from: directory)
+            }
+            if !whole, let longer = webAddress(around: text, in: screen, near: row, columns: columns) {
+                return hand(longer)
             }
             return hand(url)
         }
@@ -242,6 +237,137 @@ enum LinkOpener {
             return false
         }
         return hand(file)
+    }
+
+    // MARK: - web addresses
+
+    /// Whether a plain click may open what the runtime found: a path, a web
+    /// or mail address. A program can put any address behind its text, and a
+    /// click meant to put the cursor somewhere should not start an app; that
+    /// takes ⌘-click, or the right button's "Abrir link".
+    ///
+    /// An address is left alone when the program has the mouse: the click is
+    /// the program's then, and one that takes the mouse and draws links opens
+    /// them itself — Claude Code in full screen opens any link on a plain
+    /// click in a terminal that calls itself ghostty, as this one does, and
+    /// opening it here too opened it twice. A bare path it does not open, so
+    /// that stays this app's.
+    static func plainClickMayOpen(_ text: String, programHasMouse: Bool) -> Bool {
+        guard let url = URL(string: text), let scheme = url.scheme?.lowercased(), scheme.count > 1
+        else { return true }
+        return !programHasMouse && ["http", "https", "mailto", "ftp", "file"].contains(scheme)
+    }
+
+    /// Where a web address starts inside a word. Only these: a word read off
+    /// the screen as `Nota:` would otherwise pass for one.
+    private static let addressStarts = ["https://", "http://", "ftp://", "mailto:", "www."]
+
+    /// The web address a word holds, or nil when it holds none: from where
+    /// the address starts to where the sentence takes over again — a full
+    /// stop, a comma, a closing quote, or the bracket of a markdown link.
+    static func webAddress(in word: String) -> URL? {
+        let lowered = word.lowercased()
+        guard let start = addressStarts.compactMap({ lowered.range(of: $0)?.lowerBound }).min()
+        else { return nil }
+        var text = String(word[start...])
+        let trailing = CharacterSet(charactersIn: "`'\".,;:!?>]}*")
+        while let last = text.unicodeScalars.last {
+            if trailing.contains(last) {
+                text.removeLast()
+            } else if last == ")",
+                text.filter({ $0 == ")" }).count > text.filter({ $0 == "(" }).count {
+                text.removeLast()
+            } else {
+                break
+            }
+        }
+        if text.lowercased().hasPrefix("www.") { text = "https://" + text }
+        guard let url = URL(string: text), let scheme = url.scheme?.lowercased() else { return nil }
+        if scheme == "mailto" { return text.count > "mailto:".count ? url : nil }
+        guard let host = url.host, host.contains(".") || host == "localhost" else { return nil }
+        return url
+    }
+
+    /// The web address around a word on the screen, joined across rows when
+    /// the program broke it there: Claude Code fills a row to its right edge
+    /// with an address too long for it and goes on, indented, on the next.
+    /// A row only continues on the next one when it is full — reaches within
+    /// a few columns of `columns` — so an address that merely ends a row
+    /// keeps clear of the sentence below it. `row` is roughly where the
+    /// pointer was; nil when no hit of the word holds an address.
+    static func webAddress(
+        around text: String, in lines: [String], near row: Int?, columns: Int
+    ) -> URL? {
+        for hit in hits(of: text, in: lines, near: row) {
+            let chars = Array(lines[hit.line])
+            let (low, high) = word(chars, hit.start, hit.end)
+            var joined = String(chars[low..<high])
+            var index = hit.line
+            if chars[..<low].allSatisfy(\.isWhitespace) {
+                while index > 0, hit.line - index < 3 {
+                    let above = Array(lines[index - 1].trimmingTrailingWhitespace)
+                    guard isFull(above, columns), !above.isEmpty else { break }
+                    let (l, h) = word(above, above.count - 1, above.count)
+                    joined = String(above[l..<h]) + joined
+                    index -= 1
+                    guard above[..<l].allSatisfy(\.isWhitespace) else { break }
+                }
+            }
+            index = hit.line
+            var ending = Array(lines[index].trimmingTrailingWhitespace)
+            if high >= ending.count {
+                while index < lines.count - 1, index - hit.line < 3, isFull(ending, columns) {
+                    let below = Array(lines[index + 1])
+                    guard let first = below.firstIndex(where: { !$0.isWhitespace }) else { break }
+                    let (l, h) = word(below, first, first + 1)
+                    joined += String(below[l..<h])
+                    index += 1
+                    ending = Array(lines[index].trimmingTrailingWhitespace)
+                    guard h >= ending.count else { break }
+                }
+            }
+            if let url = webAddress(in: joined) { return url }
+        }
+        return nil
+    }
+
+    /// Whether a row reaches the right edge, give or take the margin a
+    /// program keeps there (Claude Code keeps two columns).
+    private static func isFull(_ row: [Character], _ columns: Int) -> Bool {
+        columns > 0 && row.count >= columns - 3
+    }
+
+    /// Where `text` stands on the screen, the hits nearest `row` first.
+    private static func hits(of text: String, in lines: [String], near row: Int?)
+        -> [(line: Int, start: Int, end: Int)]
+    {
+        guard !text.isEmpty else { return [] }
+        var hits: [(line: Int, start: Int, end: Int)] = []
+        let wanted = Array(text)
+        for (index, line) in lines.enumerated() {
+            let chars = Array(line)
+            guard chars.count >= wanted.count else { continue }
+            for start in 0...(chars.count - wanted.count)
+            where chars[start..<(start + wanted.count)].elementsEqual(wanted) {
+                hits.append((index, start, start + wanted.count))
+            }
+        }
+        guard let row else { return hits }
+        return hits.enumerated().sorted {
+            let a = abs($0.element.line - row), b = abs($1.element.line - row)
+            return a != b ? a < b : $0.offset < $1.offset
+        }.map(\.element)
+    }
+
+    /// A word under a click the runtime saw no link in, opened in the
+    /// browser when the screen around it holds a web address.
+    @discardableResult
+    static func openRecoveredAddress(
+        _ word: String, screen: [String], near row: Int?, columns: Int
+    ) -> Bool {
+        guard let url = webAddress(around: word, in: screen, near: row, columns: columns)
+        else { return false }
+        return hand(url)
     }
 }
 

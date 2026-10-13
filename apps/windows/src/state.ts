@@ -21,6 +21,9 @@ export interface RestoreWorkspace {
   tabs: RestoreTab[];
 }
 
+/** The cursor's shape, as the terminal draws it. */
+export type CursorShape = "bar" | "block" | "underline";
+
 export interface GuiState {
   version: 1;
   /** Workspaces in the sidebar's order. New ones join the end. */
@@ -34,12 +37,30 @@ export interface GuiState {
   active: { workspace: string; tab: number } | null;
   /** The tab last shown in each workspace, to come back to it. */
   lastTab: Record<string, number>;
+  /**
+   * The order the tabs of each workspace are listed in, as root ids. The
+   * daemon keeps no order of its own, so this is the window's (the macOS
+   * app's tab-order.json); ids are one daemon's, see `daemon`.
+   */
+  tabOrder: Record<string, number[]>;
+  /** Workspaces taken out of the sidebar: still running, a Go To away. */
+  hidden: string[];
+  /** The tabs live in the sidebar and the row above the terminal steps aside. */
+  verticalTabs: boolean;
   /** The zoom, as a share of the base size (1 = 100%). */
   zoom: number;
   appearance: Appearance;
   sidebar: { visible: boolean; width: number };
   /** Empty family means the platform's default. */
   font: { family: string; size: number };
+  /**
+   * A theme of the catalogue (themes.ts), or a `dark:A,light:B` pair of them
+   * as Ghostty's config spells it; empty is Keep's own, dark or light by
+   * `appearance`.
+   */
+  theme: string;
+  /** What the terminals do with the cursor and with what scrolls off. */
+  terminal: { cursor: CursorShape; blink: boolean; scrollback: number };
   restore: RestoreWorkspace[];
   /** The daemon the picture above was taken from; see `api.daemonIdentity`. */
   daemon: string;
@@ -47,6 +68,17 @@ export interface GuiState {
 
 export const SIDEBAR_MIN = 200;
 export const SIDEBAR_MAX = 320;
+
+/** Lines of history a terminal keeps unless told otherwise. */
+export const DEFAULT_SCROLLBACK = 10000;
+/** A cell of history costs about 12 bytes: past this one tab alone takes hundreds of megabytes of the window's memory. */
+export const SCROLLBACK_MAX = 100000;
+
+/** A number of lines held to what a terminal can keep; the default for anything else. */
+export function normalizeScrollback(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_SCROLLBACK;
+  return Math.min(SCROLLBACK_MAX, Math.max(0, Math.round(value)));
+}
 
 export function defaultState(): GuiState {
   return {
@@ -57,10 +89,15 @@ export function defaultState(): GuiState {
     workspaceNames: {},
     active: null,
     lastTab: {},
+    tabOrder: {},
+    hidden: [],
+    verticalTabs: false,
     zoom: 1,
     appearance: "auto",
     sidebar: { visible: true, width: 250 },
     font: { family: "", size: 0 },
+    theme: "",
+    terminal: { cursor: "bar", blink: true, scrollback: DEFAULT_SCROLLBACK },
     restore: [],
     daemon: "",
   };
@@ -68,6 +105,11 @@ export function defaultState(): GuiState {
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : []);
+const idList = (v: unknown): number[] => {
+  const out: number[] = [];
+  if (Array.isArray(v)) for (const n of v) if (Number.isInteger(n) && n >= 0 && !out.includes(n)) out.push(n);
+  return out;
+};
 const stringMap = (v: unknown): Record<string, string> => {
   const out: Record<string, string> = {};
   if (isRecord(v)) for (const [k, s] of Object.entries(v)) if (typeof s === "string" && s.trim()) out[k] = s;
@@ -84,6 +126,7 @@ export function normalizeState(raw: unknown): GuiState {
   if (!isRecord(raw)) return base;
   const sidebar = isRecord(raw.sidebar) ? raw.sidebar : {};
   const font = isRecord(raw.font) ? raw.font : {};
+  const terminal = isRecord(raw.terminal) ? raw.terminal : {};
   const active = isRecord(raw.active) &&
     typeof raw.active.workspace === "string" &&
     typeof raw.active.tab === "number"
@@ -92,6 +135,13 @@ export function normalizeState(raw: unknown): GuiState {
   const lastTab: Record<string, number> = {};
   if (isRecord(raw.lastTab)) {
     for (const [k, v] of Object.entries(raw.lastTab)) if (typeof v === "number") lastTab[k] = v;
+  }
+  const tabOrder: Record<string, number[]> = {};
+  if (isRecord(raw.tabOrder)) {
+    for (const [workspace, ids] of Object.entries(raw.tabOrder)) {
+      const list = idList(ids);
+      if (list.length > 0) tabOrder[workspace] = list;
+    }
   }
   const restore: RestoreWorkspace[] = Array.isArray(raw.restore)
     ? raw.restore.filter(isRecord).flatMap((w) =>
@@ -127,6 +177,9 @@ export function normalizeState(raw: unknown): GuiState {
     workspaceNames: stringMap(raw.workspaceNames),
     active,
     lastTab,
+    tabOrder,
+    hidden: [...new Set(strings(raw.hidden))],
+    verticalTabs: raw.verticalTabs === true,
     zoom: normalizeZoom(raw.zoom),
     appearance,
     sidebar: {
@@ -136,6 +189,12 @@ export function normalizeState(raw: unknown): GuiState {
     font: {
       family: typeof font.family === "string" ? font.family : "",
       size: typeof font.size === "number" && font.size >= 6 && font.size <= 48 ? font.size : 0,
+    },
+    theme: typeof raw.theme === "string" ? raw.theme.trim() : "",
+    terminal: {
+      cursor: terminal.cursor === "block" || terminal.cursor === "underline" ? terminal.cursor : "bar",
+      blink: typeof terminal.blink === "boolean" ? terminal.blink : true,
+      scrollback: normalizeScrollback(terminal.scrollback),
     },
     restore,
     daemon: typeof raw.daemon === "string" ? raw.daemon : "",

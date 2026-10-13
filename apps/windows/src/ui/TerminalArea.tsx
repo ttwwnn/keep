@@ -6,6 +6,8 @@
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { PaneTree } from "../layout";
+import { awake } from "../hibernation";
+import { shareOf, splitKey } from "../splits";
 import { tabKey } from "../state";
 import {
   activePane,
@@ -20,6 +22,8 @@ import {
   isMac,
   loaded,
   orderedWorkspaces,
+  palette,
+  shownWorkspaces,
   split,
   statuses,
   tabsByWorkspace,
@@ -31,22 +35,41 @@ import { imagePasteSequence } from "../keys";
 import { viewKey } from "../terminals";
 import { AiStatusBar } from "./AiStatusBar";
 import { openMenu } from "./common";
+import { centreDivider, startDividerDrag } from "./divider";
 import * as icon from "./icons";
+import { PaneCarryOverlay, PaneGrip } from "./PaneCarry";
 
-function PaneHost(props: { workspace: string; root: number; pane: number; visible: boolean; focused: boolean; multi: boolean }) {
-  const { workspace, root, pane, visible, focused, multi } = props;
+function PaneHost(props: {
+  workspace: string;
+  root: number;
+  pane: number;
+  visible: boolean;
+  focused: boolean;
+  multi: boolean;
+  asleep: boolean;
+}) {
+  const { workspace, root, pane, visible, focused, multi, asleep } = props;
   const host = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    if (host.current) terminals.view(workspace, pane).mount(host.current);
-  }, [workspace, pane]);
+    // Asleep, the pane has no terminal (hibernation.ts); showing the tab builds one, repainted from the daemon.
+    if (asleep) {
+      terminals.sleep(workspace, pane);
+      return;
+    }
+    const woke = terminals.existing(workspace, pane) === undefined;
+    const view = terminals.view(workspace, pane);
+    if (host.current) view.mount(host.current);
+    if (woke && visible && focused) view.focus();
+  }, [workspace, pane, asleep]);
   useEffect(() => {
     terminals.existing(workspace, pane)?.setVisible(visible);
-  }, [workspace, pane, visible]);
+  }, [workspace, pane, visible, asleep]);
   // The bar under a Claude Code or Codex conversation takes its height from
   // the pane only while it has something to say.
   const status = statuses.value.get(viewKey(workspace, pane));
   return (
     <div class="pane-column">
+      {multi && <PaneGrip workspace={workspace} root={root} pane={pane} />}
       <div
         ref={host}
         class={`pane ${multi && focused ? "focused" : ""}`}
@@ -69,12 +92,19 @@ function PaneHost(props: { workspace: string; root: number; pane: number; visibl
               action: () => void view?.type(imagePasteSequence(isMac.value)).catch(() => {}),
             },
             { label: "Selecionar tudo", action: () => view?.term.selectAll() },
-            { label: "Limpar a tela", action: () => view?.term.clear() },
+            { label: "Limpar a tela", hint: "Ctrl+Shift+L", action: () => void view?.type("\x0c").catch(() => {}) },
             "separator",
             { label: "Dividir à direita", hint: "Ctrl+Shift+D", action: () => (focusPane(workspace, root, pane), void split(SPLIT_RIGHT)) },
             { label: "Dividir abaixo", hint: "Ctrl+Shift+E", action: () => (focusPane(workspace, root, pane), void split(SPLIT_DOWN)) },
             ...(multi
-              ? (["separator", { label: "Fechar este painel…", danger: true, action: () => void closePane(workspace, pane) }] as const)
+              ? ([
+                  "separator",
+                  // Said here, where a person looks for what a pane can do; the chords are the window's own.
+                  { label: "Mover o foco entre painéis", hint: "Alt+setas", disabled: true, action: () => {} },
+                  { label: "Redimensionar o painel", hint: "Alt+Shift+setas", disabled: true, action: () => {} },
+                  "separator",
+                  { label: "Fechar este painel…", danger: true, action: () => void closePane(workspace, pane) },
+                ] as const)
               : []),
           ]);
         }}
@@ -84,7 +114,15 @@ function PaneHost(props: { workspace: string; root: number; pane: number; visibl
   );
 }
 
-function TreeView(props: { workspace: string; root: number; tree: PaneTree; visible: boolean; focused: number; multi: boolean }) {
+function TreeView(props: {
+  workspace: string;
+  root: number;
+  tree: PaneTree;
+  visible: boolean;
+  focused: number;
+  multi: boolean;
+  asleep: boolean;
+}) {
   const { tree } = props;
   if (tree.kind === "leaf") {
     return (
@@ -96,16 +134,26 @@ function TreeView(props: { workspace: string; root: number; tree: PaneTree; visi
         visible={props.visible}
         focused={props.focused === tree.id}
         multi={props.multi}
+        asleep={props.asleep}
       />
     );
   }
+  // How the two halves share the room: one half each until a divider is moved.
+  const key = splitKey(tabKey(props.workspace, props.root), tree);
+  const share = shareOf(key);
   return (
-    <div class={`split ${tree.vertical ? "side-by-side" : "stacked"}`}>
-      <div class="split-half">
+    <div class={`split ${tree.vertical ? "side-by-side" : "stacked"}`} data-split={key}>
+      <div class="split-half" style={{ flexGrow: share }}>
         <TreeView {...props} tree={tree.first} />
       </div>
-      <div class="split-divider" />
-      <div class="split-half">
+      <div
+        class="split-divider"
+        role="separator"
+        aria-orientation={tree.vertical ? "vertical" : "horizontal"}
+        onPointerDown={(e) => startDividerDrag(e, key, tree.vertical)}
+        onDblClick={() => centreDivider(key)}
+      />
+      <div class="split-half" style={{ flexGrow: 1 - share }}>
         <TreeView {...props} tree={tree.second} />
       </div>
     </div>
@@ -128,9 +176,8 @@ function FindBar() {
     );
     return () => subscription.dispose();
   }, [view]);
-  const options = {
-    decorations: { matchOverviewRuler: "#888888", activeMatchColorOverviewRuler: "#ffaa00", matchBackground: "#5a4a1a", activeMatchBackground: "#a87a00" },
-  };
+  // The matches are marked in colours that read on the theme's ground, whichever it is.
+  const options = { decorations: palette.value.search };
   const close = () => {
     view?.search.clearDecorations();
     findOpen.value = false;
@@ -196,6 +243,7 @@ export function TerminalArea() {
                 visible={visible}
                 focused={visible && focused ? focused.id : tab.root.id}
                 multi={tab.panes.length > 1}
+                asleep={!visible && !awake.value.has(tabKey(w.name, tab.root.id))}
               />
             </div>
           );
@@ -210,7 +258,14 @@ export function TerminalArea() {
           <p class="hint">Ctrl+Shift+N</p>
         </div>
       )}
+      {loaded.value && all.length > 0 && shownWorkspaces.value.length === 0 && (
+        <div class="empty">
+          <p>Todos os workspaces estão fora da barra lateral.</p>
+          <p class="hint">Ctrl+Shift+P para voltar a um</p>
+        </div>
+      )}
       {findOpen.value && <FindBar />}
+      <PaneCarryOverlay />
     </main>
   );
 }

@@ -517,6 +517,14 @@ final class NameStore {
         write(touching: [key])
     }
 
+    /// A new AI may announce a different title. Keep the name that was on
+    /// the tab before the switch, while any name the person chose wins.
+    func preserveTab(_ id: TabID, title: String) {
+        absorb(except: [], workspace: nil)
+        guard tab(id) == nil, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        setTab(id, to: title)
+    }
+
     func setWorkspace(_ workspace: String, to name: String?) {
         guard contents.workspaces[workspace] != name else { return }
         contents.workspaces[workspace] = name
