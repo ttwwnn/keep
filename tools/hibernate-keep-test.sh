@@ -538,8 +538,13 @@ FIRST_WINDOW=$("$WORK/mousedrag" windows 2>/dev/null | head -1 | awk '{print $1}
 osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" \
     >/dev/null 2>&1
 sleep 1
+# A second window: ⌘⇧N, and File > New Window should the chord not land —
+# it did not, once, with the app put in front a moment before.
 "$SENDKEY" "$APP_PID" key 45 cmd shift >/dev/null 2>&1        # ⌘⇧N
-sleep 3
+until_true 5 '[ "$(window_count)" -ge 2 ]' ||
+    "$AXPRESS" "$APP_NAME" menu File "New Window" >/dev/null 2>&1
+until_true 5 '[ "$(window_count)" -ge 2 ]'
+sleep 2
 "$SENDKEY" "$APP_PID" key 35 cmd >/dev/null 2>&1              # ⌘P
 sleep 2
 "$SENDKEY" "$APP_PID" key 36 >/dev/null 2>&1                  # return
