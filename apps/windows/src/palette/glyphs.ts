@@ -21,6 +21,7 @@ export type GlyphName =
   | "kill"
   | "settings"
   | "fullscreen"
+  | "quickWindow"
   | "image"
   | "theme"
   | "font"

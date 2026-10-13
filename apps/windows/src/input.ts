@@ -191,7 +191,7 @@ export function terminalKey(view: TermView, event: KeyboardEvent): boolean {
  * Ctrl+X on a selection: copied, and taken out of the line the program is
  * editing when the selection is on the row the cursor is on (see `cutKeys`).
  */
-function cutSelection(view: TermView): void {
+export function cutSelection(view: TermView): void {
   const text = view.term.getSelection();
   void writeText(text).catch(() => navigator.clipboard?.writeText(text));
   const buffer = view.term.buffer.active;

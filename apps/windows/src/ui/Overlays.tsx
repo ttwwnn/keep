@@ -12,6 +12,7 @@ import { activeView, answer, dialog, info, overlay, type DialogField } from "../
 import { AppearanceSettings } from "./AppearanceSettings";
 import { FontPicker } from "./FontPicker";
 import { Picker } from "./Picker";
+import { QuickSettings } from "./QuickSettings";
 import { ThemePicker } from "./ThemePicker";
 
 function close() {
@@ -50,6 +51,7 @@ function Settings() {
       <h2>Configurações</h2>
       <div class="settings-body">
         <AppearanceSettings />
+        <QuickSettings />
         <fieldset>
           <legend>Shell das abas novas</legend>
           {shells === null ? (

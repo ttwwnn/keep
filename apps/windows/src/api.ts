@@ -4,6 +4,7 @@
 // side serialises them. Nothing here keeps state; see model.ts for that.
 
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { withoutQuick, withoutQuickHits } from "./quickWorkspace";
 
 export interface TabInfo {
   id: number;
@@ -77,7 +78,10 @@ export const startup = () => invoke<Startup>("startup");
 export const ensureDaemon = () => invoke<void>("ensure_daemon");
 /** Which daemon answers (its process and start time), or null where unknown. */
 export const daemonIdentity = () => invoke<string | null>("daemon_identity");
-export const list = () => invoke<WorkspaceInfo[]>("list");
+/** The workspaces as the window shows them: the daemon's, without the drop-down terminal's (quickWorkspace.ts). */
+export const list = () => invoke<WorkspaceInfo[]>("list").then(withoutQuick);
+/** Every workspace the daemon holds, the drop-down terminal's included: what only that terminal asks for. */
+export const listAll = () => invoke<WorkspaceInfo[]>("list");
 
 export const newTab = (
   workspace: string,
@@ -108,7 +112,7 @@ export const previewVt = (workspace: string, tab: number) => invoke<Screen>("pre
 /** The folders the person goes to, from zoxide, best first; none where it is not installed. */
 export const directories = () => invoke<string[]>("directories");
 export const search = (query: string, limit = 50, workspace?: string, tab?: number) =>
-  invoke<SearchHit[]>("search", { query, limit, workspace: workspace ?? null, tab: tab ?? null });
+  invoke<SearchHit[]>("search", { query, limit, workspace: workspace ?? null, tab: tab ?? null }).then(withoutQuickHits);
 
 export const loadState = () => invoke<unknown | null>("load_state");
 /** What reading the state found wrong when the app opened (an unreadable file, and what was done about it), once. */

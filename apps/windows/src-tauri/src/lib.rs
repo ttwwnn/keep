@@ -11,6 +11,7 @@ mod fonts;
 mod ia;
 mod memory;
 mod names;
+mod quick;
 mod sessions;
 mod settings;
 mod status;
@@ -517,6 +518,8 @@ pub fn run() {
         }))
         .plugin(
             tauri_plugin_window_state::Builder::new()
+                // The drop-down terminal is placed by quick.rs at every showing, never where it was left.
+                .with_denylist(&[quick::LABEL])
                 .with_state_flags(
                     tauri_plugin_window_state::StateFlags::SIZE
                         | tauri_plugin_window_state::StateFlags::POSITION
@@ -527,7 +530,15 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        // Ctrl+` from anywhere: the drop-down terminal (quick.rs).
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(sessions)
+        .manage(quick::Quick::default())
+        .setup(|app| {
+            quick::setup(app.handle());
+            Ok(())
+        })
+        .on_window_event(quick::on_window_event)
         .invoke_handler(tauri::generate_handler![
             startup,
             ensure_daemon,
@@ -569,6 +580,11 @@ pub fn run() {
             app_log,
             confinement::confinement_all,
             confinement::confinement_set,
+            quick::quick_toggle,
+            quick::quick_status,
+            quick::quick_set_shortcut,
+            quick::quick_ready,
+            quick::quick_look,
             path_exists,
             e2e_shot,
             e2e_fake,
@@ -594,6 +610,8 @@ pub fn run() {
             // Leaving lets go of every tab and nothing more: the shells are
             // the daemon's, and they keep running.
             tauri::RunEvent::Exit => on_exit.detach_all(),
+            // The panel, kept hidden between uses, would keep the app alive once the other windows are gone.
+            tauri::RunEvent::WindowEvent { .. } => quick::on_run_event(app, &event),
             _ => {}
         });
 }
