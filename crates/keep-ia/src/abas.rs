@@ -5,7 +5,9 @@
 //! - `KEEP_IA_ESCOLHA` (posta pelo Keep na linha que sobe a IA) ou
 //!   `CLAUDE_KIT_CONTA` (a do kit) dizem a escolha;
 //! - `CLAUDE_SECURESTORAGE_CONFIG_DIR` diz o login em que o Claude roda (sem
-//!   ela, o global); `CODEX_HOME`, o do Codex (sem ela, o `~/.codex`).
+//!   ela, o global); `CODEX_HOME`, o do Codex (sem ela, o `~/.codex`). Quando
+//!   ela é o armazém de uma aba (`quente.rs`), a escolha e a conta são as do
+//!   estado dele: trocam com o Claude aberto.
 
 use std::path::Path;
 
@@ -79,6 +81,21 @@ pub fn conta_do_processo(pid: u32, agente: &str, contas: &[Conta]) -> (String, O
         return (escolha, atual);
     }
     let fixa = var("CLAUDE_SECURESTORAGE_CONFIG_DIR");
+    // O armazém da aba (`quente.rs`): a conta muda com o processo vivo, e é o
+    // estado dele que diz qual é — o ambiente diz só a de quando subiu.
+    if let Some((_, r)) = fixa.as_deref().and_then(|p| crate::quente::registro_da_pasta(Path::new(p))) {
+        let atual = contas
+            .iter()
+            .find(|c| c.engine == Motor::Claude && c.key == r.dono)
+            .map(|c| c.order_key.clone())
+            .or_else(|| (!r.conta.is_empty()).then(|| r.conta.clone()));
+        let escolha = if r.escolha == SEGUIR_ORDEM || !chave_valida(&r.escolha) {
+            SEGUIR_ORDEM.to_string()
+        } else {
+            contas::achar(contas, &r.escolha).map(|c| c.order_key.clone()).unwrap_or(r.escolha.clone())
+        };
+        return (escolha, atual);
+    }
     let atual = match &fixa {
         Some(p) => dona(contas, |a| matches!(a, Armazem::Fixa { pasta } if mesma_pasta(pasta, Path::new(p)))),
         None => dona(contas, |a| matches!(a, Armazem::Global)),

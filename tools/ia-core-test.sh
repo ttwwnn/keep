@@ -5,11 +5,14 @@
 # (tools/ia-core-test/main.swift) asking the `keep` built here — the one the
 # app carries inside it — about a daemon of the test's own, whose tab runs a
 # fake Claude Code and a fake Codex (crates/keep-ia/examples/ia_falsa.rs):
-# following the order from a bare shell, a switch between Claude accounts and
-# one to Codex and back, a busy tab refused and then interrupted, usage
-# measured from a stand-in of the services, the order followed by itself, the
-# menu built from all of it, a login opened in a tab, and the order moved.
-# What the core prints is read exactly as the app reads it.
+# following the order from a bare shell, a switch between Claude accounts made
+# with Claude open (the tab's own login store rewritten, nothing typed, the
+# same process answering from the other account), one to Codex and back, a
+# busy tab refused and then interrupted, usage measured from a stand-in of the
+# services, the order followed by itself (switching Claude while it runs),
+# the renewal spreading an account's new access into the tab, the menu built
+# from all of it, a login opened in a tab, and the order moved. What the core
+# prints is read exactly as the app reads it.
 #
 #   tools/ia-core-test.sh
 #
@@ -19,6 +22,10 @@
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
+# The test runs in none of the person's accounts: a tab of theirs passes its
+# own login store and choice down to whatever it starts (the daemon here, and
+# the tabs and fake AIs under it).
+unset CLAUDE_SECURESTORAGE_CONFIG_DIR CLAUDE_CONFIG_DIR KEEP_IA_ESCOLHA CLAUDE_KIT_CONTA CODEX_HOME
 # shellcheck source=tools/scratch.sh
 . tools/scratch.sh
 
@@ -61,6 +68,8 @@ def login(token):
 open(os.path.join(home, "chaveiro", "Claude Code-credentials"), "w").write(login("G"))
 service = "Claude Code-credentials-" + hashlib.sha256(unicodedata.normalize("NFC", fixa).encode()).hexdigest()[:8]
 open(os.path.join(home, "chaveiro", service), "w").write(login("F"))
+# Bia's item, for the test to renew it behind the core's back.
+open(os.path.join(os.path.dirname(home), "fixa-bia-item"), "w").write(service)
 json.dump({"versao": 1, "apelido": "bia", "email": "bia@y.com", "uuid": "u-2", "criadaEm": 1},
           open(os.path.join(fixa, "keep.json"), "w"))
 def b64(o):
@@ -71,12 +80,23 @@ access = b64({}) + "." + b64({"exp": int(now + 3600), "https://api.openai.com/pr
 json.dump({"tokens": {"access_token": access, "account_id": "acct-1"}},
           open(os.path.join(home, ".codex/auth.json"), "w"))
 PY
+# The Keychain, as `security` answers the core and the fake Claude: reads,
+# writes (`add-generic-password -U … -X <hex>`, by argv or through `security
+# -i`, as Claude Code and the core write) and deletes, one file per item.
 cat >"$WORK/security" <<'SH'
 #!/bin/sh
-S=
-while [ $# -gt 0 ]; do [ "$1" = -s ] && { shift; S="$1"; }; shift; done
+OP="$1"; S=; X=
+if [ "$OP" = -i ]; then
+    IFS= read -r L; OP=${L%% *}
+    S=$(printf %s "$L" | sed -n 's/.* -s "\([^"]*\)".*/\1/p')
+    X=$(printf %s "$L" | sed -n 's/.* -X "\([0-9a-fA-F]*\)".*/\1/p')
+else
+    while [ $# -gt 0 ]; do case "$1" in -s) shift; S="$1";; -X) shift; X="$1";; esac; shift; done
+fi
 F="$KEEP_AI_USAGE_HOME/chaveiro/$S"
+if [ "$OP" = add-generic-password ]; then printf %s "$X" | xxd -r -p > "$F"; exit 0; fi
 [ -f "$F" ] || exit 44
+[ "$OP" = delete-generic-password ] && { rm -f "$F"; exit 0; }
 cat "$F"
 SH
 chmod +x "$WORK/security"
@@ -141,4 +161,5 @@ while [ ! -S "$KEEP_SOCKET" ] && [ "$waited" -lt 120 ]; do sleep 0.25; waited=$(
 # HOME is an empty folder of the test's own: a core handed no home of its own
 # falls back to it, never to the person's.
 mkdir -p "$WORK/sem-casa"
-HOME=$WORK/sem-casa KEEPD_PID=$DAEMON_PID DIGITA=$PWD/tools/ia-core-test/digita.py "$WORK/test"
+HOME=$WORK/sem-casa KEEPD_PID=$DAEMON_PID DIGITA=$PWD/tools/ia-core-test/digita.py \
+    FIXA_BIA_ITEM="$(cat "$WORK/fixa-bia-item")" "$WORK/test"

@@ -306,7 +306,16 @@ fn retoma(ws: &str, tab: u32, ia: &Ia, contas: &[keep_ia::contas::Conta]) -> Res
         (p, id)
     };
     let shell = espera_shell(ws, tab).ok_or("a aba não mostrou o prompt")?;
-    let s = subida(ws, ia, programa.to_string_lossy().into_owned(), &conversa, contas);
+    let mut s = subida(ws, ia, programa.to_string_lossy().into_owned(), &conversa, contas);
+    // O Claude volta no armazém de login da aba (`keep_ia::quente`): só o
+    // acesso da conta dela, e a conta troca depois sem sair do Claude. Sem
+    // como prepará-lo, volta como antes.
+    if ia.agente != "codex" {
+        if let Some(pasta) = armazem_da_aba(ws, tab, &ia.conta) {
+            s.definir.retain(|(n, _)| n != keep_ia::quente::VAR);
+            s.definir.insert(0, (keep_ia::quente::VAR.into(), pasta));
+        }
+    }
     let texto = linha::linha(linha::sintaxe(&shell), &s);
     match keep_ia::trocar::digita(ws, tab, &texto, true) {
         Ok(true) => {}
@@ -315,6 +324,15 @@ fn retoma(ws: &str, tab: u32, ia: &Ia, contas: &[keep_ia::contas::Conta]) -> Res
     }
     espera_subir(ws, tab, &ia.agente);
     Ok(())
+}
+
+/// O armazém de login da aba `ws`#`tab` para o Claude que volta nela, com a
+/// escolha que ela tinha (seguir a ordem, ou uma conta do Claude).
+fn armazem_da_aba(ws: &str, tab: u32, conta: &str) -> Option<String> {
+    let r = daemon::listar().ok()?;
+    let shell = keep_ia::vinculo::vincular(&r).get(&(ws.to_string(), tab))?.shell;
+    let escolha = conta.starts_with("claude:").then_some(conta);
+    keep_ia::quente::preparar(ws, shell, escolha, None).ok().map(|p| p.pasta.to_string_lossy().into_owned())
 }
 
 /// O shell da aba parou no prompt (algo na tela, nada rodando, duas leituras iguais). Devolve o nome dele.

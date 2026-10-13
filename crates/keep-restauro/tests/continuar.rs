@@ -87,6 +87,11 @@ fn so_a_aba_parada_e_segura_recebe_o_continue_quando_a_causa_volta() {
         // a rede "caída": nada escuta nesta porta
         std::env::set_var("KEEP_CONTINUAR_SONDA", "http://127.0.0.1:9/api/hello");
         std::env::set_var("SHELL", "/bin/sh");
+        // A conta da aba de quem roda os testes (o Claude dela num armazém de
+        // login próprio) não passa para as abas e IAs falsas do teste.
+        for v in ["CLAUDE_SECURESTORAGE_CONFIG_DIR", "CLAUDE_CONFIG_DIR", "KEEP_IA_ESCOLHA", "CLAUDE_KIT_CONTA", "CODEX_HOME"] {
+            std::env::remove_var(v);
+        }
         std::env::set_var("PS1", "$ ");
     }
     let sock = raiz.join("k.sock");

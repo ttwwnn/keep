@@ -39,6 +39,7 @@ impl Drop for Casa {
             "KEEP_IA_CLAUDE_BIN",
             "KEEP_IA_CODEX_BIN",
             "KEEP_IA_KEEP_BIN",
+            "KEEP_IA_TESTE_ARMAZEM",
             "KEEP_SOCKET",
             "USER",
         ] {
@@ -86,6 +87,20 @@ pub fn casa(nome: &str) -> Casa {
         std::env::set_var("KEEP_IA_TESTE_CHAVEIRO", &chaveiro);
         std::env::set_var("KEEP_IA_GERENTE_EXTERNO", "0");
         std::env::set_var("USER", "teste");
+        // Um daemon que não existe: nada aqui fala com o Keep de verdade (o
+        // teste que precisa de um sobe o dele e aponta para ele).
+        std::env::set_var("KEEP_SOCKET", raiz.join("sem-keepd.sock"));
+        // Os serviços, num lugar desta máquina onde ninguém ouve: um teste
+        // que esquecer o dele falha na hora, sem mandar nada para fora. (A
+        // página do login do OpenRouter não: ela só vai para o navegador.)
+        for v in ["KEEP_IA_TOKEN_URL", "KEEP_IA_PERFIL_URL", "KEEP_IA_CLAUDE_URL", "KEEP_IA_CODEX_URL", "KEEP_IA_OPENROUTER_URL"] {
+            std::env::set_var(v, "http://127.0.0.1:9/nada");
+        }
+        // O ambiente de quem roda os testes (uma aba do Keep com o Claude
+        // numa conta) não passa para as abas e IAs falsas dos testes.
+        for v in ["CLAUDE_SECURESTORAGE_CONFIG_DIR", "CLAUDE_CONFIG_DIR", "KEEP_IA_ESCOLHA", "CLAUDE_KIT_CONTA", "CODEX_HOME"] {
+            std::env::remove_var(v);
+        }
     }
     Casa { raiz, _trava: trava }
 }
@@ -109,7 +124,7 @@ impl Casa {
     /// O login global com este token, que vence em `expira_ms` (unix ms).
     pub fn global_ate(&self, acesso: &str, refresh: &str, expira_ms: u64) {
         let json = Self::login_ate(acesso, refresh, expira_ms);
-        if cfg!(target_os = "macos") {
+        if credencial::usa_chaveiro() {
             std::fs::write(self.raiz.join("chaveiro").join(credencial::SERVICO_GLOBAL), json).unwrap();
         } else {
             std::fs::write(self.raiz.join(".claude/.credentials.json"), json).unwrap();
@@ -122,7 +137,7 @@ impl Casa {
         std::fs::create_dir_all(&pasta).unwrap();
         if let Some((acesso, refresh)) = login {
             let json = Self::login(acesso, refresh);
-            if cfg!(target_os = "macos") {
+            if credencial::usa_chaveiro() {
                 let servico = credencial::servico_de(&pasta.to_string_lossy());
                 std::fs::write(self.raiz.join("chaveiro").join(servico), json).unwrap();
             } else {
@@ -132,7 +147,7 @@ impl Casa {
         if let Some((apelido, email, uuid)) = meta {
             gravar_metadados(
                 &pasta,
-                &Metadados { versao: 1, apelido: apelido.into(), email: email.into(), uuid: uuid.into(), criada_em: 1 },
+                &Metadados { versao: 1, apelido: apelido.into(), email: email.into(), uuid: uuid.into(), criada_em: 1, aba: false },
             )
             .unwrap();
         }
@@ -326,4 +341,17 @@ fn apelidos_de_email_sao_limpos_e_unicos() {
     c.fixa("k-1", Some(("F", "r")), None);
     let contas = listar(true);
     assert_eq!(chaves(&contas), ["claude:ana", "claude:ana-2"]);
+}
+
+#[test]
+fn uma_casa_de_teste_sem_o_chaveiro_de_teste_nunca_chega_ao_de_verdade() {
+    let _c = casa("sem-chaveiro");
+    // SAFETY: a casa (e a trava) está de pé.
+    unsafe { std::env::remove_var("KEEP_IA_SECURITY") };
+    let item = credencial::Local::Chaveiro(credencial::SERVICO_GLOBAL.into());
+    assert!(matches!(credencial::ler(&item), credencial::Lido::Ausente));
+    assert!(matches!(credencial::global(), credencial::Lido::Ausente | credencial::Lido::Ilegivel(_)));
+    // (Só o apagar prova a recusa: sem ela, ele não acharia o item de uma
+    // conta "teste" e nada mudaria; um gravar sem ela gravaria de verdade.)
+    assert!(credencial::apagar(&item).unwrap_err().contains("casa de teste"));
 }

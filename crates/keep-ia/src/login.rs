@@ -209,12 +209,7 @@ fn email_valido(e: &str) -> bool {
 fn apaga_login_da_pasta(pasta: &Path) {
     if cfg!(target_os = "macos") {
         let servico = credencial::servico_de(&pasta.to_string_lossy());
-        let security = std::env::var("KEEP_IA_SECURITY").unwrap_or_else(|_| "/usr/bin/security".into());
-        let _ = std::process::Command::new(security)
-            .args(["delete-generic-password", "-a", &credencial::conta_do_item(), "-s", &servico])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+        let _ = credencial::apagar(&credencial::Local::Chaveiro(servico));
     }
     let _ = std::fs::remove_file(pasta.join(".credentials.json"));
 }
@@ -249,15 +244,16 @@ fn roda_login_claude(email: &str, securestorage: Option<&Path>, config: Option<&
 }
 
 fn depois_do_login(alvos: &[(String, u32, String)]) {
+    let lista = contas::listar(false);
     for (ws, aba, para) in alvos {
-        println!("\nPassando a aba {ws}#{aba} para {}…", trocar::rotulo(para));
+        let destino = trocar::com_artigo(&lista, para);
+        println!("\nPassando a aba {ws}#{aba} para {destino}…");
         let p = Pedido { ws: ws.clone(), aba: *aba, para: para.clone(), ..Default::default() };
         match trocar::trocar(&p) {
             Ok(feito) => println!("Pronto: {feito}."),
             Err(r) => println!(
-                "Não troquei agora: {}\nQuando quiser, escolha {} no menu da aba: o login já está pronto.",
-                r.detalhe,
-                trocar::rotulo(para)
+                "Não troquei agora: {}\nQuando quiser, escolha {destino} no menu da aba: o login já está pronto.",
+                r.detalhe
             ),
         }
     }
@@ -274,7 +270,11 @@ fn login_claude(conta: Option<&str>, email_dado: Option<&str>, apelido_dado: Opt
     let no_global = pedida.is_none() && !global_roda;
     match pedida {
         Some(c) => {
-            println!("Login próprio das abas na conta {} ({}).", c.alias, c.email.as_deref().unwrap_or("sem e-mail"));
+            println!(
+                "Login próprio das abas na conta {} ({}).",
+                trocar::rotulo_em(&contas_agora, &c.order_key),
+                c.email.as_deref().unwrap_or("sem e-mail")
+            );
             println!("É uma aprovação no navegador, uma vez só. Ctrl+C desiste sem mudar nada.\n");
         }
         None => println!("Entrar em outra conta do Claude\n"),
@@ -304,7 +304,11 @@ fn login_claude(conta: Option<&str>, email_dado: Option<&str>, apelido_dado: Opt
             .or_else(|| lista.iter().find(|c| c.engine == Motor::Claude && c.global()));
         if let Some(c) = c {
             let _ = contas::acrescentar_na_ordem(&c.order_key);
-            println!("\nPronto: {} ({}) entrou no Keep.", trocar::rotulo(&c.order_key), c.email.as_deref().unwrap_or(""));
+            println!(
+                "\nPronto: a conta {} entrou no Keep como {}.",
+                c.email.as_deref().unwrap_or(""),
+                trocar::rotulo(&c.order_key)
+            );
         } else {
             println!("\nPronto: o login global do Claude está feito.");
         }
@@ -341,7 +345,11 @@ fn login_claude(conta: Option<&str>, email_dado: Option<&str>, apelido_dado: Opt
     if let Some(c) = pedida {
         if c.key != dono.uuid && c.email.as_deref().is_none_or(|e| !e.eq_ignore_ascii_case(&dono.email)) {
             desfaz(&pasta);
-            return Err(format!("O login terminou em OUTRA conta ({}), não em {}. Nada ficou gravado.", dono.email, c.alias));
+            return Err(format!(
+                "O login terminou em OUTRA conta ({}), não na {}. Nada ficou gravado.",
+                dono.email,
+                trocar::rotulo_em(&contas_agora, &c.order_key)
+            ));
         }
     }
     // A conta de quem entrou: a pedida, ou uma que já existe com o mesmo dono.
@@ -356,10 +364,9 @@ fn login_claude(conta: Option<&str>, email_dado: Option<&str>, apelido_dado: Opt
                 base = format!("{}-{n}", contas::apelido_de_email(&dono.email));
                 n += 1;
             }
-            let ap = match apelido_dado {
-                Some(a) => a.to_string(),
-                None => pergunta("Apelido no Keep", &base),
-            };
+            // O apelido é só a chave por dentro (`claude:<apelido>`): para a
+            // pessoa, a conta é a posição dela na lista (IA-n).
+            let ap = apelido_dado.map(str::to_string).unwrap_or(base);
             if !contas::apelido_valido(&ap) || ap == "ordem" || usados.contains(&Motor::Claude.chave(&ap)) {
                 desfaz(&pasta);
                 return Err(format!("Apelido inválido ou já usado: {ap}"));
@@ -369,14 +376,20 @@ fn login_claude(conta: Option<&str>, email_dado: Option<&str>, apelido_dado: Opt
     };
     contas::gravar_metadados(
         &pasta,
-        &Metadados { versao: 1, apelido: apelido.clone(), email: dono.email.clone(), uuid: dono.uuid.clone(), criada_em: donos::agora_ms() },
+        &Metadados {
+            versao: 1,
+            apelido: apelido.clone(),
+            email: dono.email.clone(),
+            uuid: dono.uuid.clone(),
+            criada_em: donos::agora_ms(),
+            aba: false,
+        },
     )
     .map_err(|e| e.to_string())?;
     let chave = Motor::Claude.chave(&apelido);
     let _ = contas::acrescentar_na_ordem(&chave);
     let lista = contas::listar(false);
-    let pos = contas::ordem_efetiva(&lista).iter().position(|k| *k == chave).map(|i| (i + 1).to_string()).unwrap_or("?".into());
-    println!("\nPronto: Claude · {apelido} ({}) está no Keep, na posição {pos} da fila.", dono.email);
+    println!("\nPronto: a conta {} entrou no Keep como {}.", dono.email, trocar::rotulo_em(&lista, &chave));
     Ok(())
 }
 
@@ -447,7 +460,7 @@ fn login_gpt(apelido_dado: Option<&str>) -> Result<(), String> {
             sugestao = format!("gpt-{n}");
             n += 1;
         }
-        let ap = apelido_dado.map(str::to_string).unwrap_or_else(|| pergunta("Apelido no Keep", &sugestao));
+        let ap = apelido_dado.map(str::to_string).unwrap_or(sugestao);
         if !contas::apelido_valido(&ap) || ap == "principal" || ap == "ordem" || usados.contains(&ap) {
             return Err(format!("Apelido inválido ou já usado: {ap}"));
         }
@@ -487,11 +500,12 @@ fn login_gpt(apelido_dado: Option<&str>) -> Result<(), String> {
     // Outra conta GPT com o mesmo dono: é a mesma conta.
     if c.armazens.len() > 1 && nova {
         let _ = std::fs::remove_dir_all(&home);
-        return Err(format!("Essa conta do GPT já está no Keep como “{}”.", c.alias));
+        return Err(format!("Essa conta do GPT já está no Keep, como {}.", trocar::rotulo_em(&lista, &c.order_key)));
     }
     let chave = Motor::Codex.chave(&apelido);
     let _ = contas::acrescentar_na_ordem(&chave);
-    println!("\nPronto: GPT · {apelido} ({}) está na fila de prioridade.", c.email.as_deref().unwrap_or(""));
+    let lista = contas::listar(false);
+    println!("\nPronto: a conta {} entrou no Keep como {}.", c.email.as_deref().unwrap_or(""), trocar::rotulo_em(&lista, &chave));
     Ok(())
 }
 

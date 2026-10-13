@@ -400,6 +400,12 @@ pub fn em_cache() -> Vec<Linha> {
     linhas(contas::listar(false), &le_cache())
 }
 
+/// As contas (o `key`) que podem receber trabalho agora, pela última
+/// medição, entre as dadas — sem ir à rede nem reler os logins.
+pub fn disponiveis_de(lista: &[Conta]) -> Vec<String> {
+    linhas(lista.to_vec(), &le_cache()).into_iter().filter(Linha::disponivel).map(|l| l.account.key).collect()
+}
+
 /// Uma rodada: mede as contas devidas (ou `so` esta), em paralelo, e devolve
 /// todas as linhas. `forcar` é o "Medir agora".
 pub fn medir(forcar: bool, so: Option<&str>) -> Vec<Linha> {
