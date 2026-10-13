@@ -133,6 +133,11 @@ pub fn attach(
     if keeping {
         unsafe { libc::signal(libc::SIGHUP, libc::SIG_IGN) };
         early_raw = RawGuard::enter(Arc::clone(&alternate)).ok();
+    } else {
+        // One that does not keep goes with its terminal, whatever whoever
+        // started it ignored (`nohup`): nothing else ends it until the tab
+        // writes something more and that cannot be shown.
+        unsafe { libc::signal(libc::SIGHUP, libc::SIG_DFL) };
     }
 
     // A tab kept by the client of the surface before this one: it hands over

@@ -128,6 +128,8 @@ sabotage "an answer bigger than a frame sent in one" \
     crates/keep/src/keeper.rs 's/    for chunk in bytes.chunks(1 << 16) {/    for chunk in [bytes] {/'
 sabotage "a keeper leaving leaves the app's file behind" \
     crates/keep/src/keeper.rs 's/CLIPBOARD_ANSWER, WAKE, SHOWING, ATTACH_FILE, APP_FILE,/CLIPBOARD_ANSWER, WAKE, SHOWING, ATTACH_FILE,/'
+sabotage "a client that does not keep outlives its terminal when started ignoring hang-ups" \
+    crates/keep/src/attach.rs 's/        unsafe { libc::signal(libc::SIGHUP, libc::SIG_DFL) };/        {}/'
 sabotage "a client keeps wherever it was run" \
     crates/keep/src/keeper.rs 's/dir.parent().and_then(|p| p.file_name()).map(|n| n == "keep-attach").unwrap_or(false)/{ let _ = dir; true }/'
 

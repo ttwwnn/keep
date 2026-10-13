@@ -202,7 +202,7 @@ class Surface:
 
     count = 0
 
-    def __init__(self, take=None, mirror=True, app_pid=None, showing=True, where="keep-attach"):
+    def __init__(self, take=None, mirror=True, app_pid=None, showing=True, where="keep-attach", hup_ignored=False):
         Surface.count += 1
         # Where the app puts a client: a directory of its own inside one
         # named keep-attach. Anywhere else a client never keeps.
@@ -232,6 +232,9 @@ class Surface:
             try:
                 fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", ROWS, COLS, 0, 0))
                 os.chdir(self.dir)
+                # Started by something that ignores hang-ups (`nohup`),
+                # which an exec carries over.
+                signal.signal(signal.SIGHUP, signal.SIG_IGN if hup_ignored else signal.SIG_DFL)
                 os.execve(KEEP, [KEEP], env)
             finally:
                 os._exit(127)
@@ -446,12 +449,12 @@ try:
           "attached" in subprocess.run([KEEP, "ls"], env=env, capture_output=True, text=True).stdout)
 
     print("a client the app did not put where it puts them")
-    elsewhere = Surface(where="elsewhere")
+    elsewhere = Surface(where="elsewhere", hup_ignored=True)
     wait_for(30, lambda: elsewhere.has("L0005500"))
     elsewhere.hibernate()
     # As long as the other goings: a machine under load takes its time.
     wait_for(30, lambda: not elsewhere.alive())
-    check("goes with its surface, whatever the files beside it say", (False, False),
+    check("goes with its surface, whatever the files beside it say, and whoever started it ignored", (False, False),
           (elsewhere.alive(), elsewhere.kept()))
 
     print("a surface that finds a keeper that does not answer")
