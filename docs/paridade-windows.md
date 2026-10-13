@@ -115,8 +115,11 @@ não foram vistos no Windows de verdade.
 
 ## Fatia `tabs`
 
-Conferida no Mac (roteiro do app, `src/e2eTabs.ts`, com eventos de ponteiro da própria página, e testes
-do vitest); o mouse real, os cursores e a dica nativa do workspace não foram exercitados no Windows.
+Conferida no Mac e no Windows do CI (roteiro do app, `src/e2eTabs.ts`, com eventos de ponteiro da própria
+página, e testes do vitest); o mouse real, os cursores e a dica nativa do workspace não foram exercitados no
+Windows. A janela do CI deixa 286 px para a lista da barra lateral: o roteiro mostra a linha (`reveal`) antes de
+puxá-la, como uma pessoa faz, e o log do app traz o que a página via em cada arrasto (elemento sob o ponteiro,
+caixa da linha, rolagem da lista, estado do movimento, fim do arrasto por `pointerup`, `blur` ou Esc).
 
 - [x] Reordenar abas por arrasto, na fileira (a aba segue o ponteiro e as outras abrem a lacuna) e na barra
   lateral (cópia na mão, linha apagada no lugar de pouso, lacuna que acompanha), com a ordem no estado
@@ -125,6 +128,11 @@ do vitest); o mouse real, os cursores e a dica nativa do workspace não foram ex
   religado, não refeito, e o nome, o lugar, o painel com o teclado e o estado do Claude vão junto. Soltar
   no cabeçalho põe no fim; soltar sobre uma aba põe antes dela.
 - [x] Arrastar o cabeçalho do workspace reordena a lista, com a mesma lacuna.
+- [x] Lista mais longa que a janela: com o ponteiro a menos de 36 px da borda de cima ou de baixo a lista rola
+  sozinha, mais depressa quanto mais perto (no máximo 14 px por quadro, também além da borda), o pouso é
+  refeito a cada rolagem mesmo com o ponteiro parado, e soltar faz o que estava mostrado (`drag.ts`
+  `scrollStep`/`autoScroll`, `ui/tabDrag.ts`). Antes, a velocidade crescia sem limite além da borda e a soltura
+  refazia a conta com a lista já rolada: a aba voltava sem mudar de lugar.
 - [x] Alça do painel (44x14, três pontos, só com mais de um painel): cartão com o texto do painel, pouso nos
   quatro lados e na troca (`api.rearrange`), soltar numa aba da fileira junta o painel a ela, soltar fora o
   destaca em aba nova, 0,45 s sobre uma aba a abre (a mola). Trocar dois painéis mantém o layout e troca
