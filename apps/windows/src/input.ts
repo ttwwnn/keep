@@ -17,7 +17,6 @@ import {
   activeWorkspace,
   copySelection,
   dialog,
-  editing,
   findOpen,
   goToTab,
   isMac,
@@ -25,6 +24,7 @@ import {
   newWorkspace,
   overlay,
   split,
+  startRename,
   stepTab,
   stepWorkspace,
   toggleSidebar,
@@ -107,7 +107,7 @@ export function perform(action: Action): void {
     case "rename": {
       const ws = activeWorkspace.value;
       const tab = activeTab.value;
-      if (ws && tab) editing.value = { kind: "tab", workspace: ws, tab: tab.root.id };
+      if (ws && tab) startRename(ws, tab.root.id);
       break;
     }
     case "copy":

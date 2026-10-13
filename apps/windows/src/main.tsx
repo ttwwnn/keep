@@ -3,6 +3,7 @@
 
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
+import "./styles-tabs.css";
 import { render } from "preact";
 import { installInput, terminalKey } from "./input";
 import { startIA } from "./iaStore";

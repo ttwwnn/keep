@@ -40,7 +40,7 @@ function openLink(uri: string) {
 }
 
 export class TermView {
-  readonly key: string;
+  key: string;
   readonly element: HTMLDivElement;
   readonly term: Terminal;
   readonly search: SearchAddon;
@@ -60,8 +60,8 @@ export class TermView {
   failure: string | null = null;
 
   constructor(
-    readonly workspace: string,
-    readonly tab: number,
+    public workspace: string,
+    public tab: number,
     look: TerminalLook,
     private readonly hooks: TerminalHooks,
     platform: { name: string; windowsBuild: number },
@@ -104,6 +104,17 @@ export class TermView {
     });
     this.term.onResize(() => this.sendSize());
     this.observer = new ResizeObserver(() => this.fitNow());
+  }
+
+  /**
+   * The tab went to another workspace and the daemon gave it new ids. The
+   * connection holds the tab itself, not its id, and carries on; only the
+   * names this view answers to change.
+   */
+  rekey(workspace: string, tab: number): void {
+    this.workspace = workspace;
+    this.tab = tab;
+    this.key = viewKey(workspace, tab);
   }
 
   /** Put the terminal in `host`, opening it the first time and attaching it once it has a size. */
@@ -333,6 +344,23 @@ export class TerminalManager {
 
   all(): TermView[] {
     return [...this.views.values()];
+  }
+
+  /**
+   * Tabs the daemon re-filed: each view answers to its new workspace and id,
+   * scrollback and connection kept. Done all at once, so a new key is never
+   * taken by a view that has not left its old one.
+   */
+  rekey(moves: { from: [string, number]; to: [string, number] }[]): void {
+    const taken = moves.flatMap((m) => {
+      const view = this.views.get(viewKey(...m.from));
+      return view ? [{ view, to: m.to }] : [];
+    });
+    for (const { view } of taken) this.views.delete(view.key);
+    for (const { view, to } of taken) {
+      view.rekey(...to);
+      this.views.set(view.key, view);
+    }
   }
 
   /** Let go of the terminals whose tabs the daemon no longer has. */

@@ -1,0 +1,78 @@
+/* Tabs, panes and the moves between them: carrying a tab along the row or the
+   sidebar, the mark of a tab that holds panes. */
+
+/* ------------------------------------------------------------ the row, a tab carried */
+
+/* The others slide aside for the carried one; let go, they stop where they are
+   (no transition then, so the new order does not slide back). */
+.strip.reordering .tab {
+  transition: transform 140ms var(--ease), background-color 120ms ease-out, color 120ms ease-out;
+}
+
+.strip.reordering .tab.carried {
+  z-index: 3;
+  transition: none;
+  box-shadow: inset 0 0 0 1px var(--tab-edge), 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+
+/* ------------------------------------------------------------ the sidebar, a tab or a workspace carried */
+
+.sidebar-list.moving .tab-row,
+.sidebar-list.moving .workspace {
+  transition: transform 140ms var(--ease), background-color 120ms ease-out, color 120ms ease-out;
+}
+
+/* Where it was picked up it stays, dimmed, in the place it would land. */
+.tab-row.carried,
+.workspace-row.carried {
+  opacity: 0.4;
+}
+
+/* Over another workspace's header or tab: the one it would go to lights. */
+.tab-row.offered,
+.workspace-row.offered {
+  background: var(--tab-hover);
+  color: var(--ink-resting);
+}
+
+.workspace-row.offered {
+  border-radius: 12px;
+}
+
+/* A copy of the row hangs from the pointer. */
+.drag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 1000;
+  margin: 0 !important;
+  pointer-events: none;
+  opacity: 0.92;
+  background-color: var(--recessed);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  transition: none !important;
+}
+
+.tab-row.drag-ghost.selected {
+  background-image: linear-gradient(var(--tab-fill), var(--tab-fill));
+}
+
+.workspace-row.drag-ghost {
+  border-radius: 12px;
+}
+
+/* ------------------------------------------------------------ the mark of a tab with panes */
+
+.pane-mark {
+  display: inline-block;
+  flex: none;
+  vertical-align: -0.14em;
+  margin-left: 0.5em;
+  width: 1em;
+  height: 1em;
+  opacity: 0.85;
+}
+
+.tab-label > .pane-mark {
+  margin-left: 0;
+}
