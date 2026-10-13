@@ -64,6 +64,7 @@
 //! O que fala com o Windows está em `sistema` (só no Windows).
 
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::path::Path;
 
 #[cfg(windows)]
@@ -507,6 +508,22 @@ pub fn raiz_do_git(exe: &str) -> Option<String> {
         }
     }
     pasta_de(&pasta_de(&exe)?)
+}
+
+// ------------------------------------------------------------------ as permissões que foram dadas inteiras
+
+/// A linha que diz que uma permissão numa pasta foi dada inteira. Dar uma
+/// permissão a uma pasta é percorrer tudo o que há nela, e quem interrompe no
+/// meio (Ctrl+C, a aba fechada) deixa a pasta com a permissão na raiz e sem
+/// ela em parte do que está dentro: só a raiz não diz que acabou. A marca é
+/// gravada quando acaba, fora do que a IA alcança.
+pub fn marca(sid: &str, acesso: Acesso, heranca: bool, caminho: &str) -> String {
+    format!("{sid}|{:08x}|{}|{}", acesso.mascara(), if heranca { "h" } else { "f" }, partes(caminho).join("\\"))
+}
+
+/// As marcas de um arquivo de marcas.
+pub fn marcas_de(texto: &str) -> HashSet<String> {
+    texto.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect()
 }
 
 // ------------------------------------------------------------------ procurar o programa
@@ -1094,6 +1111,21 @@ mod testes {
         }
         assert_ne!(Acesso::Gravacao.mascara() & 0x0001_0000, 0, "DELETE");
         assert_eq!(Acesso::Leitura.mascara() & 0x0001_0000, 0);
+    }
+
+    #[test]
+    fn a_marca_de_uma_permissao_nao_confunde_pasta_sid_nem_acesso() {
+        let m = marca("S-1-5-9-1", Acesso::Gravacao, true, r"D:\Projetos\App\");
+        assert_eq!(m, marca("S-1-5-9-1", Acesso::Gravacao, true, "d:/projetos/app"));
+        assert_ne!(m, marca("S-1-5-9-2", Acesso::Gravacao, true, r"D:\Projetos\App"));
+        assert_ne!(m, marca("S-1-5-9-1", Acesso::Leitura, true, r"D:\Projetos\App"));
+        assert_ne!(m, marca("S-1-5-9-1", Acesso::Gravacao, false, r"D:\Projetos\App"));
+        assert_ne!(m, marca("S-1-5-9-1", Acesso::Gravacao, true, r"D:\Projetos\Outro"));
+        let texto = format!("{m}\n\n  {}  \n{m}\n", marca("S-1-5-9-1", Acesso::Leitura, true, r"C:\x"));
+        let lidas = marcas_de(&texto);
+        assert_eq!(lidas.len(), 2);
+        assert!(lidas.contains(&m));
+        assert!(marcas_de("").is_empty());
     }
 
     #[test]

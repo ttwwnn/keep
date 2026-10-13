@@ -4,12 +4,13 @@
 //!
 //! Quem decide o quê está em `super`; quem fala com o sistema, em `sistema`.
 
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::Path;
 
 use super::sistema::{self, Padrao, Sid};
 use super::{
-    Ambiente, Entrada, NIVEIS, Nivel, Quem, ambiente_preso, bloco_de_ambiente, dentro_de, eh_script_do_cmd, falha_de_partida,
+    Ambiente, Entrada, NIVEIS, Nivel, Quem, ambiente_preso, marca, marcas_de, bloco_de_ambiente, dentro_de, eh_script_do_cmd, falha_de_partida,
     junta, linha_de_comando, linha_de_script, lugar_da_isca, pasta_larga_demais, plano, procura_programa, sem_prefixo,
     sid_base, sid_da_pasta, sids_de_restricao, sondar_fs,
 };
@@ -53,6 +54,10 @@ pub struct Pedido {
     pub args: Vec<String>,
     /// A pasta em que o programa começa (dentro da permitida).
     pub onde: String,
+    /// Não morrer com o Ctrl+C que a aba manda a todos os que dividem o
+    /// console: quem o trata é o programa. Só depois de preparadas as
+    /// permissões, que o Ctrl+C ainda pode interromper.
+    pub segurar_ctrl_c: bool,
 }
 
 fn ambiente_atual() -> Vec<(Vec<u16>, Vec<u16>)> {
@@ -66,10 +71,21 @@ fn no_path(nome: &str) -> Option<String> {
     procura_programa(nome, &path, &pathext, &|c| Path::new(c).is_file())
 }
 
-/// A permissão, dada se ainda não está dada. Dá aviso antes de percorrer uma
-/// pasta: a primeira vez numa pasta grande demora.
-fn garante(c: &super::Concessao, sid: &Sid) -> Result<(), String> {
-    if sistema::concedido(&c.caminho, sid, c.acesso, c.heranca).unwrap_or(false) {
+/// Onde ficam as marcas das permissões dadas inteiras: fora do que a IA
+/// alcança (ela só mexeria no que o Keep deixa de percorrer).
+fn arquivo_das_marcas(dados: Option<&str>, local: Option<&str>, casa: &str) -> String {
+    let base = dados.or(local).map(String::from).unwrap_or_else(|| junta(casa, "AppData\\Roaming"));
+    junta(&base, "Keep\\confine-estado\\concedido.txt")
+}
+
+/// A permissão, dada se ainda não está dada. Numa pasta (que se percorre), só
+/// vale a que tem marca: a da raiz sozinha pode ser de uma passada que parou
+/// no meio. Dá aviso antes de percorrer: a primeira vez numa pasta grande
+/// demora.
+fn garante(c: &super::Concessao, sid: &Sid, sid_txt: &str, marcas: &mut HashSet<String>, arquivo: &str) -> Result<(), String> {
+    let esta = marca(sid_txt, c.acesso, c.heranca, &c.caminho);
+    let na_raiz = sistema::concedido(&c.caminho, sid, c.acesso, c.heranca).unwrap_or(false);
+    if na_raiz && (!c.heranca || marcas.contains(&esta)) {
         return Ok(());
     }
     if c.heranca {
@@ -79,7 +95,20 @@ fn garante(c: &super::Concessao, sid: &Sid) -> Result<(), String> {
         );
     }
     rastro(|| format!("concede {:?} em {} ({:?})", c.acesso, c.caminho, c.quem));
-    sistema::conceder(&c.caminho, sid, c.acesso, c.heranca)
+    sistema::conceder(&c.caminho, sid, c.acesso, c.heranca)?;
+    if c.heranca && marcas.insert(esta.clone()) {
+        // Não gravar a marca só obriga a percorrer de novo na próxima vez.
+        let gravou = Path::new(arquivo)
+            .parent()
+            .map(std::fs::create_dir_all)
+            .transpose()
+            .and_then(|_| std::fs::OpenOptions::new().create(true).append(true).open(arquivo))
+            .and_then(|mut f| writeln!(f, "{esta}"));
+        if let Err(e) = gravou {
+            rastro(|| format!("a marca de {} não foi gravada: {e}", c.caminho));
+        }
+    }
+    Ok(())
 }
 
 /// O arquivo e a pasta de isca da prova, fora de qualquer permissão. Criados
@@ -163,12 +192,14 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
         let _trava = sistema::pegar_trava(TRAVA, ESPERA_DA_TRAVA_MS, || {
             eprintln!("Keep: outra aba está preparando as permissões da IA; esperando ela acabar.")
         })?;
+        let arquivo = arquivo_das_marcas(dados.as_deref(), local.as_deref(), &casa);
+        let mut marcas = std::fs::read_to_string(&arquivo).map(|t| marcas_de(&t)).unwrap_or_default();
         for c in &plano.concessoes {
-            let sid = match c.quem {
-                Quem::Pasta => &sid_pasta,
-                Quem::Base => &sid_basico,
+            let (sid, sid_txt) = match c.quem {
+                Quem::Pasta => (&sid_pasta, &pasta_txt),
+                Quem::Base => (&sid_basico, &base_txt),
             };
-            match garante(c, sid) {
+            match garante(c, sid, sid_txt, &mut marcas, &arquivo) {
                 Ok(()) => {}
                 Err(e) if c.obrigatoria => return Err(e),
                 Err(e) => rastro(|| format!("permissão dispensada em {}: {e}", c.caminho)),
@@ -195,6 +226,9 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
         rastro(|| format!("sem Job (a IA não morre junto com a aba): {e}"));
     }
 
+    if p.segurar_ctrl_c {
+        sistema::nao_morrer_com_ctrl_c();
+    }
     let mut tentativas: Vec<String> = Vec::new();
     for nivel in NIVEIS {
         let sids: Vec<Sid> = sids_de_restricao(nivel, &pasta_txt, &base_txt, &logon_txt)
@@ -346,9 +380,7 @@ pub fn cli(args: &[String]) -> i32 {
             pasta.clone()
         }
     };
-    // Quem faz o Ctrl+C da aba é o programa, não este processo que o espera.
-    sistema::nao_morrer_com_ctrl_c();
-    let pedido = Pedido { pasta, programa: exe.replace('/', "\\"), args: linha, onde };
+    let pedido = Pedido { pasta, programa: exe.replace('/', "\\"), args: linha, onde, segurar_ctrl_c: true };
     match roda(&pedido, &Padrao::do_processo()) {
         Ok(codigo) => codigo,
         Err(e) => {
@@ -395,7 +427,8 @@ pub fn autoteste() -> i32 {
         let saida = std::fs::File::create(&saida_arq).map_err(|e| e.to_string())?;
         let padrao =
             if com_console { Padrao::do_processo() } else { Padrao::de_arquivos(None, Some(&saida), Some(&saida)) };
-        let pedido = Pedido { pasta: permitida.clone(), programa: roteiro, args: vec![], onde: permitida.clone() };
+        let pedido =
+            Pedido { pasta: permitida.clone(), programa: roteiro, args: vec![], onde: permitida.clone(), segurar_ctrl_c: false };
         let codigo = roda(&pedido, &padrao)?;
         drop(padrao);
         let texto = std::fs::read_to_string(&saida_arq).unwrap_or_default();
