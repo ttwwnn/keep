@@ -229,6 +229,9 @@ trace_count() { grep -acE "$1" "$WORK/app.log"; }
 made() { trace_count "pool +made .* $WS/$1 "; }
 hibernated() { trace_count "pool +hibernating w[0-9]+ $WS/$1 kept=true"; }
 taken() { trace_count "keeper +$WS/$1 takes over "; }
+# How many clients said they took a tab over (KEEP_CLIENT_LOG): the app
+# naming a keeper is not the client getting the tab from it.
+took() { local n; n=$(grep -c ' took over ' "$WORK/client.log" 2>/dev/null); echo "${n:-0}"; }
 grid() { grep -aoE "layout +$WS/$1 grid [0-9]+x[0-9]+" "$WORK/app.log" | tail -1 | awk '{print $NF}'; }
 daemon_grid() {
     "$KEEP" ls 2>/dev/null | awk -v t="$1" '$1 == "tab" && $2 == t {
@@ -355,10 +358,12 @@ check "no surface was made for them meanwhile" "1 1 1" "$(made 1) $(made 2) $(ma
 
 say ""
 say "back to the tab with the long history"
+TOOK=$(took)
 show 1 || say "  (tab 1 would not come up)"
 wait_for 60 dump_has 1 "P${PID[1]}-L0005000"
 sleep 1.5
-check "a surface was made again, taking the tab over from its client" "2 1" "$(made 1) $(taken 1)"
+check "a surface was made again, taking the tab over from its client" "2 1 $((TOOK + 1))" \
+    "$(made 1) $(taken 1) $(took)"
 check "every line is there, once and in order: 3000 shown, 2000 hibernated" "yes" "$(lines_whole 1 5000)"
 check "its grid is the daemon's" "$(daemon_grid 1)" "$(grid 1)"
 
@@ -400,6 +405,7 @@ say ""
 say "⌘P to a hibernated tab"
 # Kept now: 2, 3, 1. Hibernated: 4, 5, 6, 7.
 MADE4=$(made 4)
+TOOK=$(took)
 "$SENDKEY" "$APP_PID" key 35 cmd >/dev/null 2>&1
 sleep 2
 "$SENDKEY" "$APP_PID" text "tab-4" >/dev/null 2>&1
@@ -409,7 +415,7 @@ wait_for 20 shown 4
 wait_for 30 dump_has 4 "P${PID[4]}-L0000020"
 sleep 1.5
 check "it is the tab on screen" "yes" "$(shown 4 && echo yes || echo no)"
-check "taken over from its client" "$((MADE4 + 1)) 1" "$(made 4) $(taken 4)"
+check "taken over from its client" "$((MADE4 + 1)) 1 $((TOOK + 1))" "$(made 4) $(taken 4) $(took)"
 check "with its lines" "yes" "$(lines_whole 4 20)"
 give_back_front
 

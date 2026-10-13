@@ -208,12 +208,6 @@ final class SurfacePool {
         return asleep.first { $0.key.workspace == workspace && $0.key.tab == tab }?.value.directory
     }
 
-    /// Whether a pane's surface was let go of with its client keeping it,
-    /// for the tests: `isHibernated` alone says nothing of how.
-    func isKept(workspace: String, tab: UInt32) -> Bool {
-        asleep.contains { $0.key.workspace == workspace && $0.key.tab == tab && $0.value.keeper != nil }
-    }
-
     /// Where to type into a pane: the surface of a window that has one, or,
     /// for a pane hibernated in every window, the daemon. Nil for a pane this
     /// app never showed, as `anyExisting` is.

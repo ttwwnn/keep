@@ -68,7 +68,7 @@ sabotage "the client goes with its surface, whatever the app said" \
 sabotage "the keeper hands over a repaint, not the whole terminal" \
     crates/keep/src/keeper.rs 's/let snapshot = mirror.terminal.handover(Some(keyboard));/let snapshot = mirror.terminal.snapshot(keep_vt::Format::Vt).unwrap_or_default();/'
 sabotage "the keeper answers nothing" \
-    crates/keep/src/keeper.rs 's/let _ = mirror.terminal.act_as_terminal(read_facts(&dir));/let _ = \&mut mirror;/'
+    crates/keep/src/keeper.rs 's/let _ = mirror.terminal.act_as_terminal(facts_for(&dir, dark));/let _ = (\&mut mirror, dark);/'
 sabotage "the surface coming back attaches afresh instead of taking the connection" \
     crates/keep/src/attach.rs 's/Some((sock, screen)) => (sock, Some(screen)),/Some((_sock, screen)) => { let mut sock = Stream::connect(socket).context("connect to daemon")?; ClientMsg::Attach { workspace: name.to_string(), tab, cols, rows }.write(\&mut sock)?; (sock, Some(screen)) }/'
 sabotage "the handover leaves the main screen out" \
