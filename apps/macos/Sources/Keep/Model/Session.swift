@@ -2011,7 +2011,10 @@ final class Session {
                         usageAccount: aiAccounts.confirmedAccount(
                             workspace: tab.id.workspace, tab: tab.id.root,
                             program: AIProgramKind(command: aiProgram(of: tab))),
-                        runningAccount: aiRunning(of: tab)
+                        runningAccount: aiRunning(of: tab),
+                        provenAccount: aiAccounts.proven(
+                            workspace: tab.id.workspace, tab: tab.id.root,
+                            program: AIProgramKind(command: aiProgram(of: tab)))
                     )
                 },
                 expanded: !sidebar.folded.contains(workspace.name),

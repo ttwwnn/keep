@@ -400,6 +400,11 @@ pub fn em_cache() -> Vec<Linha> {
     linhas(contas::listar(false), &le_cache())
 }
 
+/// As linhas destas contas como estão, sem ir à rede nem reler os logins.
+pub fn em_cache_de(lista: &[Conta]) -> Vec<Linha> {
+    linhas(lista.to_vec(), &le_cache())
+}
+
 /// As contas (o `key`) que podem receber trabalho agora, pela última
 /// medição, entre as dadas — sem ir à rede nem reler os logins.
 pub fn disponiveis_de(lista: &[Conta]) -> Vec<String> {

@@ -566,7 +566,7 @@ struct WorkspaceSidebar: View {
                 // session republishes when the list's order changes.
                 let program = AIChoices.tabLabel(
                     command: tab.command, account: tab.account, running: tab.runningAccount,
-                    lines: UsageMonitor.shared.lines)
+                    proven: tab.provenAccount, lines: UsageMonitor.shared.lines)
                 if !program.isEmpty {
                     Text(program)
                         .font(.system(size: 12 * textZoom))

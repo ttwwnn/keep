@@ -396,17 +396,17 @@ unsafe extern "C" fn on_clipboard(
     _terminal: ffi::Terminal,
     userdata: *mut c_void,
     write: *const ffi::ClipboardWrite,
-) {
-    let Some(effects) = (unsafe { effects(userdata) }) else { return };
+) -> c_int {
+    let Some(effects) = (unsafe { effects(userdata) }) else { return ffi::CLIPBOARD_WRITE_DENIED };
     if write.is_null() {
-        return;
+        return ffi::CLIPBOARD_WRITE_DENIED;
     }
     let write = unsafe { &*write };
     // The standard clipboard, as the app writes it: a Mac has no other. And
     // by OSC 52, the one way a Ghostty surface takes a program's text: not
     // iTerm2's OSC 1337 nor the Kitty protocol's OSC 5522.
     if write.location != ffi::CLIPBOARD_LOCATION_STANDARD || effects.osc != Some(52) {
-        return;
+        return ffi::CLIPBOARD_WRITE_DENIED;
     }
     let contents: &[ffi::ClipboardContent] = if write.contents.is_null() || write.contents_len == 0 {
         &[]
@@ -417,17 +417,19 @@ unsafe extern "C" fn on_clipboard(
         let mime = bytes(content.mime);
         (mime.is_empty() || mime.starts_with(b"text/")).then(|| bytes(content.data).to_vec())
     });
-    if let Some(text) = text.filter(|t| !t.is_empty()) {
-        effects.events.clipboard.push(text);
-        if let Some(reply) = write.reply {
-            let answer = ffi::ClipboardWriteReply {
-                size: std::mem::size_of::<ffi::ClipboardWriteReply>(),
-                result: ffi::CLIPBOARD_WRITE_SUCCESS,
-                remember: false,
-            };
-            unsafe { reply(write, &answer) };
-        }
+    // Taken, said both ways: by the reply where the library hands one over,
+    // and by what is returned, which is how the pinned library hears it.
+    let Some(text) = text.filter(|t| !t.is_empty()) else { return ffi::CLIPBOARD_WRITE_DENIED };
+    effects.events.clipboard.push(text);
+    if let Some(reply) = write.reply_fn() {
+        let answer = ffi::ClipboardWriteReply {
+            size: std::mem::size_of::<ffi::ClipboardWriteReply>(),
+            result: ffi::CLIPBOARD_WRITE_SUCCESS,
+            remember: false,
+        };
+        unsafe { reply(write, &answer) };
     }
+    ffi::CLIPBOARD_WRITE_SUCCESS
 }
 
 unsafe extern "C" fn on_clipboard_read(

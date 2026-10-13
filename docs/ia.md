@@ -345,7 +345,11 @@ Toda resposta é um objeto JSON numa linha, com `"versao": 1` e `"ok"`. Recusa: 
 - `ordem [mover …]` → `{"ordem": [chave]}`.
 - `abas` → `{"keepd": {"pid", "inicioMs"}, "ia": [{"workspace", "aba", "agente"
   (`claude`|`codex`), "conta" (a escolha: `claude:ordem` ou a chave da conta), "atual" (a chave da
-  conta em que ela roda agora, ou `null`), "vinculo" (`exato`), "pid", "conversa" (id ou `null`)}]}`.
+  conta em que ela roda agora, ou `null`), "vinculo" (`exato`), "pid", "conversa" (id ou `null`),
+  "provada" (só no Claude, e só quando se prova: a conta em que ele respondeu por último, pelos
+  recomeços dos `rate_limits` da statusLine casados com os medidos no `uso`)}]}`. Logo depois de
+  uma troca a quente, `provada` ainda é a conta antiga: o Claude relê o armazém a cada 30 s e só
+  usa o token novo na resposta seguinte; a lateral do app diz "(IA·1→2)" até lá.
   `keepd.inicioMs` é o `started_ms` do `List3`: o app ignora a resposta de outro daemon.
 - `trocar` → `{"feito": texto}` (a quente: "passou para a IA-2 sem sair do Claude"). Recusas:
   `ocupada` (o app pergunta "Interromper e trocar agora" e repete com `--interromper`),
