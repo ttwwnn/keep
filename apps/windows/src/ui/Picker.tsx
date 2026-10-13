@@ -12,10 +12,15 @@
 // Flat on purpose: you do not pick a workspace and then a tab — you pick the
 // thing and you are in it. A picture of what a row actually is sits beside the
 // list, drawn from the screen the daemon is already keeping.
+//
+// "Change the theme…" and "Change the font…" in the palette put the lists of
+// ThemePicker and FontPicker in place of this card; Escape in one is a step
+// back to the palette, and choosing in one puts everything away.
 
+import type { ComponentType } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import * as api from "../api";
-import { catalogOf, commandSpec, type CatalogId } from "../commands";
+import { commandSpec, type CatalogId } from "../commands";
 import { chordAction } from "../palette/actions";
 import {
   commandItems,
@@ -40,10 +45,12 @@ import { closeOverlay } from "../palette/overlay";
 import { act, choose, dismiss } from "../palette/run";
 import { hereFacts, hitRows, homeFolder, paneScope, previewTarget, visits, workspaceFacts } from "../palette/source";
 import { isMac, now } from "../store";
+import { FontPicker } from "./FontPicker";
 import { Glyph } from "./Glyph";
 import { KeyCaps } from "./KeyCaps";
 import { ActionsPanel, Footer } from "./PickerActions";
 import { Preview } from "./PickerPreview";
+import { ThemePicker } from "./ThemePicker";
 
 export type PickerMode = "picker" | "palette" | "find" | "search";
 
@@ -266,6 +273,9 @@ function useSearch(active: boolean, query: string, scope: { workspace: string; p
 
 // ------------------------------------------------------------------ the card
 
+/** The lists a command opens in place of the card's own: the same ones the settings open, each a card of its own. */
+const LISTS: Record<CatalogId, ComponentType> = { themes: ThemePicker, fonts: FontPicker };
+
 const PLACEHOLDER = {
   picker: "Ir para um terminal, ou uma pasta onde abrir um…",
   palette: "O que você quer fazer…",
@@ -314,7 +324,8 @@ export function Picker(props: { mode: PickerMode }) {
   const row = rows[at];
   const selected = row && selectable(row) ? row.item : undefined;
 
-  useEffect(() => field.current?.focus(), []);
+  // Also when a list is put away: the field it returns to is a new one.
+  useEffect(() => field.current?.focus(), [catalog]);
   useEffect(() => {
     const box = rowsBox.current;
     if (!box) return;
@@ -323,7 +334,12 @@ export function Picker(props: { mode: PickerMode }) {
     else box.children[at]?.scrollIntoView({ block: "nearest" });
   }, [selected?.id]);
 
-  const openCatalog = (id: CatalogId) => setCatalog(id);
+  const openCatalog = (id: CatalogId) => {
+    // The palette comes back as it was opened: nothing typed, nothing chosen.
+    setQuery("");
+    setPicked(null);
+    setCatalog(id);
+  };
   const refocus = () => requestAnimationFrame(() => field.current?.focus());
   const closeActions = () => {
     setActing(false);
@@ -390,11 +406,20 @@ export function Picker(props: { mode: PickerMode }) {
     if (!(target instanceof HTMLInputElement)) e.preventDefault();
   };
 
-  const Catalog = catalog ? catalogOf(catalog) : undefined;
-  if (Catalog) {
+  if (catalog) {
+    const List = LISTS[catalog];
+    // The list is a card of its own, and closes the whole overlay when something is chosen. Escape is caught on its way down, to go back to the palette instead: one step back, as on the Mac.
     return (
-      <div class="card picker catalog" role="dialog" aria-label={commandSpec(catalog === "themes" ? "chooseTheme" : "chooseFont").title}>
-        <Catalog onBack={() => setCatalog(null)} onDone={closeOverlay} />
+      <div
+        class="pk-hosted"
+        onKeyDownCapture={(e) => {
+          if (e.key !== "Escape" || e.isComposing) return;
+          e.stopPropagation();
+          e.preventDefault();
+          setCatalog(null);
+        }}
+      >
+        <List />
       </div>
     );
   }

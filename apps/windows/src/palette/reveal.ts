@@ -1,36 +1,39 @@
 // Going to a line of history: the terminal scrolled to it, and the line marked
 // for a moment so the eye finds it.
 
-import type { Terminal } from "@xterm/xterm";
+import type { ISearchDecorationOptions } from "@xterm/addon-search";
+import type { ITheme, Terminal } from "@xterm/xterm";
 import { columnOf, locateLine, type Found } from "./hits";
 
 /** How long the mark stays. */
 const FLASH_MS = 1800;
 
 /**
- * The line a muted band and the match a bright one, in colours that read on a
- * dark theme and on a light one: the decorations take `#RRGGBB` only, so the
- * theme is chosen for rather than blended into.
+ * What the marks are drawn in: the search colours of the theme in use, which
+ * were chosen to read on its ground, under the letter colour they were chosen
+ * for. Colours the theme derives, and not a pair of them for dark and another
+ * for light, since a theme can have any ground.
  */
-function colours(dark: boolean) {
-  return {
-    band: dark ? { backgroundColor: "#4d4117", foregroundColor: "#f5f5f5" } : { backgroundColor: "#fff0b3", foregroundColor: "#1f2328" },
-    match: { backgroundColor: "#ffd60a", foregroundColor: "#1d1f21" },
-  };
+export interface Look {
+  search: ISearchDecorationOptions;
+  terminal: ITheme;
 }
 
 /** Mark a line of a terminal's buffer, and the match in it; the function takes the mark away. */
-export function markLine(term: Terminal, index: number, span: [number, number] | null | undefined, dark: boolean): () => void {
+export function markLine(term: Terminal, index: number, span: [number, number] | null | undefined, look: Look): () => void {
   const buffer = term.buffer.active;
   const marker = term.registerMarker(index - (buffer.baseY + buffer.cursorY));
   if (!marker) return () => {};
-  const tint = colours(dark);
-  const made = [term.registerDecoration({ marker, width: term.cols, layer: "bottom", ...tint.band })];
+  const foregroundColor = look.terminal.foreground;
+  // The line a muted band, the match in it the brighter of the two.
+  const band = { backgroundColor: look.search.matchBackground, foregroundColor };
+  const match = { backgroundColor: look.search.activeMatchBackground, foregroundColor };
+  const made = [term.registerDecoration({ marker, width: term.cols, layer: "bottom", ...band })];
   const row = buffer.getLine(index);
   if (span && row) {
     const from = columnOf(row, span[0]);
     const to = columnOf(row, span[1]);
-    if (to > from) made.push(term.registerDecoration({ marker, x: from, width: to - from, layer: "top", ...tint.match }));
+    if (to > from) made.push(term.registerDecoration({ marker, x: from, width: to - from, layer: "top", ...match }));
   }
   return () => {
     for (const decoration of made) decoration?.dispose();
@@ -47,7 +50,7 @@ const flashing = new WeakMap<Terminal, () => void>();
  * what follows it rather than pinned to the last row. The line is marked when
  * it is certainly the one: a guess scrolls near it and claims nothing.
  */
-export function showLine(term: Terminal, hit: Found, dark: boolean): void {
+export function showLine(term: Terminal, hit: Found, look: Look): void {
   const buffer = term.buffer.active;
   // A program on the alternate screen has no history to scroll through.
   if (buffer.type === "alternate") return;
@@ -60,7 +63,7 @@ export function showLine(term: Terminal, hit: Found, dark: boolean): void {
   // The mark is the extra and the scroll is the point: decorations are an experimental part of xterm.js.
   let clear: () => void;
   try {
-    clear = markLine(term, located.index, hit.span, dark);
+    clear = markLine(term, located.index, hit.span, look);
   } catch {
     return;
   }

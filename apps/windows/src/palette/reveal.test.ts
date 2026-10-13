@@ -4,7 +4,17 @@
 import { Terminal } from "@xterm/xterm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { columnOf } from "./hits";
-import { markLine, showLine } from "./reveal";
+import { markLine, showLine, type Look } from "./reveal";
+
+/** What a theme with a dark ground derives, and one with a light ground: the marks take their colours from it. */
+const DARK: Look = {
+  search: { matchBackground: "#4d4117", activeMatchBackground: "#7a661c", matchOverviewRuler: "#888888", activeMatchColorOverviewRuler: "#ffaa00" },
+  terminal: { foreground: "#f5f5f5" },
+};
+const LIGHT: Look = {
+  search: { matchBackground: "#fff0b3", activeMatchBackground: "#ffd60a", matchOverviewRuler: "#888888", activeMatchColorOverviewRuler: "#ffaa00" },
+  terminal: { foreground: "#1f2328" },
+};
 
 /** A terminal of `rows` rows holding `lines`, as the daemon's snapshot would write them. */
 async function terminalWith(lines: string[], rows = 6): Promise<Terminal> {
@@ -20,7 +30,7 @@ afterEach(() => vi.useRealTimers());
 describe("the scroll", () => {
   it("puts the line five rows from the bottom, with what follows it", async () => {
     const term = await terminalWith(history(30));
-    showLine(term, { text: "linha 10", line: 10, total: 30 }, true);
+    showLine(term, { text: "linha 10", line: 10, total: 30 }, DARK);
     // Six rows: the line is the second from the top, the four after it below.
     expect(term.buffer.active.viewportY).toBe(9);
     expect(term.buffer.active.getLine(10)?.translateToString(true)).toBe("linha 10");
@@ -29,14 +39,14 @@ describe("the scroll", () => {
 
   it("a line near the end is the bottom, whatever the count", async () => {
     const term = await terminalWith(history(30));
-    showLine(term, { text: "linha 28", line: 28, total: 30 }, true);
+    showLine(term, { text: "linha 28", line: 28, total: 30 }, DARK);
     expect(term.buffer.active.viewportY).toBe(term.buffer.active.baseY);
     term.dispose();
   });
 
   it("a line near the start is the top", async () => {
     const term = await terminalWith(history(30));
-    showLine(term, { text: "linha 1", line: 1, total: 30 }, true);
+    showLine(term, { text: "linha 1", line: 1, total: 30 }, DARK);
     expect(term.buffer.active.viewportY).toBe(0);
     term.dispose();
   });
@@ -44,7 +54,7 @@ describe("the scroll", () => {
   it("counts from the newest line when the terminal kept less than the daemon did", async () => {
     // The daemon's copy has 40 lines; this terminal trimmed the first 12.
     const term = await terminalWith(history(40).slice(12));
-    showLine(term, { text: "linha 20", line: 20, total: 40 }, true);
+    showLine(term, { text: "linha 20", line: 20, total: 40 }, DARK);
     // linha 20 is the ninth line here, at buffer index 8: the view starts at 7.
     expect(term.buffer.active.getLine(8)?.translateToString(true)).toBe("linha 20");
     expect(term.buffer.active.viewportY).toBe(7);
@@ -53,7 +63,7 @@ describe("the scroll", () => {
 
   it("a guess still scrolls near the line", async () => {
     const term = await terminalWith(history(30).map((l) => l.toUpperCase()));
-    showLine(term, { text: "linha 10", line: 10, total: 30 }, false);
+    showLine(term, { text: "linha 10", line: 10, total: 30 }, LIGHT);
     expect(term.buffer.active.viewportY).toBe(9);
     term.dispose();
   });
@@ -62,7 +72,7 @@ describe("the scroll", () => {
     const term = await terminalWith(history(30));
     await new Promise<void>((done) => term.write("\x1b[?1049h\x1b[Hum editor", done));
     const before = term.buffer.active.viewportY;
-    showLine(term, { text: "linha 10", line: 10, total: 30 }, true);
+    showLine(term, { text: "linha 10", line: 10, total: 30 }, DARK);
     expect(term.buffer.active.type).toBe("alternate");
     expect(term.buffer.active.viewportY).toBe(before);
     term.dispose();
@@ -70,7 +80,7 @@ describe("the scroll", () => {
 
   it("says nothing of an empty terminal", async () => {
     const term = await terminalWith([]);
-    expect(() => showLine(term, { text: "x", line: 0, total: 1 }, true)).not.toThrow();
+    expect(() => showLine(term, { text: "x", line: 0, total: 1 }, DARK)).not.toThrow();
     term.dispose();
   });
 });
@@ -81,11 +91,11 @@ describe("the mark", () => {
     const term = await terminalWith(history(30));
     vi.useFakeTimers();
     const first = vi.spyOn(term, "registerDecoration");
-    showLine(term, { text: "linha 10", line: 10, total: 30, span: [0, 5] }, true);
+    showLine(term, { text: "linha 10", line: 10, total: 30, span: [0, 5] }, DARK);
     // The line, and the match in it.
     expect(first).toHaveBeenCalledTimes(2);
     const made = first.mock.results.map((r) => r.value as { isDisposed: boolean });
-    showLine(term, { text: "linha 11", line: 11, total: 30, span: [0, 5] }, true);
+    showLine(term, { text: "linha 11", line: 11, total: 30, span: [0, 5] }, DARK);
     expect(made.every((d) => d.isDisposed)).toBe(true);
     vi.advanceTimersByTime(2000);
     const second = first.mock.results.slice(2).map((r) => r.value as { isDisposed: boolean });
@@ -96,9 +106,23 @@ describe("the mark", () => {
   it("a match that is not in the line marks the line alone", async () => {
     const term = await terminalWith(history(30));
     const spy = vi.spyOn(term, "registerDecoration");
-    const clear = markLine(term, 10, null, false);
+    const clear = markLine(term, 10, null, LIGHT);
     expect(spy).toHaveBeenCalledTimes(1);
     clear();
+    term.dispose();
+  });
+
+  it("is drawn in the colours the theme gives, the match brighter than the line, the letters in the theme's own", async () => {
+    const term = await terminalWith(history(30));
+    const spy = vi.spyOn(term, "registerDecoration");
+    for (const look of [DARK, LIGHT]) {
+      spy.mockClear();
+      const clear = markLine(term, 10, [0, 5], look);
+      const [line, match] = spy.mock.calls.map((call) => call[0]);
+      expect(line).toMatchObject({ backgroundColor: look.search.matchBackground, foregroundColor: look.terminal.foreground });
+      expect(match).toMatchObject({ backgroundColor: look.search.activeMatchBackground, foregroundColor: look.terminal.foreground });
+      clear();
+    }
     term.dispose();
   });
 
@@ -106,7 +130,7 @@ describe("the mark", () => {
     const term = await terminalWith(["あbc def"]);
     const spy = vi.spyOn(term, "registerDecoration");
     // "def" is characters 4 to 7 of the text and columns 5 to 8 of the row.
-    const clear = markLine(term, 0, [4, 7], true);
+    const clear = markLine(term, 0, [4, 7], DARK);
     const match = spy.mock.calls[1][0];
     expect([match.x, match.width]).toEqual([5, 3]);
     clear();

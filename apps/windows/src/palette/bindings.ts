@@ -1,9 +1,10 @@
 // What the window itself can do for the palette's commands, as defaults: a part
 // of the app that owns one binds it with `registerCommand` (commands.ts) and
-// wins, whenever it does. The ones that belong to another part and have no
-// default stay dim until it does.
+// wins, whenever it does. The one that belongs to a part not here yet (a second
+// window) has no default and stays dim until that part binds it.
 
 import { SPLIT_DOWN, SPLIT_RIGHT } from "../api";
+import { clearTheme, resetText } from "../appearance";
 import { registerDefault } from "../commands";
 import { perform } from "../input";
 import {
@@ -18,26 +19,23 @@ import {
   newTab,
   newWorkspace,
   overlay,
-  setFont,
+  putAway,
+  shownWorkspaces,
   split,
   tabLabel,
   tabsByWorkspace,
   toggleSidebar,
+  toggleVerticalTabs,
   zoom,
-  zoomReset,
 } from "../store";
 import { zoomStep } from "../zoom";
 
 const hasWorkspace = () => activeWorkspace.value !== null;
 const hasPane = () => activePane.value !== null;
 
-/** Where the themes and the fonts are chosen until the palette has lists of its own for them. */
-const openSettings = () => {
-  overlay.value = "settings";
-};
-
 export function bindCommands(): void {
   registerDefault("toggleSidebar", { run: toggleSidebar });
+  registerDefault("toggleVerticalTabs", { run: toggleVerticalTabs });
   registerDefault("splitRight", { run: () => void split(SPLIT_RIGHT), enabled: hasPane });
   registerDefault("splitDown", { run: () => void split(SPLIT_DOWN), enabled: hasPane });
   registerDefault("closePane", {
@@ -49,7 +47,11 @@ export function bindCommands(): void {
     // A tab of one pane is closed as a tab: there is no pane to close.
     enabled: () => (activeTab.value?.panes.length ?? 0) > 1,
   });
-  registerDefault("settings", { run: openSettings });
+  registerDefault("settings", {
+    run: () => {
+      overlay.value = "settings";
+    },
+  });
   registerDefault("fullscreen", { run: () => perform({ kind: "fullscreen" }) });
 
   registerDefault("newTab", { run: () => void newTab() });
@@ -64,6 +66,14 @@ export function bindCommands(): void {
     },
     enabled: () => activeTab.value !== null,
   });
+  // Off the sidebar, still running: "Ir para" brings it back.
+  registerDefault("removeWorkspace", {
+    run: () => {
+      const workspace = activeWorkspace.value;
+      if (workspace) putAway(workspace);
+    },
+    enabled: () => shownWorkspaces.value.some((w) => w.name === activeWorkspace.value),
+  });
   registerDefault("killWorkspace", {
     run: () => {
       const workspace = activeWorkspace.value;
@@ -73,19 +83,10 @@ export function bindCommands(): void {
   });
   registerDefault("pasteImage", { run: () => perform({ kind: "pasteImage" }), enabled: () => activeView() !== undefined });
 
-  // The themes and the fonts: the settings, for now. The lists the Mac has —
-  // each row a scrap of the thing — come from `registerCatalog` (commands.ts),
-  // and "Usar o tema do Keep" is bound by whoever owns the themes.
-  registerDefault("chooseTheme", { run: openSettings });
-  registerDefault("chooseFont", { run: openSettings });
   // The zoom's steps, as the buttons and Ctrl+= are; dim at the ends, as the buttons are.
   registerDefault("fontBigger", { run: () => zoom(1), enabled: () => zoomStep(gui.value.zoom, 1) !== undefined });
   registerDefault("fontSmaller", { run: () => zoom(-1), enabled: () => zoomStep(gui.value.zoom, -1) !== undefined });
   // The size at 100% and the face back to the default: both, as on the Mac.
-  registerDefault("fontReset", {
-    run: () => {
-      zoomReset();
-      setFont("", 0);
-    },
-  });
+  registerDefault("fontReset", { run: resetText });
+  registerDefault("clearTheme", { run: clearTheme });
 }

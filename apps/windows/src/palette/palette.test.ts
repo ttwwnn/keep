@@ -384,14 +384,14 @@ describe("the palette's commands", () => {
     const { registerCommand, registerDefault, runCommand } = await import("../commands");
     const ran: string[] = [];
     // The owner bound it before the window's defaults were made.
-    registerCommand("chooseTheme", { run: () => ran.push("owner") });
-    registerDefault("chooseTheme", { run: () => ran.push("default") });
+    registerCommand("newWindow", { run: () => ran.push("owner") });
+    registerDefault("newWindow", { run: () => ran.push("default") });
     // And one it binds after.
-    registerDefault("chooseFont", { run: () => ran.push("default font") });
-    registerCommand("chooseFont", { run: () => ran.push("owner font") });
-    runCommand("chooseTheme");
-    runCommand("chooseFont");
-    expect(ran).toEqual(["owner", "owner font"]);
+    registerDefault("removeWorkspace", { run: () => ran.push("default second") });
+    registerCommand("removeWorkspace", { run: () => ran.push("owner second") });
+    runCommand("newWindow");
+    runCommand("removeWorkspace");
+    expect(ran).toEqual(["owner", "owner second"]);
   });
 
   it("the destructive ones are said so, and the themes and fonts open lists", async () => {
@@ -404,14 +404,14 @@ describe("the palette's commands", () => {
     ]);
   });
 
-  it("a list that is registered is the one asked for", async () => {
+  it("the two that open a list need nothing bound, and run nothing", async () => {
     vi.resetModules();
-    const { registerCatalog, catalogOf } = await import("../commands");
-    const view = () => null;
-    expect(catalogOf("themes")).toBeUndefined();
-    registerCatalog("themes", view);
-    expect(catalogOf("themes")).toBe(view);
-    expect(catalogOf("fonts")).toBeUndefined();
+    const { isEnabled, runCommand } = await import("../commands");
+    expect(isEnabled("chooseTheme")).toBe(true);
+    expect(isEnabled("chooseFont")).toBe(true);
+    expect(runCommand("chooseTheme")).toBe(false);
+    // While the commands of the other parts are dim until bound.
+    expect(isEnabled("newWindow")).toBe(false);
   });
 });
 

@@ -39,9 +39,9 @@
   max-height: calc(100vh - 102px);
 }
 
-/* A list that another part of the app supplies fills the card. */
-.picker.catalog {
-  display: flex;
+/* The list of themes or faces a command opens is a card of its own, which this only carries. */
+.pk-hosted {
+  display: contents;
 }
 
 /* ------------------------------------------------------------ the field */

@@ -8,8 +8,20 @@
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { baseName } from "../layout";
-import { catalogOf, commandSpec, isEnabled, runCommand, type CatalogId } from "../commands";
-import { closeTab, createWorkspace, focusPane, newTab, palette, say, select, tabLabel, tabsByWorkspace, terminals } from "../store";
+import { commandSpec, isEnabled, runCommand, type CatalogId } from "../commands";
+import {
+  closeTab,
+  createWorkspace,
+  focusPane,
+  newTab,
+  palette,
+  say,
+  select,
+  tabLabel,
+  tabsByWorkspace,
+  terminals,
+  viewWhenAwake,
+} from "../store";
 import type { ActionId } from "./actions";
 import type { Found } from "./hits";
 import type { PickerItem } from "./items";
@@ -20,25 +32,29 @@ import { showLine } from "./reveal";
 const failed = (what: string) => (error: unknown) => say(`${what}: ${String(error)}`);
 
 /**
- * Go to a hit's line in its pane. Asked twice: a pane opened by the search
- * may still be receiving its screen, whose arrival lands the view back at the
- * bottom, and asking again once it has settled costs nothing when the first
- * time already worked.
+ * Go to a hit's line in its pane. The pane's tab may be asleep, its terminal
+ * built only now and empty until the daemon repaints, so it is waited for. And
+ * asked twice: the repaint's arrival lands the view back at the bottom, and
+ * asking again once it has settled costs nothing when the first time already
+ * worked.
  */
 function revealHit(workspace: string, pane: number, hit: Found): void {
   const apply = () => {
     const view = terminals.existing(workspace, pane);
-    if (view) showLine(view.term, hit, palette.value.dark);
+    if (view) showLine(view.term, hit, palette.value);
   };
-  apply();
-  setTimeout(apply, 700);
+  void viewWhenAwake(workspace, pane).then((view) => {
+    if (!view) return;
+    apply();
+    setTimeout(apply, 700);
+  });
 }
 
 /**
  * Choose a row: go there, open the folder, make the workspace, run the
- * command. A command that opens a list the palette has keeps the card up and
- * says which (`openList`); every other choice puts the card away first, so what
- * it does — a window opened, a question asked — does not happen under it.
+ * command. A command that opens a list keeps the card up and says which
+ * (`openList`); every other choice puts the card away first, so what it does —
+ * a window opened, a question asked — does not happen under it.
  */
 export function choose(item: PickerItem, openList: (list: CatalogId) => void): void {
   const kind = item.kind;
@@ -46,7 +62,7 @@ export function choose(item: PickerItem, openList: (list: CatalogId) => void): v
     case "command": {
       const spec = commandSpec(kind.command);
       if (!isEnabled(spec.id)) return;
-      if (spec.opens && catalogOf(spec.opens)) {
+      if (spec.opens) {
         openList(spec.opens);
         return;
       }

@@ -13,13 +13,12 @@
 //   toggleVerticalTabs   the tabs' side-bar-only layout
 //   newWindow            a second window
 //   removeWorkspace      take a workspace off this window's list
-//   clearTheme           back to Keep's own theme
 //
-// The two lists that open inside the palette — the themes and the fonts — are
-// supplied the same way, by `registerCatalog`. Until one is, its command
-// opens the settings, where the same choices are.
+// The two commands that open a list — the themes and the fonts — do not run
+// anything from the palette: the card shows the list itself, in place of its
+// own (ui/Picker.tsx), the same ones the settings open (ui/ThemePicker.tsx,
+// ui/FontPicker.tsx).
 
-import type { ComponentType } from "preact";
 import type { GlyphName } from "./palette/glyphs";
 
 export type CommandId =
@@ -47,7 +46,7 @@ export type CommandId =
 /** Where a command is listed, and a name the query matches it by. */
 export type CommandGroup = "janela" | "workspace" | "aparência";
 
-/** A list that opens inside the palette, in place of its own. */
+/** A list the palette shows in place of its own. */
 export type CatalogId = "themes" | "fonts";
 
 export interface CommandSpec {
@@ -129,36 +128,16 @@ export function registerDefault(id: CommandId, binding: CommandBinding): void {
 
 /** Whether a command has something to run now. Dim in the palette, and never chosen, when not. */
 export function isEnabled(id: CommandId): boolean {
+  // One that opens a list has nothing bound: the palette shows the list itself.
+  if (commandSpec(id).opens) return true;
   const binding = bindings.get(id);
   return binding !== undefined && (binding.enabled?.() ?? true);
 }
 
 /** Run a command if it can be; whether it did. */
 export function runCommand(id: CommandId): boolean {
-  if (!isEnabled(id)) return false;
-  bindings.get(id)!.run();
+  const binding = bindings.get(id);
+  if (!binding || !isEnabled(id)) return false;
+  binding.run();
   return true;
-}
-
-/** What a list inside the palette is given: a way back to the palette, and a way out of it. */
-export interface CatalogProps {
-  /** Escape: the palette again, as changing one's mind about which theme is not changing it about the palette. */
-  onBack(): void;
-  /** Something was chosen: the palette is put away. */
-  onDone(): void;
-}
-
-const catalogs = new Map<CatalogId, ComponentType<CatalogProps>>();
-
-/**
- * Supply a list for the palette to open: the themes (Ghostty's catalog) or the
- * fonts. The component is drawn inside the palette's card, in place of the
- * palette's own field and list, and owns its keys.
- */
-export function registerCatalog(id: CatalogId, view: ComponentType<CatalogProps>): void {
-  catalogs.set(id, view);
-}
-
-export function catalogOf(id: CatalogId): ComponentType<CatalogProps> | undefined {
-  return catalogs.get(id);
 }

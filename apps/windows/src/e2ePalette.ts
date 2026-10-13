@@ -5,7 +5,9 @@
 // screenshot somebody has to open.
 
 import * as api from "./api";
+import { fontPreview } from "./fonts";
 import { activePane, activeTab, focusPane, info, isMac, overlay, select, tabsByWorkspace } from "./store";
+import { themePreview } from "./themes";
 
 type StepRunner = (name: string, run: () => Promise<string>) => Promise<void>;
 
@@ -33,6 +35,19 @@ export async function paletteSteps(step: StepRunner, { waitFor, workspace }: Hel
   const open = async (card: "picker" | "palette" | "find" | "search") => {
     overlay.value = card;
     await waitFor(field, 3000);
+  };
+  /** When each wait of a step was passed, so that one that fails says how far it had got. */
+  const trace: string[] = [];
+  const began = performance.now();
+  /** `waitFor` that says what it was waiting for, since a step with several waits is told apart by that alone. */
+  const until = async <T>(what: string, check: () => T | undefined | null | false, ms = 3000): Promise<T> => {
+    try {
+      const found = await waitFor(check, ms);
+      trace.push(`${what} ${Math.round(performance.now() - began)}`);
+      return found;
+    } catch {
+      throw new Error(`esperei ${ms} ms por ${what} (passou: ${trace.join("; ") || "nada"})`);
+    }
   };
   const putAway = async () => {
     overlay.value = null;
@@ -90,6 +105,61 @@ export async function paletteSteps(step: StepRunner, { waitFor, workspace }: Hel
     await waitFor(() => tabs().length === before + 1, 15000);
     await putAway();
     return `${commands.length} comandos (cinza: ${dim.join(", ") || "nenhum"}); ${text(row)}`;
+  });
+
+  await step("paleta: Mudar o tema… e Mudar a fonte… põem a lista no lugar do cartão, e o Esc volta à paleta", async () => {
+    const said: string[] = [];
+    trace.length = 0;
+    // The themes are eight hundred rows, drawn again on every key: the list is narrowed first, as a person who knows the name would.
+    const lists = [
+      { typed: "mudar o tema", title: "Mudar o tema", list: "tema", looking: themePreview, narrow: "dracula" },
+      { typed: "mudar a fonte", title: "Mudar a fonte", list: "fonte", looking: fontPreview, narrow: "" },
+    ];
+    try {
+      for (const { typed, title, list, looking, narrow } of lists) {
+        await open("palette");
+        await type(typed);
+        // The typed words have been applied once the row they name is the one the selection is on.
+        await until(`a linha "${title}" selecionada`, () => rows(".command").find((r) => r.classList.contains("selected") && text(r).startsWith(title)));
+        press(field(), "Enter");
+        const input = await until(`o campo da lista de ${list}`, () => document.querySelector<HTMLInputElement>(".catalog .catalog-input"));
+        if (document.querySelector(".picker")) throw new Error(`o cartão da paleta ficou sob a lista de ${list}`);
+        const names = await until(`as linhas da lista de ${list}`, () => (document.querySelectorAll(".catalog .catalog-row").length > 1 ? document.querySelectorAll(".catalog .catalog-row") : null), 8000);
+        if (narrow) {
+          input.value = narrow;
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          await until(`a lista de ${list} só com o que tem "${narrow}"`, () => document.querySelectorAll(".catalog .catalog-row").length < 10);
+        }
+        // Looked at, not chosen: the window wears the row the selection is on. A key that comes in the very frame the list was drawn in can be undone by the list settling, so it is pressed again, slowly, if nothing was worn.
+        let pressedAt = -Infinity;
+        await until(
+          `a lista de ${list} vestir o que a seta tocou`,
+          () => {
+            if (looking.value === null && performance.now() - pressedAt > 1000) {
+              pressedAt = performance.now();
+              press(input, "ArrowDown");
+            }
+            return looking.value !== null;
+          },
+          8000,
+        );
+        const seen = looking.value;
+        press(input, "Escape");
+        await until("a paleta de volta no lugar da lista", () => document.querySelector(".picker.pk-palette .pk-field") && !document.querySelector(".catalog"));
+        await until(`o que se viu na lista de ${list} deixar de estar vestido`, () => looking.value === null);
+        const back = field();
+        await until("o teclado de volta no campo da paleta", () => document.activeElement === back);
+        if (back?.value) throw new Error(`a paleta voltou com "${back.value}" no campo`);
+        await putAway();
+        said.push(`${list}: ${names.length} linhas, viu "${seen}" e voltou`);
+      }
+    } finally {
+      // A step that fails leaves nothing on screen for the steps after it.
+      overlay.value = null;
+      themePreview.value = null;
+      fontPreview.value = null;
+    }
+    return said.join("; ");
   });
 
   await step("busca: acha a linha que o shell escreveu, no painel e em tudo, e vai até ela", async () => {

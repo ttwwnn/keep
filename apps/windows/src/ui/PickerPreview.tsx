@@ -13,7 +13,7 @@ import { useEffect, useRef } from "preact/hooks";
 import * as api from "../api";
 import { locateLine } from "../palette/hits";
 import { historyFor, plainAsScreen, rowsToSkip, topFor, type PreviewTarget } from "../palette/preview";
-import { markLine } from "../palette/reveal";
+import { markLine, type Look } from "../palette/reveal";
 import { fontFamily, palette } from "../store";
 
 /** The text of a preview: smaller than the terminal's own, as it is a picture of one. */
@@ -60,7 +60,7 @@ const rowsOf = (term: Terminal) => {
  * tells what it is. A line asked for: in the middle, and marked. Returns the
  * mark's removal.
  */
-function settle(term: Terminal, picture: HTMLElement, frame: HTMLElement, target: PreviewTarget, dark: boolean): (() => void) | null {
+function settle(term: Terminal, picture: HTMLElement, frame: HTMLElement, target: PreviewTarget, colours: Look): (() => void) | null {
   const buffer = term.buffer.active;
   const rows = picture.querySelector<HTMLElement>(".xterm-rows");
   const cell = rows?.children[0]?.getBoundingClientRect().height ?? 0;
@@ -80,7 +80,7 @@ function settle(term: Terminal, picture: HTMLElement, frame: HTMLElement, target
   const located = locateLine(rowsOf(term), target.hit);
   if (!located) return null;
   term.scrollToLine(topFor(located.index, cell > 0 ? Math.floor(room / cell) : term.rows, buffer.baseY));
-  return located.exact ? markLine(term, located.index, target.hit.span, dark) : null;
+  return located.exact ? markLine(term, located.index, target.hit.span, colours) : null;
 }
 
 export function Preview(props: { target: PreviewTarget | null; title: string; shown: boolean }) {
@@ -91,7 +91,7 @@ export function Preview(props: { target: PreviewTarget | null; title: string; sh
   const mark = useRef<(() => void) | null>(null);
   const family = fontFamily.value;
   const theme = palette.value.terminal;
-  const dark = palette.value.dark;
+  const colours = palette.value;
 
   // One terminal for as long as the card is up: a new one per row would be a
   // new one per arrow key.
@@ -154,7 +154,7 @@ export function Preview(props: { target: PreviewTarget | null; title: string; sh
       // The cursor hidden: a picture of a screen has no one typing in it.
       current.write(`${screen.text}\x1b[?25l`, () => {
         if (cancelled || !frame.current) return;
-        mark.current = settle(current, shown, frame.current, target, dark);
+        mark.current = settle(current, shown, frame.current, target, colours);
         shown.style.visibility = "";
       });
     }, SETTLE_MS);
