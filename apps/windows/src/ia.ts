@@ -96,8 +96,16 @@ export const engineTitle = (engine: Engine) => (engine === "claude" ? "Claude" :
 export const orderPrefix = (engine: Engine) => (engine === "claude" ? "claude" : "gpt");
 export const keyOf = (engine: Engine, alias: string) => `${orderPrefix(engine)}:${alias}`;
 
-/** "Claude · reserva": which service, and the name it is known by. */
-export const accountName = (account: Account) => `${engineTitle(account.engine)} · ${account.alias}`;
+/**
+ * An account is called by its place in the footer's list, "Consumo de IA",
+ * from 1: "IA-2". Never by the order's own names for the accounts (asked for
+ * 13/10/2026: "não use mais a nomenclatura principal e reserva, deve ser só
+ * a posição das contas na lista"). The macOS app's `AIChoices.name(number:)`.
+ */
+export const iaName = (number: number) => `IA-${number}`;
+
+/** "IA-2 · Claude": what the tabs call the account, then its service — the footer's tooltips. */
+export const numberedName = (number: number, account: Account) => `${iaName(number)} · ${engineTitle(account.engine)}`;
 
 /** Every key that names an account, one per name it has. */
 export function accountKeys(account: Account): string[] {
@@ -208,58 +216,78 @@ export function menuRows(
   if (program.kind === "other") {
     rows.push({ kind: "note", title: `Esta aba está rodando ${program.name}`, key: null, mark: null, enabled: false, help: null, label: "" });
   }
-  const first = lines.find(isAvailable) ?? lines[0];
+  const first = lines.findIndex(isAvailable);
+  const now = first >= 0 ? first + 1 : lines.length > 0 ? 1 : null;
   rows.push({
     kind: "follow",
     title: FOLLOW_TITLE,
     key: FOLLOW_ORDER,
     mark: current === FOLLOW_ORDER ? "on" : null,
     enabled,
-    help: first ? `Agora: ${accountName(first.account)}` : null,
+    help: now === null ? null : `Agora: ${iaName(now)}`,
     label: "a ordem de prioridade",
   });
   if (lines.length === 0) return rows;
   rows.push({ kind: "separator", title: "", key: null, mark: null, enabled: false, help: null, label: "" });
-  for (const line of lines) {
+  lines.forEach((line, index) => {
     const account = line.account;
     let mark: MenuRow["mark"] = null;
     if (current && accountKeys(account).includes(current)) mark = "on";
     else if (current === FOLLOW_ORDER && isUsedBy(account, current, running)) mark = "mixed";
     rows.push({
       kind: "account",
-      title: accountTitle(line),
+      title: accountTitle(line, index + 1),
       key: keyOf(account.engine, account.alias),
       mark,
       enabled,
       help: null,
-      label: accountName(account),
+      label: iaName(index + 1),
     });
-  }
+  });
   return rows;
 }
 
-/** "Claude · reserva · ana@… — no limite": the name, the address, and why it cannot take work. */
-export function accountTitle(line: UsageLine): string {
-  let title = accountName(line.account);
+/**
+ * "IA-2 · ana@… — no limite": the account's place in the list, the address
+ * the service knows it by, and — when it cannot take work now — why.
+ */
+export function accountTitle(line: UsageLine, number: number): string {
+  let title = iaName(number);
   if (line.account.email) title += ` · ${line.account.email}`;
   if (!isAvailable(line)) title += ` — ${line.account.warning ?? "no limite"}`;
   return title;
 }
 
+/** The place in the list, from 1, of the account a key names (`claude:x`, `gpt:y`), or null when the list has no such account. */
+export function numberOf(key: string | null | undefined, lines: readonly UsageLine[]): number | null {
+  if (!key) return null;
+  const at = lines.findIndex((l) => accountKeys(l.account).includes(key) || l.account.orderKey === key);
+  return at < 0 ? null : at + 1;
+}
+
 /**
- * What the sidebar writes after a tab's title for an AI kept on an account
- * of its own: "claude · reserva", or "codex · outra" for a GPT account other
- * than Codex's own login. Anything else: the program, as before.
+ * What the sidebar writes after a tab's title. For a tab running an AI, only
+ * the number of the account it runs on — "(IA-3)", never the AI's name
+ * (asked for 13/10/2026) —: the one the core says it runs on, else the one
+ * it was put on, and for a tab following the order the Claude login the
+ * tabs share; nothing when no account can be told. For any other program,
+ * its name: "— bash". The macOS app's `AIChoices.tabLabel`.
  */
-export function programLabel(command: string, account: string | null | undefined): string {
-  if (!account) return command;
-  const colon = account.indexOf(":");
-  if (colon < 0) return command;
-  const service = account.slice(0, colon);
-  const alias = account.slice(colon + 1);
-  if (service === "claude" && alias !== "ordem") return `claude · ${alias}`;
-  if (service === "gpt" && alias !== "principal") return `codex · ${alias}`;
-  return command;
+export function tabAccountLabel(
+  program: ProgramKind,
+  command: string,
+  account: string | null | undefined,
+  running: string | null | undefined,
+  lines: readonly UsageLine[],
+): string {
+  if (program.kind !== "claude" && program.kind !== "codex") return command ? `— ${command}` : "";
+  let key = running || account || null;
+  if (key === FOLLOW_ORDER) {
+    const shared = lines.find((l) => l.account.engine === "claude" && l.account.isActive);
+    key = shared ? accountKeys(shared.account)[0] : null;
+  }
+  const number = numberOf(key, lines);
+  return number === null ? "" : `(${iaName(number)})`;
 }
 
 // ------------------------------------------------------------------ the core's answers
@@ -363,12 +391,11 @@ export function noteText(line: UsageLine, nowMs: number): string | null {
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
-/** The tooltip on an account's name. */
-export function accountHelp(line: UsageLine, nowMs: number, used: boolean): string {
-  const out: string[] = [];
+/** The tooltip on an account's name: what the tabs call it ("IA-2 · Claude"), its address and plan, and how old its figures are. */
+export function accountHelp(line: UsageLine, number: number, nowMs: number, used: boolean): string {
+  const out: string[] = [numberedName(number, line.account)];
   if (line.account.email) out.push(line.account.email);
   if (line.account.plan) out.push(`Plano ${line.account.plan}`);
-  if (line.account.aliases.length > 1) out.push(`Também conhecida como: ${line.account.aliases.join(", ")}`);
   if (used) out.push("Conta usada nesta aba");
   if (line.measuredAt !== null) out.push(`Medido ${agoText(line.measuredAt * 1000, nowMs)}`);
   return out.join("\n");
