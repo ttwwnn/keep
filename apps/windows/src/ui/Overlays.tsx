@@ -1,6 +1,6 @@
 // What floats over the terminal: the picker (ui/Picker.tsx: Ir para, the
-// palette, the searches), the settings, and the questions the window asks
-// before it ends something.
+// palette, the searches), the settings with the lists of themes and faces they
+// open, and the questions the window asks before it ends something.
 //
 // Nothing is painted over the terminal behind a card (DESIGN.md): the card's
 // shadow says it is above, and says it where the card is.
@@ -8,9 +8,11 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "preact/hooks";
 import * as api from "../api";
-import { activeView, answer, dialog, gui, info, overlay, setAppearance, setFont, type DialogField } from "../store";
-import { defaultFontFamily, DEFAULT_FONT_SIZE } from "../theme";
+import { activeView, answer, dialog, info, overlay, type DialogField } from "../store";
+import { AppearanceSettings } from "./AppearanceSettings";
+import { FontPicker } from "./FontPicker";
 import { Picker } from "./Picker";
+import { ThemePicker } from "./ThemePicker";
 
 function close() {
   overlay.value = null;
@@ -29,85 +31,51 @@ function useFocus<T extends HTMLElement>(when = true) {
 }
 
 function Settings() {
-  const state = gui.value;
   const [shells, setShells] = useState<{ chosen: string; available: api.Shell[] } | null>(null);
-  const [family, setFamily] = useState(state.font.family);
-  const [size, setSize] = useState(state.font.size || DEFAULT_FONT_SIZE);
+  const card = useRef<HTMLDivElement>(null);
   useEffect(() => {
     void api.shells().then(setShells).catch(() => setShells({ chosen: "", available: [] }));
+    // The keyboard comes in with it: Tab goes through its controls and Esc closes it, rather than both going to the terminal behind.
+    card.current?.focus();
   }, []);
-  const platform = info.value?.platform ?? "";
   return (
-    <div class="card settings" role="dialog" aria-label="Configurações" onKeyDown={(e) => e.key === "Escape" && close()}>
+    <div
+      ref={card}
+      tabIndex={-1}
+      class="card settings"
+      role="dialog"
+      aria-label="Configurações"
+      onKeyDown={(e) => e.key === "Escape" && close()}
+    >
       <h2>Configurações</h2>
-      <fieldset>
-        <legend>Aparência</legend>
-        <div class="segmented">
-          {(
-            [
-              ["auto", "Automático"],
-              ["light", "Claro"],
-              ["dark", "Escuro"],
-            ] as const
-          ).map(([value, label]) => (
-            <button key={value} class={state.appearance === value ? "on" : ""} onClick={() => setAppearance(value)}>
-              {label}
-            </button>
-          ))}
-        </div>
-      </fieldset>
-      <fieldset>
-        <legend>Fonte</legend>
-        <div class="field-row">
-          <input
-            value={family}
-            placeholder={defaultFontFamily(platform)}
-            spellcheck={false}
-            onInput={(e) => setFamily((e.currentTarget as HTMLInputElement).value)}
-            onBlur={() => setFont(family, size)}
-            onKeyDown={(e) => e.key === "Enter" && setFont(family, size)}
-          />
-          <input
-            class="number"
-            type="number"
-            min={6}
-            max={48}
-            value={size}
-            onInput={(e) => {
-              const n = Number((e.currentTarget as HTMLInputElement).value);
-              setSize(n);
-              if (n >= 6 && n <= 48) setFont(family, n);
-            }}
-          />
-          <span class="unit">px</span>
-        </div>
-        <p class="hint">O zoom (Ctrl+= e Ctrl+-) multiplica este tamanho.</p>
-      </fieldset>
-      <fieldset>
-        <legend>Shell das abas novas</legend>
-        {shells === null ? (
-          <p class="hint">Procurando…</p>
-        ) : (
-          <select
-            value={shells.chosen}
-            onChange={(e) => {
-              const command = (e.currentTarget as HTMLSelectElement).value;
-              void api.chooseShell(command).then(() => setShells({ ...shells, chosen: command }));
-            }}
-          >
-            <option value="">Padrão (o melhor instalado)</option>
-            {shells.available.map((s) => (
-              <option key={s.id} value={s.command}>
-                {s.label}
-              </option>
-            ))}
-            {shells.chosen && !shells.available.some((s) => s.command === shells.chosen) && (
-              <option value={shells.chosen}>{shells.chosen}</option>
-            )}
-          </select>
-        )}
-        <p class="hint">Vale para as próximas abas; as abertas seguem com o seu.</p>
-      </fieldset>
+      <div class="settings-body">
+        <AppearanceSettings />
+        <fieldset>
+          <legend>Shell das abas novas</legend>
+          {shells === null ? (
+            <p class="hint">Procurando…</p>
+          ) : (
+            <select
+              value={shells.chosen}
+              onChange={(e) => {
+                const command = (e.currentTarget as HTMLSelectElement).value;
+                void api.chooseShell(command).then(() => setShells({ ...shells, chosen: command }));
+              }}
+            >
+              <option value="">Padrão (o melhor instalado)</option>
+              {shells.available.map((s) => (
+                <option key={s.id} value={s.command}>
+                  {s.label}
+                </option>
+              ))}
+              {shells.chosen && !shells.available.some((s) => s.command === shells.chosen) && (
+                <option value={shells.chosen}>{shells.chosen}</option>
+              )}
+            </select>
+          )}
+          <p class="hint">Vale para as próximas abas; as abertas seguem com o seu.</p>
+        </fieldset>
+      </div>
       <p class="about">
         Keep {info.value?.version} · <span class="mono">{info.value?.address}</span>
       </p>
@@ -225,6 +193,8 @@ export function Overlays() {
     <>
       {(which === "picker" || which === "palette" || which === "find" || which === "search") && <Picker key={which} mode={which} />}
       {which === "settings" && <Settings />}
+      {which === "themes" && <ThemePicker />}
+      {which === "fonts" && <FontPicker />}
       <DialogView />
     </>
   );

@@ -18,7 +18,12 @@
 #   - the same when the pointer is resting on the path and ⌘ is pressed after;
 #   - all of it again with the tab's program having asked for the mouse;
 #   - a path the program broke across two rows, as Claude Code does with one
-#     wider than the screen, opens whole from either row.
+#     wider than the screen, opens whole from either row;
+#   - web addresses, the mouse taken as Claude Code takes it (PRINT=web): a
+#     plain click on one opens it in the browser, a double click does not;
+#     a markdown link whose address is behind its text (OSC 8) opens that
+#     address; one broken across rows opens whole, plain click or ⌘-click;
+#     the right button offers "Abrir link".
 #
 # It takes the pointer for a few seconds. Your app and your daemon are never
 # touched.
@@ -37,6 +42,10 @@ if [ -z "${MOUSE_MODE:-}" ]; then
     done
     echo "== a path broken across two rows, the mouse taken"
     MOUSE_MODE=1 PRINT=wrapped "$0" || status=1
+    for print in web osc8 webwrapped; do
+        echo "== web addresses ($print), the mouse taken"
+        MOUSE_MODE=1 PRINT=$print "$0" || status=1
+    done
     exit $status
 fi
 PRINT=${PRINT:-plain}
@@ -50,6 +59,7 @@ BIN=$APP/Contents/MacOS/$APP_NAME
 SOCKET=/tmp/keep-link-$$.sock
 WORK=$(mktemp -d /tmp/keep-link-XXXXXX)
 MOUSE=$WORK/mousedrag
+AXPRESS=$WORK/axpress
 PASSED=0
 FAILED=0
 
@@ -77,6 +87,7 @@ check() {  # check <what> <wanted> <got>
 say "building $APP_NAME, the client, the daemon and the tools (yours is left alone)"
 ./tools/build-dev.sh >/dev/null || { say "could not build $APP_NAME — run tools/build-dev.sh"; exit 1; }
 swiftc -O tools/mousedrag.swift -o "$MOUSE" 2>/dev/null || { say "could not build mousedrag"; exit 1; }
+swiftc -O tools/axpress.swift -o "$AXPRESS" 2>/dev/null || { say "could not build axpress"; exit 1; }
 
 export KEEP_SOCKET=$SOCKET
 export KEEP_STATE_DIR=$WORK/state
@@ -92,6 +103,11 @@ LONG=$WORK/projetos/clinica/app/Filament/Resources/relatorio_de_atendimento_comp
 mkdir -p "$(dirname "$LONG")"
 : >"$LONG"
 
+ADDRESS="https://example.com/caminho/da/pagina?q=1"
+# Long enough to need a second row at the window's width (84 to 144
+# columns), short enough that the rest and the words after it fit in one.
+LONG_ADDRESS="https://github.com/ttwwnn/keep/blob/main/apps/macos/Sources/Keep/Model/LinkOpener.swift?plain=1&utm_source=keep&utm_medium=terminal&utm_campaign=links-web#L120"
+
 # The tab's program: fills the screen with the path and waits.
 cat >"$WORK/printer" <<PY
 #!/usr/bin/env python3
@@ -105,9 +121,45 @@ if "$PRINT" == "wrapped":
     for _ in range(20):
         print("  " + "$LONG"[:-44])
         print("  " + "$LONG"[-44:] + ":12")
+elif "$PRINT" in ("web", "osc8", "webwrapped"):
+    import os, signal
+    def draw(*_):
+        cols, rows = os.get_terminal_size()
+        out = ["\x1b[H\x1b[2J"]
+        for row in range(rows - 1):
+            if "$PRINT" == "web":
+                # One address filling the row, so any click on it lands on it.
+                out.append("  " + ("$ADDRESS" + "&p=" + "x" * cols)[:cols - 4])
+            elif "$PRINT" == "osc8":
+                # A markdown link as Claude Code draws it: the text, with
+                # the address behind it.
+                text = ("documentação " * cols)[:cols - 4]
+                out.append("  \x1b]8;id=d%d;$ADDRESS\x07" % row + text + "\x1b]8;;\x07")
+            else:
+                # Broken by the program at two columns short of the edge, the
+                # rest indented on the next row, then the sentence goes on.
+                first = cols - 4
+                if row % 2 == 0:
+                    out.append("  " + "$LONG_ADDRESS"[:first])
+                else:
+                    out.append("  " + "$LONG_ADDRESS"[first:] + " e também")
+            out.append("\r\n")
+        sys.stdout.write("".join(out))
+        sys.stdout.flush()
+    signal.signal(signal.SIGWINCH, draw)
+    draw()
 else:
-    for _ in range(40):
-        print(("$TARGET:12  " * 6).rstrip())
+    import os, signal
+    def draw(*_):
+        # As many copies as fit in a row: a row the terminal wraps comes back
+        # joined to the next, and the click lands on the blank it leaves.
+        cols, rows = os.get_terminal_size()
+        unit = "$TARGET:12  "
+        line = (unit * max(1, (cols - 1) // len(unit))).rstrip()
+        sys.stdout.write("\x1b[H\x1b[2J" + "\r\n".join([line] * (rows - 1)))
+        sys.stdout.flush()
+    signal.signal(signal.SIGWINCH, draw)
+    draw()
 open("$WORK/ready", "w").close()
 time.sleep(300)
 PY
@@ -146,6 +198,67 @@ read -r FX FY FW FH <<<"$("$MOUSE" frame)"
 TX=$(( ${FX%.*} + ${FW%.*} * 2 / 3 ))
 TY=$(( ${FY%.*} + 120 ))
 
+if [ "$PRINT" = web ] || [ "$PRINT" = osc8 ]; then
+    say ""
+    say "a web address on the screen ($PRINT)"
+    "$MOUSE" click "$TX" "$TY"
+    sleep 2
+    check "a plain click opens it" "$ADDRESS" "$(head -1 "$KEEP_LINK_LOG" | cut -c1-${#ADDRESS})"
+    check "once" "1" "$(wc -l <"$KEEP_LINK_LOG" | tr -d ' ')"
+    : >"$KEEP_LINK_LOG"
+    "$MOUSE" dblclick "$TX" "$((TY + 40))"
+    sleep 2
+    check "a double click opens nothing" "" "$(cat "$KEEP_LINK_LOG")"
+    "$MOUSE" drag "$((TX - 60))" "$((TY + 20))" "$((TX + 60))" "$((TY + 20))" 10 20
+    sleep 2
+    check "a drag across it opens nothing" "" "$(cat "$KEEP_LINK_LOG")"
+    "$MOUSE" move "$((TX - 150))" "$((TY + 60))"
+    "$MOUSE" cmdclick "$TX" "$((TY + 80))"
+    sleep 2
+    check "a click with ⌘ opens it" "$ADDRESS" "$(head -1 "$KEEP_LINK_LOG" | cut -c1-${#ADDRESS})"
+    : >"$KEEP_LINK_LOG"
+    "$MOUSE" rightclick "$TX" "$((TY + 120))"
+    sleep 1
+    ITEMS=$("$AXPRESS" "$APP_NAME" items 2>/dev/null | cut -f3 | grep -E '^(Abrir link|Copiar link|Abrir|Mostrar no Finder)$' | tr '\n' '|')
+    check "the right button offers the link's actions" "Abrir link|Copiar link|" "$ITEMS"
+    "$AXPRESS" "$APP_NAME" pick "Abrir link" >/dev/null 2>&1
+    sleep 1
+    check "and Abrir link opens it" "$ADDRESS" "$(head -1 "$KEEP_LINK_LOG" | cut -c1-${#ADDRESS})"
+    stop_app
+    say ""
+    say "passed $PASSED, failed $FAILED"
+    [ "$FAILED" -eq 0 ]
+    exit
+fi
+
+if [ "$PRINT" = webwrapped ]; then
+    say ""
+    say "a web address broken across rows"
+    LX=$(( ${FX%.*} + 420 ))
+    for step in 0 1 2 3 4 5; do
+        "$MOUSE" move "$((LX - 150))" "$((TY + step * 7 + 60))"
+        "$MOUSE" click "$LX" "$((TY + step * 7))"
+        sleep 1.5
+    done
+    sleep 1
+    check "every plain click opens the whole address" "6 $LONG_ADDRESS" \
+        "$(wc -l <"$KEEP_LINK_LOG" | tr -d ' ') $(sort -u "$KEEP_LINK_LOG")"
+    : >"$KEEP_LINK_LOG"
+    for step in 0 1 2 3; do
+        "$MOUSE" move "$((LX - 150))" "$((TY + step * 7 + 100))"
+        "$MOUSE" cmdclick "$LX" "$((TY + step * 7 + 40))"
+        sleep 1.5
+    done
+    sleep 1
+    check "every ⌘-click opens the whole address" "4 $LONG_ADDRESS" \
+        "$(wc -l <"$KEEP_LINK_LOG" | tr -d ' ') $(sort -u "$KEEP_LINK_LOG")"
+    stop_app
+    say ""
+    say "passed $PASSED, failed $FAILED"
+    [ "$FAILED" -eq 0 ]
+    exit
+fi
+
 if [ "$PRINT" = wrapped ]; then
     # Six clicks a few points apart, so rows of both kinds get some.
     LX=$(( ${FX%.*} + 420 ))
@@ -168,8 +281,19 @@ fi
 
 say ""
 say "a path on the screen"
-"$MOUSE" click "$TX" "$TY"
-sleep 2
+# Every row is the same, so a column on a path is one on every row. The
+# first column tried may fall on the blank between two copies (the app says
+# so: "plain click on nothing"), and a click there rightly opens nothing; a
+# few cells on is a path.
+for _ in 1 2 3; do
+    before=$(grep -c 'plain click on nothing' "$WORK/app.log")
+    "$MOUSE" click "$TX" "$TY"
+    sleep 2
+    [ -s "$KEEP_LINK_LOG" ] && break
+    [ "$(grep -c 'plain click on nothing' "$WORK/app.log")" -gt "$before" ] || break
+    say "  (column on the blank between two copies; moving 3 cells on)"
+    TX=$((TX + 24))
+done
 check "a plain click opens the file" "$TARGET" "$(cat "$KEEP_LINK_LOG")"
 : >"$KEEP_LINK_LOG"
 "$MOUSE" dblclick "$TX" "$((TY + 40))"

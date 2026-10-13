@@ -3,8 +3,10 @@
 
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
+import "./styles-appearance.css";
 import "./styles-palette.css";
 import { render } from "preact";
+import { startAppearance } from "./appearance";
 import { installInput, terminalKey } from "./input";
 import { startIA } from "./iaStore";
 import { bindCommands } from "./palette/bindings";
@@ -15,6 +17,7 @@ async function boot() {
   installInput();
   bindCommands();
   await start({ onKey: terminalKey });
+  startAppearance();
   render(<App />, document.getElementById("app")!);
   await connect();
   // The AI layer after the daemon: its tabs' AI is asked of the daemon the window found.

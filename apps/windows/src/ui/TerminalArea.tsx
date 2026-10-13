@@ -20,6 +20,7 @@ import {
   isMac,
   loaded,
   orderedWorkspaces,
+  palette,
   split,
   statuses,
   tabsByWorkspace,
@@ -132,9 +133,8 @@ function FindBar() {
     );
     return () => subscription.dispose();
   }, [view]);
-  const options = {
-    decorations: { matchOverviewRuler: "#888888", activeMatchColorOverviewRuler: "#ffaa00", matchBackground: "#5a4a1a", activeMatchBackground: "#a87a00" },
-  };
+  // The matches are marked in colours that read on the theme's ground, whichever it is.
+  const options = { decorations: palette.value.search };
   const close = () => {
     view?.search.clearDecorations();
     findOpen.value = false;

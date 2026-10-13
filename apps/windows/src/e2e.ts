@@ -35,6 +35,7 @@ import {
   workspaces,
   zoom,
 } from "./store";
+import { appearanceSteps } from "./e2eAppearance";
 import { paletteSteps } from "./e2ePalette";
 import { viewKey } from "./terminals";
 import { menu } from "./ui/common";
@@ -179,6 +180,8 @@ export async function runE2E(): Promise<void> {
     if (read !== "done") throw new Error(`leu ${String(read)}`);
     return "done";
   });
+
+  await appearanceSteps(step, WORKSPACE);
 
   if (info.value?.e2eIa) await aiSteps(step, info.value.e2eIa === "real");
 
