@@ -168,6 +168,7 @@ final class AIChores {
         renew()
         // The conversations of a restart come back now, not in 30 s.
         restore(always: true)
+        DispatchQueue.global(qos: .utility).async { TabRestore.links() }
     }
 
     /// The conversations still to come back after a restart, and a fresh

@@ -226,7 +226,6 @@ fn recria_abas(origem: &Retrato, lista: &daemon::Retrato, reg: &mut Registro, fa
 
 /// O nome que a pessoa deu a cada aba volta para o app (`names.json`, do keepd atual).
 fn devolve_nomes(amb: &Ambiente, atual: &Keepd, origem: &Retrato, reg: &Registro) {
-    let (Some(app), Some(nasceu)) = (&amb.app, atual.socket_nasceu) else { return };
     let nomes: Vec<(String, u32, String)> = reg
         .criadas
         .iter()
@@ -235,38 +234,7 @@ fn devolve_nomes(amb: &Ambiente, atual: &Keepd, origem: &Retrato, reg: &Registro
             Some((c.workspace.clone(), c.aba, a.nome.clone().filter(|_| a.split_of == 0)?))
         })
         .collect();
-    if nomes.is_empty() {
-        return;
-    }
-    let _trava = trava_do_app(app);
-    let caminho = app.join("names.json");
-    let mut v: serde_json::Value = crate::ler(&caminho).unwrap_or_else(|| serde_json::json!({}));
-    let mesmo = v.get("daemonStart").and_then(|d| d.as_f64()).is_some_and(|d| (d - nasceu).abs() < 0.01);
-    if !mesmo || !v.is_object() {
-        let ws = v.get("workspaces").cloned().unwrap_or_else(|| serde_json::json!({}));
-        v = serde_json::json!({ "daemonStart": nasceu, "tabs": {}, "workspaces": ws });
-    }
-    if !v["tabs"].is_object() {
-        v["tabs"] = serde_json::json!({});
-    }
-    for (ws, aba, nome) in nomes {
-        let k = format!("{ws}\u{1f}{aba}");
-        if v["tabs"].get(&k).is_none() {
-            v["tabs"][k] = serde_json::Value::String(nome);
-        }
-    }
-    let _ = crate::gravar(&caminho, &v);
-}
-
-/// A mesma trava com que o app grava o estado dele (`.state.lock`).
-fn trava_do_app(app: &Path) -> Option<std::fs::File> {
-    let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(app.join(".state.lock")).ok()?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::io::AsRawFd;
-        unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) };
-    }
-    Some(f)
+    crate::nomear_no_app(amb, atual.socket_nasceu, &nomes, false);
 }
 
 fn retoma_conversas(origem: &Retrato, reg: &mut Registro, falhas: &mut Vec<String>) -> usize {
@@ -350,7 +318,7 @@ fn retoma(ws: &str, tab: u32, ia: &Ia, contas: &[keep_ia::contas::Conta]) -> Res
 }
 
 /// O shell da aba parou no prompt (algo na tela, nada rodando, duas leituras iguais). Devolve o nome dele.
-fn espera_shell(ws: &str, tab: u32) -> Option<String> {
+pub(crate) fn espera_shell(ws: &str, tab: u32) -> Option<String> {
     let mut anterior = String::new();
     daemon::espera(Duration::from_secs(20), Duration::from_millis(300), || {
         let l = daemon::listar().ok()?;

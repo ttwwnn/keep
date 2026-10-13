@@ -56,3 +56,29 @@ um app de testes, com daemon próprio, nunca lê o retrato da pessoa).
   do keep-ia (`cargo build -p keep-ia --examples`), o reinício inteiro.
 - `tools/restauro-test.sh [--sabotage]` — o app de verdade (KeepDev) abrindo
   num keepd novo: as abas voltam antes do workspace padrão, e o retrato gira.
+
+# Conversa nova numa aba, e os links `claude-cli://`
+
+`keep nova` abre uma conversa nova do Claude numa aba nova (no lugar do
+`claude-nova-aba` do kit-mac): é o caminho para uma sessão abrir outra, e o
+Terminal do macOS só a pessoa abre. A aba nasce do keepd, com o ambiente limpo
+dele, na pasta pedida; o `claude` é digitado na aba, e a função `claude` do
+shell (o esforço padrão, a pasta presa do workspace) vale.
+
+    keep nova --workspace W --pasta P --passagem ARQUIVO     lê o arquivo inteiro e segue
+    keep nova --workspace W --pasta P --pedido "texto"       o texto vai para ~/.claude/handoffs/abas/
+    keep nova [--workspace W] --pasta P --argumentos -- ARG…  claude ARG… (sem workspace: o da última aba usada)
+        [--nome "rótulo"] [--sem-enter]
+    keep nova --listar
+
+`keep links instalar | conferir` monta `~/Applications/Ghostty.app`, por onde o
+Claude Code abre os links `claude-cli://` (ele escolhe o terminal pelo
+`TERM_PROGRAM`, e o Keep diz `ghostty`): o executável é uma cópia do `keep`, que,
+chamado com o nome "Ghostty", abre o link com `keep nova --argumentos` (com o Keep
+fechado, abre o Keep e tenta de novo; log em `~/Library/Logs/desvio-deep-link.log`).
+O app o monta, ou o põe em dia, a cada abertura (só o app de produção; um app de
+testes nunca); com o Ghostty de verdade em `/Applications`, não. Substitui o
+desvio que o kit-mac montava (lançador em C + script).
+
+Testes: `cargo test -p keep-restauro` (o `tests/nova.rs` abre conversas de
+verdade num daemon do próprio teste, com a IA falsa como `claude`).

@@ -10,9 +10,14 @@
 //! O app do macOS chama `keep restauro …` (JSON): uma vez ao abrir com um keepd
 //! novo, para as abas (`--fase abas`), e depois a cada 30 s, para as conversas e
 //! o retrato (`manter`).
+//!
+//! Aqui mora também `keep nova`: uma conversa nova do Claude numa aba nova (o
+//! caminho para uma sessão abrir outra, e o dos links `claude-cli://`).
 
 pub mod cli;
 pub mod daemon;
+pub mod links;
+pub mod nova;
 pub mod restaurar;
 pub mod retrato;
 
@@ -125,6 +130,45 @@ pub fn gravar<T: Serialize>(caminho: &std::path::Path, valor: &T) -> std::io::Re
         std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
     }
     std::fs::rename(&tmp, caminho)
+}
+
+/// Dá nome a abas no app (`names.json` da pasta de estado dele, do keepd cujo socket nasceu em `nasceu`), sob a
+/// trava com que o app grava o estado dele. `sobrescrever`: troca o nome que a aba já tinha.
+pub fn nomear_no_app(amb: &keep_ia::worktrees::ambiente::Ambiente, nasceu: Option<f64>, nomes: &[(String, u32, String)], sobrescrever: bool) {
+    let (Some(app), Some(nasceu)) = (&amb.app, nasceu) else { return };
+    if nomes.is_empty() {
+        return;
+    }
+    let _ = std::fs::create_dir_all(app);
+    let _trava = trava_do_app(app);
+    let caminho = app.join("names.json");
+    let mut v: serde_json::Value = ler(&caminho).unwrap_or_else(|| serde_json::json!({}));
+    let mesmo = v.get("daemonStart").and_then(|d| d.as_f64()).is_some_and(|d| (d - nasceu).abs() < 0.01);
+    if !mesmo || !v.is_object() {
+        let ws = v.get("workspaces").cloned().unwrap_or_else(|| serde_json::json!({}));
+        v = serde_json::json!({ "daemonStart": nasceu, "tabs": {}, "workspaces": ws });
+    }
+    if !v["tabs"].is_object() {
+        v["tabs"] = serde_json::json!({});
+    }
+    for (ws, aba, nome) in nomes {
+        let k = format!("{ws}\u{1f}{aba}");
+        if sobrescrever || v["tabs"].get(&k).is_none() {
+            v["tabs"][k] = serde_json::Value::String(nome.clone());
+        }
+    }
+    let _ = gravar(&caminho, &v);
+}
+
+/// A mesma trava com que o app grava o estado dele (`.state.lock`).
+fn trava_do_app(app: &std::path::Path) -> Option<std::fs::File> {
+    let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(app.join(".state.lock")).ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) };
+    }
+    Some(f)
 }
 
 /// Uma trava entre processos (o app pode chamar duas vezes): `None` se outro a tem.

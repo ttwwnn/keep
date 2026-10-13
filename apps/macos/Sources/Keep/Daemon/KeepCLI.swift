@@ -476,6 +476,20 @@ enum TabRestore {
         log(KeepCLI.run(helper, ["restauro", "manter"], within: 900, name: "keep restauro"))
     }
 
+    /// `~/Applications/Ghostty.app`, the stand-in through which Claude Code
+    /// opens its `claude-cli://` links in a Keep tab (`keep links`): made, or
+    /// brought up to this app's `keep`, once per launch. Blocking.
+    static func links() {
+        // Only the person's app: a test build (KeepDev) must not put its own
+        // `keep` behind their links.
+        guard Bundle.main.bundleIdentifier == "dev.luhw.keep", let helper else { return }
+        let answer = KeepCLI.run(helper, ["links", "instalar"], within: 60, name: "keep links")
+        if case .success(let output) = answer {
+            let text = String(decoding: output.data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            if text != "em dia" { Trace.log("links", text) }
+        }
+    }
+
     private static func log(_ answer: Result<KeepCLI.Output, KeepCLI.Failure>) {
         switch answer {
         case .success(let output):
