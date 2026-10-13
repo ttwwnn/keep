@@ -217,6 +217,24 @@ pub fn pasta_de(p: &str) -> Option<String> {
     Some(if pasta.ends_with(':') { format!("{pasta}\\") } else { pasta.to_string() }).filter(|s| !s.is_empty())
 }
 
+/// As pastas que contêm o caminho, da mais perto à mais longe, sem a raiz da
+/// unidade (nem a do compartilhamento de rede): a raiz o Windows já deixa
+/// ver, e não é do usuário para ter a permissão mexida.
+pub fn ancestrais(caminho: &str) -> Vec<String> {
+    let mut v = Vec::new();
+    let mut atual = pasta_de(caminho);
+    while let Some(p) = atual {
+        let componentes = partes(&p);
+        let rede = componentes.first().is_some_and(|s| s.starts_with("\\\\"));
+        if componentes.len() <= if rede { 2 } else { 1 } {
+            break;
+        }
+        atual = pasta_de(&p);
+        v.push(p);
+    }
+    v
+}
+
 /// O nome do arquivo, sem a pasta.
 pub fn nome_de(p: &str) -> &str {
     p.trim_end_matches(['\\', '/']).rsplit(['\\', '/']).next().unwrap_or(p)
@@ -250,6 +268,11 @@ pub enum Acesso {
     Leitura,
     /// Ler, gravar, executar e apagar (o "Modificar" do Explorer).
     Gravacao,
+    /// Só saber que a pasta existe e ler os atributos dela, sem listar o que
+    /// há dentro: o que as pastas no caminho até a pasta presa precisam. O
+    /// `realpath` do Node e o `stat` do Git andam por todos os componentes do
+    /// caminho, e um que nega isso derruba o programa.
+    Atributos,
 }
 
 impl Acesso {
@@ -260,6 +283,8 @@ impl Acesso {
         match self {
             Acesso::Leitura => 0x0012_00A9,
             Acesso::Gravacao => 0x0013_01BF,
+            // READ_CONTROL | SYNCHRONIZE | FILE_READ_ATTRIBUTES | FILE_TRAVERSE.
+            Acesso::Atributos => 0x0012_00A0,
         }
     }
 }
@@ -484,6 +509,28 @@ pub fn plano(amb: &dyn Ambiente, e: &Entrada) -> Plano {
             poe(le(raiz, true));
         }
     }
+
+    // Os caminhos até tudo o que se concede, só com os atributos (sem listar):
+    // um programa que confere cada componente do caminho (o `realpath` do
+    // Node, o Git atrás do repositório, o `cd ..`) não passa por uma pasta cujos
+    // atributos ele não pode ler. As de cima da casa (`C:\Users`) e as do
+    // sistema o Windows já deixa ver; as que têm uma permissão maior já valem.
+    let mut pais: Vec<Concessao> = Vec::new();
+    for c in &concessoes {
+        for a in ancestrais(&c.caminho) {
+            if do_sistema(&a) || (dentro_de(&a, &e.casa) && !dentro_de(&e.casa, &a)) {
+                continue;
+            }
+            let ja = concessoes
+                .iter()
+                .chain(pais.iter())
+                .any(|x| partes(&x.caminho) == partes(&a) && (x.heranca || x.acesso == Acesso::Atributos));
+            if !ja {
+                pais.push(Concessao { caminho: a, acesso: Acesso::Atributos, quem: Quem::Base, heranca: false, criar: false, obrigatoria: false });
+            }
+        }
+    }
+    concessoes.extend(pais);
 
     Plano { concessoes, criar, temp: junta(&privada, "tmp") }
 }
@@ -1032,9 +1079,13 @@ mod testes {
             let c = de(&p, so_le);
             assert_eq!((c.len(), c[0].acesso, c[0].quem), (1, Acesso::Leitura, Quem::Base), "{so_le}");
         }
-        // A casa inteira nunca é concedida.
-        assert!(de(&p, CASA).is_empty());
-        assert!(!p.concessoes.iter().any(|c| dentro_de(CASA, &c.caminho) && partes(&c.caminho).len() <= partes(CASA).len()));
+        // A casa inteira nunca é concedida: só os atributos dela (para o
+        // programa andar pelo caminho), sem herança nem listagem.
+        assert!(de(&p, CASA).iter().all(|c| c.acesso == Acesso::Atributos && !c.heranca));
+        assert!(!p
+            .concessoes
+            .iter()
+            .any(|c| c.acesso != Acesso::Atributos && dentro_de(CASA, &c.caminho) && partes(&c.caminho).len() <= partes(CASA).len()));
     }
 
     #[test]
@@ -1049,7 +1100,8 @@ mod testes {
         assert!(de(&p, r"C:\Users\ana\.claude").is_empty());
         // Outro programa qualquer: só a pasta e a área privada.
         let p = plano(&amb, &entrada(r"C:\Windows\System32\cmd.exe"));
-        let quais: Vec<&str> = p.concessoes.iter().map(|c| c.caminho.as_str()).collect();
+        let quais: Vec<&str> =
+            p.concessoes.iter().filter(|c| c.acesso != Acesso::Atributos).map(|c| c.caminho.as_str()).collect();
         assert_eq!(quais, [r"D:\projetos\app", r"C:\Users\ana\AppData\Local\Keep\confine"]);
     }
 
@@ -1094,15 +1146,69 @@ mod testes {
 
     #[test]
     fn as_mascaras_nao_dao_poder_sobre_a_permissao_dos_outros() {
-        for a in [Acesso::Leitura, Acesso::Gravacao] {
+        for a in [Acesso::Leitura, Acesso::Gravacao, Acesso::Atributos] {
             let m = a.mascara();
             assert_eq!(m & 0x0004_0000, 0, "WRITE_DAC");
             assert_eq!(m & 0x0008_0000, 0, "WRITE_OWNER");
             assert_ne!(m & 0x0010_0000, 0, "SYNCHRONIZE");
-            assert_ne!(m & 0x0000_0001, 0, "FILE_READ_DATA");
         }
+        for a in [Acesso::Leitura, Acesso::Gravacao] {
+            assert_ne!(a.mascara() & 0x0000_0001, 0, "FILE_READ_DATA");
+        }
+        // Os atributos não listam a pasta nem leem nada dela, nem gravam.
+        let atributos = Acesso::Atributos.mascara();
+        assert_eq!(atributos & 0x0000_0001, 0, "FILE_LIST_DIRECTORY");
+        assert_eq!(atributos & 0x0000_0006, 0, "FILE_ADD_FILE e FILE_ADD_SUBDIRECTORY");
+        assert_ne!(atributos & 0x0000_0080, 0, "FILE_READ_ATTRIBUTES");
         assert_ne!(Acesso::Gravacao.mascara() & 0x0001_0000, 0, "DELETE");
         assert_eq!(Acesso::Leitura.mascara() & 0x0001_0000, 0);
+    }
+
+    #[test]
+    fn ancestrais_vao_da_pasta_de_cima_ate_antes_da_raiz() {
+        assert_eq!(
+            ancestrais(r"C:\Users\Ana\Projetos\app"),
+            [r"C:\Users\Ana\Projetos", r"C:\Users\Ana", r"C:\Users"]
+        );
+        assert_eq!(ancestrais(r"D:\projetos"), Vec::<String>::new());
+        assert_eq!(ancestrais(r"D:\"), Vec::<String>::new());
+        assert_eq!(ancestrais(r"\\srv\share\a\b"), [r"\\srv\share\a"]);
+        assert_eq!(ancestrais(r"\\?\C:\x\y"), [r"C:\x"]);
+    }
+
+    #[test]
+    fn o_plano_deixa_ver_os_atributos_dos_caminhos_ate_a_pasta_presa() {
+        let amb = Falso::novo(&[r"C:\Users\ana\.claude", r"C:\Users\ana\.claude.json"]);
+        let mut e = entrada(r"C:\Windows\System32\cmd.exe");
+        e.pasta = r"C:\Users\ana\Projetos\Cliente\app".into();
+        let p = plano(&amb, &e);
+        let atributos: Vec<&Concessao> = p.concessoes.iter().filter(|c| c.acesso == Acesso::Atributos).collect();
+        let caminhos: Vec<String> = atributos.iter().map(|c| partes(&c.caminho).join("\\")).collect();
+        // A casa e as pastas entre ela e a pasta presa; `C:\Users` e o sistema, não.
+        for esperado in [r"C:\Users\ana", r"C:\Users\ana\Projetos", r"C:\Users\ana\Projetos\Cliente", r"C:\Users\ana\AppData\Local\Keep", r"C:\Users\ana\AppData\Local", r"C:\Users\ana\AppData"] {
+            assert!(caminhos.contains(&partes(esperado).join("\\")), "{esperado}: {caminhos:?}");
+        }
+        assert!(!caminhos.contains(&partes(r"C:\Users").join("\\")), "{caminhos:?}");
+        // Sem herança, do SID base, e uma vez só por pasta.
+        assert!(atributos.iter().all(|c| !c.heranca && c.quem == Quem::Base && !c.obrigatoria && !c.criar));
+        let mut unicos = caminhos.clone();
+        unicos.sort();
+        unicos.dedup();
+        assert_eq!(unicos.len(), caminhos.len(), "{caminhos:?}");
+        // A pasta presa e o que tem permissão maior (herdada) não ganham a menor.
+        assert!(!caminhos.contains(&partes(r"C:\Users\ana\Projetos\Cliente\app").join("\\")));
+        assert!(!caminhos.contains(&partes(r"C:\Users\ana\.claude").join("\\")));
+        // Fora da casa também: o que está acima da pasta, menos a raiz da unidade.
+        e.pasta = r"D:\trabalho\2026\app".into();
+        let p = plano(&amb, &e);
+        let fora: Vec<String> = p
+            .concessoes
+            .iter()
+            .filter(|c| c.acesso == Acesso::Atributos && partes(&c.caminho).first().is_some_and(|d| d == "d:"))
+            .map(|c| partes(&c.caminho).join("\\"))
+            .collect();
+        assert_eq!(fora.len(), 2, "{fora:?}");
+        assert!(fora.contains(&r"d:\trabalho".to_string()) && fora.contains(&r"d:\trabalho\2026".to_string()));
     }
 
     #[test]

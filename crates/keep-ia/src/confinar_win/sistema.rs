@@ -12,7 +12,10 @@ use std::ptr::{null, null_mut};
 
 use windows_sys::Win32::Foundation::{
     CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, GetLastError, HANDLE, HLOCAL, INVALID_HANDLE_VALUE,
-    LocalFree, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    LUID, LocalFree, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+};
+use windows_sys::Win32::Storage::FileSystem::{
+    CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSidToSidW, EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW,
@@ -23,11 +26,13 @@ use windows_sys::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_REVISION, ACL_SIZE_INFORMATION, AclSizeInformation, AddAccessAllowedAce,
     CreateRestrictedToken, DACL_SECURITY_INFORMATION, DISABLE_MAX_PRIVILEGE, DuplicateTokenEx, EqualSid, GetAce,
     GetAclInformation, GetLengthSid, GetSecurityDescriptorControl, GetTokenInformation, INHERIT_ONLY_ACE,
-    InitializeAcl, IsTokenRestricted, NO_INHERITANCE, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
-    PSID, RevertToSelf, SE_DACL_PROTECTED, SID_AND_ATTRIBUTES, SUB_CONTAINERS_AND_OBJECTS_INHERIT,
-    SecurityImpersonation, SetTokenInformation, TOKEN_ADJUST_DEFAULT, TOKEN_ALL_ACCESS, TOKEN_ASSIGN_PRIMARY,
-    TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE, TOKEN_GROUPS, TOKEN_INFORMATION_CLASS, TOKEN_OWNER, TOKEN_QUERY,
-    TOKEN_USER, TokenDefaultDacl, TokenGroups, TokenImpersonation, TokenOwner, TokenUser, UNPROTECTED_DACL_SECURITY_INFORMATION,
+    InitializeAcl, IsTokenRestricted, LUA_TOKEN, LUID_AND_ATTRIBUTES, LookupPrivilegeNameW, LookupPrivilegeValueW,
+    NO_INHERITANCE, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, RevertToSelf, SE_DACL_PROTECTED,
+    SID_AND_ATTRIBUTES, SUB_CONTAINERS_AND_OBJECTS_INHERIT, SecurityImpersonation,
+    SetTokenInformation, TOKEN_ADJUST_DEFAULT, TOKEN_ALL_ACCESS, TOKEN_ASSIGN_PRIMARY, TOKEN_DEFAULT_DACL,
+    TOKEN_DUPLICATE, TOKEN_GROUPS, TOKEN_INFORMATION_CLASS, TOKEN_MANDATORY_LABEL, TOKEN_OWNER, TOKEN_PRIVILEGES,
+    TOKEN_QUERY, TOKEN_USER, TokenDefaultDacl, TokenGroups, TokenImpersonation, TokenIntegrityLevel, TokenOwner,
+    TokenPrivileges, TokenUser, UNPROTECTED_DACL_SECURITY_INFORMATION,
 };
 use windows_sys::Win32::System::Console::{
     CTRL_BREAK_EVENT, CTRL_C_EVENT, GetConsoleProcessList, GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE,
@@ -45,6 +50,11 @@ use windows_sys::Win32::System::Threading::{
 use windows_sys::core::PWSTR;
 
 use super::Acesso;
+
+pub mod objetos;
+
+/// O atributo do rótulo de integridade de um token (`SE_GROUP_INTEGRITY`).
+const GRUPO_INTEGRIDADE: u32 = 0x20;
 
 /// O atributo de um grupo que o marca como o da sessão de logon.
 const GRUPO_LOGON: u32 = 0xC000_0000;
@@ -259,7 +269,13 @@ fn monta_dacl(sids: &[&Sid]) -> Result<Vec<u32>, String> {
 /// A chamada a `CreateRestrictedToken` e nada mais: o token, ou o código de
 /// erro do Windows. É o que o diagnóstico repete com uma lista de cada vez
 /// para achar o SID ou a opção que o sistema não aceita.
-pub fn token_restrito_cru(origem: &Alca, flags: u32, desabilitar: &[&Sid], restringir: &[&Sid]) -> Result<Alca, u32> {
+pub fn token_restrito_cru(
+    origem: &Alca,
+    flags: u32,
+    desabilitar: &[&Sid],
+    apagar: &[LUID_AND_ATTRIBUTES],
+    restringir: &[&Sid],
+) -> Result<Alca, u32> {
     let lista = |sids: &[&Sid]| -> Vec<SID_AND_ATTRIBUTES> {
         sids.iter().map(|s| SID_AND_ATTRIBUTES { Sid: s.ptr(), Attributes: 0 }).collect()
     };
@@ -273,8 +289,8 @@ pub fn token_restrito_cru(origem: &Alca, flags: u32, desabilitar: &[&Sid], restr
             flags,
             a_desabilitar.len() as u32,
             ou_nulo(&a_desabilitar),
-            0,
-            null(),
+            apagar.len() as u32,
+            if apagar.is_empty() { null() } else { apagar.as_ptr() },
             a_restringir.len() as u32,
             ou_nulo(&a_restringir),
             &mut novo,
@@ -310,7 +326,14 @@ pub fn token_restrito(
     desabilitar: &[&Sid],
     do_keep: &[&Sid],
 ) -> Result<Alca, String> {
-    let novo = token_restrito_cru(origem, DISABLE_MAX_PRIVILEGE, desabilitar, restringir)
+    // Os privilégios são apagados, não só desligados (`DISABLE_MAX_PRIVILEGE`):
+    // o token de um administrador tem muitos (backup, restauração, depuração),
+    // e um processo religa o que só está desligado. Sem a lista, o desligar.
+    let (flags, apagar) = match privilegios_a_apagar(origem) {
+        Ok(p) => (0, p),
+        Err(_) => (DISABLE_MAX_PRIVILEGE, Vec::new()),
+    };
+    let novo = token_restrito_cru(origem, flags, desabilitar, &apagar, restringir)
         .map_err(|codigo| falha("CreateRestrictedToken", codigo))?;
     let mut donos: Vec<&Sid> = vec![usuario, sistema];
     donos.extend(do_keep);
@@ -338,6 +361,72 @@ pub fn token_restrito(
             TokenOwner,
             (&dono as *const TOKEN_OWNER).cast(),
             std::mem::size_of::<TOKEN_OWNER>() as u32,
+        );
+    }
+    Ok(novo)
+}
+
+/// Os privilégios que o token tem, com os atributos de cada um (1 padrão ligado,
+/// 2 ligado, 3... bits de `SE_PRIVILEGE_*`).
+fn privilegios(token: &Alca) -> Result<Vec<LUID_AND_ATTRIBUTES>, String> {
+    let buf = info_do_token(token.0, TokenPrivileges)?;
+    Ok(unsafe {
+        let p = buf.as_ptr() as *const TOKEN_PRIVILEGES;
+        let n = std::ptr::addr_of!((*p).PrivilegeCount).read() as usize;
+        std::slice::from_raw_parts(std::ptr::addr_of!((*p).Privileges) as *const LUID_AND_ATTRIBUTES, n).to_vec()
+    })
+}
+
+/// Os privilégios que valem apagar do token restrito: todos menos o de
+/// atravessar pastas sem permissão em cada uma (`SeChangeNotifyPrivilege`), de
+/// que o Windows e os programas dependem.
+pub fn privilegios_a_apagar(token: &Alca) -> Result<Vec<LUID_AND_ATTRIBUTES>, String> {
+    let nome = larga("SeChangeNotifyPrivilege");
+    let mut luid = LUID { LowPart: 0, HighPart: 0 };
+    if unsafe { LookupPrivilegeValueW(null(), nome.as_ptr(), &mut luid) } == 0 {
+        return Err(falha_ultimo("LookupPrivilegeValue"));
+    }
+    Ok(privilegios(token)?
+        .into_iter()
+        .filter(|p| !(p.Luid.LowPart == luid.LowPart && p.Luid.HighPart == luid.HighPart))
+        .collect())
+}
+
+/// Os privilégios do token, pelo nome, e se estão ligados (para o diagnóstico).
+pub fn privilegios_do_token(token: &Alca) -> Result<Vec<(String, bool)>, String> {
+    let mut v = Vec::new();
+    for p in privilegios(token)? {
+        let mut tam = 128u32;
+        let mut nome = vec![0u16; tam as usize];
+        let texto = if unsafe { LookupPrivilegeNameW(null(), &p.Luid, nome.as_mut_ptr(), &mut tam) } != 0 {
+            String::from_utf16_lossy(&nome[..tam as usize])
+        } else {
+            format!("{}:{}", p.Luid.HighPart, p.Luid.LowPart)
+        };
+        v.push((texto, p.Attributes & 0x2 != 0));
+    }
+    Ok(v)
+}
+
+/// O token de quem não está elevado: o de um administrador com o UAC ligado
+/// (`LUA_TOKEN`: sem privilégios, com o grupo dos administradores só para
+/// negar) e integridade média. É o token que o usuário tem de verdade; o do
+/// CI, e o de quem abre o terminal "como administrador", é o inteiro.
+pub fn token_comum(origem: &Alca) -> Result<Alca, String> {
+    let mut novo: HANDLE = null_mut();
+    if unsafe { CreateRestrictedToken(origem.0, LUA_TOKEN, 0, null(), 0, null(), 0, null(), &mut novo) } == 0 {
+        return Err(falha_ultimo("CreateRestrictedToken(LUA_TOKEN)"));
+    }
+    let novo = Alca(novo);
+    let medio = Sid::de_texto("S-1-16-8192")?;
+    let rotulo = TOKEN_MANDATORY_LABEL { Label: SID_AND_ATTRIBUTES { Sid: medio.ptr(), Attributes: GRUPO_INTEGRIDADE } };
+    // Se não aceitar, fica a integridade que o LUA_TOKEN deu.
+    unsafe {
+        SetTokenInformation(
+            novo.0,
+            TokenIntegrityLevel,
+            (&rotulo as *const TOKEN_MANDATORY_LABEL).cast(),
+            (std::mem::size_of::<TOKEN_MANDATORY_LABEL>() as u32) + GetLengthSid(medio.ptr()),
         );
     }
     Ok(novo)
@@ -426,6 +515,67 @@ pub fn conceder(caminho: &str, sid: &Sid, acesso: Acesso, heranca: bool) -> Resu
     let r = unsafe {
         SetNamedSecurityInfoW(w.as_ptr(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | estado, null_mut(), null_mut(), nova, null())
     };
+    if r != 0 {
+        return Err(falha(&format!("não foi possível dar a permissão em {caminho}"), r));
+    }
+    Ok(())
+}
+
+/// Dá `acesso` ao SID só em `caminho`, sem herança e sem percorrer o que há
+/// dentro dele. `conceder` troca a DACL pelo nome, e o Windows então refaz a
+/// herança de tudo o que está embaixo: numa pasta de passagem, como a casa do
+/// usuário, seria percorrer o perfil inteiro por uma permissão que não é
+/// herdada. Pela alça, o sistema troca só a DACL deste objeto.
+pub fn conceder_so_aqui(caminho: &str, sid: &Sid, acesso: Acesso) -> Result<(), String> {
+    let w = larga(caminho);
+    // READ_CONTROL | WRITE_DAC; backup semantics para abrir uma pasta.
+    let h = unsafe {
+        CreateFileW(
+            w.as_ptr(),
+            0x0002_0000 | 0x0004_0000,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            null_mut(),
+        )
+    };
+    if h == INVALID_HANDLE_VALUE {
+        return Err(falha_ultimo(&format!("não foi possível abrir {caminho} para dar a permissão")));
+    }
+    let alca = Alca(h);
+    let (mut sd, mut dacl): (PSECURITY_DESCRIPTOR, *mut ACL) = (null_mut(), null_mut());
+    let r = unsafe {
+        GetSecurityInfo(alca.0, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, null_mut(), null_mut(), &mut dacl, null_mut(), &mut sd)
+    };
+    if r != 0 {
+        return Err(falha(&format!("não foi possível ler as permissões de {caminho}"), r));
+    }
+    let _guarda = Local(sd);
+    // Sem DACL o objeto é de todos.
+    if dacl.is_null() {
+        return Ok(());
+    }
+    let ea = EXPLICIT_ACCESS_W {
+        grfAccessPermissions: acesso.mascara(),
+        grfAccessMode: GRANT_ACCESS,
+        grfInheritance: NO_INHERITANCE,
+        Trustee: TRUSTEE_W {
+            pMultipleTrustee: null_mut(),
+            MultipleTrusteeOperation: NO_MULTIPLE_TRUSTEE,
+            TrusteeForm: TRUSTEE_IS_SID,
+            TrusteeType: TRUSTEE_IS_UNKNOWN,
+            ptstrName: sid.ptr() as PWSTR,
+        },
+    };
+    let mut nova: *mut ACL = null_mut();
+    let r = unsafe { SetEntriesInAclW(1, &ea, dacl, &mut nova) };
+    if r != 0 {
+        return Err(falha("SetEntriesInAcl", r));
+    }
+    let _nova = Local(nova as *mut c_void);
+    let estado = if nao_protegida(sd) { UNPROTECTED_DACL_SECURITY_INFORMATION } else { PROTECTED_DACL_SECURITY_INFORMATION };
+    let r = unsafe { SetSecurityInfo(alca.0, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | estado, null_mut(), null_mut(), nova, null()) };
     if r != 0 {
         return Err(falha(&format!("não foi possível dar a permissão em {caminho}"), r));
     }

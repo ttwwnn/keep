@@ -104,7 +104,13 @@ fn garante(c: &super::Concessao, sid: &Sid, sid_txt: &str, marcas: &mut HashSet<
         );
     }
     rastro(|| format!("concede {:?} em {} ({:?})", c.acesso, c.caminho, c.quem));
-    sistema::conceder(&c.caminho, sid, c.acesso, c.heranca)?;
+    if c.acesso == super::Acesso::Atributos {
+        // Uma pasta de passagem (a casa do usuário): a permissão não herda, e
+        // trocar a DACL pelo nome faria o Windows percorrer o que há embaixo.
+        sistema::conceder_so_aqui(&c.caminho, sid, c.acesso)?;
+    } else {
+        sistema::conceder(&c.caminho, sid, c.acesso, c.heranca)?;
+    }
     if c.heranca && marcas.insert(esta.clone()) {
         // Não gravar a marca só obriga a percorrer de novo na próxima vez.
         let gravou = Path::new(arquivo)
@@ -354,6 +360,8 @@ pub fn cli(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         Some("--autoteste") => return autoteste(),
         Some("--diagnostico") => return diagnostico(),
+        Some("--objetos") => return objetos(args.iter().any(|a| a == "--conceder")),
+        Some("--como-comum") => return como_comum(&args[1..]),
         _ => {}
     }
     let args: Vec<String> = match args.first().map(String::as_str) {
@@ -633,7 +641,7 @@ pub fn diagnostico() -> i32 {
             Err(e) => format!("SID recusado: {e}"),
             Ok(sids) => {
                 let refs: Vec<&Sid> = sids.iter().collect();
-                match sistema::token_restrito_cru(&token0, flags, des, &refs) {
+                match sistema::token_restrito_cru(&token0, flags, des, &[], &refs) {
                     Ok(t) => format!("ok (restrito: {})", sistema::e_restrito(&t)),
                     Err(c) => format!("FALHOU {}", sistema::erro_em_texto(c)),
                 }
@@ -670,7 +678,92 @@ pub fn diagnostico() -> i32 {
         um(&format!("nível {nivel:?}, sem negar"), 1, &[], &ids);
         um(&format!("nível {nivel:?}, negando os administrativos"), 1, &admins, &ids);
     }
+
+    // O que o processo tem e o que o token restrito de verdade guarda.
+    println!("  privilégios do token (* ligado):");
+    match sistema::privilegios_do_token(&token0) {
+        Ok(v) => {
+            for (nome, ligado) in v {
+                println!("    {nome}{}", if ligado { " *" } else { "" });
+            }
+        }
+        Err(e) => println!("    não leu: {e}"),
+    }
+    let ids = sids_de_restricao(NIVEIS[0], &da_pasta, &base, &logon_txt);
+    let sids: Result<Vec<Sid>, String> = ids.iter().map(|t| Sid::de_texto(t)).collect();
+    if let (Ok(sids), Ok(sistema_sid), Ok(sid_pasta)) = (sids, Sid::de_texto(super::SID_SISTEMA), Sid::de_texto(&da_pasta)) {
+        let refs: Vec<&Sid> = sids.iter().collect();
+        match sistema::token_restrito(&token0, &usuario, &sistema_sid, &refs, &admins, &[&sid_pasta]) {
+            Ok(t) => {
+                println!("  o token restrito de verdade ({:?}): restrito {}", NIVEIS[0], sistema::e_restrito(&t));
+                match sistema::privilegios_do_token(&t) {
+                    Ok(v) => println!("    privilégios que sobram: {}", v.iter().map(|(n, l)| format!("{n}{}", if *l { "*" } else { "" })).collect::<Vec<_>>().join(", ")),
+                    Err(e) => println!("    privilégios: {e}"),
+                }
+            }
+            Err(e) => println!("  o token restrito de verdade: {e}"),
+        }
+    }
     0
+}
+
+/// `keep ia confinar --objetos [--conceder]`: os objetos com nome do MSYS2 e
+/// do Cygwin, de quem são, e (com `--conceder`) o acesso do SID base do Keep a
+/// eles. Para ver por que o bash preso não sobe com o bash do usuário aberto.
+fn objetos(conceder: bool) -> i32 {
+    let token0 = match sistema::token_do_processo() {
+        Ok(t) => t,
+        Err(e) => {
+            println!("{e}");
+            return 1;
+        }
+    };
+    let Ok(usuario) = sistema::sid_do_usuario(&token0) else {
+        println!("sem o SID do usuário");
+        return 1;
+    };
+    let usuario_txt = usuario.texto().unwrap_or_default();
+    let base = Sid::de_texto(&sid_base(&usuario_txt)).ok();
+    println!("Objetos do MSYS2/Cygwin do usuário {usuario_txt}{}", if conceder { " (dando acesso ao SID base do Keep)" } else { "" });
+    let achados = sistema::objetos::mostra(&usuario_txt, if conceder { base.as_ref() } else { None });
+    println!("  {achados} objeto(s) do MSYS2/Cygwin");
+    0
+}
+
+/// `keep ia confinar --como-comum -- <programa> [argumentos…]`: roda o programa
+/// com o token de quem não está elevado (o de um administrador com o UAC
+/// ligado, sem privilégios e com integridade média), sem prender nada. É o
+/// token que o usuário tem de verdade; o do CI é o elevado, e o que ele prova
+/// não é o que o usuário vê.
+fn como_comum(args: &[String]) -> i32 {
+    let args: &[String] = if args.first().map(String::as_str) == Some("--") { &args[1..] } else { args };
+    let Some((programa, resto)) = args.split_first() else {
+        eprintln!("uso: keep ia confinar --como-comum -- <programa> [argumentos...]");
+        return 2;
+    };
+    let Some(exe) = no_path(programa) else {
+        eprintln!("Keep: {programa} não está no PATH.");
+        return 127;
+    };
+    let aqui = std::env::current_dir().map(|p| sem_prefixo(&p.to_string_lossy())).unwrap_or_else(|_| perfil_real());
+    let rodar = || -> Result<i32, String> {
+        let origem = sistema::token_do_processo()?;
+        let token = sistema::token_comum(&origem)?;
+        let linha = linha_de_comando(&exe, resto);
+        let ambiente = bloco_de_ambiente(&ambiente_atual());
+        let sem_janela = !sistema::tem_console();
+        sistema::nao_morrer_com_ctrl_c();
+        let filho = sistema::criar_processo(&token, &exe, &linha, &aqui, &ambiente, &Padrao::do_processo(), sem_janela)?;
+        sistema::retomar(&filho)?;
+        Ok(sistema::esperar(&filho.processo, sistema::INFINITO)?.unwrap_or(1) as i32)
+    };
+    match rodar() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Keep: {e}");
+            1
+        }
+    }
 }
 
 #[cfg(test)]

@@ -169,18 +169,37 @@ const s = net.createServer((c) => c.end("pong")).listen(0, "127.0.0.1", () => {
         Programa "claude -p chega ao pedido de login" @($claude, "-p", "ola") { param($c, $t) $t -match "(?i)log.?in|api key|authenticat|credential" -and $t -notmatch "(?i)EPERM|EACCES|access is denied|permission" } -mostrar
     }
     if ($bash) {
-        # O Git Bash (MSYS2) é o que o Claude Code usa para o Bash. Com outro
-        # bash do usuário já aberto, que é o caso de quem usa o Git Bash.
-        # As aspas são nossas: o Start-Process junta os argumentos sem pô-las.
-        $aberto = Start-Process -FilePath $bash -ArgumentList @("-c", '"sleep 60"') -PassThru -WindowStyle Hidden
-        Start-Sleep -Seconds 1
+        # O Git Bash (MSYS2) é o que o Claude Code usa para o Bash. O MSYS2 guarda
+        # o estado do usuário numa memória compartilhada com nome, que o primeiro
+        # bash cria com uma DACL só do usuário e do sistema; o token restrito não
+        # a abre. Confere o bash preso (1) sozinho e com filhos, (2) com dois
+        # presos ao mesmo tempo e (3) com um bash do usuário já aberto.
         $b1 = Join-Path $permitida "do-bash.txt"
         $b2 = Join-Path $fora "do-bash.txt"
         Programa "o bash roda" @($bash, "-c", "echo ola") { param($c, $t) $t -eq "ola" }
+        Programa "o bash roda um programa do MSYS" @($bash, "-c", "ls / | head -n 1") { param($c, $t) $c -eq 0 -and $t.Length -gt 0 }
+        Programa "o bash dentro do bash" @($bash, "-c", "bash -c 'echo ola2'") { param($c, $t) $t -eq "ola2" }
+        Programa "o bash faz um filho e espera" @($bash, "-c", "(echo filho) | cat") { param($c, $t) $t -eq "filho" }
         Programa "o bash grava na pasta" @($bash, "-c", ("echo bash > '" + (Posix $b1) + "'")) { param($c, $t) $c -eq 0 -and (Test-Path $b1) }
         Programa "o bash não grava fora" @($bash, "-c", ("echo bash > '" + (Posix $b2) + "'")) { param($c, $t) -not (Test-Path $b2) }
         Programa "o bash não lê o que está fora" @($bash, "-c", ("cat '" + (Posix (Join-Path $fora "b.txt")) + "'")) { param($c, $t) $t -notmatch "fora" -and $c -ne 0 }
-        Programa "o bash faz um filho e espera" @($bash, "-c", "(echo filho) | cat") { param($c, $t) $t -eq "filho" }
+
+        # Dois presos ao mesmo tempo: o primeiro fica 15 segundos de pé.
+        $env:KEEP_WORKSPACE = "presa"
+        $primeiro = Start-Process -FilePath $Keep -ArgumentList @("ia", "confinar", "--", ('"' + $bash + '"'), "-c", '"sleep 15"') -PassThru -WindowStyle Hidden
+        Start-Sleep -Seconds 4
+        Programa "dois bash presos ao mesmo tempo" @($bash, "-c", "echo dois") { param($c, $t) $t -eq "dois" }
+        Wait-Process -Id $primeiro.Id -Timeout 40 -ErrorAction SilentlyContinue
+
+        # Com um bash do usuário aberto, que é o caso de quem usa o Git Bash.
+        # As aspas são nossas: o Start-Process junta os argumentos sem pô-las.
+        $aberto = Start-Process -FilePath $bash -ArgumentList @("-c", '"sleep 120"') -PassThru -WindowStyle Hidden
+        Start-Sleep -Seconds 2
+        Programa "o bash preso com um bash do usuário aberto" @($bash, "-c", "echo ola3") { param($c, $t) $t -eq "ola3" }
+        Write-Host "  os objetos do MSYS2 que o usuário deixou, e de quem são:"
+        & $Keep ia confinar --objetos 2>&1 | ForEach-Object { Write-Host "    $_" }
+        & $Keep ia confinar --objetos --conceder 2>&1 | ForEach-Object { Write-Host "    $_" }
+        Programa "o bash preso, depois de dar os objetos do MSYS2 ao Keep" @($bash, "-c", "echo ola4") { param($c, $t) $t -eq "ola4" }
         Stop-Process -Id $aberto.Id -Force -ErrorAction SilentlyContinue
     }
 

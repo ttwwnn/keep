@@ -97,6 +97,14 @@ jobs:
         shell: pwsh
         run: ./tools/confine-test.ps1 -Keep "$PWD/target/debug/keep.exe"
 
+      # O mesmo roteiro com o token de quem não está elevado (o do CI é o de um
+      # administrador, com privilégios e integridade alta; o do usuário, não).
+      - name: Contenção da IA (token sem elevação)
+        if: always() && matrix.name == 'Windows'
+        timeout-minutes: 12
+        shell: pwsh
+        run: target/debug/keep.exe ia confinar --como-comum -- pwsh -NoProfile -NonInteractive -File "$PWD/tools/confine-test-comum.ps1" -Keep "$PWD/target/debug/keep.exe"
+
       - name: Binários
         run: cargo build --release -p keep -p keepd
 
