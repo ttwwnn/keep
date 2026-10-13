@@ -1,0 +1,17 @@
+/* The folder button of a workspace header (ui/ConfineButton.tsx): an icon like
+   the + and the fold, faint at rest. Resting ink when the pointer is over it
+   and while the AI is held to a folder, so the shut folder is seen at a glance
+   in a long list. */
+.hdr-btn.confine svg {
+  width: calc(12px * var(--zoom));
+  height: calc(12px * var(--zoom));
+}
+
+.hdr-btn.confine svg path {
+  stroke-width: 1.5;
+}
+
+.hdr-btn.confine:hover,
+.hdr-btn.confine.held {
+  color: var(--ink-resting);
+}

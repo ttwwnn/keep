@@ -68,6 +68,18 @@ cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage changed nothing
 build "$WORK/Sabotaged.swift" || exit 1
 if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
 
+echo "sabotage: a surface woken out of sight keeps the columns the window gives it"
+sed 's/width: max(1, size.width + Double(program.cols - grid.cols) \* cell.width),/width: max(1, size.width),/' "$SOURCE" > "$WORK/Sabotaged.swift"
+cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage changed nothing"; exit 1; }
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
+echo "sabotage: a surface at its program's grid moved anyway"
+sed 's/program.cols != grid.cols || program.rows != grid.rows/true/' "$SOURCE" > "$WORK/Sabotaged.swift"
+cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage changed nothing"; exit 1; }
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
 echo "sabotage: the pane to take over is not named"
 sed 's/if let take, take.hasPrefix("\/") { lines.append("take=\\(take)") }/_ = take/' "$SOURCE" > "$WORK/Sabotaged.swift"
 cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage changed nothing"; exit 1; }

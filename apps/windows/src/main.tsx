@@ -4,12 +4,14 @@
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 import "./styles-appearance.css";
+import "./styles-confine.css";
 import "./styles-tabs.css";
 import { render } from "preact";
 import { startAppearance } from "./appearance";
 import { installInput, terminalKey } from "./input";
 import { restoreTabs } from "./iaChores";
 import { startIA } from "./iaStore";
+import { startConfinement } from "./confinementStore";
 import { watchSleep } from "./sleepWatch";
 import { connect, info, start } from "./store";
 import { App } from "./ui/App";
@@ -21,6 +23,7 @@ async function boot() {
   render(<App />, document.getElementById("app")!);
   watchSleep();
   await connect({ restore: restoreTabs });
+  startConfinement();
   // The AI layer after the daemon: its tabs' AI is asked of the daemon the window found.
   await startIA();
   if (info.value?.e2eReport) {

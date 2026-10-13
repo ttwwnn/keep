@@ -145,4 +145,42 @@ yes("refused where it denies", KeeperProtocol.clipboardRead(policy: "deny") == .
 yes("and the person asked where it asks, or says nothing (libghostty's default)",
     KeeperProtocol.clipboardRead(policy: "ask") == .ask && KeeperProtocol.clipboardRead(policy: nil) == .ask, true)
 
+// A surface woken out of sight takes its program's grid (`takeSizeOutOfSight`):
+// the size it has, moved by whole cells. What libghostty makes of a size —
+// what is left past the padding, divided by the cell, rounded down — is the
+// grid asked for, from any size it started at.
+func fitted(_ name: String, _ got: (width: Double, height: Double)?, _ want: (width: Double, height: Double)?) {
+    let same = got.map { [$0.width, $0.height] } == want.map { [$0.width, $0.height] }
+    if same { print("ok   \(name)") } else {
+        failures += 1
+        print("FAIL \(name): got \(String(describing: got)), wanted \(String(describing: want))")
+    }
+}
+fitted("the program's grid already: nothing to move",
+       KeeperProtocol.pixels((1698, 1296), grid: (105, 38), cell: (16, 34), program: (105, 38)), nil)
+fitted("a smaller program's grid: whole cells fewer, both ways",
+       KeeperProtocol.pixels((1698, 1296), grid: (105, 38), cell: (16, 34), program: (80, 24)), (1298, 820))
+fitted("a larger one: whole cells more",
+       KeeperProtocol.pixels((1698, 1296), grid: (105, 38), cell: (16, 34), program: (144, 48)), (2322, 1636))
+fitted("only the rows off: the columns left alone",
+       KeeperProtocol.pixels((1698, 1296), grid: (105, 38), cell: (16, 34), program: (105, 24)), (1698, 820))
+fitted("no grid from the daemon: nothing",
+       KeeperProtocol.pixels((1698, 1296), grid: (105, 38), cell: (16, 34), program: (0, 0)), nil)
+fitted("no cell yet: nothing",
+       KeeperProtocol.pixels((1698, 1296), grid: (105, 38), cell: (0, 0), program: (80, 24)), nil)
+var lands = true
+for padding in [0.0, 4.0, 11.0] {
+    for start in stride(from: 900.0, through: 2400.0, by: 37.0) {
+        let grid = { (size: Double, cell: Double) in Int(((size - padding) / cell).rounded(.down)) }
+        for program in [(80, 24), (105, 38), (144, 48), (200, 60)] {
+            let now = (cols: grid(start, 16.5), rows: grid(start * 0.7, 34))
+            guard let fit = KeeperProtocol.pixels(
+                (start, start * 0.7), grid: now, cell: (16.5, 34), program: program)
+            else { if now != program { lands = false }; continue }
+            if grid(fit.width, 16.5) != program.0 || grid(fit.height, 34) != program.1 { lands = false }
+        }
+    }
+}
+check("the grid libghostty makes of the size given is the program's, whatever the padding", [lands ? 1 : 0], [1])
+
 exit(failures == 0 ? 0 : 1)
