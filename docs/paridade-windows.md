@@ -132,11 +132,14 @@ do vitest); o mouse real, os cursores e a dica nativa do workspace não foram ex
 ## Fatia `ai`
 
 - [~] Integração de shell (função `claude` e `codex` no PowerShell das abas): troca a quente, armazém por
-  aba. Feita pelo keepd (`crates/keepd/src/ai.ps1`, `shellhook.rs`); testada com um `pwsh` 7 de verdade e
-  programas de mentira (argumentos, pipe, código de saída, falha segura, subcomandos, função da pessoa),
-  e conferida para o Windows com `cargo check --target x86_64-pc-windows-msvc`; não rodou num Windows nem
-  no PowerShell 5.1. Cmd e Git Bash ficam de fora (rodam no login global) e o WSL é invisível ao crate
-  (docs/ia.md).
+  aba, e a subida pelo `keep ia confinar` (a pasta presa da fatia `confine`: sem pasta para o workspace o
+  `confinar` roda o programa como sempre, e se o keep recusa prender nada sobe solto). Feita pelo keepd
+  (`crates/keepd/src/ai.ps1`, `shellhook.rs`); testada com um `pwsh` 7 de verdade e programas de mentira
+  (argumentos, pipe, código de saída, falha segura, subcomandos, função da pessoa, o `confinar` que recusa,
+  o `claude.ps1` na frente no PATH), e conferida para o Windows com `cargo check --target
+  x86_64-pc-windows-msvc`; não rodou num Windows nem no PowerShell 5.1. Cmd e Git Bash ficam de fora
+  (rodam no login global e soltos) e o WSL é invisível ao crate (docs/ia.md). O `--` digitado sem aspas é
+  consumido pelo PowerShell antes de qualquer função (`claude -- texto` chega como `claude texto`).
 - [~] Restauro depois de reiniciar, com as conversas (`keep restauro`), sem o retrato apagado cedo: o app
   deixou de recriar abas em JS; `restaurar --fase=abas` antes de mostrar o vazio (espera até 1 min por um
   keepd lento), `manter` a cada 30 s, nomes das abas pelo `names.json`, trava do crate que agora trava no
@@ -185,11 +188,13 @@ formato do Mac) e quem prende é o `keep ia confinar -- <programa>`.
   daqui; o CI roda o autoteste (`keep ia confinar --autoteste`, também
   dentro de uma aba) e `tools/confine-test.ps1` repete o roteiro à mão.
   `CONFINEMENT_ENFORCED` (confinement.ts) tira o botão e os itens do menu.
-- [~] Encaixe na função `claude` do PowerShell (fatia `ai`): trocar o
-  `& $claude @args` final por `& $keep ia confinar -- $claude @args`; sem pasta
-  para o workspace o `confinar` roda o programa como sempre. Enquanto a função
-  não passa por ele, só a troca de conta/IA e a restauração (que já chamam
-  `envolve`) prendem; digitar `claude` no shell, não.
+- [~] Encaixe nas funções `claude` e `codex` do PowerShell (fatia `ai`, feito):
+  elas sobem o programa por `keep ia confinar -- <programa> …` em toda aba do
+  Keep, como o `_keep_ia` do Mac, e não caem para a subida solta quando o keep
+  recusa; sem pasta para o workspace o `confinar` roda o programa como sempre.
+  Testado com um `pwsh` 7 e um `confinar` de mentira (docs/ia.md); digitar
+  `claude` numa aba do Windows com a pasta presa não foi visto. Um `claude.ps1`
+  sozinho (sem `.exe` nem `.cmd` ao lado), o Cmd e o Git Bash rodam sem prender.
 - [ ] O que o Windows não deixa fechar sem administrador: pastas de rede (o
   servidor confere o usuário, não o token), o que o Windows deixa qualquer um
   ler (`C:\Windows`, `Arquivos de Programas`, e, nos níveis compatível e amplo,

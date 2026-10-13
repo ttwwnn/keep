@@ -1,12 +1,18 @@
 function global:__KeepProgram([string]$name) {
   Get-Command -Name $name -CommandType Application,ExternalScript -All -ErrorAction SilentlyContinue | Select-Object -First 1
 }
-function global:__KeepClaudeStore($rest) {
-  if (-not $env:KEEP_WORKSPACE -or $env:CLAUDE_SECURESTORAGE_CONFIG_DIR) { return $null }
+function global:__KeepKind([string]$name, $rest) {
+  if ($name -ne 'claude') { return 'conversation' }
   $first = ''
   if ($rest -and $rest.Count -gt 0) { $first = [string]$rest[0] }
-  $quiet = '-v','--version','-h','--help','agents','attach','rc','remote-control','auth','auto-mode','config','daemon','doctor','gateway','help','import','install','kill','logs','mcp','plugin','plugins','project','respawn','rm','setup-token','stop','ultrareview','update','upgrade'
-  if ($quiet -contains $first) { return $null }
+  $held = 'agents','attach','rc','remote-control'
+  $plain = '-v','--version','-h','--help','auth','auto-mode','config','daemon','doctor','gateway','help','import','install','kill','logs','mcp','plugin','plugins','project','respawn','rm','setup-token','stop','ultrareview','update','upgrade'
+  if ($held -contains $first) { return 'held' }
+  if ($plain -contains $first) { return 'plain' }
+  return 'conversation'
+}
+function global:__KeepClaudeStore {
+  if (-not $env:KEEP_WORKSPACE -or $env:CLAUDE_SECURESTORAGE_CONFIG_DIR) { return $null }
   $keep = $env:KEEP_IA_BIN
   if (-not $keep -or -not (Test-Path -LiteralPath $keep)) { return $null }
   $answer = $null
@@ -28,17 +34,31 @@ function global:__KeepClaudeStore($rest) {
   Write-Host "Keep: não deu para preparar o login desta aba ($why); o Claude sobe como antes." -ForegroundColor Yellow
   return $null
 }
+function global:__KeepHold([string]$name) {
+  $keep = $env:KEEP_IA_BIN
+  if (-not $env:KEEP_WORKSPACE -or -not $keep -or -not (Test-Path -LiteralPath $keep)) { return $null }
+  $app = Get-Command -Name $name -CommandType Application -All -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($app) { return $app.Source }
+  return $null
+}
 function global:__KeepRun([string]$name, $rest) {
   $real = __KeepProgram $name
   if (-not $real) {
     Write-Error "The term '$name' is not recognized as the name of a cmdlet, function, script file, or executable program." -Category ObjectNotFound
     return
   }
+  $kind = __KeepKind $name $rest
   $store = $null
-  if ($name -eq 'claude') { $store = __KeepClaudeStore $rest }
+  if ($name -eq 'claude' -and $kind -eq 'conversation') { $store = __KeepClaudeStore }
   if ($store) { $env:CLAUDE_SECURESTORAGE_CONFIG_DIR = $store }
+  $hold = $null
+  if ($kind -ne 'plain') { $hold = __KeepHold $name }
   try {
-    if ($MyInvocation.ExpectingInput) { $input | & $real @rest } else { & $real @rest }
+    if ($hold) {
+      $line = @('ia','confinar','--',$hold)
+      if ($null -ne $rest) { $line += $rest }
+      if ($MyInvocation.ExpectingInput) { $input | & $env:KEEP_IA_BIN @line } else { & $env:KEEP_IA_BIN @line }
+    } elseif ($MyInvocation.ExpectingInput) { $input | & $real @rest } else { & $real @rest }
   } finally {
     if ($store) { Remove-Item Env:CLAUDE_SECURESTORAGE_CONFIG_DIR -ErrorAction SilentlyContinue }
   }
