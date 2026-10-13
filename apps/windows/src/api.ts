@@ -155,6 +155,11 @@ export const writeClaudeSettings = (expected: string | null, text: string) =>
 /** Codex's model cache when it is not the version `known`: its stamp (null: no cache) and, when it changed, its text. */
 export const codexModels = (known: string | null) =>
   invoke<{ stamp: string | null; text: string | null }>("codex_models", { known });
+/** The names file the core shares with the window, when it is not the version `known`: its stamp (null: no file) and, when it changed, its text. */
+export const namesRead = (known: string | null) =>
+  invoke<{ stamp: string | null; text: string | null }>("names_read", { known });
+/** Write the names file; the stamp of what was written. */
+export const namesWrite = (text: string) => invoke<string | null>("names_write", { text });
 /** A line for the app's log. */
 export const appLog = (line: string) => invoke<void>("app_log", { line });
 export interface Memory {

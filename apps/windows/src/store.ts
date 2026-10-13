@@ -35,9 +35,10 @@ import {
 } from "./aiStatus";
 import { defaultsOf, planStatusLine, restoreDefaults } from "./claudeSettings";
 import { nameToKeep } from "./ia";
+import { sameDaemon } from "./names";
 import { chooseClaudeEffort, chooseClaudeModel, chooseCodex, type PickerIO } from "./pickers";
 import { baseName, isPathTitle, rootTabs, type RootTab } from "./layout";
-import { defaultState, normalizeState, tabKey, type GuiState, type RestoreWorkspace } from "./state";
+import { defaultState, normalizeState, tabKey, type GuiState } from "./state";
 import { TerminalManager, viewKey, type TermView } from "./terminals";
 import { DEFAULT_FONT_SIZE, applyPalette, defaultFontFamily, onSystemAppearanceChange, resolvePalette } from "./theme";
 import {
@@ -277,8 +278,18 @@ export async function refresh(): Promise<void> {
   if (refreshing) return;
   refreshing = true;
   try {
-    const list = await api.list();
+    let list = await api.list();
     const firstAnswer = daemonError.value !== null;
+    // Back after being out of reach, and with nothing in it: a daemon that
+    // has just started, perhaps. The tabs of the last one are asked for
+    // before the window takes the empty list for the truth.
+    if (firstAnswer && settled) {
+      await adoptIdentity();
+      if (await restoreIfEmpty(list)) {
+        list = await api.list();
+        say("Restaurado após reinício");
+      }
+    }
     batch(() => {
       workspaces.value = list;
       daemonError.value = null;
@@ -289,7 +300,7 @@ export async function refresh(): Promise<void> {
   } catch (error) {
     daemonError.value = String(error);
     // Started again if it went away: the first launch after it was killed,
-    // say. Its tabs are gone with it, which the restore picture is for.
+    // say. Its tabs are gone with it, which the core's restore is for.
     void api.ensureDaemon().catch(() => {});
   } finally {
     refreshing = false;
@@ -303,7 +314,8 @@ function reconcile(list: WorkspaceInfo[]): void {
   for (const w of list) for (const t of w.tabs) if (!t.finished) alive.add(viewKey(w.name, t.id));
   terminals.prune(alive);
   // Until the window has decided whether to restore, an empty daemon is not
-  // news: what it says must not wipe the picture that restoring needs.
+  // news: what it says must not take the order and the names that restoring
+  // is about to give meaning back to.
   if (!settled) return;
 
   const state = gui.value;
@@ -313,7 +325,6 @@ function reconcile(list: WorkspaceInfo[]): void {
   const workspaceNames = Object.fromEntries(Object.entries(state.workspaceNames).filter(([k]) => names.has(k)));
   const folded = state.folded.filter((n) => names.has(n));
   const lastTab = Object.fromEntries(Object.entries(state.lastTab).filter(([k]) => names.has(k)));
-  const restore = picture(list, tabNames);
 
   // The tab in front went away: the one beside it comes forward.
   let active = state.active;
@@ -334,80 +345,59 @@ function reconcile(list: WorkspaceInfo[]): void {
   tabsByWorkspaceSnapshot = new Map(list.map((w) => [w.name, tabsOf(w.name).map((t) => t.root.id)]));
 
   const changed =
-    JSON.stringify([order, tabNames, workspaceNames, folded, lastTab, restore, active]) !==
-    JSON.stringify([state.order, state.tabNames, state.workspaceNames, state.folded, state.lastTab, state.restore, state.active]);
+    JSON.stringify([order, tabNames, workspaceNames, folded, lastTab, active]) !==
+    JSON.stringify([state.order, state.tabNames, state.workspaceNames, state.folded, state.lastTab, state.active]);
   if (changed) {
-    gui.value = { ...state, order, tabNames, workspaceNames, folded, lastTab, restore, active };
+    gui.value = { ...state, order, tabNames, workspaceNames, folded, lastTab, active };
   }
 }
 
 let tabsByWorkspaceSnapshot = new Map<string, number[]>();
 
-/** The window has decided whether to restore; from here on the daemon's list rules. */
+/**
+ * The window has decided whether to restore; from here on the daemon's list
+ * rules. Until then an empty daemon is not news: what it says must not take
+ * the order of the sidebar and the names the restore is about to bring back.
+ */
 let settled = false;
 
-/** The workspaces as they stand, to open again after a reboot. */
-function picture(list: WorkspaceInfo[], names: Record<string, string>): RestoreWorkspace[] {
-  return list
-    .map((w) => ({
-      name: w.name,
-      tabs: rootTabs(w.tabs.filter((t) => !t.finished)).flatMap((tab) =>
-        tab.panes.map((p) => ({
-          id: p.id,
-          cwd: p.cwd,
-          name: names[tabKey(w.name, p.id)],
-          splitOf: p.splitOf,
-          splitDir: p.splitDir,
-        })),
-      ),
-    }))
-    .filter((w) => w.tabs.length > 0);
+/** The restore the page was given (`connect`), and the daemon it last asked about: a daemon is asked once. */
+let restoreTabs: (() => Promise<boolean>) | undefined;
+let restoreAsked: string | undefined;
+
+/**
+ * Which daemon this is. Tab numbers are one daemon's — a new one counts from
+ * one again —, so the names given under another belong to no tab of this one;
+ * the restore brings back the ones the tabs it makes had.
+ */
+async function adoptIdentity(): Promise<void> {
+  const identity = await api.daemonIdentity().catch(() => null);
+  if (identity === null || identity === gui.value.daemon) return;
+  gui.value = sameDaemon(gui.value.daemon, identity)
+    ? { ...gui.value, daemon: identity }
+    : { ...gui.value, daemon: identity, tabNames: {} };
 }
 
 /**
- * Open the workspaces of the last picture again, in the same folders and
- * under the same names. Only on a daemon this window just started: one that
- * was already running and is empty was emptied on purpose.
+ * A daemon with no tab that has not been asked yet whether the last one left
+ * some to bring back: the core is asked (`keep restauro`, docs/restauro.md —
+ * the one place tabs are made again), once per daemon. True when some came
+ * back.
  */
-async function restoreFrom(pictureToRestore: RestoreWorkspace[]): Promise<boolean> {
-  if (pictureToRestore.length === 0) return false;
-  const { cols, rows } = guessSize();
-  const names: Record<string, string> = {};
-  let restored = 0;
-  for (const w of pictureToRestore) {
-    // Parents before their panes: the daemon refuses a pane of nothing.
-    const ids = new Map<number, number>();
-    const pending = [...w.tabs];
-    for (let guard = 0; pending.length > 0 && guard < w.tabs.length + 1; guard++) {
-      for (let i = 0; i < pending.length; i++) {
-        const t = pending[i];
-        const parent = t.splitOf ? ids.get(t.splitOf) : 0;
-        if (t.splitOf && parent === undefined) continue;
-        try {
-          const id = await api.newTab(w.name, t.cwd || null, cols, rows, parent ?? 0, t.splitOf ? t.splitDir : 0);
-          ids.set(t.id, id);
-          if (t.name) names[tabKey(w.name, id)] = t.name;
-          restored++;
-        } catch {
-          // A folder that no longer exists: the daemon refuses it. Opened at
-          // home instead rather than lost.
-          try {
-            const id = await api.newTab(w.name, null, cols, rows, parent ?? 0, t.splitOf ? t.splitDir : 0);
-            ids.set(t.id, id);
-            restored++;
-          } catch {
-            /* nothing to be done for this one */
-          }
-        }
-        pending.splice(i, 1);
-        i--;
-      }
-    }
+async function restoreIfEmpty(list: WorkspaceInfo[]): Promise<boolean> {
+  if (!restoreTabs || list.some((w) => w.tabs.some((t) => !t.finished))) return false;
+  const daemon = gui.value.daemon || "?";
+  if (restoreAsked === daemon) return false;
+  restoreAsked = daemon;
+  const saying = "Restaurando as abas…";
+  say(saying, 60);
+  try {
+    return await restoreTabs();
+  } catch {
+    return false;
+  } finally {
+    if (notice.value === saying) notice.value = null;
   }
-  update((s) => {
-    s.tabNames = { ...s.tabNames, ...names };
-  });
-  return restored > 0;
 }
 
 /** A size for a tab that is not on screen yet: the tab in front's, or a guess from the font. */
@@ -1106,33 +1096,58 @@ export async function start(options: StartOptions): Promise<void> {
   statusLineSetup = setUpStatusLine();
 }
 
+export interface ConnectOptions {
+  /**
+   * Bring back the tabs the last daemon had, for a daemon that has none (the
+   * core does it: `keep restauro`, docs/restauro.md); true when some came
+   * back. Asked before the window first hears from the daemon, so that nothing
+   * is drawn in the place of what is coming back, and again if the daemon turns
+   * up empty after being out of reach.
+   */
+  restore?: () => Promise<boolean>;
+}
+
+/**
+ * Start the daemon if it is not up, and wait for a slow one — a first launch
+ * after a reboot, with a program scanning its executable — up to a minute:
+ * what the window decides about the tabs it holds is decided on its list.
+ * That list, or null for a daemon that never answered.
+ */
+async function reachDaemon(): Promise<WorkspaceInfo[] | null> {
+  const until = Date.now() + 60_000;
+  for (let attempt = 0; ; attempt++) {
+    // Started again now and then, in case it died while this was waiting.
+    if (attempt % 15 === 0) {
+      try {
+        await api.ensureDaemon();
+      } catch (error) {
+        daemonError.value = String(error);
+      }
+    }
+    try {
+      return await api.list();
+    } catch (error) {
+      daemonError.value = String(error);
+    }
+    if (Date.now() > until) return null;
+    await sleep(1000);
+  }
+}
+
 /** Find the daemon — starting it if needed — and keep asking it. */
-export async function connect(): Promise<void> {
-  // Was the daemon running before this window asked? A daemon this window
-  // starts is a fresh one — after a reboot, typically — and the picture of
-  // the last session is opened in it. One that was running and is empty was
-  // emptied on purpose.
-  const wasRunning = await api.list().then(
-    () => true,
-    () => false,
-  );
-  try {
-    await api.ensureDaemon();
-  } catch (error) {
-    daemonError.value = String(error);
-  }
-  // Taken before the daemon is first heard: its list replaces the picture.
-  const lastSession = gui.value.restore;
-  // A daemon other than the one the picture was taken from is a fresh one
-  // too, whoever started it — `keep ls` in a terminal after a reboot, say.
-  const identity = await api.daemonIdentity().catch(() => null);
-  const anotherDaemon = identity !== null && gui.value.daemon !== "" && identity !== gui.value.daemon;
+export async function connect(options: ConnectOptions = {}): Promise<void> {
+  restoreTabs = options.restore;
+  // The tabs of a daemon this window starts are the last one's, brought back
+  // by the core before the window has heard anything of the new one: an empty
+  // list would be drawn as "no workspace", and the sidebar's order, kept for
+  // the workspaces that are about to return, taken as stale. One that was
+  // already running and is empty was emptied on purpose, and the core knows
+  // that too: it restores once per daemon.
+  const first = await reachDaemon();
+  if (first !== null) await adoptIdentity();
+  const restored = first !== null && (await restoreIfEmpty(first));
   await refresh();
-  if ((!wasRunning || anotherDaemon) && loaded.value && workspaces.value.length === 0 && lastSession.length > 0) {
-    const restored = await restoreFrom(lastSession);
-    if (restored) say("Restaurado após reinício");
-  }
-  if (identity !== null && identity !== gui.value.daemon) gui.value = { ...gui.value, daemon: identity };
+  if (restored) say("Restaurado após reinício");
   settled = true;
   await refresh();
   const active = activeWorkspace.value;

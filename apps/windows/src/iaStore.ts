@@ -36,6 +36,7 @@ import {
   type TabAI,
   type UsageLine,
 } from "./ia";
+import { startChores } from "./iaChores";
 import { setUpAccountHook } from "./iaHooks";
 import type { RootTab } from "./layout";
 import {
@@ -610,6 +611,8 @@ export async function startIA(): Promise<void> {
   setInterval(() => void indexWorktrees(), 120_000);
   void renewLogins();
   setInterval(() => void renewLogins(), 60_000);
+  // The tabs back after a restart, the conversations a drop stopped, the names.
+  startChores();
   setInterval(() => (usageClock.value = Date.now()), 30_000);
 }
 

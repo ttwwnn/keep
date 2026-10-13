@@ -114,6 +114,14 @@ pub fn deadline(args: &[String]) -> Option<Duration> {
             asked.clamp(0.5, 30.0) + 1.5
         }
         ("worktrees", "indexar") => 120.0,
+        // The tabs back after a restart (docs/restauro.md): the first phase is
+        // quick and the window waits for it; the second brings the
+        // conversations back one at a time, and the picture of the tabs for
+        // the next restart. The full `restaurar`, with no phase, is not asked.
+        ("restauro", "restaurar") if args.iter().any(|a| a == "--fase=abas") => 30.0,
+        ("restauro", "manter") => 900.0,
+        // The conversations a dropped login, network or usage limit stopped.
+        ("continuar", _) => 120.0,
         _ => return None,
     };
     Some(Duration::from_secs_f64(seconds))
@@ -143,6 +151,17 @@ fn run(resources: Option<&Path>, daemon: &Path, args: &[String], within: Duratio
     let exe = cli(resources).ok_or_else(|| "o keep.exe não está junto do app".to_string())?;
     let mut cmd = Command::new(&exe);
     cmd.args(args).env("KEEP_SOCKET", daemon).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    // What the core keeps beside the app's own: the pictures of the tabs and
+    // the names given to them (docs/restauro.md). A test app, with a daemon
+    // of its own, never reads the person's.
+    if let Some(dir) = crate::settings::keep_dir() {
+        if std::env::var_os("KEEP_STATE_DIR").is_none() {
+            cmd.env("KEEP_STATE_DIR", &dir);
+        }
+        if std::env::var_os("KEEP_RESTAURO_ESTADO").is_none() {
+            cmd.env("KEEP_RESTAURO_ESTADO", dir.join("restauro"));
+        }
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -764,6 +783,14 @@ mod tests {
         assert_eq!(deadline(&args("worktrees listar --prazo 3.0 a:1")), Some(Duration::from_secs_f64(4.5)));
         assert_eq!(deadline(&args("ia login claude")), None);
         assert_eq!(deadline(&args("worktrees preparar C:\\x")), None);
+        // The restart's two phases, and the stopped conversations; nothing else of theirs.
+        assert_eq!(deadline(&args("restauro restaurar --fase=abas")), Some(Duration::from_secs(30)));
+        assert_eq!(deadline(&args("restauro manter")), Some(Duration::from_secs(900)));
+        assert_eq!(deadline(&args("restauro restaurar")), None);
+        assert_eq!(deadline(&args("restauro retrato --print")), None);
+        assert_eq!(deadline(&args("continuar")), Some(Duration::from_secs(120)));
+        assert_eq!(deadline(&args("continuar --status")), Some(Duration::from_secs(120)));
+        assert_eq!(deadline(&args("nova --workspace a")), None);
     }
 
     #[test]

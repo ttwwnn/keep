@@ -192,11 +192,15 @@ describe("the state file", () => {
       zoom: 1.25,
       appearance: "dark" as const,
       active: { workspace: "a", tab: 1 },
-      restore: [{ name: "a", tabs: [{ id: 1, cwd: "C:\\x", name: "Primeira", splitOf: 0, splitDir: 0 }] }],
-      daemon: "4242-133700000000000000",
+      daemon: "4242-1791234567890",
     };
     expect(normalizeState(JSON.parse(JSON.stringify(state)))).toEqual(state);
     expect(normalizeState({ daemon: 7 }).daemon).toBe("");
+  });
+  it("the picture of the tabs a state used to carry is not read: the core keeps it now", () => {
+    const old = { order: ["a"], restore: [{ name: "a", tabs: [{ id: 1, cwd: "C:\\x", splitOf: 0, splitDir: 0 }] }] };
+    expect("restore" in normalizeState(old)).toBe(false);
+    expect(normalizeState(old).order).toEqual(["a"]);
   });
 });
 

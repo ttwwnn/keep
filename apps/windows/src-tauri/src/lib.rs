@@ -8,6 +8,7 @@ mod claude_settings;
 mod daemon;
 mod ia;
 mod memory;
+mod names;
 mod sessions;
 mod settings;
 mod status;
@@ -375,6 +376,38 @@ async fn codex_models(known: Option<String>) -> Answer<CodexModels> {
     .map_err(|e| e.to_string())
 }
 
+/// The names file the core shares with the window, when it is not the version
+/// `known`; see `names`.
+#[derive(Serialize)]
+struct Names {
+    /// Which version is there; `None` when there is no file.
+    stamp: Option<String>,
+    /// Its text, when the version changed.
+    text: Option<String>,
+}
+
+#[tauri::command]
+async fn names_read(known: Option<String>) -> Answer<Names> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(path) = names::file() else { return Names { stamp: None, text: None } };
+        let (stamp, text) = names::read(&path, known.as_deref());
+        Names { stamp, text }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Write the names file; the stamp of what was written.
+#[tauri::command]
+async fn names_write(text: String) -> Answer<Option<String>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = names::file().ok_or_else(|| "sem pasta do Keep".to_string())?;
+        names::write(&path, &text).map_err(crate::text)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// A line for the app's log (`settings::log_file`): what the page did that
 /// nobody sees, such as a status line left alone or a picker backed out of.
 #[tauri::command]
@@ -498,6 +531,8 @@ pub fn run() {
             claude_settings,
             write_claude_settings,
             codex_models,
+            names_read,
+            names_write,
             app_log,
             path_exists,
             e2e_shot,

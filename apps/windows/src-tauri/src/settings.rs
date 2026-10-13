@@ -250,15 +250,22 @@ fn append(path: &Path, line: &str, limit: u64) {
     }
 }
 
+/// The folder the app, the daemon and the core share for what is the Keep's
+/// own: `KEEP_STATE_DIR` (a test's), else `%APPDATA%\Keep`. The shell chosen
+/// here, the pictures of the tabs and the names given to them are in it.
+pub fn keep_dir() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("KEEP_STATE_DIR") {
+        return Some(PathBuf::from(dir));
+    }
+    let appdata = std::env::var("APPDATA").ok()?;
+    Some(Path::new(&appdata).join("Keep"))
+}
+
 /// Where the daemon looks for the shell chosen here: `%APPDATA%\Keep\shell.txt`.
 /// Read by keepd for every new tab, so a choice applies without restarting
 /// the daemon that holds the tabs already open.
 pub fn shell_file() -> Option<PathBuf> {
-    if let Ok(dir) = std::env::var("KEEP_STATE_DIR") {
-        return Some(PathBuf::from(dir).join("shell.txt"));
-    }
-    let appdata = std::env::var("APPDATA").ok()?;
-    Some(Path::new(&appdata).join("Keep").join("shell.txt"))
+    keep_dir().map(|dir| dir.join("shell.txt"))
 }
 
 pub fn chosen_shell() -> String {
