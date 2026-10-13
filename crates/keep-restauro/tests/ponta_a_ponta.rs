@@ -56,14 +56,54 @@ fn as_abas_o_painel_o_nome_e_a_conversa_voltam_depois_do_reinicio() {
         std::fs::create_dir_all(d).unwrap();
     }
     std::fs::copy(&falsa, bin.join("claude")).unwrap();
+    // Um login global de mentira (no Chaveiro de mentira e no arquivo, que é
+    // onde fora do macOS ele mora): a conversa volta no armazém de login da
+    // aba, só com o acesso dele, como a troca de conta a quente pede.
+    let chaveiro = raiz.join("chaveiro");
+    std::fs::create_dir_all(&chaveiro).unwrap();
+    std::fs::create_dir_all(casa.join(".claude")).unwrap();
+    let login = format!(
+        r#"{{"claudeAiOauth":{{"accessToken":"G","refreshToken":"rG","expiresAt":{},"subscriptionType":"max"}}}}"#,
+        keep_restauro::agora_ms() + 3_600_000
+    );
+    std::fs::write(chaveiro.join("Claude Code-credentials"), &login).unwrap();
+    std::fs::write(casa.join(".claude/.credentials.json"), &login).unwrap();
+    let security = raiz.join("security");
+    std::fs::write(
+        &security,
+        // Lê, grava (`add-generic-password -U … -X <hex>`, por argv ou pelo
+        // `security -i`) e apaga, um arquivo por item.
+        "#!/bin/sh\nOP=\"$1\"; S=; X=\n\
+         if [ \"$OP\" = -i ]; then IFS= read -r L; OP=${L%% *}; \
+         S=$(printf %s \"$L\" | sed -n 's/.* -s \"\\([^\"]*\\)\".*/\\1/p'); \
+         X=$(printf %s \"$L\" | sed -n 's/.* -X \"\\([0-9a-fA-F]*\\)\".*/\\1/p'); \
+         else while [ $# -gt 0 ]; do case \"$1\" in -s) shift; S=\"$1\";; -X) shift; X=\"$1\";; esac; shift; done; fi\n\
+         F=\"$KEEP_IA_TESTE_CHAVEIRO/$S\"\n\
+         if [ \"$OP\" = add-generic-password ]; then printf %s \"$X\" | xxd -r -p > \"$F\"; exit 0; fi\n\
+         [ -f \"$F\" ] || exit 44\n\
+         [ \"$OP\" = delete-generic-password ] && { rm -f \"$F\"; exit 0; }\ncat \"$F\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&security, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     // SAFETY: o único teste deste arquivo; nada mais lê o ambiente ao mesmo tempo.
     unsafe {
+        std::env::set_var("KEEP_IA_SECURITY", &security);
+        std::env::set_var("KEEP_IA_TESTE_CHAVEIRO", &chaveiro);
+        // Os serviços num lugar onde ninguém ouve: nada sai desta máquina.
+        for v in ["KEEP_IA_TOKEN_URL", "KEEP_IA_PERFIL_URL", "KEEP_IA_CLAUDE_URL", "KEEP_IA_CODEX_URL"] {
+            std::env::set_var(v, "http://127.0.0.1:9/nada");
+        }
         std::env::set_var("KEEP_IA_HOME", &casa);
         std::env::set_var("KEEP_IA_ESTADO", raiz.join("ia"));
         std::env::set_var("KEEP_RESTAURO_ESTADO", raiz.join("restauro"));
         std::env::set_var("KEEP_STATE_DIR", &app);
         std::env::set_var("KEEP_IA_CLAUDE_BIN", bin.join("claude"));
         std::env::set_var("SHELL", "/bin/sh");
+        // A conta da aba de quem roda os testes (o Claude dela num armazém de
+        // login próprio) não passa para as abas e IAs falsas do teste.
+        for v in ["CLAUDE_SECURESTORAGE_CONFIG_DIR", "CLAUDE_CONFIG_DIR", "KEEP_IA_ESCOLHA", "CLAUDE_KIT_CONTA", "CODEX_HOME"] {
+            std::env::remove_var(v);
+        }
         std::env::set_var("PS1", "$ ");
     }
 
@@ -129,6 +169,14 @@ fn as_abas_o_painel_o_nome_e_a_conversa_voltam_depois_do_reinicio() {
     let f2 = restaurar::restaurar(false, false).unwrap();
     assert_eq!((f2.abas, f2.conversas, f2.falhas.len()), (0, 1, 0), "{f2:?}");
     assert!(tela_tem("A", mae.info.id, &format!(r#""--effort", "max", "--resume", "{id}""#), 15));
+    // No armazém de login da aba, com o acesso do login global e sem refresh.
+    let abas = casa.join(".claude/contas/abas");
+    assert!(
+        tela_tem("A", mae.info.id, &format!("fixa={}/", abas.display()), 15),
+        "{}",
+        daemon::tela("A", mae.info.id).unwrap_or_default()
+    );
+    assert!(tela_tem("A", mae.info.id, "conta=G", 15), "o Claude lê o acesso no armazém da aba");
     assert!(daemon::tela("A", filho.info.id).unwrap().contains('$'), "o painel fica no shell");
 
     // de novo: nada em dobro

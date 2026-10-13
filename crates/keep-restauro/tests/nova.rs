@@ -52,6 +52,11 @@ fn a_conversa_nova_abre_numa_aba_nova_com_o_pedido_o_link_e_o_nome() {
         std::env::set_var("KEEP_STATE_DIR", &app);
         std::env::set_var("KEEP_SOCKET", &sock);
         std::env::set_var("SHELL", "/bin/sh");
+        // A conta da aba de quem roda os testes (o Claude dela num armazém de
+        // login próprio) não passa para as abas e IAs falsas do teste.
+        for v in ["CLAUDE_SECURESTORAGE_CONFIG_DIR", "CLAUDE_CONFIG_DIR", "KEEP_IA_ESCOLHA", "CLAUDE_KIT_CONTA", "CODEX_HOME"] {
+            std::env::remove_var(v);
+        }
         std::env::set_var("PS1", "$ ");
         std::env::set_var("PATH", format!("{}:/usr/bin:/bin", bin.display()));
     }
