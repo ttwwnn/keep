@@ -14,6 +14,7 @@ mod names;
 mod sessions;
 mod settings;
 mod status;
+mod zoxide;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -156,6 +157,22 @@ async fn preview(workspace: String, tab: u32) -> Answer<String> {
         .await
         .map_err(|e| e.to_string())?
         .map_err(text)
+}
+
+/// A tab's screen with its colours (the sequences the daemon repaints with),
+/// and the grid it is held on.
+#[tauri::command]
+async fn preview_vt(workspace: String, tab: u32) -> Answer<daemon::Screen> {
+    tauri::async_runtime::spawn_blocking(move || daemon::preview_vt(&workspace, tab))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(text)
+}
+
+/// The folders the person goes to, from zoxide; none where it is not installed.
+#[tauri::command]
+async fn directories() -> Answer<Vec<String>> {
+    tauri::async_runtime::spawn_blocking(zoxide::directories).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -522,6 +539,8 @@ pub fn run() {
             move_tab,
             rearrange,
             preview,
+            preview_vt,
+            directories,
             search,
             attach,
             input,

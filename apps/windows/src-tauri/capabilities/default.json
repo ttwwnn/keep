@@ -18,6 +18,7 @@
     "core:window:allow-set-title",
     "dialog:allow-open",
     "opener:allow-open-url",
+    "opener:allow-reveal-item-in-dir",
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text"
   ]
