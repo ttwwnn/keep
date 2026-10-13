@@ -6,7 +6,7 @@
 // still says how many of its tabs wait on you.
 
 import { signal } from "@preact/signals";
-import { useRef } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import { SPLIT_DOWN, SPLIT_RIGHT } from "../api";
 import type { RootTab } from "../layout";
 import { SIDEBAR_MAX, SIDEBAR_MIN, tabKey } from "../state";
@@ -15,15 +15,14 @@ import {
   activeWorkspace,
   closeTab,
   closeWorkspace,
+  createWorkspace,
   editing,
   gui,
   isMac,
   moveWorkspace,
   newTab,
-  newWorkspace,
   notice,
   orderedWorkspaces,
-  overlay,
   renameTab,
   renameWorkspace,
   select,
@@ -38,6 +37,7 @@ import {
   zoom,
   zoomReset,
 } from "../store";
+import { busyMark, programOf } from "../claude";
 import { tabAccountLabel } from "../ia";
 import { tabAccount, usageLines } from "../iaStore";
 import { homeRelative } from "../text";
@@ -67,7 +67,9 @@ function TabRow(props: { workspace: string; tab: RootTab; index: number; selecte
   const suffix = program && !repeats ? <span class="tab-program">{program}</span> : null;
   return (
     <div
-      class={`tab-row ${selected ? "selected" : ""}`}
+      ref={badge as never}
+      class={`tab-row ${selected ? "selected" : ""} ${look.wantsYou ? "wants" : ""}`}
+      style={look.wantsYou ? { background: look.fill } : undefined}
       title={where || undefined}
       onClick={() => select(workspace, tab.root.id)}
       onDblClick={startRename}
@@ -95,29 +97,40 @@ function TabRow(props: { workspace: string; tab: RootTab; index: number; selecte
             if (value !== null) renameTab(workspace, tab.root.id, value);
           }}
         />
-      ) : look.wantsYou ? (
-        <span ref={badge as never} class="row-badge" style={{ background: look.fill }}>
-          <icon.Hand />
-          <span class="tab-title" style={look.color ? { color: look.color } : undefined}>
-            {look.label}
-          </span>
-          {suffix}
-        </span>
       ) : (
         <span class="tab-label">
-          <span class="tab-title" style={look.color ? { color: look.color } : undefined}>
-            {look.mark && (
+          {look.wantsYou ? (
+            <span class="hand">
+              <icon.Hand />
+            </span>
+          ) : (
+            look.mark && (
               <span class="busy-mark" style={{ color: look.mark.color }}>
-                {look.mark.glyph}{" "}
+                {look.mark.glyph}
               </span>
-            )}
+            )
+          )}
+          <span class="tab-title" style={look.color ? { color: look.color } : undefined}>
             {look.label}
           </span>
           {suffix}
+          <AccountChevron workspace={workspace} tab={tab} label={look.label} />
         </span>
       )}
-      {!renaming && <AccountChevron workspace={workspace} tab={tab} label={look.label} />}
-      {tab.panes.length > 1 && <span class="pane-count">{tab.panes.length}</span>}
+      {!renaming && (
+        <button
+          class="row-x"
+          title="Fechar a aba"
+          aria-label="Fechar a aba"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            close();
+          }}
+        >
+          <icon.Close size={8} />
+        </button>
+      )}
     </div>
   );
 }
@@ -127,7 +140,15 @@ function WorkspaceGroup(props: { name: string }) {
   const tabs = tabsByWorkspace.value.get(name) ?? [];
   const folded = gui.value.folded.includes(name);
   const current = activeWorkspace.value === name;
-  const busy = tabs.some((t) => tabBusy(name, t));
+  // One mark for each program at work in the workspace, as the header says it.
+  const marks = [
+    ...new Map(
+      tabs
+        .filter((t) => tabBusy(name, t))
+        .map((t) => busyMark(programOf(t.root.command, t.root.title)))
+        .map((m) => [m.glyph + m.color, m] as const),
+    ).values(),
+  ];
   const waiting = tabs.filter((t) => tabActivity(name, t) === "waitingForYou").length;
   const renaming = editing.value?.kind === "workspace" && editing.value.workspace === name;
   const startRename = () => (editing.value = { kind: "workspace", workspace: name });
@@ -151,18 +172,6 @@ function WorkspaceGroup(props: { name: string }) {
           ])
         }
       >
-        <button
-          class="fold"
-          title={folded ? "Mostrar as abas" : "Recolher as abas"}
-          aria-label={folded ? "Mostrar as abas" : "Recolher as abas"}
-          onClick={(e) => {
-            e.stopPropagation();
-            toggleFolded(name);
-          }}
-        >
-          <icon.Chevron open={!folded} />
-        </button>
-        <span class={`dot ${busy ? "busy" : "idle"}`} aria-label={busy ? "rodando" : "parado"} />
         {renaming ? (
           <InlineEditor
             value={workspaceLabel(name)}
@@ -176,24 +185,48 @@ function WorkspaceGroup(props: { name: string }) {
             {workspaceLabel(name)}
           </span>
         )}
+        {marks.length > 0 && (
+          <span class="header-marks" aria-label="rodando">
+            {marks.map((m) => (
+              <span key={m.glyph + m.color} style={{ color: m.color }}>
+                {m.glyph}
+              </span>
+            ))}
+          </span>
+        )}
         {folded && waiting > 0 && (
           <span class="waiting-count" title={`${waiting} aba(s) esperando você`}>
             <icon.Hand />
             {waiting}
           </span>
         )}
-        <span class="tab-count">{tabs.length}</span>
+        <span class="header-spacer" />
         <button
-          class="row-close"
-          title="Fechar o workspace"
-          aria-label="Fechar o workspace"
+          class="hdr-btn plus"
+          title={`Nova aba em ${workspaceLabel(name)}`}
+          aria-label="Nova aba neste workspace"
           onClick={(e) => {
             e.stopPropagation();
-            void closeWorkspace(name);
+            void newTab(name);
           }}
         >
-          <icon.Close size={8} />
+          <icon.Plus />
         </button>
+        {tabs.length > 0 ? (
+          <button
+            class={`hdr-btn fold ${folded ? "" : "open"}`}
+            title={folded ? "Mostrar as abas" : "Recolher as abas"}
+            aria-label={folded ? "Mostrar as abas" : "Recolher as abas"}
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleFolded(name);
+            }}
+          >
+            <icon.ChevronRight />
+          </button>
+        ) : (
+          <span class="hdr-gap" />
+        )}
       </div>
       {!folded &&
         tabs.map((tab, i) => (
@@ -256,13 +289,42 @@ function ZoomControl() {
       <button title="Diminuir o zoom (Ctrl+-)" aria-label="Diminuir o zoom" onClick={() => zoom(-1)} disabled={level <= 0.5}>
         <icon.Minus />
       </button>
-      <button class="zoom-level" title="Voltar a 100% (Ctrl+0)" onClick={zoomReset}>
+      <button
+        class={`zoom-level ${level !== 1 ? "zoomed" : ""}`}
+        title="Voltar a 100% (Ctrl+0)"
+        onClick={zoomReset}
+      >
         {zoomPercent(level)}
       </button>
       <button title="Aumentar o zoom (Ctrl+=)" aria-label="Aumentar o zoom" onClick={() => zoom(1)} disabled={level >= 3}>
         <icon.Plus />
       </button>
     </div>
+  );
+}
+
+/** A new workspace is named where it is made: the field under the list, and return. */
+function NewWorkspaceField() {
+  const [value, setValue] = useState("");
+  const empty = orderedWorkspaces.value.length === 0;
+  return (
+    <label class="new-workspace" title="Novo workspace (Ctrl+Shift+N)">
+      <icon.Plus />
+      <input
+        value={value}
+        placeholder={empty ? "Nome do primeiro workspace" : "Novo workspace"}
+        spellcheck={false}
+        onInput={(e) => setValue((e.currentTarget as HTMLInputElement).value)}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key !== "Enter") return;
+          const name = value.trim();
+          if (!name) return;
+          setValue("");
+          void createWorkspace(name, null);
+        }}
+      />
+    </label>
   );
 }
 
@@ -292,10 +354,8 @@ export function Sidebar() {
   return (
     <aside class="sidebar" style={{ width: `${width}px` }}>
       <div class={`sidebar-head ${isMac.value ? "inset" : ""}`} data-tauri-drag-region>
-        <span class="sidebar-title" data-tauri-drag-region>
-          Workspaces
-        </span>
-        <button class="icon-button" title="Esconder a barra lateral" aria-label="Esconder a barra lateral" onClick={toggleSidebar}>
+        <ZoomControl />
+        <button class="round-button" title="Esconder a barra lateral" aria-label="Esconder a barra lateral" onClick={toggleSidebar}>
           <icon.Sidebar />
         </button>
       </div>
@@ -303,26 +363,14 @@ export function Sidebar() {
         {orderedWorkspaces.value.map((w) => (
           <WorkspaceGroup key={w.name} name={w.name} />
         ))}
-        <button class="new-workspace" onClick={() => void newWorkspace()} title="Novo workspace (Ctrl+Shift+N)">
-          <icon.Plus /> Novo workspace
-        </button>
+        <NewWorkspaceField />
       </div>
       <UsageFooter />
-      <div class="sidebar-foot">
-        {notice.value && <div class="notice">{notice.value}</div>}
-        <div class="foot-row">
-          <ZoomControl />
-          <button
-            class="icon-button"
-            data-overlay-toggle
-            title="Configurações"
-            aria-label="Configurações"
-            onClick={() => (overlay.value = overlay.value === "settings" ? null : "settings")}
-          >
-            <icon.Gear />
-          </button>
+      {notice.value && (
+        <div class="sidebar-foot">
+          <div class="notice">{notice.value}</div>
         </div>
-      </div>
+      )}
       <Resizer />
     </aside>
   );

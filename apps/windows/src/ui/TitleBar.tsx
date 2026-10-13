@@ -16,7 +16,7 @@ import {
   isMac,
   isWindows,
   maximized,
-  newTab,
+  overlay,
   renameTab,
   select,
   split,
@@ -28,18 +28,20 @@ import { InlineEditor, openMenu } from "./common";
 import * as icon from "./icons";
 import { tabLook, useBreath } from "./tabLook";
 
-function TabCapsule(props: { workspace: string; tab: RootTab; index: number; selected: boolean }) {
-  const { workspace, tab, index, selected } = props;
+function TabCapsule(props: { workspace: string; tab: RootTab; index: number; selected: boolean; alone: boolean; count: number }) {
+  const { workspace, tab, index, selected, alone, count } = props;
   const look = tabLook(workspace, tab, index, selected);
   const badge = useBreath(look.breathing);
   const renaming =
     editing.value?.kind === "tab" && editing.value.workspace === workspace && editing.value.tab === tab.root.id;
   const startRename = () => (editing.value = { kind: "tab", workspace, tab: tab.root.id });
   const close = () => void closeTab(workspace, tab, look.label);
+  // The ninth is the last, as in a browser; past the ninth there is no number.
+  const key = index < 8 ? index + 1 : index === count - 1 ? 9 : 0;
   return (
     <div
       ref={badge as never}
-      class={`tab ${selected ? "selected" : ""} ${look.wantsYou ? "attention" : ""}`}
+      class={`tab ${selected ? "selected" : ""} ${look.wantsYou ? "attention" : ""} ${alone ? "alone" : ""}`}
       style={look.wantsYou ? { background: look.fill } : undefined}
       title={tab.root.cwd || undefined}
       data-tab={tabKey(workspace, tab.root.id)}
@@ -62,10 +64,19 @@ function TabCapsule(props: { workspace: string; tab: RootTab; index: number; sel
         ])
       }
     >
-      {look.wantsYou && (
-        <span class="hand">
-          <icon.Hand />
-        </span>
+      {!alone && !renaming && (
+        <button
+          class="tab-close"
+          title="Fechar a aba"
+          aria-label="Fechar a aba"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            close();
+          }}
+        >
+          <icon.Close size={8} />
+        </button>
       )}
       {renaming ? (
         <InlineEditor
@@ -77,26 +88,17 @@ function TabCapsule(props: { workspace: string; tab: RootTab; index: number; sel
         />
       ) : (
         <span class="tab-title" style={look.color ? { color: look.color } : undefined}>
-          {look.mark && (
-            <span class="busy-mark" style={{ color: look.mark.color }}>
-              {look.mark.glyph}{" "}
+          {look.wantsYou && (
+            <span class="hand">
+              <icon.Hand />
             </span>
           )}
+          {look.mark && <span class="busy-mark">{look.mark.glyph} </span>}
           {look.label}
         </span>
       )}
       {!renaming && <AccountChevron workspace={workspace} tab={tab} label={look.label} />}
-      <button
-        class="tab-close"
-        title="Fechar a aba"
-        aria-label="Fechar a aba"
-        onClick={(e) => {
-          e.stopPropagation();
-          close();
-        }}
-      >
-        <icon.Close size={8} />
-      </button>
+      {!alone && !renaming && key > 0 && <span class="tab-key">{isMac.value ? `⌘${key}` : `Ctrl+${key}`}</span>}
     </div>
   );
 }
@@ -131,20 +133,45 @@ export function TitleBar() {
   return (
     <header class={`titlebar ${isMac.value && sidebarHidden ? "inset" : ""}`} data-tauri-drag-region>
       {sidebarHidden && (
-        <button class="icon-button" title="Mostrar a barra lateral" aria-label="Mostrar a barra lateral" onClick={toggleSidebar}>
+        <button class="round-button" title="Mostrar a barra lateral" aria-label="Mostrar a barra lateral" onClick={toggleSidebar}>
           <icon.Sidebar />
         </button>
       )}
       <nav class="strip" data-tauri-drag-region aria-label="Abas">
         {ws &&
           tabs.map((tab, i) => (
-            <TabCapsule key={tabKey(ws, tab.root.id)} workspace={ws} tab={tab} index={i} selected={tab === current} />
+            <TabCapsule
+              key={tabKey(ws, tab.root.id)}
+              workspace={ws}
+              tab={tab}
+              index={i}
+              selected={tab === current}
+              alone={tabs.length === 1}
+              count={tabs.length}
+            />
           ))}
-        <button class="new-tab icon-button" title="Nova aba (Ctrl+Shift+T)" aria-label="Nova aba" onClick={() => void newTab()}>
-          <icon.Plus />
-        </button>
       </nav>
       <div class="drag-fill" data-tauri-drag-region />
+      <div class="strip-actions">
+        <button
+          class="round-button"
+          data-overlay-toggle
+          title="Ir para… (Ctrl+Shift+P)"
+          aria-label="Ir para"
+          onClick={() => (overlay.value = overlay.value === "picker" ? null : "picker")}
+        >
+          <icon.Search />
+        </button>
+        <button
+          class="round-button"
+          data-overlay-toggle
+          title="Configurações"
+          aria-label="Configurações"
+          onClick={() => (overlay.value = overlay.value === "settings" ? null : "settings")}
+        >
+          <icon.Gear />
+        </button>
+      </div>
       {isWindows.value && <WindowControls />}
     </header>
   );

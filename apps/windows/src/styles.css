@@ -3,10 +3,17 @@
    strengths, and colour appears only where a state is being said. */
 
 :root {
-  --titlebar: 36px;
+  --titlebar: 52px;
   --row: 24px;
   --gutter: 6px;
   --zoom: 1;
+  /* The chrome's text is a quarter above the size it was drawn at (the macOS
+     app's textBoost); its footers a fifth more. The icons follow the zoom to
+     130%, the most the zoom control's capsule holds. */
+  --boost: 1.25;
+  --t: calc(var(--zoom) * var(--boost));
+  --s: calc(var(--zoom) * 1.2 * var(--boost));
+  --icon: min(var(--zoom), 1.3);
   --ui-font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
   --mono: "Cascadia Mono", "Cascadia Code", Consolas, Menlo, monospace;
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -109,12 +116,16 @@ button {
   min-width: 0;
 }
 
+/* The row the window's controls stand in: the zoom and the sidebar's own
+   button ride its far end, a divider's gap from the edge. */
 .sidebar-head {
   height: var(--titlebar);
   flex: none;
   display: flex;
   align-items: center;
-  padding: 0 6px 0 14px;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 0 12px 0 14px;
 }
 
 /* macOS: the window's own buttons sit over the corner. */
@@ -122,49 +133,31 @@ button {
   padding-left: 78px;
 }
 
-.sidebar-title {
-  flex: 1;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-}
-
 .sidebar-list {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 0 var(--gutter) 10px;
+  padding: 4px 5px 10px;
   scrollbar-width: thin;
 }
 
 .workspace {
-  margin-top: 8px;
-}
-
-.workspace:first-child {
   margin-top: 2px;
 }
 
-.workspace-row,
-.tab-row {
-  min-height: var(--row);
+/* A header has no ground of its own: the name, what runs, and at the far end
+   the + and the fold. */
+.workspace-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  border-radius: 6px;
+  gap: 8px;
+  padding: 10px 12px 4px;
+  color: var(--ink-faint);
+  transition: color 150ms var(--ease);
+}
+
+.workspace-row:hover {
   color: var(--ink-resting);
-  transition: background-color 150ms var(--ease), color 150ms var(--ease);
-}
-
-.workspace-row {
-  padding: 0 4px 0 2px;
-}
-
-.workspace-row:hover,
-.tab-row:hover {
-  background: var(--wash);
-  color: var(--ink);
 }
 
 .workspace.current > .workspace-row {
@@ -176,59 +169,82 @@ button {
   box-shadow: inset 0 2px 0 var(--ink-resting);
 }
 
-.fold {
-  width: 16px;
-  height: 18px;
-  flex: none;
-  display: grid;
-  place-items: center;
-  border: 0;
-  padding: 0;
-  background: none;
-  color: var(--ink-faint);
-}
-
-.fold:hover {
-  color: var(--ink);
-}
-
-/* State dots: filled while something runs, hollow at rest — the shape says
-   it as well as the hue. */
-.dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex: none;
-}
-
-.dot.busy {
-  background: var(--dot-busy);
-}
-
-.dot.idle {
-  border: 1.5px solid var(--dot-idle);
-}
-
 .workspace-name {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--mono);
-  font-size: calc(12.5px * var(--zoom));
+  font-size: calc(12.5px * var(--t));
+  font-weight: 400;
 }
 
-.workspace.current .workspace-name {
-  font-weight: 600;
+.header-spacer {
+  flex: 1;
+  min-width: 0;
 }
 
-.tab-count,
-.pane-count {
+/* What runs in the workspace, one mark per program. */
+.header-marks {
   flex: none;
+  display: inline-flex;
+  gap: 2px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: calc(10.5px * var(--zoom));
+}
+
+/* The + and the fold arrow: icons, so the zoom moves them and the boost does
+   not; fourteen across, each in a hit area wider than the glyph. */
+.hdr-btn {
+  position: relative;
+  width: 14px;
+  height: 16px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
   color: var(--ink-faint);
+}
+
+.hdr-btn::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+}
+
+.hdr-btn svg {
+  width: calc(12px * var(--zoom));
+  height: calc(12px * var(--zoom));
+}
+
+.hdr-btn svg path {
+  stroke-width: 1.7;
+}
+
+.hdr-btn.plus:hover {
+  color: var(--ink-resting);
+}
+
+.hdr-btn.fold svg {
+  width: calc(10.5px * var(--zoom));
+  height: calc(10.5px * var(--zoom));
+  transition: transform 140ms ease-out;
+}
+
+.hdr-btn.fold svg path {
+  stroke-width: 1.8;
+}
+
+.hdr-btn.fold.open svg {
+  transform: rotate(90deg);
+}
+
+.hdr-gap {
+  width: 14px;
+  flex: none;
 }
 
 .waiting-count {
@@ -236,102 +252,217 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  height: 17px;
-  padding: 0 6px;
-  border-radius: 9px;
-  background: rgb(255, 120, 20);
+  padding: 1.5px 6px;
+  border-radius: 999px;
+  background: var(--attention-fill);
   color: rgb(33, 22, 12);
-  font: 600 11px var(--mono);
+  font: 600 calc(10.5px * var(--zoom)) var(--ui-font);
+  font-variant-numeric: tabular-nums;
 }
 
-.row-close {
-  width: 18px;
-  height: 18px;
-  flex: none;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: 5px;
-  background: none;
-  color: var(--ink-faint);
-  opacity: 0;
+.waiting-count svg {
+  width: calc(9px * var(--zoom));
+  height: calc(9px * var(--zoom));
 }
 
-.workspace-row:hover .row-close {
-  opacity: 1;
-}
-
-.row-close:hover {
-  background: var(--wash-strong);
-  color: var(--ink);
-}
-
+/* A tab of the workspace: a capsule inset from the list, its text a header's
+   width in from the edge. */
 .tab-row {
-  padding: 0 6px 0 30px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin: 0 8px 0 12px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  color: var(--ink-faint);
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+
+.tab-row:hover:not(.selected):not(.wants) {
+  background: var(--tab-hover);
+  color: var(--ink-resting);
 }
 
 .tab-row.selected {
-  background: var(--wash-strong);
+  background: var(--tab-fill);
+  box-shadow: inset 0 0 0 1px var(--tab-edge);
   color: var(--ink);
 }
 
-.tab-row .tab-title {
-  flex: 1;
+.tab-row.wants {
+  color: rgb(33, 22, 12);
 }
 
-/* The title and, for an AI kept on an account of its own, which one. */
+.tab-row.wants.selected {
+  box-shadow: none;
+}
+
+/* The title and, after it, the program or the account an AI runs on. */
 .tab-label {
   flex: 1;
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
 }
 
-.tab-label .tab-title,
-.row-badge .tab-title {
+.tab-row:hover:not(.wants) .tab-label,
+.tab-row.selected:not(.wants) .tab-label {
+  padding-right: 22px;
+}
+
+.tab-row .tab-title {
   flex: 0 1 auto;
+  font-size: calc(12px * var(--t));
+}
+
+.tab-row.selected .tab-title,
+.tab-row.wants .tab-title {
+  font-weight: 600;
+}
+
+.tab-row .busy-mark,
+.tab-row .hand {
+  flex: none;
+  font-size: calc(12.5px * var(--zoom));
+  line-height: 1;
+}
+
+.tab-row .hand svg {
+  width: calc(12.5px * var(--zoom));
+  height: calc(12.5px * var(--zoom));
 }
 
 .tab-program {
   flex: none;
   color: var(--ink-faint);
-  font-size: calc(11.5px * var(--zoom));
+  font-size: calc(12px * var(--t));
   white-space: nowrap;
 }
 
-.row-badge .tab-program {
+.tab-row.wants .tab-program {
   color: rgba(33, 22, 12, 0.62);
 }
 
-/* The chevron that opens a tab's menu of AI and account: quiet at rest,
-   there on the chosen tab and under the pointer, as the close button is. */
-.ai-chevron {
+/* The × that closes a tab, on the right of its capsule, there under the
+   pointer. */
+.row-x {
+  position: absolute;
+  right: 9px;
+  top: 50%;
   width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(var(--ink-rgb), 0.08);
+  color: inherit;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+}
+
+.tab-row:hover .row-x {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.row-x svg {
+  width: calc(8px * var(--zoom));
+  height: calc(8px * var(--zoom));
+}
+
+.row-x svg path {
+  stroke-width: 1.8;
+}
+
+/* The chevron that opens a tab's menu of AI and account: after the program,
+   there on the chosen tab and under the pointer. */
+.ai-chevron {
+  width: 14px;
   height: 16px;
   flex: none;
   display: grid;
   place-items: center;
   padding: 0;
   border: 0;
-  border-radius: 5px;
   background: none;
-  color: currentColor;
+  color: var(--ink-faint);
   opacity: 0;
-  transition: opacity 150ms var(--ease), background-color 150ms var(--ease);
+  transition: opacity 150ms var(--ease), color 150ms var(--ease);
+}
+
+.ai-chevron svg {
+  width: calc(10.5px * var(--zoom));
+  height: calc(10.5px * var(--zoom));
+}
+
+.ai-chevron svg path {
+  stroke-width: 1.9;
 }
 
 .tab:hover .ai-chevron,
 .tab.selected .ai-chevron,
 .tab-row:hover .ai-chevron,
 .tab-row.selected .ai-chevron {
-  opacity: 0.6;
+  opacity: 1;
 }
 
 .ai-chevron:hover,
 .ai-chevron:focus-visible {
-  opacity: 1 !important;
-  background: var(--wash-strong);
+  color: var(--ink-resting);
+}
+
+.tab-row.wants .ai-chevron,
+.tab.attention .ai-chevron {
+  color: rgba(33, 22, 12, 0.62);
+}
+
+.tab-row.wants .ai-chevron:hover,
+.tab.attention .ai-chevron:hover {
+  color: rgb(33, 22, 12);
+}
+
+/* A new workspace is named in a field, and return makes it. */
+.new-workspace {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 5px 0;
+  padding: 6px 10px;
+  border-radius: 12px;
+  color: var(--ink-faint);
+  transition: background-color 160ms ease-out;
+}
+
+.new-workspace:focus-within {
+  background: rgba(var(--ink-rgb), 0.09);
+  color: var(--ink-resting);
+}
+
+.new-workspace svg {
+  width: calc(9px * var(--zoom));
+  height: calc(9px * var(--zoom));
+  flex: none;
+}
+
+.new-workspace input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-resting);
+  font: calc(12.5px * var(--t)) var(--mono);
+  outline: none;
+  user-select: text;
+}
+
+.new-workspace input::placeholder {
+  color: var(--ink-faint);
 }
 
 /* ------------------------------------------------------------ usage footer */
@@ -340,28 +471,34 @@ button {
   flex: none;
   max-height: 48vh;
   overflow-y: auto;
-  padding: 2px calc(var(--gutter) + 8px) 8px;
+  padding: 0 17px 10px;
   border-top: 1px solid var(--rule);
   scrollbar-width: thin;
+  font: calc(12.5px * var(--t)) var(--mono);
 }
 
 .usage-head {
   display: flex;
   align-items: center;
-  gap: 2px;
-  height: 28px;
+  gap: 4px;
+  min-height: calc(14px * var(--s));
+  padding: 7px 0 5px;
+}
+
+.usage-footer.folded .usage-head {
+  padding-bottom: 4px;
 }
 
 .usage-fold {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   padding: 0;
   border: 0;
   background: none;
   color: var(--ink-faint);
-  font-size: 11px;
-  font-weight: 600;
+  font: inherit;
+  font-weight: 400;
   transition: color 150ms var(--ease);
 }
 
@@ -369,36 +506,55 @@ button {
   color: var(--ink-resting);
 }
 
+.usage-fold svg {
+  width: calc(8px * var(--s));
+  height: calc(8px * var(--s));
+}
+
+.usage-fold svg path {
+  stroke-width: 1.8;
+}
+
 .usage-spacer {
   flex: 1;
 }
 
 .usage-icon {
-  width: 20px;
-  height: 18px;
+  width: calc(16px * var(--s));
+  height: calc(14px * var(--s));
   display: grid;
   place-items: center;
   padding: 0;
   border: 0;
-  border-radius: 5px;
   background: none;
   color: var(--ink-faint);
-  transition: color 150ms var(--ease), background-color 150ms var(--ease);
+  transition: color 150ms var(--ease);
 }
 
 .usage-icon:hover {
   color: var(--ink-resting);
-  background: var(--wash);
 }
 
 .usage-icon.busy {
   opacity: 0.35;
 }
 
+.usage-icon svg {
+  width: calc(9px * var(--s));
+  height: calc(9px * var(--s));
+}
+
+.usage-icon svg path {
+  stroke-width: 1.8;
+}
+
 .usage-notice {
   margin: 0 0 6px;
-  font-size: 10.5px;
   color: var(--attention);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
 }
 
 .usage-lines {
@@ -409,11 +565,6 @@ button {
 
 .usage-lines.folded {
   gap: 3px;
-}
-
-.usage-empty {
-  font-size: 10.5px;
-  color: var(--ink-faint);
 }
 
 .usage-block {
@@ -442,7 +593,7 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: 11px var(--mono);
+  font: inherit;
   color: var(--ink-resting);
 }
 
@@ -466,14 +617,13 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 10.5px;
   color: var(--ink-resting);
 }
 
 .usage-bars {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 
 .usage-bars.stale {
@@ -484,16 +634,15 @@ button {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 13px;
+  height: calc(16px * var(--s));
 }
 
 .usage-bar-label {
-  width: 34px;
+  width: calc(34px * var(--s));
   flex: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 10px;
   color: var(--ink-resting);
 }
 
@@ -502,13 +651,14 @@ button {
   flex: 1;
   height: 4px;
   border-radius: 2px;
-  background: var(--wash-strong);
+  background: rgba(var(--ink-rgb), 0.12);
   overflow: hidden;
 }
 
 .usage-fill {
   position: absolute;
   inset: 0 auto 0 0;
+  min-width: 2px;
   border-radius: 2px;
   background: var(--ink-resting);
 }
@@ -522,10 +672,9 @@ button {
 }
 
 .usage-percent {
-  width: 34px;
+  width: calc(34px * var(--s));
   flex: none;
   text-align: right;
-  font: 11px var(--mono);
   font-variant-numeric: tabular-nums;
   color: var(--ink-resting);
 }
@@ -542,11 +691,10 @@ button {
 
 /* The Jev's dollars: wider than a percentage ("< US$ 0,01"). */
 .usage-dollars {
-  width: 74px;
+  width: calc(74px * var(--s));
   flex: none;
   text-align: right;
   white-space: nowrap;
-  font: 11px var(--mono);
   font-variant-numeric: tabular-nums;
   color: var(--ink-resting);
 }
@@ -560,16 +708,14 @@ button {
 }
 
 .usage-until {
-  width: 40px;
+  width: calc(40px * var(--s));
   flex: none;
   text-align: right;
   white-space: nowrap;
-  font-size: 10px;
   color: var(--ink-faint);
 }
 
 .usage-note {
-  font-size: 10px;
   color: var(--ink-faint);
 }
 
@@ -584,21 +730,28 @@ button {
 }
 
 .usage-arrow {
-  width: 14px;
-  height: 14px;
+  width: calc(12px * var(--s));
+  height: calc(12px * var(--s));
   display: grid;
   place-items: center;
   padding: 0;
   border: 0;
-  border-radius: 4px;
   background: none;
   color: var(--ink-faint);
-  transition: color 150ms var(--ease), background-color 150ms var(--ease);
+  transition: color 150ms var(--ease);
 }
 
 .usage-arrow:hover {
   color: var(--ink-resting);
-  background: var(--wash);
+}
+
+.usage-arrow svg {
+  width: calc(7.5px * var(--s));
+  height: calc(7.5px * var(--s));
+}
+
+.usage-arrow svg path {
+  stroke-width: 1.9;
 }
 
 .usage-arrow.hidden {
@@ -610,7 +763,7 @@ button {
   align-items: center;
   gap: 5px;
   min-width: 0;
-  height: 16px;
+  height: calc(16px * var(--s));
 }
 
 .usage-compact-name {
@@ -621,7 +774,6 @@ button {
 
 .usage-compact-figures {
   flex: none;
-  font: 11px var(--mono);
   font-variant-numeric: tabular-nums;
   color: var(--ink-resting);
 }
@@ -635,94 +787,102 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: calc(12px * var(--zoom));
-}
-
-.selected > .tab-title,
-.selected .row-badge .tab-title {
-  font-weight: 600;
-}
-
-.row-badge {
-  flex: 1;
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 19px;
-  padding: 0 7px;
-  border-radius: 10px;
-  color: rgb(33, 22, 12);
-}
-
-.new-workspace {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  height: var(--row);
-  margin-top: 10px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 6px;
-  background: none;
-  color: var(--ink-faint);
-  text-align: left;
-}
-
-.new-workspace:hover {
-  background: var(--wash);
-  color: var(--ink);
 }
 
 .sidebar-foot {
   flex: none;
-  padding: 6px var(--gutter) 8px;
 }
 
 .notice {
-  margin: 0 4px 6px;
-  font-size: 11.5px;
+  margin: 0 12px 8px;
+  font-size: calc(11.5px * var(--t));
   color: var(--ink-resting);
 }
 
-.foot-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+/* The round buttons of the row: a ground that deepens under the pointer, a
+   glyph that brightens. */
+.round-button {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 13px;
+  background: var(--control-fill);
+  color: var(--chrome-dim);
+  transition: background-color 120ms ease-out, color 120ms ease-out;
 }
 
+.round-button:hover {
+  background: var(--control-hover);
+  color: var(--chrome-text);
+}
+
+.round-button svg,
+.icon-glyph {
+  width: calc(15px * var(--icon));
+  height: calc(15px * var(--icon));
+}
+
+/* The zoom: smaller, how big the text is, larger — one capsule. */
 .zoom {
   display: inline-flex;
   align-items: center;
+  flex: none;
   height: 26px;
   border-radius: 13px;
-  background: var(--wash);
+  background: var(--control-fill);
+  transition: background-color 120ms ease-out;
+}
+
+.zoom:has(button:hover:not(:disabled)) {
+  background: var(--control-hover);
 }
 
 .zoom button {
   height: 26px;
-  min-width: 26px;
+  width: 24px;
   display: grid;
   place-items: center;
+  padding: 0;
   border: 0;
   background: none;
-  color: var(--ink-resting);
+  color: var(--chrome-dim);
   border-radius: 13px;
 }
 
 .zoom button:hover:not(:disabled) {
-  color: var(--ink);
-  background: var(--wash-strong);
+  color: var(--chrome-text);
 }
 
 .zoom button:disabled {
-  color: var(--ink-faint);
+  color: var(--chrome-off);
+}
+
+.zoom button svg {
+  width: calc(11px * var(--icon));
+  height: calc(11px * var(--icon));
+}
+
+.zoom button svg path {
+  stroke-width: 1.7;
 }
 
 .zoom .zoom-level {
-  min-width: 46px;
-  font: 11.5px var(--mono);
+  width: 40px;
+  border-radius: 0;
+  font: 500 calc(11px * var(--icon)) var(--ui-font);
+  font-variant-numeric: tabular-nums;
+}
+
+.zoom .zoom-level.zoomed {
+  color: var(--chrome-hover);
+}
+
+.zoom .zoom-level:hover:not(:disabled) {
+  color: var(--chrome-text);
 }
 
 .sidebar-resizer {
@@ -742,8 +902,8 @@ button {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding-left: 6px;
+  gap: 6px;
+  padding-left: 12px;
   background: var(--ground);
 }
 
@@ -751,38 +911,49 @@ button {
   padding-left: 78px;
 }
 
+/* The tabs share the row equally, however many there are. */
 .strip {
+  flex: 1;
   display: flex;
   align-items: center;
-  gap: 2px;
   min-width: 0;
   height: 100%;
   overflow: hidden;
 }
 
 .tab {
+  --tab-height: max(26px, calc(12px * var(--t) * 1.2 + 8px));
   position: relative;
-  height: 26px;
-  flex: 0 1 auto;
-  min-width: 56px;
-  max-width: 240px;
+  container-type: inline-size;
+  height: var(--tab-height);
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0 2px;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 4px 0 11px;
-  border-radius: 13px;
-  color: var(--ink-resting);
-  transition: background-color 150ms var(--ease), color 150ms var(--ease);
+  justify-content: center;
+  gap: 2px;
+  padding: 0 8px;
+  border-radius: 999px;
+  color: var(--chrome-dim);
+  transition: background-color 120ms ease-out, color 120ms ease-out;
 }
 
-.tab:hover {
-  background: var(--wash);
-  color: var(--ink);
+.tab:hover:not(.selected):not(.attention):not(.alone) {
+  background: var(--tab-hover);
+  color: var(--chrome-hover);
 }
 
 .tab.selected {
-  background: var(--wash-strong);
-  color: var(--ink);
+  background: var(--tab-fill);
+  box-shadow: inset 0 0 0 1px var(--tab-edge);
+  color: var(--chrome-text);
+}
+
+.tab.alone {
+  background: none;
+  box-shadow: none;
+  color: var(--chrome-text);
 }
 
 .tab.attention {
@@ -790,55 +961,117 @@ button {
 }
 
 .tab.attention.selected {
-  box-shadow: inset 0 0 0 1.5px var(--ink);
+  box-shadow: inset 0 0 0 2px var(--edge-attention);
 }
 
 .tab .tab-title {
-  flex: 1;
+  flex: 0 1 auto;
+  text-align: center;
+  font-size: calc(12px * var(--t));
+  font-weight: 400;
+}
+
+.tab.selected .tab-title,
+.tab.alone .tab-title {
+  font-weight: 600;
 }
 
 .tab .hand {
-  display: inline-grid;
-  place-items: center;
-  flex: none;
+  display: inline-block;
+  vertical-align: -0.12em;
+  margin-right: 0.35em;
+}
+
+.tab .hand svg {
+  width: 1em;
+  height: 1em;
+}
+
+.tab .busy-mark {
+  color: inherit;
 }
 
 .tab-close {
-  width: 18px;
-  height: 18px;
-  flex: none;
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
   display: grid;
   place-items: center;
+  padding: 0;
   border: 0;
-  border-radius: 9px;
+  border-radius: 50%;
   background: none;
   color: currentColor;
   opacity: 0;
-  transition: opacity 150ms var(--ease);
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
 }
 
-.tab:hover .tab-close,
-.tab.selected .tab-close {
-  opacity: 0.65;
+.tab-close svg {
+  width: calc(8px * var(--zoom));
+  height: calc(8px * var(--zoom));
+}
+
+.tab-close svg path {
+  stroke-width: 1.8;
+}
+
+@container (min-width: 96px) {
+  .tab:hover .tab-close {
+    opacity: 0.85;
+    pointer-events: auto;
+  }
+  .tab:hover:not(.alone) {
+    padding-left: 28px;
+  }
 }
 
 .tab-close:hover {
   opacity: 1 !important;
-  background: var(--wash-strong);
 }
 
-.new-tab {
-  margin-left: 2px;
+/* The shortcut that goes to this tab, where there is room. */
+.tab-key {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  display: none;
+  transform: translateY(-50%);
+  color: var(--chrome-dim);
+  font: 11px var(--ui-font);
+  pointer-events: none;
+}
+
+@container (min-width: 160px) {
+  .tab:not(.alone) .tab-key {
+    display: block;
+  }
+  .tab:not(.alone) {
+    padding-right: 52px;
+  }
 }
 
 .drag-fill {
-  flex: 1;
+  flex: 0 0 4px;
   height: 100%;
+}
+
+/* Go to and settings, round, at the end of the row. */
+.strip-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 10px 0 6px;
+  flex: none;
 }
 
 .window-controls {
   display: flex;
-  align-self: stretch;
+  align-self: flex-start;
+  height: 36px;
   flex: none;
 }
 

@@ -40,14 +40,14 @@ export const Chevron = ({ open }: { open: boolean }) => (
 );
 
 export const Sidebar = () => (
-  <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+  <svg width="15" height="15" viewBox="0 0 14 14" aria-hidden="true" class="icon-glyph">
     <rect x="1.5" y="2.5" width="11" height="9" rx="2" {...stroke} />
     <path d="M5.5 2.5v9" {...stroke} />
   </svg>
 );
 
 export const Gear = () => (
-  <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+  <svg width="15" height="15" viewBox="0 0 14 14" aria-hidden="true" class="icon-glyph">
     <circle cx="7" cy="7" r="2" {...stroke} />
     <path
       d="M7 1.5v1.6M7 10.9v1.6M1.5 7h1.6M10.9 7h1.6M3.1 3.1l1.1 1.1M9.8 9.8l1.1 1.1M3.1 10.9l1.1-1.1M9.8 4.2l1.1-1.1"
@@ -118,5 +118,20 @@ export const Refresh = () => (
   <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true">
     <path d="M9.6 4.2A4 4 0 1 0 10 7" {...stroke} stroke-width={1.3} />
     <path d="M9.9 1.8v2.6H7.3" {...stroke} stroke-width={1.3} />
+  </svg>
+);
+
+/** Go to: the magnifying glass at the end of the row. */
+export const Search = () => (
+  <svg width="15" height="15" viewBox="0 0 14 14" aria-hidden="true" class="icon-glyph">
+    <circle cx="6" cy="6" r="3.8" {...stroke} />
+    <path d="M8.9 8.9l3 3" {...stroke} />
+  </svg>
+);
+
+/** The fold arrow of a workspace, drawn pointing right and turned by its state. */
+export const ChevronRight = () => (
+  <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+    <path d="M3.5 2l3 3-3 3" {...stroke} />
   </svg>
 );

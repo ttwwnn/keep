@@ -107,18 +107,36 @@ export function applyPalette(palette: Palette): void {
   const vars: Record<string, string> = {
     "--ground": palette.ground,
     "--recessed": palette.recessed,
-    "--ink": `rgba(${ink}, ${palette.dark ? 0.96 : 0.9})`,
-    "--ink-resting": `rgba(${ink}, ${palette.dark ? 0.55 : 0.58})`,
-    "--ink-faint": `rgba(${ink}, ${palette.dark ? 0.35 : 0.38})`,
+    // The sidebar's inks, as the macOS app draws them (Palette in
+    // WorkspaceSidebar.swift), which the footers and the menus share.
+    "--ink": `rgba(${ink}, ${palette.dark ? 0.96 : 0.92})`,
+    "--ink-resting": `rgba(${ink}, ${palette.dark ? 0.6 : 0.75})`,
+    "--ink-faint": `rgba(${ink}, ${palette.dark ? 0.38 : 0.55})`,
+    // The row at the top (TabStripView.swift): the tab's text, its dim and
+    // hover inks, its fill, hover fill and edge, the glass a chosen tab
+    // wears, and the ground the round controls stand on.
+    "--chrome-text": `rgba(${ink}, ${palette.dark ? 0.92 : 0.85})`,
+    "--chrome-dim": `rgba(${ink}, 0.45)`,
+    "--chrome-hover": `rgba(${ink}, ${palette.dark ? 0.72 : 0.66})`,
+    "--tab-fill": `rgba(${ink}, ${palette.dark ? 0.22 : 0.14})`,
+    "--tab-hover": `rgba(${ink}, ${palette.dark ? 0.05 : 0.035})`,
+    "--tab-edge": `rgba(${ink}, ${palette.dark ? 0.16 : 0.1})`,
+    "--control-fill": `rgba(${ink}, ${palette.dark ? 0.09 : 0.06})`,
+    "--control-hover": `rgba(${ink}, ${palette.dark ? 0.22 : 0.12})`,
+    "--chrome-off": `rgba(${ink}, 0.09)`,
+    "--ink-rgb": ink,
+    "--edge-attention": palette.dark ? "#ffffff" : "rgb(40, 30, 20)",
+    "--attention-fill": palette.dark ? "rgb(255, 120, 20)" : "rgb(255, 106, 0)",
     "--wash": `rgba(${ink}, ${palette.dark ? 0.09 : 0.07})`,
     "--wash-strong": `rgba(${ink}, ${palette.dark ? 0.14 : 0.11})`,
-    "--rule": `rgba(${ink}, ${palette.dark ? 0.08 : 0.1})`,
+    "--rule": `rgba(${ink}, 0.08)`,
     "--overlay": palette.dark ? "rgba(36, 40, 47, 0.97)" : "rgba(252, 252, 252, 0.98)",
-    "--shadow": palette.dark ? "0 18px 50px rgba(0, 0, 0, 0.55)" : "0 18px 50px rgba(0, 0, 0, 0.18)",
+    "--shadow": "0 18px 48px rgba(0, 0, 0, 0.62)",
     // DESIGN.md's state dots, in OKLCH: attached, busy, idle.
-    "--dot-attached": "oklch(0.76 0.14 150)",
-    "--dot-busy": "oklch(0.82 0.15 85)",
-    "--dot-idle": "oklch(0.70 0.05 250)",
+    // A step darker on a light ground, as the macOS app lowers them.
+    "--dot-attached": palette.dark ? "oklch(0.76 0.14 150)" : "oklch(0.54 0.14 150)",
+    "--dot-busy": palette.dark ? "oklch(0.82 0.15 85)" : "oklch(0.60 0.15 85)",
+    "--dot-idle": palette.dark ? "oklch(0.70 0.05 250)" : "oklch(0.48 0.05 250)",
     // The mark of a tab at work: Claude Code's orange, Codex's blue-green.
     "--mark-claude": palette.dark ? "oklch(0.72 0.15 48)" : "oklch(0.50 0.15 48)",
     "--mark-codex": palette.dark ? "oklch(0.78 0.11 200)" : "oklch(0.56 0.11 200)",
@@ -140,4 +158,8 @@ export function defaultFontFamily(platform: string): string {
   return "'DejaVu Sans Mono', 'Liberation Mono', monospace";
 }
 
-export const DEFAULT_FONT_SIZE = 14;
+/**
+ * The terminal's text at 100%: 13 points, Ghostty's own default, a quarter
+ * up — what the macOS app calls 100% (GhosttyApp.textBoost).
+ */
+export const DEFAULT_FONT_SIZE = 16.25;
