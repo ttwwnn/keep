@@ -8,7 +8,7 @@ import { SPLIT_RIGHT } from "./api";
 import { parseStatusFile } from "./aiStatus";
 import { busyMark, programOf, readActivity } from "./claude";
 import { defaultsOf, parseSettings, statusLineCommand } from "./claudeSettings";
-import { lineId } from "./ia";
+import { iaName, lineId } from "./ia";
 import { chooseAccount, e2eHooks, iaAvailable, measureNow, moveOrder, signIn, usageLines } from "./iaStore";
 import {
   activeTab,
@@ -473,7 +473,7 @@ async function aiSteps(step: StepRunner, real: boolean): Promise<void> {
     const named = names.filter((n) => !/^\d+ · (Claude|GPT)$/.test(n.trim()));
     if (named.length > 0) throw new Error(`nomes no rodapé fora de "n · serviço": ${named.join(" | ")}`);
     const figures = lines.map(
-      (l) => `${l.account.alias}: ${l.reading?.windows.map((w) => `${w.label} ${Math.round(w.percent)}%`).join(", ") ?? l.problem}`,
+      (l, i) => `${iaName(i + 1)}: ${l.reading?.windows.map((w) => `${w.label} ${Math.round(w.percent)}%`).join(", ") ?? l.problem}`,
     );
     return `${names.join(" | ")} — ${figures.join("; ")}`;
   });
