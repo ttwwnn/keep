@@ -52,6 +52,31 @@ printf '#!/bin/sh\necho "$@"\n' > "$WORK/permitida/bin/codex"; chmod +x "$WORK/p
 check "codex goes up with its server in its own process" "--no-daemon resume x" \
     "$(KEEP_WORKSPACE=presa "$KEEP" ia confinar -- "$WORK/permitida/bin/codex" resume x 2>/dev/null)"
 
+echo "typing claude and codex, as the shell functions run them"
+mkdir -p "$WORK/permitida/bin"
+cat > "$WORK/permitida/bin/claude" <<'FAKE'
+#!/bin/sh
+cat "$HOME/.zshrc" >/dev/null 2>&1 && echo leu-a-casa || echo nao-leu-a-casa
+cat "$KEEP_CONFINED_TO/a.txt" 2>&1
+FAKE
+printf '#!/bin/sh\necho "codex $*"\n' > "$WORK/permitida/bin/codex"
+chmod +x "$WORK/permitida/bin/claude" "$WORK/permitida/bin/codex"
+printf '{"presa": "%s"}\n' "$WORK/permitida" > "$KEEP_CONFINE_CONFIG"
+FUNCAO=${KEEP_CLAUDE_FUNCAO:-$HOME/.config/zsh/claude-funcao.zsh}
+# The login store is set, so the function prepares none (that would be the real tab's).
+as_function() {  # as_function <workspace> <command…>
+    local ws=$1; shift
+    KEEP_WORKSPACE="$ws" KEEP_IA_BIN="$KEEP" CLAUDE_SECURESTORAGE_CONFIG_DIR="$WORK/sem-armazem" \
+        PATH="$WORK/permitida/bin:$PATH" HOME="$HOME" zsh -c "source '$FUNCAO'; $*" 2>&1 | grep -v '^Keep: '
+}
+check "the AI of a workspace with a folder is held to it" "nao-leu-a-casa
+dentro" "$(as_function presa claude)"
+check "the AI of another workspace is not" "leu-a-casa" "$(as_function livre claude | head -1)"
+check "codex in a workspace with a folder goes up with its server inside" "codex --no-daemon resume x" "$(as_function presa codex resume x)"
+check "codex elsewhere, as always" "codex resume x" "$(as_function livre codex resume x)"
+check "claude agents is refused in a workspace with a folder" "1" \
+    "$(KEEP_WORKSPACE=presa KEEP_IA_BIN="$KEEP" PATH="$WORK/permitida/bin:$PATH" zsh -c "source '$FUNCAO'; claude agents" >/dev/null 2>&1; echo $?)"
+
 echo "a pasta sumiu"
 printf '{"presa": "%s"}\n' "$WORK/nao-existe" > "$KEEP_CONFINE_CONFIG"
 OUT=$(KEEP_WORKSPACE=presa "$KEEP" ia confinar -- /bin/echo subiu 2>&1)
