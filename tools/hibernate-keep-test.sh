@@ -625,11 +625,12 @@ else
     done
     say "  (full screen entered: ${WAY:-by no way}; held: $HELD)"
     if [ "${HELD: -1}" != 1 ]; then
-        # Measured on this machine: the system takes any window out of full
-        # screen again two seconds after it entered — TextEdit's as well as
-        # Keep's, with AppKit saying so (windowWillExitFullScreen) and the
-        # Dock moving it back to the desktop. Nothing to measure in it then.
-        say "  skip  full screen: the system took the window out of it again, as it does any app's here"
+        # Something on the machine took the window out of full screen again,
+        # and there is nothing to measure in it then. On the Mac this was
+        # written on that is QuitOnClose (kit-mac), which turns any window
+        # that stays in full screen 1.5 s into a maximized one, TextEdit's as
+        # well; KeepDev opts out of it in its Info.plist (tools/build-dev.sh).
+        say "  skip  full screen: something took the window out of it again (a window manager?)"
         SKIPPED=$((SKIPPED + 1))
         # The same tabs shown as in full screen, for what follows to start
         # from where it would have — tab 1 for as long, too: a tab shown for
