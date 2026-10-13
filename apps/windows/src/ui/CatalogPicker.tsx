@@ -5,8 +5,9 @@
 
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { filterNames } from "../catalog";
 import { activeView, overlay } from "../store";
-import { fuzzyScore, matchRanges } from "../text";
+import { matchRanges } from "../text";
 
 /** The name in a row, with the letters the query matched in bold. */
 export function Marked(props: { name: string; query: string }) {
@@ -21,18 +22,6 @@ export function Marked(props: { name: string; query: string }) {
   }
   parts.push(props.name.slice(at));
   return <>{parts}</>;
-}
-
-/** The names that fit a query, best fit first; every name, in their order, for none. */
-export function filterNames(names: readonly string[], query: string): string[] {
-  if (query.trim() === "") return [...names];
-  const scored: { name: string; score: number }[] = [];
-  for (const name of names) {
-    const score = fuzzyScore(query, name);
-    if (score !== undefined) scored.push({ name, score });
-  }
-  // Array.sort is stable: names with the same fit stay in the list's order.
-  return scored.sort((a, b) => a.score - b.score).map((entry) => entry.name);
 }
 
 function closeList() {
@@ -100,10 +89,10 @@ export function CatalogPicker(props: Props) {
   };
 
   return (
-    <div class="card picker catalog" role="dialog" aria-label={props.label}>
+    <div class="card catalog" role="dialog" aria-label={props.label}>
       <input
         ref={input}
-        class="card-input"
+        class="catalog-input"
         value={query}
         placeholder={props.placeholder}
         spellcheck={false}
@@ -123,11 +112,11 @@ export function CatalogPicker(props: Props) {
           else if (e.key === "Enter") choose(rows[index]);
         }}
       />
-      <div class="card-list" ref={list}>
+      <div class="catalog-list" ref={list}>
         {rows.map((name, i) => (
           <button
             key={name}
-            class={`card-row catalog-row ${i === index ? "selected" : ""}`}
+            class={`catalog-row ${i === index ? "selected" : ""}`}
             // The keyboard stays in the field, which is where the arrows are read.
             tabIndex={-1}
             onMouseDown={(e) => e.preventDefault()}
@@ -137,7 +126,7 @@ export function CatalogPicker(props: Props) {
             {props.row(name, query, name === worn)}
           </button>
         ))}
-        {rows.length === 0 && <div class="card-empty">{names === null ? "Procurando…" : props.none}</div>}
+        {rows.length === 0 && <div class="catalog-empty">{names === null ? "Procurando…" : props.none}</div>}
       </div>
       <div class="catalog-foot">
         <span>↑ ↓ para ver</span>

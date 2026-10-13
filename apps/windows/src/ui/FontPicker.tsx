@@ -24,13 +24,13 @@ export function FontPicker() {
         const face = { fontFamily: `${quoteFamily(name)}, monospace` };
         return (
           <>
-            <span class="row-title face" style={face}>
+            <span class="catalog-name face" style={face}>
               <Marked name={name} query={query} />
             </span>
             <span class="face-sample" style={face}>
               {previewSample}
             </span>
-            {worn && <span class="row-detail">em uso</span>}
+            {worn && <span class="catalog-note">em uso</span>}
           </>
         );
       }}

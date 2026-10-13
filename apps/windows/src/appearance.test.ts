@@ -1,6 +1,7 @@
 // The look the settings change: the face, what a program that asks is told of
 // the ground, the window's title, and what the state keeps of it all.
 import { describe, expect, it } from "vitest";
+import { filterNames } from "./catalog";
 import { SYMBOLS_FAMILY, isFixedPitch, isTextFace, monospacedNames, quoteFamily, terminalFontStack } from "./fonts";
 import { SchemeReporter, schemeReport } from "./schemeReport";
 import { DEFAULT_SCROLLBACK, SCROLLBACK_MAX, defaultState, normalizeScrollback, normalizeState } from "./state";
@@ -47,6 +48,30 @@ describe("which faces are monospaced", () => {
   it("takes nothing measured, or nothing wide, for neither", () => {
     expect(isFixedPitch([])).toBe(false);
     expect(isFixedPitch([0, 0, 0])).toBe(false);
+  });
+});
+
+describe("typing over a list of themes or faces", () => {
+  const names = ["Catppuccin Frappe", "Catppuccin Latte", "Catppuccin Mocha", "Dracula", "Mocha Mix", "Solarized Dark"];
+
+  it("lists every name, in the list's order, for nothing typed", () => {
+    expect(filterNames(names, "")).toEqual(names);
+    expect(filterNames(names, "   ")).toEqual(names);
+  });
+  it("keeps the names the letters are in, in order", () => {
+    expect(filterNames(names, "dra")).toEqual(["Dracula"]);
+    expect(filterNames(names, "slrd")).toEqual(["Solarized Dark"]);
+  });
+  it("puts a plain match before a scattered one, and one at the start before one inside", () => {
+    expect(filterNames(names, "mocha")).toEqual(["Mocha Mix", "Catppuccin Mocha"]);
+    expect(filterNames(["xcatx", "catx", "cxaxt"], "cat")).toEqual(["catx", "xcatx", "cxaxt"]);
+  });
+  it("keeps the list's order among names that fit alike", () => {
+    expect(filterNames(["Beta Light", "Alpha Light", "Gamma Light"], "light")).toEqual(["Beta Light", "Alpha Light", "Gamma Light"]);
+  });
+  it("is empty when nothing fits", () => {
+    expect(filterNames(names, "zzz")).toEqual([]);
+    expect(filterNames([], "a")).toEqual([]);
   });
 });
 

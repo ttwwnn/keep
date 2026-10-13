@@ -71,6 +71,10 @@ describe("a Ghostty theme file", () => {
     expect(parseGhosttyTheme(MOCHA.replace(/^foreground.*$/m, ""))).toBeUndefined();
     expect(parseGhosttyTheme("")).toBeUndefined();
   });
+  it("takes a slot only as a plain number", () => {
+    const text = MOCHA.replace("palette = 0=#45475a", "palette = =#123456\npalette = 1e1=#654321\npalette = 0x0=#abcdef");
+    expect(parseGhosttyTheme(text)!.ansi[0]).toBe("#000000");
+  });
   it("ignores a slot out of range, and takes a colour it cannot read as one left out", () => {
     const theme = parseGhosttyTheme(MOCHA + "palette = 16=#ffffff\npalette = x=#ffffff\ncursor-color = cell-foreground\n")!;
     expect(theme.ansi).toHaveLength(16);

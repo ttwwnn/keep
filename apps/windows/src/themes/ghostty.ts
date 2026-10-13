@@ -77,9 +77,9 @@ export function parseGhosttyTheme(text: string): ThemeColors | undefined {
         // "palette = 4=#89b4fa": the slot, then the colour.
         const split = value.indexOf("=");
         if (split < 0) break;
-        const slot = Number(value.slice(0, split).trim());
+        const slot = value.slice(0, split).trim();
         const parsed = hexOf(value.slice(split + 1));
-        if (Number.isInteger(slot) && slot >= 0 && slot <= 15 && parsed) ansi[slot] = parsed;
+        if (/^\d{1,2}$/.test(slot) && Number(slot) <= 15 && parsed) ansi[Number(slot)] = parsed;
         break;
       }
     }

@@ -40,10 +40,10 @@ export function ThemePicker() {
               ground={colors?.background ?? "transparent"}
               dots={colors ? [colors.ansi[1], colors.ansi[2], colors.ansi[3], colors.ansi[4], colors.foreground] : null}
             />
-            <span class="row-title">
+            <span class="catalog-name">
               <Marked name={name} query={query} />
             </span>
-            {worn && <span class="row-detail">em uso</span>}
+            {worn && <span class="catalog-note">em uso</span>}
           </>
         );
       }}
