@@ -128,9 +128,14 @@ check("the runtime's piece, made whole", opened { LinkOpener.open(first, from: n
 check("an address that arrived whole, though the screen goes on past it", opened { LinkOpener.open(first, from: nil, screen: broken, near: 2, columns: columns, whole: true) }, first)
 check("a word the runtime missed, under a plain click", opened { LinkOpener.openRecoveredAddress(third, screen: broken, near: 4, columns: columns) }, link)
 check("a word with no address under a plain click", opened { LinkOpener.openRecoveredAddress("também", screen: broken, near: 4, columns: columns) }, nil)
-check("a plain click opens a web address", String(LinkOpener.plainClickMayOpen("https://example.com")), "true")
-check("a plain click opens a path", String(LinkOpener.plainClickMayOpen("/tmp/a.txt:3")), "true")
-check("a plain click opens a file address", String(LinkOpener.plainClickMayOpen("file:///tmp/a.txt")), "true")
-check("a plain click does not start an app by its address", String(LinkOpener.plainClickMayOpen("vscode://file/tmp/a")), "false")
+func plain(_ text: String, _ programHasMouse: Bool = false) -> String {
+    String(LinkOpener.plainClickMayOpen(text, programHasMouse: programHasMouse))
+}
+check("a plain click opens a web address", plain("https://example.com"), "true")
+check("a plain click opens a path", plain("/tmp/a.txt:3"), "true")
+check("a plain click opens a file address", plain("file:///tmp/a.txt"), "true")
+check("a plain click does not start an app by its address", plain("vscode://file/tmp/a"), "false")
+check("an address is the program's when it has the mouse", plain("https://example.com", true), "false")
+check("a path is still opened when the program has the mouse", plain("/tmp/a.txt:3", true), "true")
 _ = real
 exit(failures == 0 ? 0 : 1)
