@@ -22,8 +22,9 @@
 #   - full screen: tabs are let go of and come back at the full-screen grid;
 #   - a picture drawn in a hibernated tab: its client asks for a surface,
 #     the tab is woken out of sight at the grid its program draws for —
-#     the window made smaller and the text larger meanwhile —, and is not
-#     let go of again;
+#     a smaller one than its window's, a second viewer's, with the window
+#     made smaller and the text larger meanwhile —, and is not let go of
+#     again;
 #   - the config's clipboard-read changed while tabs are hibernated: their
 #     clients are told;
 #   - what a Keep that is gone left beside its clients is swept at launch,
@@ -66,6 +67,7 @@ PASSED=0
 FAILED=0
 
 cleanup() {
+    [ -n "${VIEWER_PID:-}" ] && kill "$VIEWER_PID" 2>/dev/null
     [ -n "${APP_PID:-}" ] && kill "$APP_PID" 2>/dev/null
     [ -n "${DAEMON_PID:-}" ] && kill "$DAEMON_PID" 2>/dev/null
     [ -n "${KEEP_WORK:-}" ] && say "kept: $WORK" || rm -rf "$WORK"
@@ -691,11 +693,42 @@ if [ -z "$PIC" ]; then
     check "a tab is hibernated to draw in" "yes" "no"
 else
     MADE_PIC=$(made "$PIC")
-    # The window smaller and the text a size larger meanwhile: a surface out
-    # of sight keeps the grid its program draws for until it is shown, and
-    # so does one made for it — the size in pixels the pane rested at, and
-    # its text's.
+    # Its program draws for a grid other than its window's: a second viewer
+    # of the tab, smaller — the daemon fits a tab to the smallest viewer
+    # looking. (A tab shown for a moment and let go of again before its
+    # client told the daemon the window's grid is the same: the program
+    # still draws for the grid before.) The window smaller and the text a
+    # size larger meanwhile, too. A surface made for it out of sight takes
+    # the grid its program draws for, whatever the window would give it.
+    cat >"$WORK/viewer.py" <<'PY'
+import fcntl, os, pty, select, signal, struct, sys, termios
+keep, workspace, tab, cols, rows = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5])
+pid, fd = pty.fork()
+if pid == 0:
+    fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+    signal.signal(signal.SIGHUP, signal.SIG_DFL)
+    os.execv(keep, [keep, workspace, "--tab", tab])
+def stop(*_):
+    try:
+        os.kill(pid, signal.SIGHUP)
+    except ProcessLookupError:
+        pass
+    os._exit(0)
+signal.signal(signal.SIGTERM, stop)
+while True:
+    ready, _, _ = select.select([fd], [], [], 1)
+    if ready:
+        try:
+            if not os.read(fd, 65536):
+                break
+        except OSError:
+            break
+PY
+    python3 "$WORK/viewer.py" "$KEEP" "$WS" "$PIC" 80 24 >/dev/null 2>&1 &
+    VIEWER_PID=$!
+    until_true 15 '[ "$(daemon_grid "$PIC")" = 80x24 ]'
     RESTING=$(daemon_grid "$PIC")
+    check "a second viewer, smaller, has the tab's program draw for its grid" "80x24" "$RESTING"
     if [ -z "$LOCKED" ]; then
         ON_SCREEN=$(grep -aoE "switch +→ $WS/[0-9]+" "$WORK/app.log" | tail -1 | sed 's/.*\///')
         LARGE=$(daemon_grid "$ON_SCREEN")
@@ -717,8 +750,10 @@ else
     WOKEN=$(grep -aE "handing over at .* held" "$WORK/client.log" | grep -vE " 0 held" | tail -1)
     check "the picture went to the surface as it came, with the rest" "yes" \
         "$([ -n "$WOKEN" ] && echo yes || echo no)"
-    check "at the grid its program draws for, out of sight as it is, the window and the text changed meanwhile" \
+    check "at the grid its program draws for, not its window's, out of sight as it is, the window and the text changed meanwhile" \
         "$RESTING" "$(printf '%s\n' "$WOKEN" | grep -oE 'at [0-9]+x[0-9]+' | head -1 | cut -c4-)"
+    kill "$VIEWER_PID" 2>/dev/null
+    VIEWER_PID=
     "$AXPRESS" "$APP_NAME" menu View "Actual Size" >/dev/null 2>&1
     if [ -z "$LOCKED" ]; then
         osascript -e "tell application \"System Events\" to tell process \"$APP_NAME\" to set size of window 1 to {1100, 700}" \
