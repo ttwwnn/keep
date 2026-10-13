@@ -226,3 +226,115 @@ enum CodexPickerDriver {
         }
     }
 }
+
+/// Changes Claude Code's model or effort for this conversation only, through
+/// its own pickers: `/model` (the arrows to the model, then "s") and
+/// `/effort` (the arrows along its rule, then "s"). Each step reads the
+/// screen first; the question Claude Code asks before switching models in a
+/// conversation with a cache is answered yes — the pick was the person's. A
+/// step that does not come backs out with Esc.
+enum ClaudePickerDriver {
+    static func choose(
+        model label: String, workspace: String, tab: UInt32, send: @escaping @MainActor (String) -> Void
+    ) {
+        run(workspace: workspace, tab: tab, send: send) { key, screen, changed, giveUp in
+            key("/model")
+            usleep(250_000)
+            key("\r")
+            guard var shown = screen(ClaudePicker.modelSessionOnly), shown.contains(ClaudePicker.modelTitle)
+            else { return giveUp("no model picker") }
+            for _ in 0..<25 {
+                guard let steps = ClaudePicker.steps(to: label, onScreen: shown) else {
+                    return giveUp("\(label) not in the picker")
+                }
+                if steps == 0 { break }
+                key(steps > 0 ? "\u{1B}[B" : "\u{1B}[A")
+                // The next look is taken once the pointer has moved: a key
+                // pressed the moment the picker opens can be lost, and is
+                // then pressed again rather than counted.
+                guard let next = changed(shown, ClaudePicker.modelSessionOnly)
+                else { return giveUp("picker gone") }
+                shown = next
+            }
+            guard ClaudePicker.steps(to: label, onScreen: shown) == 0 else { return giveUp("pointer never reached \(label)") }
+            key("s")
+            // The question, when the conversation has a cache.
+            for _ in 0..<20 {
+                usleep(250_000)
+                guard let text = try? Daemon.preview(workspace: workspace, tab: tab) else { continue }
+                if ClaudePicker.asksToSwitch(onScreen: text) {
+                    key("\r")
+                    break
+                }
+                if !text.contains(ClaudePicker.modelSessionOnly) { break }
+            }
+            Trace.log("claude", "picker: model \(label), this session only")
+        }
+    }
+
+    static func choose(
+        effort level: String, workspace: String, tab: UInt32, send: @escaping @MainActor (String) -> Void
+    ) {
+        run(workspace: workspace, tab: tab, send: send) { key, screen, changed, giveUp in
+            key("/effort")
+            usleep(250_000)
+            key("\r")
+            guard var shown = screen(ClaudePicker.effortSessionOnly) else { return giveUp("no effort picker") }
+            for _ in 0..<10 {
+                guard let steps = ClaudePicker.effortSteps(to: level, onScreen: shown) else {
+                    return giveUp("\(level) not on the rule")
+                }
+                if steps == 0 { break }
+                key(steps > 0 ? "\u{1B}[C" : "\u{1B}[D")
+                guard let next = changed(shown, ClaudePicker.effortSessionOnly)
+                else { return giveUp("picker gone") }
+                shown = next
+            }
+            guard ClaudePicker.effortSteps(to: level, onScreen: shown) == 0 else {
+                return giveUp("marker never reached \(level)")
+            }
+            key("s")
+            Trace.log("claude", "picker: effort \(level), this session only")
+        }
+    }
+
+    private static func run(
+        workspace: String, tab: UInt32, send: @escaping @MainActor (String) -> Void,
+        _ steps: @escaping (
+            _ key: (String) -> Void, _ screen: (String) -> String?,
+            _ changed: (String, String) -> String?, _ giveUp: (String) -> Void
+        ) -> Void
+    ) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            func key(_ keys: String) { DispatchQueue.main.sync { send(keys) } }
+            func screen(showing text: String) -> String? {
+                for _ in 0..<50 {
+                    if let shown = try? Daemon.preview(workspace: workspace, tab: tab), shown.contains(text) {
+                        return shown
+                    }
+                    usleep(100_000)
+                }
+                return nil
+            }
+            /// The screen once it differs from `before` (the pointer or the
+            /// marker moved), or as it is after a second; nil when the picker
+            /// is gone.
+            func changed(from before: String, showing text: String) -> String? {
+                var last: String?
+                for _ in 0..<10 {
+                    usleep(100_000)
+                    guard let shown = try? Daemon.preview(workspace: workspace, tab: tab), shown.contains(text)
+                    else { continue }
+                    if shown != before { return shown }
+                    last = shown
+                }
+                return last
+            }
+            func giveUp(_ why: String) {
+                Trace.log("claude", "picker: \(why); backing out")
+                key("\u{1B}")
+            }
+            steps(key, screen(showing:), changed(from:showing:), giveUp)
+        }
+    }
+}
