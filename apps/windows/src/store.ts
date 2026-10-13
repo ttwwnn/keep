@@ -41,10 +41,10 @@ import { noTabNumbers, remapTabNumbers, type Restored, type TabNumbers } from ".
 import { chooseClaudeEffort, chooseClaudeModel, chooseCodex, type PickerIO } from "./pickers";
 import { baseName, isPathTitle, rootTabs, type RootTab } from "./layout";
 import { noteVisit } from "./recent";
-import { defaultState, normalizeState, tabKey, type GuiState } from "./state";
+import { defaultState, tabKey, type GuiState } from "./state";
 import { refile } from "./hibernation";
 import { keepShares, moveShares } from "./splits";
-import { listed, neighbour, putAwayWith, putAwayWithout, stillRunning } from "./putAway";
+import { listed, neighbour, stillRunning } from "./putAway";
 import { arrangeTabs, heirsOf, insertBefore, memberIds, pruneOrders, substitute } from "./tabOrder";
 import { TerminalManager, viewKey, type TermView } from "./terminals";
 import { DEFAULT_FONT_SIZE, applyPalette, onSystemAppearanceChange, resolvePalette } from "./theme";
@@ -58,6 +58,9 @@ import {
   type WorktreeAnswer,
   type WorktreeTarget,
 } from "./worktrees";
+import { adopt, carriedByAll, carriedOf, isQuickWorkspace, orphansOf, readPeers, remove } from "./windowModel";
+import { isLeader, peers, windowLabel } from "./windowPeers";
+import { joinState } from "./windowState";
 import { zoomStep, zoomedSize } from "./zoom";
 
 // ------------------------------------------------------------------ state
@@ -180,8 +183,33 @@ export const orderedWorkspaces = computed(() => {
   return [...list].sort((a, b) => (rank.get(a.name) ?? Infinity) - (rank.get(b.name) ?? Infinity));
 });
 
-/** The workspaces the sidebar lists: those not put away, still running and a Go To from being listed again. */
-export const shownWorkspaces = computed(() => listed(orderedWorkspaces.value, gui.value.hidden));
+/** The running workspaces no window lists and nobody put away: made by the command line, or while the app was not running. */
+const orphans = computed(() =>
+  orphansOf(
+    workspaces.value.map((w) => w.name),
+    carriedByAll(peers.value, windowLabel.value, carriedOf(gui.value.order, gui.value.hidden)),
+    gui.value.hidden,
+  ),
+);
+
+/**
+ * The workspaces the sidebar lists: those of this window's order that are not
+ * put away, still running and a Go To from being listed again; and, in the
+ * oldest window, the ones nobody lists, which it takes (windowModel.ts). Alone,
+ * that is every workspace there is but the ones put away.
+ */
+export const shownWorkspaces = computed(() => {
+  const mine = new Set(gui.value.order);
+  const taken = isLeader.value ? new Set(orphans.value) : null;
+  const here = orderedWorkspaces.value.filter((w) => !isQuickWorkspace(w.name) && (mine.has(w.name) || taken?.has(w.name)));
+  return listed(here, gui.value.hidden);
+});
+
+/** What this window says it lists: its order less what is put away, and — the oldest window — what it takes. */
+export const carriedHere = computed(() => [
+  ...carriedOf(gui.value.order, gui.value.hidden),
+  ...(isLeader.value ? orphans.value : []),
+]);
 
 /** A workspace's tabs, each with its panes, in the order the window gave them (tabOrder.ts). */
 function orderedTabs(tabs: WorkspaceInfo["tabs"], remembered: number[] | undefined): RootTab[] {
@@ -307,19 +335,11 @@ function look() {
 
 // ------------------------------------------------------------------ persistence
 
-let saveTimer: ReturnType<typeof setTimeout> | undefined;
-let stateLoaded = false;
-
+/** Change the state; it is kept, and told to the other windows, by windowSync.ts. */
 export function update(change: (state: GuiState) => void): void {
   const next = structuredClone(gui.value);
   change(next);
   gui.value = next;
-}
-
-function scheduleSave(): void {
-  if (!stateLoaded) return;
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => void api.saveState(gui.value).catch(() => {}), 500);
 }
 
 // ------------------------------------------------------------------ the daemon
@@ -414,7 +434,11 @@ function reconcile(list: WorkspaceInfo[], previous: WorkspaceInfo[]): void {
   const heirOf = (workspace: string, id: number) => heirs.get(workspace)?.get(id);
 
   const order = state.order.filter((n) => names.has(n));
-  for (const w of list) if (!order.includes(w.name)) order.push(w.name);
+  // The oldest window takes the workspaces nobody lists, at the end (windowModel.ts).
+  if (isLeader.value) {
+    const listedByAll = carriedByAll(peers.value, windowLabel.value, carriedOf(order, state.hidden));
+    order.push(...orphansOf(list.map((w) => w.name), listedByAll, state.hidden));
+  }
   const named = { ...state.tabNames };
   for (const [workspace, found] of heirs) {
     for (const [root, heir] of found) {
@@ -871,8 +895,8 @@ export function select(workspace: string, tab?: number): void {
   const tabs = tabsByWorkspace.value.get(workspace) ?? [];
   const id = tab ?? gui.value.lastTab[workspace] ?? tabs[0]?.root.id;
   update((s) => {
-    // Going to a workspace puts it back in the sidebar if it was put away.
-    s.hidden = putAwayWithout(s.hidden, workspace);
+    // Going to a workspace lists it here, and puts it back if it was put away (windowModel.ts).
+    ({ order: s.order, hidden: s.hidden } = adopt(s, workspace));
     if (id === undefined) {
       s.active = { workspace, tab: -1 };
       return;
@@ -1248,16 +1272,18 @@ export function toggleVerticalTabs(): void {
 }
 
 /**
- * Take a workspace out of the sidebar. It keeps running, and so do its tabs:
- * what leaves is its place in the list, which Go To gives back, and which a
- * relaunch leaves out as it was left.
+ * Take a workspace out of this window's sidebar. It keeps running, and so do
+ * its tabs: what leaves is its place in the list, which Go To gives back, and
+ * which a relaunch leaves out as it was left. If another window lists it, it
+ * is only this window's list it leaves; put away is what the last window
+ * listing it does (windowModel.ts).
  */
 export function putAway(workspace: string): void {
   const names = shownWorkspaces.value.map((w) => w.name);
   if (!names.includes(workspace)) return;
   // Standing in the one going out: step to a neighbour.
   const next = activeWorkspace.value === workspace ? neighbour(names, workspace) : undefined;
-  update((s) => void (s.hidden = putAwayWith(s.hidden, workspace)));
+  update((s) => void ({ order: s.order, hidden: s.hidden } = remove(s, peers.value, windowLabel.value, workspace)));
   if (next !== undefined) select(next);
 }
 
@@ -1341,7 +1367,7 @@ export async function moveTabTo(workspace: string, tab: RootTab, to: string, bef
         if (inFront) {
           s.active = { workspace: to, tab: newRoot };
           s.lastTab[to] = newRoot;
-          s.hidden = putAwayWithout(s.hidden, to);
+          ({ order: s.order, hidden: s.hidden } = adopt(s, to));
         }
       });
       applyList(list);
@@ -1442,13 +1468,18 @@ export interface StartOptions {
   onKey: (view: TermView, event: KeyboardEvent) => boolean;
 }
 
-/** Everything the window needs before it draws: what platform, what state, what look. */
-export async function start(options: StartOptions): Promise<void> {
+/**
+ * Everything the window needs before it draws: what platform, what state,
+ * what look. What the app told it of itself and of the other windows.
+ */
+export async function start(options: StartOptions): Promise<api.WindowBoot> {
   const startup = await api.startup();
   info.value = startup;
-  const raw = await api.loadState().catch(() => null);
-  gui.value = normalizeState(raw);
-  stateLoaded = true;
+  // The app's state and this window's own, and which windows there are (src-tauri: windows.rs).
+  const boot = await api.windowBoot();
+  windowLabel.value = boot.label;
+  peers.value = readPeers(boot.windows);
+  gui.value = joinState(boot.shared, boot.window, boot.inherit);
   // A state that could not be read is told, once, with what was done about it.
   void api
     .stateWarning()
@@ -1481,15 +1512,11 @@ export async function start(options: StartOptions): Promise<void> {
     { name: startup.platform, windowsBuild: startup.windowsBuild },
   );
 
-  // Look, saving and the clock follow the state from here on.
+  // Look and the clock follow the state from here on; keeping it is windowSync.ts's.
   effect(() => applyPalette(palette.value));
   effect(() => terminals.setLook(look()));
   // The tabs' titles grow with the zoom, as the terminals' text does.
   effect(() => document.documentElement.style.setProperty("--zoom", String(gui.value.zoom)));
-  effect(() => {
-    void gui.value;
-    scheduleSave();
-  });
   setInterval(() => (now.value = Date.now()), 1000);
 
   const win = getCurrentWindow();
@@ -1498,6 +1525,7 @@ export async function start(options: StartOptions): Promise<void> {
 
   // Not waited on: the window draws while it is being done.
   statusLineSetup = setUpStatusLine();
+  return boot;
 }
 
 export interface ConnectOptions {
@@ -1510,6 +1538,13 @@ export interface ConnectOptions {
    * up empty after being out of reach.
    */
   restore?: () => Promise<Restored | null>;
+  /**
+   * The windows of the last run, to be opened (by the oldest window only): once
+   * the daemon has its tabs and the window knows what became of the old ones,
+   * and before it decides what the daemon's list means. `remap` carries the
+   * tab a window was left on to the number it has now, null when it is gone.
+   */
+  windows?: (remap: (active: GuiState["active"]) => GuiState["active"]) => Promise<void>;
 }
 
 /**
@@ -1554,6 +1589,7 @@ export async function connect(options: ConnectOptions = {}): Promise<void> {
   carryOver(was, restored);
   await refresh();
   if (restored) say("Restaurado após reinício");
+  await options.windows?.((active) => (was ? remapTabNumbers({ ...noTabNumbers(), active }, restored?.made ?? []).active : active));
   settled = true;
   await refresh();
   // Something must be on screen: a daemon with nothing in it and nothing to

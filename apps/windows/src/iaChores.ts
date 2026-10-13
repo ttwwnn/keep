@@ -22,8 +22,10 @@ import * as api from "./api";
 import { daemonStartOf, planNames, type NamesFile } from "./names";
 import { isQuietResume, isQuietRestore, readResume, readRestore, restoreLine, resumeLine, type Restored } from "./restauro";
 import { daemonError, gui, loaded, log, renameTab } from "./store";
+import { isLeader } from "./windowPeers";
 
 const daemonUp = () => loaded.value && daemonError.value === null;
+// With several windows open the rounds that change something are the oldest window's alone (windowPeers.ts).
 
 /** Whether the core is here to be asked (a window without it has no AI layer, and nothing to restore with). */
 async function coreHere(): Promise<boolean> {
@@ -63,7 +65,7 @@ let keeping = false;
  * come back: one at a time, each waiting for the one before to come up.
  */
 async function keepPicture(always: boolean): Promise<void> {
-  if (keeping || (!always && !daemonUp())) return;
+  if (keeping || !isLeader.value || (!always && !daemonUp())) return;
   keeping = true;
   try {
     const round = readRestore(await api.iaAsk(["restauro", "manter"]));
@@ -86,7 +88,7 @@ let resuming = false;
  * state are beside the pictures.
  */
 async function resumeStopped(): Promise<void> {
-  if (resuming || !daemonUp()) return;
+  if (resuming || !isLeader.value || !daemonUp()) return;
   resuming = true;
   try {
     const round = readResume(await api.iaAsk(["continuar"]));
@@ -115,7 +117,7 @@ let syncing = false;
  */
 export async function syncNames(): Promise<void> {
   const start = daemonStartOf(gui.value.daemon);
-  if (start === null || syncing) return;
+  if (start === null || syncing || !isLeader.value) return;
   syncing = true;
   try {
     const read = await api.namesRead(seen);

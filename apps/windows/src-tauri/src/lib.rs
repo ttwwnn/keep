@@ -14,6 +14,7 @@ mod names;
 mod sessions;
 mod settings;
 mod status;
+mod windows;
 mod zoxide;
 
 use std::path::PathBuf;
@@ -70,15 +71,21 @@ fn startup() -> Startup {
     }
 }
 
+/// Several windows may ask at once; the daemon is started by one of them, and the others find it up.
+static STARTING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Make sure the daemon runs. Started here when it does not — the first
 /// launch after a reboot — and from then on it belongs to nobody.
 #[tauri::command]
 async fn ensure_daemon(app: AppHandle) -> Answer<()> {
     let dir = resources(&app);
-    tauri::async_runtime::spawn_blocking(move || daemon::ensure(dir.as_deref()))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(text)
+    tauri::async_runtime::spawn_blocking(move || {
+        let _one = STARTING.lock().unwrap_or_else(|e| e.into_inner());
+        daemon::ensure(dir.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(text)
 }
 
 /// Which daemon is answering; see `daemon::identity`.
@@ -190,13 +197,14 @@ async fn search(query: String, limit: u32, workspace: Option<String>, tab: Optio
 #[tauri::command]
 fn attach(
     sessions: State<'_, Arc<Sessions>>,
+    window: tauri::Window,
     workspace: String,
     tab: u32,
     cols: u16,
     rows: u16,
     channel: Channel<InvokeResponseBody>,
 ) -> Answer<u64> {
-    sessions.inner().attach(workspace, tab, cols, rows, channel).map_err(text)
+    sessions.inner().attach(window.label().to_string(), workspace, tab, cols, rows, channel).map_err(text)
 }
 
 #[tauri::command]
@@ -218,24 +226,6 @@ fn resize(sessions: State<'_, Arc<Sessions>>, handle: u64, cols: u16, rows: u16)
 #[tauri::command]
 fn detach(sessions: State<'_, Arc<Sessions>>, handle: u64) {
     sessions.detach(handle);
-}
-
-fn state_path(app: &AppHandle) -> Answer<PathBuf> {
-    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    Ok(settings::state_file(&dir))
-}
-
-#[tauri::command]
-fn load_state(app: AppHandle) -> Answer<Option<serde_json::Value>> {
-    Ok(settings::load(&state_path(&app)?))
-}
-
-#[tauri::command]
-fn save_state(app: AppHandle, state: serde_json::Value) -> Answer<()> {
-    settings::save(&state_path(&app)?, &state).map_err(|e| {
-        settings::log(&format!("estado não gravado: {e:#}"));
-        text(e)
-    })
 }
 
 /// What reading the state found wrong when the app opened, once: an
@@ -508,15 +498,11 @@ pub fn run() {
     tauri::Builder::default()
         // A second launch brings the window that is already open forward,
         // rather than a second viewer of the same daemon.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
-        }))
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| windows::show_front(app)))
         .plugin(
             tauri_plugin_window_state::Builder::new()
+                // The first window's size and place; the others' are kept with their records (windows.rs).
+                .with_filter(|label| label == "main")
                 .with_state_flags(
                     tauri_plugin_window_state::StateFlags::SIZE
                         | tauri_plugin_window_state::StateFlags::POSITION
@@ -528,6 +514,18 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(sessions)
+        .manage(windows::Hub::default())
+        .setup(|app| {
+            windows::start(app.handle());
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            // A window that is gone lets go of the tabs it was showing.
+            if let tauri::WindowEvent::Destroyed = event {
+                window.state::<Arc<Sessions>>().detach_window(window.label());
+            }
+            windows::on_window_event(window, event);
+        })
         .invoke_handler(tauri::generate_handler![
             startup,
             ensure_daemon,
@@ -547,8 +545,14 @@ pub fn run() {
             input_bytes,
             resize,
             detach,
-            load_state,
-            save_state,
+            windows::window_boot,
+            windows::shared_apply,
+            windows::window_save,
+            windows::windows_report,
+            windows::windows_list,
+            windows::window_open,
+            windows::window_under,
+            windows::window_show,
             state_warning,
             shells,
             choose_shell,
@@ -581,6 +585,8 @@ pub fn run() {
             // the app waits for them. A folder half dealt with and nobody
             // told is worse than a process that lingers a few seconds.
             tauri::RunEvent::ExitRequested { api, .. } if ia::trashing() > 0 => {
+                // The windows closing on the way out put nothing away.
+                windows::leave(app);
                 api.prevent_exit();
                 let app = app.clone();
                 std::thread::spawn(move || {
@@ -591,9 +597,13 @@ pub fn run() {
                     app.exit(0);
                 });
             }
+            tauri::RunEvent::ExitRequested { .. } => windows::leave(app),
             // Leaving lets go of every tab and nothing more: the shells are
             // the daemon's, and they keep running.
-            tauri::RunEvent::Exit => on_exit.detach_all(),
+            tauri::RunEvent::Exit => {
+                windows::leave(app);
+                on_exit.detach_all();
+            }
             _ => {}
         });
 }
