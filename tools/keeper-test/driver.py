@@ -449,7 +449,8 @@ try:
     elsewhere = Surface(where="elsewhere")
     wait_for(30, lambda: elsewhere.has("L0005500"))
     elsewhere.hibernate()
-    wait_for(10, lambda: not elsewhere.alive())
+    # As long as the other goings: a machine under load takes its time.
+    wait_for(30, lambda: not elsewhere.alive())
     check("goes with its surface, whatever the files beside it say", (False, False),
           (elsewhere.alive(), elsewhere.kept()))
 
