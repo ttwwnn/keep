@@ -19,11 +19,13 @@ import {
   menuRows,
   momentText,
   moved,
+  nameToKeep,
   noteText,
   numberOf,
   numberedName,
   percentText,
   programKind,
+  provenKey,
   tabAccountLabel,
   readJev,
   readStoredLines,
@@ -202,6 +204,40 @@ describe("what a tab runs", () => {
     expect(tabAccountLabel({ kind: "shell" }, "pwsh", null, null, lines)).toBe("— pwsh");
     expect(tabAccountLabel({ kind: "other", name: "vim" }, "vim", null, null, lines)).toBe("— vim");
     expect(tabAccountLabel({ kind: "unknown" }, "", null, null, lines)).toBe("");
+  });
+  it("a Claude switched and not answering on the new account yet says both: (IA·1→2)", () => {
+    const lines = [ana, bia, gpt];
+    const claude = { kind: "claude" } as const;
+    // Put on IA·2 (what the core or the note says), still answering on IA·1 (proven).
+    expect(tabAccountLabel(claude, "claude", "claude:trabalho", null, lines, "claude:ana")).toBe("(IA·1→2)");
+    expect(tabAccountLabel(claude, "claude", FOLLOW_ORDER, "claude:trabalho", lines, "claude:ana")).toBe("(IA·1→2)");
+    // Answering on the account it is on: one number. Nothing proven: one number.
+    expect(tabAccountLabel(claude, "claude", "claude:trabalho", null, lines, "claude:trabalho")).toBe("(IA·2)");
+    expect(tabAccountLabel(claude, "claude", "claude:trabalho", null, lines, null)).toBe("(IA·2)");
+    expect(tabAccountLabel(claude, "claude", "claude:trabalho", null, lines)).toBe("(IA·2)");
+    // A proof of an account the list does not have says nothing.
+    expect(tabAccountLabel(claude, "claude", "claude:trabalho", null, lines, "claude:sumiu")).toBe("(IA·2)");
+    // The arrow follows the footer's order too, and a plain program never gets one.
+    expect(tabAccountLabel(claude, "claude", "claude:trabalho", null, [bia, ana, gpt], "claude:ana")).toBe("(IA·2→1)");
+    expect(tabAccountLabel({ kind: "shell" }, "pwsh", null, null, lines, "claude:ana")).toBe("— pwsh");
+    // No account to name, no arrow either.
+    expect(tabAccountLabel(claude, "claude", "claude:ninguem", null, lines, "claude:ana")).toBe("");
+  });
+  it("what the core proves is a key, never the order", () => {
+    expect(provenKey("claude:ana")).toBe("claude:ana");
+    expect(provenKey("gpt:principal")).toBe("gpt:principal");
+    expect(provenKey(FOLLOW_ORDER)).toBeNull();
+    expect(provenKey("ana")).toBeNull();
+    expect(provenKey(null)).toBeNull();
+    expect(provenKey(7)).toBeNull();
+  });
+  it("a tab keeps the name it had through a switch, unless it was named meanwhile", () => {
+    expect(nameToKeep("✳ Revisão do PR", undefined)).toBe("✳ Revisão do PR");
+    expect(nameToKeep("  pwsh ", undefined)).toBe("pwsh");
+    // The person's name wins; the fallback is not a name; nothing is nothing.
+    expect(nameToKeep("✳ Revisão do PR", "Meu nome")).toBeNull();
+    expect(nameToKeep("aba 3", undefined)).toBeNull();
+    expect(nameToKeep("   ", undefined)).toBeNull();
   });
   it("the number follows the footer's order", () => {
     const lines = [ana, bia, gpt];

@@ -34,6 +34,7 @@ import {
   type CodexModel,
 } from "./aiStatus";
 import { defaultsOf, planStatusLine, restoreDefaults } from "./claudeSettings";
+import { nameToKeep } from "./ia";
 import { chooseClaudeEffort, chooseClaudeModel, chooseCodex, type PickerIO } from "./pickers";
 import { baseName, isPathTitle, rootTabs, type RootTab } from "./layout";
 import { defaultState, normalizeState, tabKey, type GuiState, type RestoreWorkspace } from "./state";
@@ -183,9 +184,17 @@ export const fontSize = computed(() => zoomedSize(baseFontSize.value, gui.value.
 
 // ------------------------------------------------------------------ names
 
+/**
+ * Names tabs go by while their AI is switched to another account: the program
+ * that comes up may announce another title, and the tab goes on being called
+ * what it was (the macOS app's `switching`). By `tabKey`.
+ */
+export const heldNames = signal<ReadonlyMap<string, string>>(new Map());
+
 /** What a tab is called: the name given it, else what its program says it is. */
 export function tabLabel(workspace: string, tab: RootTab, index: number): string {
-  const given = gui.value.tabNames[tabKey(workspace, tab.root.id)];
+  const key = tabKey(workspace, tab.root.id);
+  const given = gui.value.tabNames[key] || heldNames.value.get(key);
   if (given) return given;
   const pane = tab.root;
   const title = pane.title.trim();
@@ -945,6 +954,22 @@ export function renameTab(workspace: string, tab: number, name: string): void {
     if (name.trim()) s.tabNames[key] = name.trim();
     else delete s.tabNames[key];
   });
+}
+
+/** Keep a tab called `title` while its AI is switched (`null` lets it go). */
+export function holdTabName(workspace: string, tab: number, title: string | null): void {
+  const key = tabKey(workspace, tab);
+  if ((heldNames.value.get(key) ?? null) === title) return;
+  const next = new Map(heldNames.value);
+  if (title) next.set(key, title);
+  else next.delete(key);
+  heldNames.value = next;
+}
+
+/** After a switch the name the tab had becomes its own (see `nameToKeep`). */
+export function preserveTabName(workspace: string, tab: number, title: string): void {
+  const kept = nameToKeep(title, gui.value.tabNames[tabKey(workspace, tab)]);
+  if (kept) renameTab(workspace, tab, kept);
 }
 
 export function renameWorkspace(workspace: string, name: string): void {

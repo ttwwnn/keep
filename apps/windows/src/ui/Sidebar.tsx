@@ -64,7 +64,7 @@ function TabRow(props: { workspace: string; tab: RootTab; index: number; selecte
   // footer's list — "(IA·3)" —, and follows that list's order; any other
   // program says its name — "— pwsh" —, unless the title already is it.
   const account = tabAccount(workspace, tab.root);
-  const program = tabAccountLabel(account.program, tab.root.command, account.key, account.running, usageLines.value);
+  const program = tabAccountLabel(account.program, tab.root.command, account.key, account.running, usageLines.value, account.proven);
   const repeats = program === `— ${look.label}` || program === `— ${look.label.replace(/\.exe$/i, "")}`;
   const suffix = program && !repeats ? <span class="tab-program">{program}</span> : null;
   return (
