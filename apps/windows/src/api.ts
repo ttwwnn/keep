@@ -111,6 +111,8 @@ export const search = (query: string, limit = 50, workspace?: string, tab?: numb
   invoke<SearchHit[]>("search", { query, limit, workspace: workspace ?? null, tab: tab ?? null });
 
 export const loadState = () => invoke<unknown | null>("load_state");
+/** What reading the state found wrong when the app opened (an unreadable file, and what was done about it), once. */
+export const stateWarning = () => invoke<string | null>("state_warning");
 export const saveState = (state: unknown) => invoke<void>("save_state", { state });
 export const shells = () => invoke<{ chosen: string; available: Shell[] }>("shells");
 export const chooseShell = (command: string) => invoke<void>("choose_shell", { command });
@@ -161,6 +163,8 @@ export interface ClaudeSettings {
   folder: boolean;
   /** The `keep-statusline.ps1` installed with the app; null when it is not there. */
   script: string | null;
+  /** The core's command line (`keep.exe`), which the account hook runs; null when it is not there. */
+  keep: string | null;
 }
 export const claudeSettings = () => invoke<ClaudeSettings>("claude_settings");
 /** Write Claude Code's settings file if it still holds `expected` (null: no file); false when it changed meanwhile. */
@@ -169,6 +173,11 @@ export const writeClaudeSettings = (expected: string | null, text: string) =>
 /** Codex's model cache when it is not the version `known`: its stamp (null: no cache) and, when it changed, its text. */
 export const codexModels = (known: string | null) =>
   invoke<{ stamp: string | null; text: string | null }>("codex_models", { known });
+/** The names file the core shares with the window, when it is not the version `known`: its stamp (null: no file) and, when it changed, its text. */
+export const namesRead = (known: string | null) =>
+  invoke<{ stamp: string | null; text: string | null }>("names_read", { known });
+/** Write the names file; the stamp of what was written. */
+export const namesWrite = (text: string) => invoke<string | null>("names_write", { text });
 /** A line for the app's log. */
 export const appLog = (line: string) => invoke<void>("app_log", { line });
 /** The folder each workspace's AI is held to, by workspace name (~/.config/keep/confinement.json). */

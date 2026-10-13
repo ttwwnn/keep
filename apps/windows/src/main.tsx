@@ -11,6 +11,7 @@ import { render } from "preact";
 import { startAppearance } from "./appearance";
 import { startConfinement } from "./confinementStore";
 import { installInput, terminalKey } from "./input";
+import { restoreTabs } from "./iaChores";
 import { startIA } from "./iaStore";
 import { bindCommands } from "./palette/bindings";
 import { watchSleep } from "./sleepWatch";
@@ -24,7 +25,7 @@ async function boot() {
   startAppearance();
   render(<App />, document.getElementById("app")!);
   watchSleep();
-  await connect();
+  await connect({ restore: restoreTabs });
   startConfinement();
   // The AI layer after the daemon: its tabs' AI is asked of the daemon the window found.
   await startIA();

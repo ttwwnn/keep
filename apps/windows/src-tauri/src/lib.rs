@@ -10,6 +10,7 @@ mod daemon;
 mod fonts;
 mod ia;
 mod memory;
+mod names;
 mod sessions;
 mod settings;
 mod status;
@@ -231,7 +232,17 @@ fn load_state(app: AppHandle) -> Answer<Option<serde_json::Value>> {
 
 #[tauri::command]
 fn save_state(app: AppHandle, state: serde_json::Value) -> Answer<()> {
-    settings::save(&state_path(&app)?, &state).map_err(text)
+    settings::save(&state_path(&app)?, &state).map_err(|e| {
+        settings::log(&format!("estado não gravado: {e:#}"));
+        text(e)
+    })
+}
+
+/// What reading the state found wrong when the app opened, once: an
+/// unreadable file, and what was done about it.
+#[tauri::command]
+fn state_warning() -> Option<String> {
+    settings::take_warning()
 }
 
 #[derive(Serialize)]
@@ -337,6 +348,8 @@ struct ClaudeSettings {
     folder: bool,
     /// The `keep-statusline.ps1` installed with the app, when it is there.
     script: Option<String>,
+    /// The core's command line (`keep.exe`), which the account hook runs.
+    keep: Option<String>,
 }
 
 #[tauri::command]
@@ -347,11 +360,12 @@ async fn claude_settings(app: AppHandle) -> Answer<ClaudeSettings> {
             .ok_or_else(|| "sem pasta do usuário".to_string())?;
         let path = dir.join("settings.json");
         let text = claude_settings::read(&path).map_err(crate::text)?;
+        let keep = ia::cli(resources.as_deref()).map(|p| claude_settings::plain(&p));
         let script = resources
             .map(|r| r.join("keep-statusline.ps1"))
             .filter(|p| p.is_file())
             .map(|p| claude_settings::plain(&p));
-        Ok(ClaudeSettings { path: claude_settings::plain(&path), text, folder: dir.is_dir(), script })
+        Ok(ClaudeSettings { path: claude_settings::plain(&path), text, folder: dir.is_dir(), script, keep })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -390,6 +404,38 @@ async fn codex_models(known: Option<String>) -> Answer<CodexModels> {
     })
     .await
     .map_err(|e| e.to_string())
+}
+
+/// The names file the core shares with the window, when it is not the version
+/// `known`; see `names`.
+#[derive(Serialize)]
+struct Names {
+    /// Which version is there; `None` when there is no file.
+    stamp: Option<String>,
+    /// Its text, when the version changed.
+    text: Option<String>,
+}
+
+#[tauri::command]
+async fn names_read(known: Option<String>) -> Answer<Names> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(path) = names::file() else { return Names { stamp: None, text: None } };
+        let (stamp, text) = names::read(&path, known.as_deref());
+        Names { stamp, text }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Write the names file; the stamp of what was written.
+#[tauri::command]
+async fn names_write(text: String) -> Answer<Option<String>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = names::file().ok_or_else(|| "sem pasta do Keep".to_string())?;
+        names::write(&path, &text).map_err(crate::text)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// A line for the app's log (`settings::log_file`): what the page did that
@@ -503,6 +549,7 @@ pub fn run() {
             detach,
             load_state,
             save_state,
+            state_warning,
             shells,
             choose_shell,
             installed_fonts,
@@ -517,6 +564,8 @@ pub fn run() {
             claude_settings,
             write_claude_settings,
             codex_models,
+            names_read,
+            names_write,
             app_log,
             confinement::confinement_all,
             confinement::confinement_set,

@@ -57,7 +57,7 @@ export function statusLineCommand(script: string): string {
  * does (`%`), and the quote itself: a path with one is left out rather than
  * risked.
  */
-const UNSAFE_IN_PATH = /["$`%]/;
+export const UNSAFE_IN_PATH = /["$`%]/;
 
 export type StatusLinePlan =
   /** The file to write: the one there with the status line added, or a new one with only it. */
