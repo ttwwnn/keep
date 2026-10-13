@@ -65,6 +65,10 @@ def check(what, wanted, got):
         print("  FAIL  %s" % what)
         print("        wanted: %r" % (wanted,))
         print("        got:    %r" % (got,))
+        # A sabotage needs only to be caught: the first failure says so, and
+        # the waits the rest would time out on are spared.
+        if os.environ.get("KEEPER_FAIL_FAST"):
+            raise SystemExit(1)
 
 
 def wait_for(seconds, predicate):
@@ -113,8 +117,17 @@ while True:
                 asked += 1
                 answers = []
                 for query in arg.split("|"):
-                    answers.append(repr(ask(query.replace("\\e", "\x1b").encode())))
+                    answers.append(repr(ask(query.replace("\\e", "\x1b").replace("\\a", "\x07").encode())))
                 open(os.path.join(work, "answers-%d" % asked), "w").write("\n".join(answers))
+            elif op == "listen":
+                asked += 1
+                got = b""
+                end = time.time() + float(arg or "1.5")
+                while time.time() < end:
+                    r, _, _ = select.select([0], [], [], 0.05)
+                    if r:
+                        got += os.read(0, 4096)
+                open(os.path.join(work, "answers-%d" % asked), "w").write(repr(got))
             elif op == "exit":
                 sys.exit(0)
         open(os.path.join(work, "done"), "w").write(str(n))
@@ -164,13 +177,15 @@ class Surface:
 
     count = 0
 
-    def __init__(self, take=None, mirror=True, app_pid=None):
+    def __init__(self, take=None, mirror=True, app_pid=None, showing=True, where="keep-attach"):
         Surface.count += 1
-        self.dir = os.path.join(WORK, "surface-%d" % Surface.count)
+        # Where the app puts a client: a directory of its own inside one
+        # named keep-attach. Anywhere else a client never keeps.
+        self.dir = os.path.join(WORK, where, "surface-%d" % Surface.count)
         os.makedirs(self.dir)
         self.showing = os.path.join(self.dir, "showing")
         with open(self.showing, "w") as f:
-            f.write("1")
+            f.write("1" if showing else "0")
         lines = ["k", "1", self.showing]
         if mirror and not NO_MIRROR:
             lines.append("mirror=10000000")
@@ -192,6 +207,10 @@ class Surface:
                 os.execve(KEEP, [KEEP], env)
             finally:
                 os._exit(127)
+        # Not inherited by the clients of the surfaces made after this one,
+        # as a surface's is not: a client holding another's pty open would
+        # keep that one's surface from ever going.
+        fcntl.fcntl(self.master, fcntl.F_SETFD, fcntl.FD_CLOEXEC)
         fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack("HHHH", ROWS, COLS, 0, 0))
         self.reader = threading.Thread(target=self.read, daemon=True)
         self.reader.start()
@@ -209,6 +228,13 @@ class Surface:
             if not data:
                 return
             self.received.extend(data)
+            # What a surface answers when asked dark or light: light, as
+            # the facts say.
+            if b"\x1b[?996n" in data:
+                try:
+                    os.write(self.master, b"\x1b[?997;2n")
+                except OSError:
+                    pass
 
     def let_go(self):
         """Close the surface's end, as a surface going away does."""
@@ -221,7 +247,9 @@ class Surface:
         # What a surface does to its process group as it goes.
         try:
             os.killpg(self.pid, signal.SIGHUP)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
+            # Gone already, the pty's own hang-up having ended it: macOS
+            # says EPERM of a group left with only a zombie in it.
             pass
 
     def has(self, text):
@@ -231,15 +259,20 @@ class Surface:
         with open(self.showing, "w") as f:
             f.write("0")
 
-    def hibernate(self):
+    def hibernate(self, wait=0.3):
         """What the app does: hide it, say it will come back, let go of it."""
         self.hide()
-        time.sleep(0.3)
+        time.sleep(wait)
         with open(os.path.join(self.dir, "facts"), "w") as f:
             f.write(FACTS)
         with open(os.path.join(self.dir, "hibernate"), "w") as f:
             f.write("1")
         self.let_go()
+
+    def ttys(self):
+        """The terminals the client still has open, as lsof sees them."""
+        out = subprocess.run(["lsof", "-p", str(self.pid)], capture_output=True, text=True).stdout
+        return [line.split()[-1] for line in out.splitlines() if "/dev/ttys" in line]
 
     def kept(self):
         return os.path.exists(os.path.join(self.dir, "kept"))
@@ -253,7 +286,7 @@ class Surface:
 
 
     def replay(self, more=None):
-        path = os.path.join(self.dir, "received.bin")
+        path = os.path.join(WORK, "received-%d.bin" % self.pid)
         with open(path, "wb") as f:
             f.write(bytes(self.received))
         args = [REPLAY, str(COLS), str(ROWS), path] + ([more] if more else [])
@@ -291,6 +324,7 @@ try:
     wait_for(30, one.kept)
     check("its client keeps the tab when the surface goes", True, one.kept())
     check("and is still running", True, one.alive())
+    check("holding on to no terminal of the surface's", [], one.ttys())
 
     print("while kept")
     command(
@@ -304,7 +338,7 @@ try:
     check("CSI = c is left unanswered, as the surface leaves it", repr(b""), answers[2])
     check("XTVERSION names the surface's terminal", repr(b"\x1bP>|ghostty 1.3.2-HEAD-+a53771a\x1b\\"), answers[3])
     check("OSC 11 reports the background the program set", repr(b"\x1b]11;rgb:0101/0202/0303\x1b\\"), answers[4])
-    check("the colour scheme is the app's", repr(b"\x1b[?997;2n"), answers[5])
+    check("the colour scheme is the surface's", repr(b"\x1b[?997;2n"), answers[5])
     check("the text area in pixels", repr(b"\x1b[4;1292;1680t"), answers[6])
     check("and in cells", repr(b"\x1b[8;38;105t"), answers[7])
     check("the keyboard protocol", repr(b"\x1b[?0u"), answers[8])
@@ -313,11 +347,58 @@ try:
     check("and the directory", b"file://host/tmp/elsewhere", read("pwd"))
     check("and the clipboard", b"hello", read("clipboard"))
     check("and the background", b"010203\n", read("background"))
+    # The window turns dark: the app writes the facts again. The program
+    # that asked to be told (2031) is, and is answered dark from then on.
+    command("raw \\e[?2031h")
+    time.sleep(0.5)
+    with open(os.path.join(one.dir, "facts"), "w") as f:
+        f.write(FACTS.replace("scheme=light", "scheme=dark"))
+    command("listen 1.5", "ask \\e[?996n")
+    told = open(os.path.join(WORK, "answers-2")).read()
+    check("a program asking to be told of the scheme is told it turned dark", repr(b"\x1b[?997;1n"), told)
+    asked = open(os.path.join(WORK, "answers-3")).read().splitlines()
+    check("and asking, is answered dark", repr(b"\x1b[?997;1n"), asked[0])
+    with open(os.path.join(one.dir, "facts"), "w") as f:
+        f.write(FACTS)
+    command("listen 1.5", "raw \\e[?2031l")
+    check("and light again", repr(b"\x1b[?997;2n"), open(os.path.join(WORK, "answers-4")).read())
+
+    # The program reads the clipboard (OSC 52): its keeper asks the app,
+    # played here, which answers with the pasteboard; where the config
+    # denies it, nobody is asked and nothing is answered.
+    def play_the_app(directory, text, seen):
+        request = os.path.join(directory, "clipboard-request")
+        if wait_for(5, lambda: os.path.exists(request)):
+            ident = open(request).read().split("\n")[0]
+            seen.append(ident)
+            with open(os.path.join(directory, ".answer"), "w") as f:
+                f.write(ident + "\n" + text)
+            os.rename(os.path.join(directory, ".answer"), os.path.join(directory, "clipboard-answer"))
+    seen = []
+    app_thread = threading.Thread(target=play_the_app, args=(one.dir, "pasted", seen), daemon=True)
+    app_thread.start()
+    command("ask \\e]52;c;?\\a")
+    app_thread.join(5)
+    check("a program reading the clipboard is answered with what the app read", repr(b"\x1b]52;c;cGFzdGVk\x1b\\"),
+          open(os.path.join(WORK, "answers-5")).read().splitlines()[0])
+    check("the app was asked once", 1, len(seen))
+    os.unlink(os.path.join(one.dir, "clipboard-request"))
+    with open(os.path.join(one.dir, "facts"), "w") as f:
+        f.write(FACTS + "clipboard-read=deny\n")
+    time.sleep(0.5)
+    command("ask \\e]52;c;?\\a|\\e[5n")
+    answers = open(os.path.join(WORK, "answers-6")).read().splitlines()
+    check("where the config denies it, nothing is answered and nobody asked",
+          (repr(b""), repr(b"\x1b[0n"), False),
+          (answers[0], answers[1], os.path.exists(os.path.join(one.dir, "clipboard-request"))))
+    with open(os.path.join(one.dir, "facts"), "w") as f:
+        f.write(FACTS)
 
     print("a surface comes back for it")
     two = Surface(take=one.dir)
     wait_for(90, lambda: not os.path.exists(one.dir))
     check("the keeper is gone, and its directory with it", False, os.path.exists(one.dir))
+    check("the new client says it took the pane", b"1\n", open(os.path.join(two.dir, "took"), "rb").read() if os.path.exists(os.path.join(two.dir, "took")) else b"")
     command("print 500")
     wait_for(90, lambda: two.has("L0005500"))
     report, text = two.replay()
@@ -328,6 +409,14 @@ try:
     check("with the title the program set while kept", "second title", report.get("title"))
     check("it is attached the way the daemon counts", True,
           "attached" in subprocess.run([KEEP, "ls"], env=env, capture_output=True, text=True).stdout)
+
+    print("a client the app did not put where it puts them")
+    elsewhere = Surface(where="elsewhere")
+    wait_for(30, lambda: elsewhere.has("L0005500"))
+    elsewhere.hibernate()
+    wait_for(10, lambda: not elsewhere.alive())
+    check("goes with its surface, whatever the files beside it say", (False, False),
+          (elsewhere.alive(), elsewhere.kept()))
 
     print("a program on the alternate screen, over the shell")
     command("raw \\e[?1049h\\e[H\\e[2JFULL SCREEN PROGRAM\\e[>1u")
@@ -344,39 +433,114 @@ try:
     check("and the program's keyboard", "1", report.get("kitty"))
     report, text = three.replay("\\e[<u\\e[?1049l")
     found = numbers(text)
+    if not in_order_once(found, 5500):
+        print("        lines: %d, first %s, last %s, gaps %s" % (
+            len(found), found[:3], found[-3:],
+            [(a, b) for a, b in zip(found, found[1:]) if b != a + 1][:5]))
     check("when it leaves, the shell's screen and history are under it (5500 lines)", True,
           in_order_once(found, 5500))
     check("on the main screen", "no", report.get("alternate"))
-    command("raw \\e[<u\\e[?1049l")
+    command("raw \\e[<u\\e[?1049l", "print 100")
 
-    print("the keeper goes when it should")
-    three.hibernate()
-    wait_for(30, three.kept)
-    keeper_dir = three.dir
-    os.unlink(os.path.join(keeper_dir, "hibernate"))
+    print("a surface that comes for the pane before its keeper listens")
+    # The app let go of a surface a moment ago and shows the tab again at
+    # once: the new client is there before the old one keeps.
+    three.hide()
+    time.sleep(0.3)
+    with open(os.path.join(three.dir, "facts"), "w") as f:
+        f.write(FACTS)
+    with open(os.path.join(three.dir, "hibernate"), "w") as f:
+        f.write("1")
+    four = Surface(take=three.dir)
+    time.sleep(0.8)
+    check("the new client waits for the keeper", True, four.alive() and not os.path.exists(os.path.join(four.dir, "took")))
+    three.let_go()
+    wait_for(90, lambda: four.has("L0005600"))
+    found = numbers(four.replay()[1])
+    check("and takes the pane from it: every line, once and in order (5600)", True, in_order_once(found, 5600))
     wait_for(30, lambda: not three.alive())
-    check("when the app says it will not come back", False, three.alive())
-    check("the tab is untouched", True, pid_alive(PROGRAM_PID))
-    four = Surface(take=keeper_dir)
-    wait_for(90, lambda: four.has("L0005500"))
-    check("a surface that finds no keeper attaches the ordinary way", True, four.has("L0005500"))
+    check("the keeper is gone", False, three.alive())
+
+    print("a surface let go of while its client waits to take the pane")
     four.hibernate()
     wait_for(30, four.kept)
+    # Shown for a moment and out of sight again: the client waits to be
+    # shown, and the app lets go of its surface meanwhile, meaning to come
+    # back. Its process group is hung up, as a surface going does.
+    five = Surface(take=four.dir, showing=False)
+    time.sleep(0.4)
+    with open(os.path.join(five.dir, "facts"), "w") as f:
+        f.write(FACTS)
+    with open(os.path.join(five.dir, "hibernate"), "w") as f:
+        f.write("1")
+    five.let_go()
+    wait_for(30, five.kept)
+    check("the client outlives its surface, takes the pane and keeps it", True, five.kept() and five.alive())
+    check("from the keeper before it, which is gone", False, os.path.exists(four.dir))
+    command("print 100")
+    six = Surface(take=five.dir)
+    wait_for(90, lambda: six.has("L0005700"))
+    found = numbers(six.replay()[1])
+    check("the next surface has every line, once and in order (5700)", True, in_order_once(found, 5700))
+
+    print("a sequence cut in two")
+    # The surface goes out of sight while the program is in the middle of
+    # a title: the client's own question waits for the end of it.
+    command("raw \\e]2;cut")
+    wait_for(30, lambda: six.has("\x1b]2;cut"))
+    six.hide()
+    time.sleep(0.6)
+    command("raw  in two\\a")
+    wait_for(30, lambda: six.has(" in two\x07"))
+    wait_for(5, lambda: six.has(" in two\x07\x1b[?996n"))
+    tail = bytes(six.received[six.received.rfind(b"\x1b]2;cut"):])
+    check("nothing is written into the middle of the program's sequence", True,
+          tail.startswith(b"\x1b]2;cut in two\x07"))
+    check("the question comes after it", True, b"\x1b[?996n" in tail)
+    check("so the title is the program's", "cut in two", six.replay()[0].get("title"))
+    # And handed over in the middle of one: the rest finishes it there.
+    command("raw \\e]2;handed")
+    six.hibernate()
+    wait_for(30, six.kept)
+    seven = Surface(take=six.dir)
+    wait_for(30, lambda: os.path.exists(os.path.join(seven.dir, "took")))
+    command("raw  over\\a", "print 1")
+    wait_for(30, lambda: seven.has("L0005701"))
+    check("a sequence the handover cut off is finished on the new surface", "handed over", seven.replay()[0].get("title"))
+
+    print("the keeper goes when it should")
+    seven.hibernate()
+    wait_for(30, seven.kept)
+    keeper_dir = seven.dir
+    os.unlink(os.path.join(keeper_dir, "hibernate"))
+    wait_for(30, lambda: not seven.alive())
+    check("when the app says it will not come back", False, seven.alive())
+    check("the tab is untouched", True, pid_alive(PROGRAM_PID))
+    eight = Surface(take=keeper_dir)
+    wait_for(90, lambda: eight.has("L0005701"))
+    check("a surface that finds no keeper attaches the ordinary way", True, eight.has("L0005701"))
+    eight.hibernate()
+    wait_for(30, eight.kept)
     app.kill()
     app.wait()
-    wait_for(30, lambda: not four.alive())
-    check("when the app is gone", False, four.alive())
+    wait_for(30, lambda: not eight.alive())
+    check("when the app is gone", False, eight.alive())
     app2 = subprocess.Popen(["/bin/sleep", "3600"])
-    five = Surface(take=four.dir, app_pid=app2.pid)
-    wait_for(90, lambda: five.has("L0005500"))
-    five.hibernate()
-    wait_for(30, five.kept)
+    nine = Surface(take=eight.dir, app_pid=app2.pid)
+    wait_for(90, lambda: nine.has("L0005701"))
+    nine.hibernate()
+    wait_for(30, nine.kept)
+    with open(os.path.join(nine.dir, "somebody's"), "w") as f:
+        f.write("not the keeper's")
     command_nowait = os.path.join(WORK, "cmd")
     with open(command_nowait, "w") as f:
         f.write("exit\n")
-    wait_for(30, lambda: not five.alive())
-    check("when the tab ends", False, five.alive())
+    wait_for(30, lambda: not nine.alive())
+    check("when the tab ends", False, nine.alive())
+    check("taking only its own files with it", (True, False),
+          (os.path.exists(os.path.join(nine.dir, "somebody's")), os.path.exists(os.path.join(nine.dir, "kept"))))
     app2.kill()
+
 finally:
     for proc in (app,):
         try:

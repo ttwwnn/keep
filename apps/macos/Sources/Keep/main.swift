@@ -237,6 +237,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // would wear the light half of its theme for a frame or two.
         NSApp.appearance = GhosttyApp.prefs.nsAppearance
         _ = GhosttyApp.shared
+        // What a Keep that is gone left beside the clients it ran.
+        Keeper.sweepOrphans()
         buildMenu()
         swallowUnwantedKeys()
 

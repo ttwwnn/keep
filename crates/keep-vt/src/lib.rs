@@ -13,7 +13,7 @@ use std::os::raw::c_int;
 mod effects;
 mod handover;
 
-pub use effects::{Device, Events, Facts};
+pub use effects::{ClipboardAnswer, ClipboardReader, Device, Events, Facts};
 pub use handover::Keyboard;
 
 /// Raw FFI surface. Prefer the safe wrappers below.
@@ -59,6 +59,12 @@ pub mod ffi {
     pub const OPT_CLIPBOARD_WRITE: c_int = 26;
     /// How much history the terminal keeps, in bytes; see `set_scrollback_limit`.
     pub const OPT_SCROLLBACK_MAX_BYTES: c_int = 27;
+    /// How much of a sequence a write ended in the middle of the terminal
+    /// keeps, to say it again; see `Terminal::continuation`.
+    pub const OPT_CONTINUATION_MAX_BYTES: c_int = 31;
+    /// A program reading the clipboard (OSC 52 `?`); see
+    /// `Terminal::read_clipboard_with`.
+    pub const OPT_CLIPBOARD_READ: c_int = 38;
 
     pub type TitleChangedFn = unsafe extern "C" fn(terminal: Terminal, userdata: *mut c_void);
     pub type PwdChangedFn = unsafe extern "C" fn(terminal: Terminal, userdata: *mut c_void);
@@ -143,6 +149,41 @@ pub mod ffi {
     pub type ClipboardWriteReplyFn =
         unsafe extern "C" fn(write: *const ClipboardWrite, reply: *const ClipboardWriteReply);
 
+    /// `GhosttyClipboardRead`: a program reading the clipboard, answered
+    /// before the callback returns.
+    #[repr(C)]
+    pub struct ClipboardRead {
+        pub size: usize,
+        pub location: c_int,
+        pub mimes: *const GhosttyString,
+        pub mimes_len: usize,
+        pub list: bool,
+        pub name: GhosttyString,
+        pub granted: bool,
+        pub can_remember: bool,
+        pub ctx: *const c_void,
+        pub reply: Option<ClipboardReadReplyFn>,
+    }
+
+    /// `GhosttyClipboardReadReply`.
+    #[repr(C)]
+    pub struct ClipboardReadReply {
+        pub size: usize,
+        pub result: c_int,
+        pub contents: *const ClipboardContent,
+        pub contents_len: usize,
+        pub available: *const GhosttyString,
+        pub available_len: usize,
+        pub remember: bool,
+    }
+    pub const CLIPBOARD_READ_SUCCESS: c_int = 0;
+    pub const CLIPBOARD_READ_DENIED: c_int = 1;
+
+    pub type ClipboardReadReplyFn =
+        unsafe extern "C" fn(read: *const ClipboardRead, reply: *const ClipboardReadReply);
+    pub type ClipboardReadFn =
+        unsafe extern "C" fn(terminal: Terminal, userdata: *mut c_void, read: *const ClipboardRead);
+
     /// `GhosttyClipboardWrite`: a program writing the clipboard (OSC 52).
     #[repr(C)]
     pub struct ClipboardWrite {
@@ -179,6 +220,9 @@ pub mod ffi {
     pub const DATA_COLOR_PALETTE_DEFAULT: c_int = 25;
     pub const DATA_SCROLLBACK_MAX_BYTES: c_int = 34;
     pub const DATA_MODE: c_int = 37;
+    /// Whether the stream is between sequences: no escape sequence or UTF-8
+    /// character begun and not finished.
+    pub const DATA_VT_GROUND: c_int = 38;
 
     /// `GhosttyGridRef`: a cell, resolved.
     #[repr(C)]
@@ -234,6 +278,18 @@ pub mod ffi {
     /// `GhosttyRowData`: whether any cell of the row may have a hyperlink.
     pub const ROW_DATA_HYPERLINK: c_int = 5;
     pub const OUT_OF_SPACE: c_int = -3;
+
+    /// `GhosttyCell`, and what is read of one (`GhosttyCellData`).
+    pub type Cell = u64;
+    /// `GhosttyCellContentTag`: 0 and 1 text, 2 and 3 a background colour
+    /// with no text (an erase in colour).
+    pub const CELL_DATA_CONTENT_TAG: c_int = 2;
+    pub const CELL_DATA_WIDE: c_int = 3;
+    pub const CELL_DATA_HAS_TEXT: c_int = 4;
+    pub const CELL_DATA_HAS_STYLING: c_int = 5;
+    /// `GhosttyCellWide`: an ordinary cell, as against either half of a wide
+    /// character or the space a wide one left at the margin.
+    pub const CELL_WIDE_NARROW: c_int = 0;
 
     /// `GhosttyTerminalModeConfig`: a mode to ask about, and its answer.
     /// `mode` is a `GhosttyMode` — the number, with bit 15 set for ANSI
@@ -332,6 +388,14 @@ pub mod ffi {
 
         pub fn ghostty_terminal_grid_ref(terminal: Terminal, point: Point, out: *mut GridRef) -> c_int;
         pub fn ghostty_grid_ref_row(grid_ref: *const GridRef, out: *mut Row) -> c_int;
+        pub fn ghostty_grid_ref_cell(grid_ref: *const GridRef, out: *mut Cell) -> c_int;
+        pub fn ghostty_cell_get(cell: Cell, data: c_int, out: *mut c_void) -> c_int;
+        pub fn ghostty_terminal_continuation_buf(
+            terminal: Terminal,
+            buf: *mut u8,
+            buf_len: usize,
+            out_written: *mut usize,
+        ) -> c_int;
         pub fn ghostty_row_get(row: Row, data: c_int, out: *mut c_void) -> c_int;
         pub fn ghostty_grid_ref_hyperlink_uri(
             grid_ref: *const GridRef,
@@ -459,6 +523,33 @@ impl Terminal {
     }
 
     fn raw_write(&mut self, data: &[u8]) {
+        // Reading the clipboard for a program, the bytes go in OSC by OSC:
+        // the reader is asked from inside the write, and has to know which
+        // of the two protocols that reach it is asking.
+        let ends = match self.effects.as_mut() {
+            Some(effects) if effects.reads_clipboard() => effects.osc_ends(data),
+            _ => Vec::new(),
+        };
+        let mut at = 0;
+        for (end, number) in ends {
+            if let Some(effects) = self.effects.as_mut() {
+                effects.osc = Some(number);
+            }
+            self.vt_write(&data[at..=end]);
+            if let Some(effects) = self.effects.as_mut() {
+                effects.osc = None;
+            }
+            at = end + 1;
+        }
+        self.vt_write(&data[at..]);
+        // An answer to a clipboard read that was not to be given comes, if
+        // it comes, before the write returns.
+        if let Some(effects) = self.effects.as_mut() {
+            effects.answered_clipboard();
+        }
+    }
+
+    fn vt_write(&mut self, data: &[u8]) {
         if data.is_empty() {
             return;
         }
@@ -480,6 +571,62 @@ impl Terminal {
             return Err(Error(rc));
         }
         Ok(())
+    }
+
+    /// Keep, up to `bytes`, whatever sequence a write ends in the middle of,
+    /// for [`Terminal::continuation`] to say again. Before anything is
+    /// written: a sequence already begun cannot be kept from its start.
+    pub fn track_continuation(&mut self, bytes: usize) -> Result<(), Error> {
+        let rc = unsafe {
+            ffi::ghostty_terminal_set(
+                self.raw,
+                ffi::OPT_CONTINUATION_MAX_BYTES,
+                &bytes as *const usize as *const c_void,
+            )
+        };
+        if rc != ffi::SUCCESS {
+            return Err(Error(rc));
+        }
+        Ok(())
+    }
+
+    /// The start of the sequence (or UTF-8 character) the last write ended
+    /// in the middle of — what a terminal that has seen everything else must
+    /// still be told to read the rest of it as this one will. Empty between
+    /// sequences; None when it was not kept ([`Terminal::track_continuation`]
+    /// never asked, or the sequence outgrew it).
+    pub fn continuation(&self) -> Option<Vec<u8>> {
+        let mut needed: usize = 0;
+        let rc = unsafe {
+            ffi::ghostty_terminal_continuation_buf(self.raw, std::ptr::null_mut(), 0, &mut needed)
+        };
+        if rc == ffi::SUCCESS {
+            return Some(Vec::new());
+        }
+        if rc != ffi::OUT_OF_SPACE {
+            return None;
+        }
+        let mut buf = vec![0u8; needed];
+        let mut written: usize = 0;
+        let rc = unsafe {
+            ffi::ghostty_terminal_continuation_buf(self.raw, buf.as_mut_ptr(), buf.len(), &mut written)
+        };
+        if rc != ffi::SUCCESS {
+            return None;
+        }
+        buf.truncate(written);
+        Some(buf)
+    }
+
+    /// Whether what was written so far ends between sequences: the point at
+    /// which something of one's own can be said to a terminal reading the
+    /// same stream without landing inside the program's.
+    pub fn at_ground(&self) -> bool {
+        let mut ground = false;
+        let rc = unsafe {
+            ffi::ghostty_terminal_get(self.raw, ffi::DATA_VT_GROUND, &mut ground as *mut bool as *mut c_void)
+        };
+        rc == ffi::SUCCESS && ground
     }
 
     /// Rows of history on the screen in use, above the rows on view.
@@ -1102,6 +1249,8 @@ mod abi {
         assert_eq!(std::mem::size_of::<ffi::SizeReportSize>(), 12, "SizeReportSize");
         assert_eq!(std::mem::size_of::<ffi::ClipboardContent>(), 32, "ClipboardContent");
         assert_eq!(std::mem::size_of::<ffi::ClipboardWrite>(), 72, "ClipboardWrite");
+        assert_eq!(std::mem::size_of::<ffi::ClipboardRead>(), 80, "ClipboardRead");
+        assert_eq!(std::mem::size_of::<ffi::ClipboardReadReply>(), 56, "ClipboardReadReply");
         assert_eq!(std::mem::size_of::<ffi::ClipboardWriteReply>(), 16, "ClipboardWriteReply");
     }
 }

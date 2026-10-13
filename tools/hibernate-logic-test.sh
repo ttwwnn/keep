@@ -98,6 +98,36 @@ cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage changed nothing
 build "$WORK/Sabotaged.swift" || exit 1
 if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
 
+echo "sabotage: a directory swept whatever its app"
+sed 's/return app != me \&\& !alive(app)/return app != me/' "$SOURCE" > "$WORK/Sabotaged.swift"
+cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage changed nothing"; exit 1; }
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
+echo "sabotage: this app's own directories swept"
+sed 's/return app != me \&\& !alive(app)/return !alive(app)/' "$SOURCE" > "$WORK/Sabotaged.swift"
+cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage changed nothing"; exit 1; }
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
+echo "sabotage: the clipboard written whatever clipboard-write says"
+sed 's/policy != "deny"/policy != "nothing"/' "$SOURCE" > "$WORK/Sabotaged.swift"
+cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage changed nothing"; exit 1; }
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
+echo "sabotage: a program reading the clipboard answered without asking"
+sed 's/default: return .ask/default: return .answer/' "$SOURCE" > "$WORK/Sabotaged.swift"
+cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage changed nothing"; exit 1; }
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
+echo "sabotage: clipboard-read left out of the facts"
+sed 's/lines.append("clipboard-read=\\(clipboardRead ?? "ask")")/_ = clipboardRead/' "$SOURCE" > "$WORK/Sabotaged.swift"
+cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage changed nothing"; exit 1; }
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
 echo "sabotage: blinking said the other way"
 sed 's/"blink=\\(blink ? 1 : 0)"/"blink=\\(blink ? 0 : 1)"/' "$SOURCE" > "$WORK/Sabotaged.swift"
 cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage changed nothing"; exit 1; }

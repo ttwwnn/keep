@@ -81,7 +81,8 @@ enum KeeperProtocol {
     /// with when it has none: `key=value`, colours as six hex digits.
     static func facts(
         foreground: [UInt8]?, background: [UInt8]?, cursor: [UInt8]?, palette: [[UInt8]],
-        dark: Bool, cell: (width: UInt32, height: UInt32)?, version: String?, device: String
+        dark: Bool, cell: (width: UInt32, height: UInt32)?, version: String?, device: String,
+        clipboardRead: String? = nil
     ) -> [String] {
         var lines: [String] = []
         if let foreground, let hex = hex(foreground) { lines.append("foreground=\(hex)") }
@@ -95,7 +96,42 @@ enum KeeperProtocol {
         if let cell, cell.width > 0, cell.height > 0 { lines.append("cell=\(cell.width),\(cell.height)") }
         if let version, !version.isEmpty { lines.append("xtversion=ghostty \(version)") }
         lines.append("da=\(device)")
+        // Unset is libghostty's default: ask.
+        lines.append("clipboard-read=\(clipboardRead ?? "ask")")
         return lines
+    }
+
+    /// How a kept pane's program asking for the clipboard (OSC 52) is
+    /// answered, as a surface's is: with the pasteboard, after asking the
+    /// person, or — `deny` — not at all.
+    enum ClipboardRead: Equatable { case answer, ask, refuse }
+
+    static func clipboardRead(policy: String?) -> ClipboardRead {
+        switch policy {
+        case "allow": return .answer
+        case "deny": return .refuse
+        default: return .ask
+        }
+    }
+
+    /// Whether a client's directory was left behind by an app that is gone:
+    /// its attach file names the app (`app=`) and no such process runs.
+    /// Never one of this app's own, nor one written by a Keep that names no
+    /// app, which may well be running still.
+    static func isOrphan(attachFile: String, me: Int32, alive: (Int32) -> Bool) -> Bool {
+        let named = attachFile.split(separator: "\n").dropFirst(3).compactMap { line -> Int32? in
+            guard line.hasPrefix("app=") else { return nil }
+            return Int32(line.dropFirst(4).trimmingCharacters(in: .whitespaces))
+        }
+        guard let app = named.first, app > 0 else { return false }
+        return app != me && !alive(app)
+    }
+
+    /// Whether what a kept pane's program put on the clipboard is put on
+    /// the pasteboard, as a surface would: unless `clipboard-write` says
+    /// deny (a surface asked to ask writes it, as this app's always has).
+    static func relaysClipboardWrite(policy: String?) -> Bool {
+        policy != "deny"
     }
 
     static func hex(_ rgb: [UInt8]) -> String? {

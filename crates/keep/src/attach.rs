@@ -110,6 +110,31 @@ pub fn attach(
 ) -> Result<Outcome> {
     let (cols, rows) = terminal::size().unwrap_or((80, 24));
 
+    // The keyboard protocol the terminal we run in is speaking, and which of
+    // its screens it is on, as followed from what we write to it; see
+    // `KittyFlags`.
+    let kitty = Arc::new(AtomicU8::new(0));
+    let alternate = Arc::new(AtomicBool::new(false));
+
+    // A client that may keep its tab once the surface goes (`keeper`): the
+    // surface going away hangs up this terminal, which kills its processes —
+    // this one among them, which is not done. From the start, and in raw
+    // mode from the start, where a ctrl-c is a byte for the program rather
+    // than a signal for this: taking a pane over can take a while, and the
+    // surface can go, or be typed into, meanwhile. Raw mode may not be had
+    // on a terminal already gone, which is no reason to drop the pane.
+    #[cfg(unix)]
+    let dir = std::env::current_dir().unwrap_or_default();
+    #[cfg(unix)]
+    let keeping = options.mirror.is_some() && crate::keeper::is_attach_dir(&dir);
+    #[cfg(unix)]
+    let mut early_raw = None;
+    #[cfg(unix)]
+    if keeping {
+        unsafe { libc::signal(libc::SIGHUP, libc::SIG_IGN) };
+        early_raw = RawGuard::enter(Arc::clone(&alternate)).ok();
+    }
+
     // A tab kept by the client of the surface before this one: it hands over
     // the terminal as it stands and its own connection to the daemon, so
     // that nothing the tab wrote meanwhile is missed or written twice. A
@@ -120,12 +145,18 @@ pub fn attach(
         None => (cols, rows),
     };
     #[cfg(unix)]
-    let handed = options.take.as_deref().and_then(|dir| match crate::keeper::take(dir, cols, rows) {
-        Ok(handed) => Some(handed),
-        Err(error) => {
-            crate::keeper::note(format_args!("could not take over {}: {error}", dir.display()));
-            None
+    let handed = options.take.as_deref().and_then(|from| {
+        let taken = match crate::keeper::take(from, cols, rows) {
+            Ok(handed) => Some(handed),
+            Err(error) => {
+                crate::keeper::note(format_args!("could not take over {}: {error}", from.display()));
+                None
+            }
+        };
+        if keeping {
+            crate::keeper::tried_to_take(&dir, taken.is_some());
         }
+        taken
     });
     #[cfg(not(unix))]
     let handed: Option<(Stream, Vec<u8>)> = None;
@@ -141,15 +172,10 @@ pub fn attach(
     // The terminal the surface shows, followed byte for byte, and the pipe
     // the input thread says on when the surface has gone; see `keeper`.
     #[cfg(unix)]
-    let dir = std::env::current_dir().unwrap_or_default();
-    #[cfg(unix)]
-    let mut mirror = crate::keeper::Mirror::new(cols, rows, &options, &dir);
+    let mut mirror = if keeping { crate::keeper::Mirror::new(cols, rows, &options, &dir) } else { None };
     #[cfg(unix)]
     let (wake_read, wake_write) = match mirror {
         Some(_) => {
-            // The surface going away hangs up this terminal, which kills
-            // its processes — this one among them, which is not done.
-            unsafe { libc::signal(libc::SIGHUP, libc::SIG_IGN) };
             let mut ends = [-1; 2];
             if unsafe { libc::pipe(ends.as_mut_ptr()) } == 0 { (ends[0], ends[1]) } else { (-1, -1) }
         }
@@ -161,11 +187,13 @@ pub fn attach(
     #[cfg(unix)]
     let scheme = Arc::new(crate::keeper::Scheme::default());
 
-    // The keyboard protocol the terminal we run in is speaking, and which of
-    // its screens it is on, as followed from what we write to it; see
-    // `KittyFlags`.
-    let kitty = Arc::new(AtomicU8::new(0));
-    let alternate = Arc::new(AtomicBool::new(false));
+    #[cfg(unix)]
+    let _raw = match early_raw.take() {
+        Some(raw) => Some(raw),
+        None if keeping => RawGuard::enter(Arc::clone(&alternate)).ok(),
+        None => Some(RawGuard::enter(Arc::clone(&alternate))?),
+    };
+    #[cfg(not(unix))]
     let _raw = RawGuard::enter(Arc::clone(&alternate))?;
 
     let detached = Arc::new(AtomicBool::new(false));
@@ -305,11 +333,20 @@ pub fn attach(
 
     // Whether the surface has been asked its scheme since it was made, and
     // whether it was on screen when last looked at: each time it goes out of
-    // sight, it is asked again (`keeper::Scheme`).
+    // sight, it is asked again (`keeper::Scheme`). Asked only between two of
+    // the program's sequences, as the mirror says where the surface is in
+    // the stream: a question written into the middle of one would break it
+    // on the surface, and nowhere else.
     #[cfg(unix)]
     let mut asked_scheme = false;
     #[cfg(unix)]
+    let mut to_ask = false;
+    #[cfg(unix)]
     let mut was_showing = true;
+    // Whether the surface is on screen, as its file last said: read at most
+    // ten times a second, not once per frame of output.
+    #[cfg(unix)]
+    let mut showing_now = (true, std::time::Instant::now() - Duration::from_secs(1));
 
     // What a keeper handed over is the whole screen, written first.
     if let Some(screen) = handed_screen.as_deref() {
@@ -327,7 +364,7 @@ pub fn attach(
         }
         #[cfg(unix)]
         if !hung_up && mirror.is_some() {
-            let _ = out.write_all(scheme.ask()).and_then(|_| out.flush());
+            to_ask = true;
             asked_scheme = true;
         }
         #[cfg(not(unix))]
@@ -340,7 +377,11 @@ pub fn attach(
             if hung_up {
                 break Outcome::Ended;
             }
-            if mirror.is_some() {
+            if let Some(mirror) = mirror.as_ref() {
+                if to_ask && mirror.terminal.at_ground() {
+                    to_ask = false;
+                    let _ = out.write_all(scheme.ask()).and_then(|_| out.flush());
+                }
                 let (ready, woke) = crate::keeper::wait(sock.as_raw_fd(), wake_read, 1000);
                 if woke && !ready {
                     hung_up = true;
@@ -348,9 +389,17 @@ pub fn attach(
                 }
                 // The surface going out of sight is the moment before it may
                 // be let go of: what it says of dark and light, asked now.
-                let showing = watching_now.as_ref().map(|p| is_showing(p)).unwrap_or(true);
+                if showing_now.1.elapsed() >= Duration::from_millis(100) {
+                    let showing = watching_now.as_ref().map(|p| is_showing(p)).unwrap_or(true);
+                    showing_now = (showing, std::time::Instant::now());
+                }
+                let showing = showing_now.0;
                 if was_showing && !showing && asked_scheme {
-                    let _ = out.write_all(scheme.ask()).and_then(|_| out.flush());
+                    to_ask = true;
+                    if mirror.terminal.at_ground() {
+                        to_ask = false;
+                        let _ = out.write_all(scheme.ask()).and_then(|_| out.flush());
+                    }
                 }
                 was_showing = showing;
                 if !ready {
@@ -420,9 +469,15 @@ pub fn attach(
         // Once the first screen is there, the surface is asked what it says
         // of dark and light.
         #[cfg(unix)]
-        if !asked_scheme && mirror.is_some() {
-            let _ = out.write_all(scheme.ask()).and_then(|_| out.flush());
-            asked_scheme = true;
+        if let Some(mirror) = mirror.as_ref() {
+            if !asked_scheme {
+                asked_scheme = true;
+                to_ask = true;
+            }
+            if to_ask && mirror.terminal.at_ground() {
+                to_ask = false;
+                let _ = out.write_all(scheme.ask()).and_then(|_| out.flush());
+            }
         }
     };
     drop(out);
@@ -432,7 +487,9 @@ pub fn attach(
     #[cfg(unix)]
     if hung_up {
         if let Some(mirror) = mirror {
-            if dir.join(crate::keeper::FLAG).exists() {
+            let flagged = dir.join(crate::keeper::FLAG).exists();
+            crate::keeper::note(format_args!("surface gone; asked to keep: {flagged}"));
+            if flagged {
                 resize_stop.store(true, Ordering::Release);
                 let _ = resizer.join();
                 crate::keeper::keep(crate::keeper::Kept {

@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use keep_proto::{ClientMsg, ServerMsg};
-use keep_vt::{Device, Facts, Keyboard, Terminal};
+use keep_vt::{ClipboardAnswer, ClipboardReader, Device, Facts, Keyboard, Terminal};
 
 use crate::attach::KittyFlags;
 
@@ -50,6 +50,27 @@ pub const KEPT: &str = "kept";
 /// The mirror holds what a handover cannot carry (an image), and the app had
 /// better not let go of the surface.
 pub const UNKEEPABLE: &str = "unkeepable";
+/// Written by a client asked to take a pane over, once it has tried: until
+/// then the pane is the old keeper's, and its surface is not to be let go of.
+pub const TOOK: &str = "took";
+/// A kept program reading the clipboard: the request the keeper leaves for
+/// the app, and the answer the app leaves for the keeper.
+pub const CLIPBOARD_REQUEST: &str = "clipboard-request";
+pub const CLIPBOARD_ANSWER: &str = "clipboard-answer";
+/// The app's own files beside the client.
+const SHOWING: &str = "showing";
+const ATTACH_FILE: &str = ".keep-attach";
+/// How much of a sequence cut off at the end of a write the mirror keeps,
+/// to hand over: an image's chunk, a clipboard's text.
+const CONTINUATION_LIMIT: usize = 1 << 20;
+
+/// Whether a directory is one the app made for a surface's client — inside
+/// one named `keep-attach` — rather than wherever somebody ran `keep` with an
+/// attach file lying about. Only there does a client keep its tab, and only
+/// there does it ever remove anything.
+pub fn is_attach_dir(dir: &Path) -> bool {
+    dir.parent().and_then(|p| p.file_name()).map(|n| n == "keep-attach").unwrap_or(false)
+}
 
 /// A line for the tests' record of what a client did (`KEEP_CLIENT_LOG`
 /// names the file); nothing at all otherwise. Never the terminal: that is
@@ -111,7 +132,8 @@ pub struct Mirror {
     pub terminal: Terminal,
     size: (u16, u16),
     images: bool,
-    /// The last bytes fed, for an image's introducer split between two writes.
+    /// What a write ended with that may be the start of an image: the
+    /// introducer, or a command whose action is still to come.
     tail: Vec<u8>,
     dir: PathBuf,
     options: Options,
@@ -120,8 +142,14 @@ pub struct Mirror {
 impl Mirror {
     pub fn new(cols: u16, rows: u16, options: &Options, dir: &Path) -> Option<Self> {
         let scrollback = options.mirror?;
+        if !is_attach_dir(dir) {
+            return None;
+        }
         let mut terminal = Terminal::new(cols.max(1), rows.max(1)).ok()?.with_default_cursor_unset();
         terminal.set_scrollback_limit(scrollback).ok()?;
+        // A handover can fall between two writes that split a sequence; the
+        // start of it is handed over too (`Terminal::continuation`).
+        terminal.track_continuation(CONTINUATION_LIMIT).ok()?;
         // The modes the surface starts with that this library does not.
         if options.grapheme {
             terminal.write(b"\x1b[?2027h");
@@ -153,15 +181,16 @@ impl Mirror {
         // An image (the Kitty graphics protocol, the only one the surface
         // draws) is something a handover cannot carry: once one has been
         // seen, the app is told not to let go of this surface.
-        if !self.images {
-            let mut seen = std::mem::take(&mut self.tail);
-            seen.extend_from_slice(&bytes[..bytes.len().min(2)]);
-            if contains_image(&seen) || contains_image(bytes) {
-                self.images = true;
-                let _ = std::fs::write(self.dir.join(UNKEEPABLE), "images\n");
-            }
-            self.tail = bytes[bytes.len().saturating_sub(2)..].to_vec();
+        if !self.images && places_image(&mut self.tail, bytes) {
+            self.images = true;
+            let _ = std::fs::write(self.dir.join(UNKEEPABLE), "images\n");
         }
+    }
+
+    /// Whether the mirror stands between two sequences, or knows how the one
+    /// it is in the middle of began: a handover now loses nothing.
+    pub fn can_hand_over(&self) -> bool {
+        self.terminal.continuation().is_some()
     }
 
     #[cfg(test)]
@@ -178,9 +207,49 @@ impl Mirror {
     }
 }
 
-/// Whether the bytes begin a Kitty graphics command: APC `G`.
-fn contains_image(bytes: &[u8]) -> bool {
-    bytes.windows(3).any(|w| w == b"\x1b_G")
+/// Whether `bytes`, after what `carried` kept of the write before, hold a
+/// Kitty graphics command (APC `G`) that leaves an image in the terminal:
+/// any but a query (`a=q`, how a program finds out the protocol is spoken
+/// at all) and a delete (`a=d`). A command whose action the write cut off,
+/// or whose introducer it split, is carried to the next.
+fn places_image(carried: &mut Vec<u8>, bytes: &[u8]) -> bool {
+    let mut data = std::mem::take(carried);
+    data.extend_from_slice(bytes);
+    let mut at = 0;
+    while let Some(found) = data[at..].windows(3).position(|w| w == b"\x1b_G") {
+        let start = at + found + 3;
+        // The control data runs to the payload (`;`) or to the end (ESC).
+        match data[start..].iter().position(|&b| b == b';' || b == 0x1b) {
+            Some(end) => {
+                if image_action(&data[start..start + end]) {
+                    return true;
+                }
+                at = start + end;
+            }
+            // Control data that long is no command this knows: an image,
+            // to be safe.
+            None if data.len() - start > 256 => return true,
+            None => {
+                *carried = data[at + found..].to_vec();
+                return false;
+            }
+        }
+    }
+    // An introducer the write may have split: ESC, or ESC _.
+    let keep = if data.ends_with(b"\x1b_") { 2 } else if data.ends_with(b"\x1b") { 1 } else { 0 };
+    *carried = data[data.len() - keep..].to_vec();
+    false
+}
+
+/// Whether a graphics command's control data (`a=T,f=100,…`) puts an image
+/// in the terminal: transmit (the default), display, frames, animation.
+fn image_action(control: &[u8]) -> bool {
+    let action = control
+        .split(|&b| b == b',')
+        .find_map(|pair| pair.strip_prefix(b"a="))
+        .and_then(|value| value.first().copied())
+        .unwrap_or(b't');
+    !matches!(action, b'q' | b'd')
 }
 
 /// Dark or light, as the surface itself answers CSI ? 996 n.
@@ -315,6 +384,54 @@ fn hex(value: &str) -> Option<[u8; 3]> {
     Some([byte(0)?, byte(2)?, byte(4)?])
 }
 
+/// One `key=value` line of the facts, as the app wrote it.
+fn fact(dir: &Path, key: &str) -> Option<String> {
+    let body = std::fs::read_to_string(dir.join(FACTS)).ok()?;
+    body.lines().find_map(|line| line.strip_prefix(key)?.strip_prefix('=').map(str::to_string))
+}
+
+/// Who answers the kept program reading the clipboard (OSC 52): the app,
+/// which reads the pasteboard as for a surface — asking the person first
+/// where `clipboard-read` says to — and leaves the answer here. The program
+/// waits for it, as it would for a surface's. Where the config denies it,
+/// nobody is asked and the question goes unanswered, as a surface leaves it.
+fn clipboard_reader(dir: PathBuf, app: Option<i32>) -> ClipboardReader {
+    let mut asked: u64 = 0;
+    Box::new(move || {
+        if fact(&dir, "clipboard-read").as_deref() == Some("deny") {
+            return ClipboardAnswer::Nothing;
+        }
+        asked += 1;
+        let id = format!("{}-{asked}", std::process::id());
+        let _ = std::fs::remove_file(dir.join(CLIPBOARD_ANSWER));
+        publish(&dir, CLIPBOARD_REQUEST, format!("{id}\n").as_bytes());
+        note(format_args!("asked the app for the clipboard: {id}"));
+        let deadline = Instant::now() + Duration::from_secs(300);
+        let mine = format!("{id}\n");
+        while Instant::now() < deadline {
+            if let Ok(body) = std::fs::read(dir.join(CLIPBOARD_ANSWER)) {
+                if let Some(text) = body.strip_prefix(mine.as_bytes()) {
+                    let _ = std::fs::remove_file(dir.join(CLIPBOARD_ANSWER));
+                    return ClipboardAnswer::Text(text.to_vec());
+                }
+            }
+            // Nobody left to answer: as the person saying no.
+            if !dir.join(FLAG).exists() || app.map(|pid| !alive(pid)).unwrap_or(false) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        ClipboardAnswer::Text(Vec::new())
+    })
+}
+
+/// Stand in for the surface: answer as the facts say it would, and read the
+/// clipboard through the app.
+fn stand_in(mirror: &mut Mirror, facts: Facts, dir: &Path, app: Option<i32>) {
+    let _ = mirror.terminal.act_as_terminal(facts);
+    let _ = mirror.terminal.read_clipboard_with(clipboard_reader(dir.to_path_buf(), app));
+}
+
 /// Write a file the app reads, whole or not at all.
 fn publish(dir: &Path, name: &str, body: &[u8]) {
     let staging = dir.join(format!(".{name}.{}", std::process::id()));
@@ -325,14 +442,30 @@ fn publish(dir: &Path, name: &str, body: &[u8]) {
 
 /// Ask a kept tab's keeper for it: the terminal as it stands, at this grid,
 /// and the connection to the daemon it was kept through.
+///
+/// A keeper that cannot be had is told to go — its flag taken away, which it
+/// sees within a quarter of a second — rather than left answering the
+/// program alongside this client, which then attaches the ordinary way.
 pub fn take(dir: &Path, cols: u16, rows: u16) -> io::Result<(UnixStream, Vec<u8>)> {
-    // By name, from inside the directory: a socket's path has to fit in a
-    // hundred-odd bytes, and the app's temporary directory alone takes half.
-    let here = std::env::current_dir()?;
-    std::env::set_current_dir(dir)?;
-    let connected = UnixStream::connect(SOCKET);
-    std::env::set_current_dir(&here)?;
-    let mut conn = connected?;
+    let taken = try_take(dir, cols, rows);
+    if taken.is_err() {
+        let _ = std::fs::remove_file(dir.join(FLAG));
+    }
+    taken
+}
+
+fn try_take(dir: &Path, cols: u16, rows: u16) -> io::Result<(UnixStream, Vec<u8>)> {
+    // The app may have let go of the surface a moment ago, its client still
+    // on its way to keeping and not yet listening: worth waiting for while
+    // the app still says it means the pane to be kept.
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut conn = loop {
+        match connect_in(dir) {
+            Ok(conn) => break conn,
+            Err(error) if Instant::now() >= deadline || !dir.join(FLAG).exists() => return Err(error),
+            Err(_) => std::thread::sleep(Duration::from_millis(25)),
+        }
+    };
     conn.set_read_timeout(Some(Duration::from_secs(20)))?;
     let mut hello = HELLO.to_vec();
     hello.extend_from_slice(&cols.to_be_bytes());
@@ -353,6 +486,24 @@ pub fn take(dir: &Path, cols: u16, rows: u16) -> io::Result<(UnixStream, Vec<u8>
     Ok((daemon, snapshot))
 }
 
+/// The keeper's socket, by name, from inside its directory: a socket's path
+/// has to fit in a hundred-odd bytes, and the app's temporary directory
+/// alone takes half.
+fn connect_in(dir: &Path) -> io::Result<UnixStream> {
+    let here = std::env::current_dir()?;
+    std::env::set_current_dir(dir)?;
+    let connected = UnixStream::connect(SOCKET);
+    std::env::set_current_dir(&here)?;
+    connected
+}
+
+/// Say, beside this client, that it has tried to take its pane over: the
+/// app lets go of the surface only after, the pane being the old keeper's
+/// until then.
+pub fn tried_to_take(dir: &Path, taken: bool) {
+    publish(dir, TOOK, if taken { b"1\n" } else { b"0\n" });
+}
+
 /// Everything a keeper needs from the client it was.
 pub struct Kept {
     pub daemon: UnixStream,
@@ -364,21 +515,48 @@ pub struct Kept {
     pub dark: Option<bool>,
 }
 
-/// The facts the app wrote, with dark or light as the surface said it.
-fn facts_for(dir: &Path, dark: Option<bool>) -> Facts {
-    let mut facts = read_facts(dir);
-    if dark.is_some() {
-        facts.dark = dark;
+/// Dark or light, as the surface would say it: what it said last, until the
+/// app says otherwise — the app writes the facts again when the window
+/// changes appearance, which the surface would have heard of too.
+struct Shade {
+    heard: Option<bool>,
+    told: Option<bool>,
+}
+
+impl Shade {
+    fn now(&self) -> Option<bool> {
+        self.heard.or(self.told)
     }
-    facts
+
+    /// The facts the app wrote, with dark or light as the surface would say it.
+    fn facts(&mut self, dir: &Path) -> Facts {
+        let mut facts = read_facts(dir);
+        if facts.dark != self.told {
+            // A change since the surface was heard: the app's word now.
+            if self.told.is_some() {
+                self.heard = None;
+            }
+            self.told = facts.dark;
+        }
+        facts.dark = self.now();
+        facts
+    }
 }
 
 /// Carry on without a surface, until one comes for the tab or the app lets
 /// it go. Never returns.
 pub fn keep(kept: Kept) -> ! {
     let Kept { mut daemon, mut mirror, mut flags, dir, app, dark } = kept;
+    // The terminal this client wrote to is gone. Its end, held on to, keeps
+    // the pseudo-terminal from being freed, and there are only so many.
+    if let Ok(null) = std::fs::OpenOptions::new().read(true).write(true).open("/dev/null") {
+        for fd in 0..3 {
+            unsafe { libc::dup2(null.as_raw_fd(), fd) };
+        }
+    }
+    let mut shade = Shade { heard: dark, told: read_facts(&dir).dark };
     let mut facts_seen = modified(&dir.join(FACTS));
-    let _ = mirror.terminal.act_as_terminal(facts_for(&dir, dark));
+    stand_in(&mut mirror, shade.facts(&dir), &dir, app);
     // Nobody is looking: the app hid the surface before letting it go, and
     // its last word to the daemon said so. Said again, in case it did not.
     let _ = ClientMsg::Resize { cols: 0, rows: 0 }.write(&mut daemon);
@@ -390,16 +568,23 @@ pub fn keep(kept: Kept) -> ! {
             UnixListener::bind(SOCKET).ok()
         }
     };
-    if let Some(listener) = listener.as_ref() {
-        let _ = listener.set_nonblocking(true);
-    }
+    // A keeper nobody can reach is a pane nobody gets back: the surface that
+    // comes for it attaches afresh, and two answering the program is one
+    // too many.
+    let Some(listener) = listener else { leave(&dir) };
+    let _ = listener.set_nonblocking(true);
     publish(&dir, KEPT, format!("{}\n", std::process::id()).as_bytes());
-    note(format_args!("keeping {} at {}x{}, dark {:?}", dir.display(), mirror.size.0, mirror.size.1, dark));
+    note(format_args!("keeping {} at {}x{}, dark {:?}", dir.display(), mirror.size.0, mirror.size.1, shade.now()));
     let mut background = mirror.terminal.background_colour();
     let mut checked = Instant::now();
+    // A client come for the pane while the mirror was in the middle of a
+    // sequence it cannot say the start of: handed over between two, or
+    // after a while whatever the mirror is in the middle of.
+    let mut waiting: Option<(UnixStream, u16, u16, Instant)> = None;
 
     loop {
-        let ready = readable(daemon.as_raw_fd(), listener.as_ref().map(|l| l.as_raw_fd()), 250);
+        let listening = if waiting.is_none() { Some(listener.as_raw_fd()) } else { None };
+        let ready = readable(daemon.as_raw_fd(), listening, 250);
         if ready.0 {
             match ServerMsg::read(&mut daemon) {
                 Ok(Some(ServerMsg::Output(data))) => {
@@ -443,23 +628,29 @@ pub fn keep(kept: Kept) -> ! {
             }
         }
         if ready.1 {
-            if let Some(listener) = listener.as_ref() {
-                if let Ok((conn, _)) = listener.accept() {
-                    let keyboard = Keyboard { main: flags.pushed(false), alternate: flags.pushed(true) };
-                    match hand_over(conn, &daemon, &mut mirror, &keyboard) {
-                        Ok(()) => leave(&dir),
-                        // The terminal was read for the handover, which on
-                        // the alternate screen means leaving it: made again
-                        // from what was to be handed over.
-                        Err(Failed(Some(snapshot))) => {
-                            if let Some(mut again) = mirror.remade(&snapshot) {
-                                let _ = again.terminal.act_as_terminal(facts_for(&dir, dark));
-                                mirror = again;
-                            }
-                        }
-                        Err(Failed(None)) => {}
-                    }
+            if let Ok((conn, _)) = listener.accept() {
+                if let Some((conn, cols, rows)) = greet(conn) {
+                    waiting = Some((conn, cols, rows, Instant::now()));
                 }
+            }
+        }
+        if let Some((conn, cols, rows, since)) = waiting.take() {
+            if mirror.can_hand_over() || since.elapsed() >= Duration::from_secs(2) {
+                let keyboard = Keyboard { main: flags.pushed(false), alternate: flags.pushed(true) };
+                match hand_over(conn, cols, rows, &daemon, &mut mirror, &keyboard) {
+                    Ok(()) => leave(&dir),
+                    // The terminal was read for the handover, which leaves it
+                    // changed: made again from what was to be handed over.
+                    Err(Failed(Some(snapshot))) => {
+                        if let Some(mut again) = mirror.remade(&snapshot) {
+                            stand_in(&mut again, shade.facts(&dir), &dir, app);
+                            mirror = again;
+                        }
+                    }
+                    Err(Failed(None)) => {}
+                }
+            } else {
+                waiting = Some((conn, cols, rows, since));
             }
         }
         if checked.elapsed() >= Duration::from_millis(250) {
@@ -470,7 +661,17 @@ pub fn keep(kept: Kept) -> ! {
             let seen = modified(&dir.join(FACTS));
             if seen != facts_seen {
                 facts_seen = seen;
-                let _ = mirror.terminal.act_as_terminal(facts_for(&dir, dark));
+                let before = shade.now();
+                let facts = shade.facts(&dir);
+                // As a surface told of a new scheme tells a program that
+                // asked to be told (mode 2031).
+                if let Some(dark) = shade.now().filter(|&d| Some(d) != before) {
+                    if mirror.terminal.dec_mode(2031) {
+                        let report = format!("\x1b[?997;{}n", if dark { 1 } else { 2 });
+                        let _ = ClientMsg::write_input(&mut daemon, report.as_bytes());
+                    }
+                }
+                let _ = mirror.terminal.act_as_terminal(facts);
             }
         }
     }
@@ -478,18 +679,23 @@ pub fn keep(kept: Kept) -> ! {
 
 struct Failed(Option<Vec<u8>>);
 
-/// Give the tab to the client that asked: the whole terminal, fitted to its
-/// grid, and the connection to the daemon, unread past the last frame read
-/// here.
-fn hand_over(mut conn: UnixStream, daemon: &UnixStream, mirror: &mut Mirror, keyboard: &Keyboard) -> Result<(), Failed> {
+/// The grid a client come for the pane asks for, as its first words say.
+fn greet(mut conn: UnixStream) -> Option<(UnixStream, u16, u16)> {
     let _ = conn.set_nonblocking(false);
     let _ = conn.set_read_timeout(Some(Duration::from_secs(5)));
     let mut hello = [0u8; 8];
     if conn.read_exact(&mut hello).is_err() || &hello[..4] != HELLO {
-        return Err(Failed(None));
+        return None;
     }
-    let cols = u16::from_be_bytes([hello[4], hello[5]]);
-    let rows = u16::from_be_bytes([hello[6], hello[7]]);
+    Some((conn, u16::from_be_bytes([hello[4], hello[5]]), u16::from_be_bytes([hello[6], hello[7]])))
+}
+
+/// Give the tab to the client that asked: the whole terminal, fitted to its
+/// grid, and the connection to the daemon, unread past the last frame read
+/// here.
+fn hand_over(
+    mut conn: UnixStream, cols: u16, rows: u16, daemon: &UnixStream, mirror: &mut Mirror, keyboard: &Keyboard,
+) -> Result<(), Failed> {
     let before = mirror.size;
     mirror.follow((cols, rows));
     let snapshot = mirror.terminal.handover(Some(keyboard));
@@ -508,12 +714,23 @@ fn hand_over(mut conn: UnixStream, daemon: &UnixStream, mirror: &mut Mirror, key
     Ok(())
 }
 
-/// Stop keeping: the socket and the directory go with this process.
+/// Stop keeping: the socket and the directory go with this process — the
+/// files the app and the client put there, then the directory if that
+/// leaves it empty, and nothing else.
 fn leave(dir: &Path) -> ! {
     note(format_args!("leaving {}", dir.display()));
-    let _ = std::fs::remove_file(SOCKET);
-    let _ = std::fs::remove_dir_all(dir);
+    clear_out(dir);
     std::process::exit(0)
+}
+
+fn clear_out(dir: &Path) {
+    for name in [
+        SOCKET, FLAG, FACTS, TITLE, PWD, CLIPBOARD, BACKGROUND, KEPT, UNKEEPABLE, TOOK, CLIPBOARD_REQUEST,
+        CLIPBOARD_ANSWER, SHOWING, ATTACH_FILE,
+    ] {
+        let _ = std::fs::remove_file(dir.join(name));
+    }
+    let _ = std::fs::remove_dir(dir);
 }
 
 fn modified(path: &Path) -> Option<SystemTime> {
@@ -646,13 +863,40 @@ mod tests {
         assert_eq!(parse_facts("da=62;22/1;10;0/00ab01ff\n").device.unwrap().tertiary, Some(0x00ab01ff));
     }
 
-    /// An image, even one whose introducer two writes split, is told to the
-    /// app: a handover cannot carry it.
+    /// A directory as the app makes one for a client, in a directory of the
+    /// test's own, taken away with `done_with`.
+    fn attach_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir()
+            .join(format!("keep-keeper-test-{}-{name}", std::process::id()))
+            .join("keep-attach")
+            .join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn done_with(dir: &Path) {
+        if let Some(base) = dir.parent().and_then(Path::parent) {
+            std::fs::remove_dir_all(base).ok();
+        }
+    }
+
+    /// An image, even one whose introducer or whose action two writes split,
+    /// is told to the app: a handover cannot carry it. A program asking
+    /// whether images are spoken at all, or deleting one, leaves none.
     #[test]
     fn an_image_marks_the_surface_as_not_to_be_let_go_of() {
-        for chunks in [&[&b"text \x1b_Ga=T;AAAA\x1b\\"[..]][..], &[&b"text \x1b"[..], &b"_Ga=T;AAAA\x1b\\"[..]][..]] {
-            let dir = std::env::temp_dir().join(format!("keep-image-{}-{}", std::process::id(), chunks.len()));
-            std::fs::create_dir_all(&dir).unwrap();
+        let cases: [(&[&[u8]], bool); 8] = [
+            (&[b"text \x1b_Ga=T;AAAA\x1b\\"], true),
+            (&[b"text \x1b", b"_Ga=T;AAAA\x1b\\"], true),
+            (&[b"text \x1b_", b"Gf=100;AAAA\x1b\\"], true),
+            (&[b"text \x1b_Gi=31,s=1,v=1,", b"a=p,f=24;AAAA\x1b\\"], true),
+            (&[b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\"], false),
+            (&[b"\x1b_Gi=31,a=", b"q;AAAA\x1b\\"], false),
+            (&[b"\x1b_Ga=d,d=A\x1b\\ more"], false),
+            (&[b"\x1b_Ga=q;\x1b\\then \x1b_Ga=t;AAAA\x1b\\"], true),
+        ];
+        for (n, (chunks, image)) in cases.iter().enumerate() {
+            let dir = attach_dir(&format!("image-{n}"));
             let options = Options { mirror: Some(1_000_000), ..Options::default() };
             let mut mirror = Mirror::new(20, 5, &options, &dir).unwrap();
             mirror.feed(b"before");
@@ -660,10 +904,62 @@ mod tests {
             for chunk in chunks.iter() {
                 mirror.feed(chunk);
             }
-            assert!(mirror.holds_images(), "{} write(s)", chunks.len());
-            assert!(dir.join(UNKEEPABLE).exists());
-            std::fs::remove_dir_all(&dir).ok();
+            let what = chunks.iter().map(|c| String::from_utf8_lossy(c).into_owned()).collect::<Vec<_>>();
+            assert_eq!(mirror.holds_images(), *image, "{what:?}");
+            assert_eq!(dir.join(UNKEEPABLE).exists(), *image, "{what:?}");
+            done_with(&dir);
         }
+    }
+
+    /// A mirror, and so a keeper, only where the app put the client: a
+    /// directory of its own inside `keep-attach`.
+    #[test]
+    fn a_client_keeps_only_in_a_directory_the_app_made() {
+        let options = Options { mirror: Some(1_000_000), ..Options::default() };
+        let mine = attach_dir("mine");
+        assert!(Mirror::new(20, 5, &options, &mine).is_some());
+        done_with(&mine);
+        let elsewhere = std::env::temp_dir().join(format!("keep-not-attach-{}", std::process::id()));
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        assert!(Mirror::new(20, 5, &options, &elsewhere).is_none());
+        assert!(!is_attach_dir(Path::new("/home/somebody/repo")));
+        assert!(is_attach_dir(Path::new("/var/folders/x/T/keep-attach/0E2B")));
+        std::fs::remove_dir_all(&elsewhere).ok();
+    }
+
+    /// Leaving takes the files the app and the client put there, and the
+    /// directory if nothing else is in it: never anything else.
+    #[test]
+    fn leaving_removes_only_what_keeping_put_there() {
+        let dir = attach_dir("leave");
+        for name in [FLAG, FACTS, TITLE, KEPT, SHOWING, ATTACH_FILE] {
+            std::fs::write(dir.join(name), "x").unwrap();
+        }
+        std::fs::write(dir.join("somebody's"), "precious").unwrap();
+        clear_out(&dir);
+        assert!(dir.join("somebody's").exists(), "a file not of keeping");
+        assert!(!dir.join(FLAG).exists() && !dir.join(ATTACH_FILE).exists());
+        std::fs::remove_file(dir.join("somebody's")).unwrap();
+        clear_out(&dir);
+        assert!(!dir.exists(), "an empty directory goes");
+        done_with(&dir);
+    }
+
+    /// Dark or light: as the surface said, until the app writes another
+    /// scheme into the facts; then the app's.
+    #[test]
+    fn the_scheme_heard_gives_way_to_the_apps_once_it_changes() {
+        let dir = attach_dir("shade");
+        std::fs::write(dir.join(FACTS), "scheme=dark\n").unwrap();
+        let mut shade = Shade { heard: Some(false), told: read_facts(&dir).dark };
+        assert_eq!(shade.facts(&dir).dark, Some(false), "the surface's word");
+        std::fs::write(dir.join(FACTS), "scheme=dark\nbackground=000000\n").unwrap();
+        assert_eq!(shade.facts(&dir).dark, Some(false), "a change of colour alone");
+        std::fs::write(dir.join(FACTS), "scheme=light\n").unwrap();
+        assert_eq!(shade.facts(&dir).dark, Some(false), "now light");
+        std::fs::write(dir.join(FACTS), "scheme=dark\n").unwrap();
+        assert_eq!(shade.facts(&dir).dark, Some(true), "and dark again, as the app says");
+        done_with(&dir);
     }
 
     /// The surface's word on dark and light is heard; the answers to the

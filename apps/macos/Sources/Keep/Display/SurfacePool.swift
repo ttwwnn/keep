@@ -68,7 +68,13 @@ final class SurfacePool {
         let surface = TerminalSurfaceView(workspace: workspace, tab: tab)
         surface.translatesAutoresizingMaskIntoConstraints = false
         if let sleeper = asleep.removeValue(forKey: key) {
-            sleeper.watch?.stop()
+            // Its keeper is heard until it has handed the pane over: what its
+            // program puts on the clipboard, or asks of it, meanwhile is
+            // still the app's to carry. It goes with its directory, which it
+            // takes with it; a minute is long past any handover.
+            if let watch = sleeper.watch {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 60) { watch.stop() }
+            }
             // Woken from hibernation: the shell says where it is only at its
             // next prompt, and the screen handed over does not say it at all.
             if let directory = sleeper.directory {
@@ -124,7 +130,8 @@ final class SurfacePool {
     ///
     /// The caller takes the surface out of its layout: this only lets go.
     func hibernate(
-        window: WindowID, workspace: String, tab: UInt32, onTitle: @escaping (String) -> Void
+        window: WindowID, workspace: String, tab: UInt32, shownIn host: NSWindow? = nil,
+        onTitle: @escaping (String) -> Void
     ) {
         let key = Key(window: window, workspace: workspace, tab: tab)
         guard let surface = surfaces[key] else { return }
@@ -145,6 +152,7 @@ final class SurfacePool {
         if let keeper {
             sleeper.watch = KeeperWatch(
                 directory: keeper,
+                window: host,
                 onTitle: onTitle,
                 onDirectory: { [weak self] raw in
                     let path = raw.hasPrefix("file://") ? (URL(string: raw)?.path ?? raw) : raw

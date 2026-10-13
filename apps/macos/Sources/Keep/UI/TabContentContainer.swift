@@ -408,8 +408,16 @@ final class TabHostView: NSView {
     /// the keyboard itself.
     var holdsUnsavedState: Bool {
         if surfaces.values.contains(where: \.holdsUnsavedState) { return true }
+        if isTakingOver { return true }
         guard let responder = window?.firstResponder else { return false }
         return surfaces.values.contains { $0 === responder }
+    }
+
+    /// Whether a pane of this tab is still being taken over from the client
+    /// that kept it (`TerminalSurfaceView.isTakingOver`): the tab is not
+    /// let go of again until it has been.
+    var isTakingOver: Bool {
+        surfaces.values.contains(where: \.isTakingOver)
     }
 
     /// Let go of every surface of the tab, and with them their renderers.
@@ -428,7 +436,7 @@ final class TabHostView: NSView {
             // Its program still renames itself, kept by its client: told up
             // with this tab's identity, as the surface's own titles are.
             SurfacePool.shared.hibernate(
-                window: windowID, workspace: id.workspace, tab: pane,
+                window: windowID, workspace: id.workspace, tab: pane, shownIn: window,
                 onTitle: { [weak self] title in
                     guard let self else { return }
                     self.onPaneTitle?(self.id, pane, title)

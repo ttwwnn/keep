@@ -13,8 +13,10 @@ final class Hibernation {
     private let containers = NSHashTable<TabContentContainer>.weakObjects()
     private var clock: UInt64 = 0
     private var pending: DispatchWorkItem?
+    private var retry: DispatchWorkItem?
     private var timer: Timer?
     private var backgroundObserver: NSObjectProtocol?
+    private var appearanceObserver: NSKeyValueObservation?
 
     private init() {}
 
@@ -30,6 +32,14 @@ final class Hibernation {
             MainActor.assumeIsolated {
                 Hibernation.tellSchemeToSleepers()
                 self?.refreshFacts()
+            }
+        }
+        // Light or dark, as the windows turn: a surface is told it
+        // (`applyColorScheme`), and so is a kept pane's client, through the
+        // facts — whether or not the theme's colours change with it.
+        appearanceObserver = NSApp.observe(\.effectiveAppearance) { [weak self] _, _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.refreshFacts() }
             }
         }
     }
@@ -74,6 +84,17 @@ final class Hibernation {
             }
         }
         let chosen = HibernationPolicy.sleepers(candidates, limit: limit)
+        // A tab whose client is still taking a pane over is asked about
+        // again once it will have: in a few seconds, not the quarter of a
+        // minute the timer would take.
+        if live.contains(where: { $0.hosts.values.contains(where: \.isTakingOver) }) {
+            retry?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated { self?.settle() }
+            }
+            retry = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
+        }
         guard !chosen.isEmpty else { return }
         for index in chosen {
             hydrated[index].container.hibernate(hydrated[index].id)

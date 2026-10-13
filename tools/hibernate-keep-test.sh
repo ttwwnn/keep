@@ -19,7 +19,9 @@
 #     grid the zoom gives, and so does its shell;
 #   - ⌘P to a hibernated tab;
 #   - a tab on screen in another window is never let go of;
-#   - full screen: tabs are let go of and come back at the full-screen grid.
+#   - full screen: tabs are let go of and come back at the full-screen grid;
+#   - what a Keep that is gone left beside its clients is swept at launch,
+#     and nothing of a Keep still running.
 #
 # Seven tabs, three kept (KEEP_HYDRATED_LIMIT=3). Each runs a stand-in for
 # Claude Code (tools/hibernate-keep-test/program.py), told what to do through
@@ -303,7 +305,28 @@ if [ -n "$SABOTAGE" ]; then
     codesign --force --sign - "$APP/Contents/Resources/keep" >/dev/null 2>&1
     codesign --force --deep --sign - "$APP" >/dev/null 2>&1
 fi
+# Clients' directories as three Keeps left them: one that is gone, one that
+# runs (this script, as far as the sweep can tell), one too old to say.
+ORPHANS=${TMPDIR:-/tmp}
+ORPHANS=${ORPHANS%/}/keep-attach
+mkdir -p "$ORPHANS"
+sleep 0 &
+GONE=$!
+wait "$GONE"
+for kind in gone alive unnamed; do mkdir -p "$ORPHANS/hk-$kind-$$"; done
+printf 'x\n1\n/dev/null\nmirror=1\napp=%s\n' "$GONE" >"$ORPHANS/hk-gone-$$/.keep-attach"
+printf 'x\n1\n/dev/null\nmirror=1\napp=%s\n' "$$" >"$ORPHANS/hk-alive-$$/.keep-attach"
+printf 'x\n1\n/dev/null\n' >"$ORPHANS/hk-unnamed-$$/.keep-attach"
+
 launch KEEP_HYDRATED_LIMIT=$LIMIT
+
+say ""
+say "what a Keep that is gone left behind"
+check "a client's directory whose app is gone is swept at launch" "no" \
+    "$([ -d "$ORPHANS/hk-gone-$$" ] && echo yes || echo no)"
+check "not one whose app runs, nor one that names none" "yes yes" \
+    "$([ -d "$ORPHANS/hk-alive-$$" ] && echo yes || echo no) $([ -d "$ORPHANS/hk-unnamed-$$" ] && echo yes || echo no)"
+rm -rf "$ORPHANS/hk-gone-$$" "$ORPHANS/hk-alive-$$" "$ORPHANS/hk-unnamed-$$"
 
 # --- the history, and a program's questions, through hibernation -------------
 

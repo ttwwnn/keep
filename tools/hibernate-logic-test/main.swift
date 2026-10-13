@@ -94,14 +94,18 @@ let facts = KeeperProtocol.facts(
 lines("the facts a kept pane answers with",
       facts.filter { !$0.hasPrefix("palette=") },
       ["foreground=ffffff", "background=282c34", "cursor=ffffff", "scheme=light", "cell=16,34",
-       "xtversion=ghostty 1.3.2-HEAD-+a53771a", "da=62;22;52/1;10;0"])
+       "xtversion=ghostty 1.3.2-HEAD-+a53771a", "da=62;22;52/1;10;0", "clipboard-read=ask"])
 lines("the palette, all 256, in order",
       facts.filter { $0.hasPrefix("palette=") }.map { String($0.prefix(29)) },
       ["palette=000000,010000,020000,"])
 lines("a cursor with a colour of its own keeps it; dark is said",
       KeeperProtocol.facts(foreground: [1, 2, 3], background: nil, cursor: [9, 9, 9], palette: [],
                            dark: true, cell: nil, version: nil, device: "d"),
-      ["foreground=010203", "cursor=090909", "scheme=dark", "da=d"])
+      ["foreground=010203", "cursor=090909", "scheme=dark", "da=d", "clipboard-read=ask"])
+lines("clipboard-read as the config says it",
+      KeeperProtocol.facts(foreground: nil, background: nil, cursor: nil, palette: [],
+                           dark: true, cell: nil, version: nil, device: "d", clipboardRead: "deny"),
+      ["scheme=dark", "da=d", "clipboard-read=deny"])
 lines("a palette short of a colour is no palette: the client keeps its own",
       KeeperProtocol.facts(foreground: nil, background: nil, cursor: nil, palette: Array(palette.dropLast()),
                            dark: false, cell: nil, version: nil, device: "d").filter { $0.hasPrefix("palette=") },
@@ -115,5 +119,30 @@ func colour(_ name: String, _ text: String, _ want: [UInt8]?) {
 }
 colour("a background the client wrote", "010203\n", [1, 2, 3])
 colour("not a colour", "01020", nil)
+
+// What is swept at launch, and what is put on the pasteboard.
+func yes(_ name: String, _ got: Bool, _ want: Bool) {
+    if got == want { print("ok   \(name)") } else {
+        failures += 1
+        print("FAIL \(name): got \(got), wanted \(want)")
+    }
+}
+let attach = "work\n3\n/tmp/keep-attach/X/showing\nmirror=10000000\ngrapheme=1\nblink=1\napp=4242\n"
+yes("a directory left by an app that is gone is swept",
+    KeeperProtocol.isOrphan(attachFile: attach, me: 1, alive: { _ in false }), true)
+yes("not one whose app runs", KeeperProtocol.isOrphan(attachFile: attach, me: 1, alive: { $0 == 4242 }), false)
+yes("nor this app's own", KeeperProtocol.isOrphan(attachFile: attach, me: 4242, alive: { _ in false }), false)
+yes("nor one that names no app: an older Keep, perhaps running",
+    KeeperProtocol.isOrphan(attachFile: "work\n3\n/tmp/showing\n", me: 1, alive: { _ in false }), false)
+yes("app= on the first three lines is not the app",
+    KeeperProtocol.isOrphan(attachFile: "app=9\n3\n/tmp/showing\n", me: 1, alive: { _ in false }), false)
+yes("a program's clipboard write goes to the pasteboard", KeeperProtocol.relaysClipboardWrite(policy: "allow"), true)
+yes("as with a surface asked to ask", KeeperProtocol.relaysClipboardWrite(policy: "ask"), true)
+yes("and not when clipboard-write says deny", KeeperProtocol.relaysClipboardWrite(policy: "deny"), false)
+yes("a program reading the clipboard is answered where clipboard-read allows",
+    KeeperProtocol.clipboardRead(policy: "allow") == .answer, true)
+yes("refused where it denies", KeeperProtocol.clipboardRead(policy: "deny") == .refuse, true)
+yes("and the person asked where it asks, or says nothing (libghostty's default)",
+    KeeperProtocol.clipboardRead(policy: "ask") == .ask && KeeperProtocol.clipboardRead(policy: nil) == .ask, true)
 
 exit(failures == 0 ? 0 : 1)

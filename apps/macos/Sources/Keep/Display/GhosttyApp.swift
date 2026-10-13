@@ -74,6 +74,16 @@ final class GhosttyApp {
     /// starts the same way, for a program asking.
     private(set) var cursorBlinks = true
 
+    /// `clipboard-write`: whether a program may put text on the clipboard
+    /// (OSC 52). libghostty refuses for a surface; a kept pane's client
+    /// relays it to the app, which refuses the same way (`KeeperWatch`).
+    private(set) var clipboardWritePolicy: String?
+
+    /// `clipboard-read`: whether a program may read the clipboard (OSC 52),
+    /// and whether the person is asked first. A kept pane's client asks
+    /// the app, which answers as for a surface (`KeeperWatch`).
+    private(set) var clipboardReadPolicy: String?
+
     /// libghostty's version, as XTVERSION reports it after "ghostty ".
     static let version: String? = {
         let info = ghostty_info()
@@ -524,9 +534,13 @@ final class GhosttyApp {
     }
 
     private static func graphemeWidthMethod(of config: ghostty_config_t?) -> String? {
+        enumValue("grapheme-width-method", of: config)
+    }
+
+    /// An option whose value is one of a few words, as the config has it.
+    private static func enumValue(_ key: String, of config: ghostty_config_t?) -> String? {
         guard let config else { return nil }
         var value: UnsafePointer<CChar>?
-        let key = "grapheme-width-method"
         let found = key.withCString { ghostty_config_get(config, &value, $0, UInt(key.utf8.count)) }
         guard found, let value else { return nil }
         return String(cString: value)
@@ -588,6 +602,8 @@ final class GhosttyApp {
         scrollbackLimit = Self.scrollbackLimit(of: config) ?? scrollbackLimit
         clustersGraphemes = Self.graphemeWidthMethod(of: config).map { $0 != "legacy" } ?? true
         cursorBlinks = Self.cursorStyleBlink(of: config) ?? true
+        clipboardWritePolicy = Self.enumValue("clipboard-write", of: config)
+        clipboardReadPolicy = Self.enumValue("clipboard-read", of: config)
         themeColours = Self.themeColours(of: config)
         Trace.log("config", "scrollback \(scrollbackLimit) bytes, graphemes \(clustersGraphemes ? "clustered" : "legacy")")
         let font = Self.fontSettings()
@@ -756,8 +772,12 @@ final class GhosttyApp {
                 // a tab.
                 let wholeApp = target.tag == GHOSTTY_TARGET_APP
                 let theme = GhosttyApp.themeColours(of: config)
+                let clipboardWrite = GhosttyApp.enumValue("clipboard-write", of: config)
+                let clipboardRead = GhosttyApp.enumValue("clipboard-read", of: config)
                 DispatchQueue.main.async {
                     GhosttyApp.shared.themeColours = theme
+                    GhosttyApp.shared.clipboardWritePolicy = clipboardWrite
+                    GhosttyApp.shared.clipboardReadPolicy = clipboardRead
                     GhosttyApp.shared.adopt(background: color, opacity: opacity, blur: blur)
                     if wholeApp { GhosttyApp.shared.settleFont() }
                 }

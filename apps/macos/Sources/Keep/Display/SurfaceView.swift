@@ -1626,6 +1626,21 @@ final class TerminalSurfaceView: NSView {
         return false
     }
 
+    /// Whether this surface's client was asked to take its pane over from
+    /// the one that kept it and has not yet said it tried (`Keeper.took`):
+    /// until it has, the pane is the old keeper's, and letting go of this
+    /// surface would leave nobody to hand it to. A client gives up within
+    /// half a minute; one silent for a whole minute is not coming.
+    var isTakingOver: Bool {
+        guard takeOver != nil, let directory = clientDirectory,
+              Date().timeIntervalSince(madeAt) < 60
+        else { return false }
+        return !FileManager.default.fileExists(atPath: directory.appendingPathComponent(Keeper.took).path)
+    }
+
+    /// When this view was made, its client started with it.
+    private let madeAt = Date()
+
     /// The private directory this surface's client runs in.
     var clientDirectory: URL? {
         watchFile?.deletingLastPathComponent()
@@ -1888,8 +1903,10 @@ final class TerminalSurfaceView: NSView {
         }
     }
 
-    /// Ask before pasting something that would run itself.
-    func confirmPaste(_ text: String, state: UnsafeMutableRawPointer?) {
+    /// The question asked before the clipboard goes to the program: a paste
+    /// that would run itself, or a program reading the clipboard where the
+    /// config says to ask — here, and for a kept pane (`KeeperWatch`).
+    static func pasteQuestion(_ text: String) -> NSAlert {
         let alert = NSAlert()
         alert.messageText = "Paste this?"
         alert.informativeText = "What you are pasting has line breaks in it, "
@@ -1898,6 +1915,12 @@ final class TerminalSurfaceView: NSView {
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Paste")
         alert.addButton(withTitle: "Cancel")
+        return alert
+    }
+
+    /// Ask before pasting something that would run itself.
+    func confirmPaste(_ text: String, state: UnsafeMutableRawPointer?) {
+        let alert = Self.pasteQuestion(text)
         // A sheet on this surface's own window: the question is about this
         // terminal, and the other window has no business being frozen by it.
         // The answer is allowed to arrive later — this is already a turn of

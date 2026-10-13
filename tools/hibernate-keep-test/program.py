@@ -43,13 +43,18 @@ def write(data):
 
 
 def ask(query):
+    """The answer to one question: whatever comes within two seconds, and
+    once something has, until a few tenths of a second go by with nothing
+    more. A terminal busy elsewhere answers late, and an answer read as the
+    next question's puts every answer after it in the wrong place."""
     write(query)
     got = b""
-    end = time.time() + 0.5
+    end = time.time() + 2.0
     while time.time() < end:
         ready, _, _ = select.select([0], [], [], 0.05)
         if ready:
             got += os.read(0, 4096)
+            end = min(end, time.time() + 0.3)
     return got
 
 
