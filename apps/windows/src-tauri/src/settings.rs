@@ -70,14 +70,14 @@ pub fn take_warning() -> Option<String> {
     WARNING.lock().ok().and_then(|mut said| said.take())
 }
 
-/// "há 12 min", "há 3 h", "há 2 dias": how long ago a copy was taken.
+/// "12 min atrás", "3 h atrás", "2 dias atrás": how long ago a copy was taken.
 pub fn age_text(age: Duration) -> String {
     let minutes = age.as_secs() / 60;
     match minutes {
-        0 => "agora há pouco".into(),
-        1..=59 => format!("há {minutes} min"),
-        60..=1439 => format!("há {} h", minutes / 60),
-        _ => format!("há {} dias", minutes / 1440),
+        0 => "menos de 1 min atrás".into(),
+        1..=59 => format!("{minutes} min atrás"),
+        60..=1439 => format!("{} h atrás", minutes / 60),
+        _ => format!("{} dias atrás", minutes / 1440),
     }
 }
 
@@ -166,7 +166,7 @@ fn recover(path: &Path, bad: &[u8], now: SystemTime) -> (Option<serde_json::Valu
             .ok()
             .and_then(|t| now.duration_since(t).ok())
             .map(age_text)
-            .unwrap_or_else(|| "de antes".into());
+            .unwrap_or_else(|| "antes".into());
         let said = format!(
             "O arquivo de estado do Keep estava ilegível. Voltei à cópia de {age}; o arquivo com problema ficou em {shown}."
         );
@@ -474,7 +474,7 @@ mod tests {
         assert_eq!(parse(&std::fs::read(&path).unwrap()).unwrap(), json!({"order": ["a"]}), "put back as the state");
         assert_eq!(std::fs::read(unreadable_path(&path)).unwrap(), b"{\"order\": [\"b\"", "the bad one is kept");
         let said = said.expect("the person is told");
-        assert!(said.contains("ilegível") && said.contains("cópia de há 15 min") && said.contains("state.json.ilegivel"), "{said}");
+        assert!(said.contains("ilegível") && said.contains("cópia de 15 min atrás") && said.contains("state.json.ilegivel"), "{said}");
         // Read again, it is the good one now: nothing more to say.
         assert_eq!(read_state(&path, at(36), &[]), Found { state: Some(json!({"order": ["a"]})), said: None, unread: false });
         std::fs::remove_dir_all(&dir).unwrap();
@@ -541,11 +541,11 @@ mod tests {
     #[test]
     fn how_old_a_copy_is_said_in_words() {
         let s = Duration::from_secs;
-        assert_eq!(age_text(s(20)), "agora há pouco");
-        assert_eq!(age_text(s(60)), "há 1 min");
-        assert_eq!(age_text(s(59 * 60)), "há 59 min");
-        assert_eq!(age_text(s(3 * 3600 + 5)), "há 3 h");
-        assert_eq!(age_text(s(2 * 86_400)), "há 2 dias");
+        assert_eq!(age_text(s(20)), "menos de 1 min atrás");
+        assert_eq!(age_text(s(60)), "1 min atrás");
+        assert_eq!(age_text(s(59 * 60)), "59 min atrás");
+        assert_eq!(age_text(s(3 * 3600 + 5)), "3 h atrás");
+        assert_eq!(age_text(s(2 * 86_400)), "2 dias atrás");
     }
 
     #[test]
