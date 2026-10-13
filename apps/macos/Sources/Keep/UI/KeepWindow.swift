@@ -256,7 +256,7 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
         // Larger than the system's small control draws it, and moving with the zoom.
         let setGlyph = {
             button.image = button.image?.withSymbolConfiguration(NSImage.SymbolConfiguration(
-                pointSize: 15 * GhosttyApp.shared.zoomLevel, weight: .regular))
+                pointSize: 15 * GhosttyApp.shared.iconScale, weight: .regular))
         }
         setGlyph()
         sidebarToggleZoomObserver = NotificationCenter.default.addObserver(

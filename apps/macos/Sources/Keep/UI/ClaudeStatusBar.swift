@@ -13,7 +13,7 @@ final class ClaudeStatusBar: NSView {
     /// Tall enough for its text at the terminal's zoom.
     static var height: CGFloat { (ClaudeStatusBar.fontSize + 13).rounded() }
     /// The size and face of a tab's name in the sidebar, zoom included.
-    static var fontSize: CGFloat { 12.5 * CGFloat(GhosttyApp.shared.zoomLevel) }
+    static var fontSize: CGFloat { 12.5 * CGFloat(GhosttyApp.shared.textScale) }
 
     /// A level was picked from the effort menu (`low` … `max`).
     var onEffort: ((String) -> Void)?

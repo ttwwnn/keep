@@ -152,8 +152,20 @@ enum ActivityMonitor {
 }
 
 extension GhosttyApp {
-    /// The face and size of a tab's name in the sidebar (12.5 points at the
-    /// terminal's zoom), which the footers under the list write in as well, so
-    /// everything in the sidebar's column reads as one text.
-    var tabNameFont: NSFont { terminalFont(size: 12.5 * zoomLevel) }
+    /// The face and size of a tab's name in the sidebar (12.5 points, a quarter
+    /// up and at the terminal's zoom), which the footers under the list write
+    /// in as well, so everything in the sidebar's column reads as one text.
+    var tabNameFont: NSFont { terminalFont(size: 12.5 * textScale) }
+
+    /// The chrome's text is set a quarter above the size it was drawn at: at
+    /// 100% it was too small to read (asked for 13/10/2026: "como ficam em 125%").
+    static let textBoost = 1.25
+
+    /// What the chrome's text is multiplied by: the zoom, and the boost.
+    var textScale: Double { zoomLevel * Self.textBoost }
+
+    /// What the chrome's icons are multiplied by: the zoom, held at 130% so
+    /// that the zoom control's percentage still fits its capsule. The icons
+    /// are as drawn at 100% (they were right there) and follow the zoom.
+    var iconScale: Double { min(zoomLevel, 1.3) }
 }
