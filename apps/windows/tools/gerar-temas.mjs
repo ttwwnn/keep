@@ -6,9 +6,9 @@
 //   node tools/gerar-temas.mjs                  # clones the repository (its ghostty folder only)
 //   node tools/gerar-temas.mjs --from <clone>   # builds from a clone already at hand
 //
-// Run from apps/windows with Node 22.18 or later, which runs the TypeScript
-// module the app reads the catalogue with. The output is sorted and names the
-// commit it was made from, so the same commit gives the same file.
+// Needs Node 22.18 or later, which runs the TypeScript module the app reads
+// the catalogue with. The output is sorted and names the commit it was made
+// from, so the same commit gives the same file.
 
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
