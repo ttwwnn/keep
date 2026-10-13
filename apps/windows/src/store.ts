@@ -22,6 +22,14 @@ import {
   type ClaudeActivity,
   type ClaudeMode,
 } from "./claude";
+import {
+  claudeStatus,
+  codexStatus,
+  ENTER_DELAY_MS,
+  parseStatusFile,
+  sameStatus,
+  type AiStatus,
+} from "./aiStatus";
 import { baseName, isPathTitle, rootTabs, type RootTab } from "./layout";
 import { defaultState, normalizeState, tabKey, type GuiState, type RestoreWorkspace } from "./state";
 import { TerminalManager, viewKey, type TermView } from "./terminals";
@@ -51,6 +59,8 @@ export const gui = signal<GuiState>(defaultState());
 export const activities = signal<ReadonlyMap<string, ClaudeActivity>>(new Map());
 /** The mode each Claude Code pane declares, by pane; `null` is manual. */
 export const modes = signal<ReadonlyMap<string, ClaudeMode | null>>(new Map());
+/** What the bar under each Claude Code or Codex pane shows, by pane; a pane with none has no bar. */
+export const statuses = signal<ReadonlyMap<string, AiStatus>>(new Map());
 /** When each pane began waiting on you, in seconds: what its badge breathes from. */
 export const waitingSince = signal<ReadonlyMap<string, number>>(new Map());
 
@@ -405,6 +415,7 @@ function guessSize(): { cols: number; rows: number } {
 function readScreens(): void {
   const nextActivities = new Map<string, ClaudeActivity>();
   const nextModes = new Map<string, ClaudeMode | null>();
+  const forBar: BarInput[] = [];
   const previousActivities = activities.value;
   const previousModes = modes.value;
   for (const w of workspaces.value) {
@@ -419,6 +430,7 @@ function readScreens(): void {
         const a = text ? readCodexActivity(text) : undefined;
         const kept = a ?? previousActivities.get(key);
         if (kept) nextActivities.set(key, kept);
+        forBar.push({ key, program: "codex", shellPid: pane.shellPid, screen: text, activity: kept });
         continue;
       }
       // Undefined is "cannot tell": what was known stands.
@@ -428,8 +440,10 @@ function readScreens(): void {
       const a = text ? readActivity(text) : undefined;
       const kept = a ?? previousActivities.get(key);
       if (kept) nextActivities.set(key, kept);
+      forBar.push({ key, program: "claude", shellPid: pane.shellPid, screen: text, activity: kept });
     }
   }
+  void readBars(forBar);
   const since = new Map<string, number>();
   const seconds = Date.now() / 1000;
   for (const [key, activity] of nextActivities) {
@@ -443,6 +457,70 @@ function readScreens(): void {
     if (!same(nextModes, previousModes)) modes.value = nextModes;
     if (!same(since, waitingSince.value)) waitingSince.value = since;
   });
+}
+
+/** What the bar under a pane is built from: its screen, its turn, and the shell whose status file speaks for it. */
+interface BarInput {
+  key: string;
+  program: "claude" | "codex";
+  shellPid: number;
+  screen: string;
+  activity: ClaudeActivity | undefined;
+}
+
+let readingBars = false;
+
+/**
+ * Build the bar of each pane running Claude Code or Codex. Claude Code's model
+ * and effort are in the file its status line saved for the pane's shell (one
+ * question to the app for all of them); Codex's are on its screen.
+ */
+async function readBars(inputs: BarInput[]): Promise<void> {
+  if (readingBars) return;
+  readingBars = true;
+  try {
+    const shells = inputs.filter((i) => i.program === "claude" && i.shellPid > 0).map((i) => i.shellPid);
+    let files: Record<string, string> = {};
+    if (shells.length > 0) {
+      try {
+        files = await api.claudeStatuses(shells);
+      } catch {
+        return; // cannot read now: the bars stand as they are
+      }
+    }
+    const previous = statuses.value;
+    const next = new Map<string, AiStatus>();
+    for (const input of inputs) {
+      let status: AiStatus | null;
+      if (input.program === "claude") {
+        const text = files[String(input.shellPid)];
+        status = claudeStatus(text ? parseStatusFile(text) : null, input.screen, input.activity);
+      } else {
+        const before = previous.get(input.key);
+        const kept = before?.program === "codex" ? { model: before.modelId, effort: before.effort } : null;
+        status = codexStatus(input.screen, input.activity, kept);
+      }
+      if (status) next.set(input.key, status);
+    }
+    const same = next.size === previous.size && [...next].every(([k, v]) => sameStatus(previous.get(k), v));
+    if (!same) statuses.value = next;
+  } finally {
+    readingBars = false;
+  }
+}
+
+/** Type a command into a pane's prompt and send it: the bar's clicks. */
+export async function runCommand(workspace: string, pane: number, command: string): Promise<void> {
+  const view = terminals.existing(workspace, pane);
+  if (!view) return;
+  try {
+    await view.type(command);
+    await new Promise((resolve) => setTimeout(resolve, ENTER_DELAY_MS));
+    await view.type("\r");
+    view.focus();
+  } catch {
+    // The tab is not attached just now; nothing was sent that matters.
+  }
 }
 
 // ------------------------------------------------------------------ actions

@@ -921,11 +921,69 @@ button {
   height: 1px;
 }
 
-.pane {
-  position: relative;
+/* A pane and, under it, the bar of a Claude Code or Codex conversation.
+   The terminal takes what the bar leaves, so a pane without one is as before. */
+.pane-column {
+  display: flex;
+  flex-direction: column;
   width: 100%;
   height: 100%;
+}
+
+.pane {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
   overflow: hidden;
+}
+
+/* The bar: the model and the effort (click to change), the agents. Never
+   smaller than 13px; it keeps up with the zoom and does not fall under it. */
+.ai-status-bar {
+  --bar-text: max(13px, calc(13px * var(--zoom)));
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: max(28px, calc(28px * var(--zoom)));
+  padding: 0 12px;
+  border-top: 1px solid var(--rule);
+  background: var(--ground);
+  color: var(--ink-resting);
+  font-family: var(--mono);
+  font-size: var(--bar-text);
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.ai-chip {
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  transition: background-color 150ms var(--ease);
+}
+
+.ai-chip:hover {
+  background: var(--wash);
+}
+
+.ai-dot {
+  color: var(--ink-faint);
+}
+
+.ai-agents {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* In a split, the panes not holding the keyboard step back a little. */

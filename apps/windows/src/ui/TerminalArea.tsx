@@ -21,12 +21,15 @@ import {
   loaded,
   orderedWorkspaces,
   split,
+  statuses,
   tabsByWorkspace,
   terminals,
   activeView,
 } from "../store";
 import { SPLIT_DOWN, SPLIT_RIGHT } from "../api";
 import { imagePasteSequence } from "../keys";
+import { viewKey } from "../terminals";
+import { AiStatusBar } from "./AiStatusBar";
 import { openMenu } from "./common";
 import * as icon from "./icons";
 
@@ -39,39 +42,45 @@ function PaneHost(props: { workspace: string; root: number; pane: number; visibl
   useEffect(() => {
     terminals.existing(workspace, pane)?.setVisible(visible);
   }, [workspace, pane, visible]);
+  // The bar under a Claude Code or Codex conversation takes its height from
+  // the pane only while it has something to say.
+  const status = statuses.value.get(viewKey(workspace, pane));
   return (
-    <div
-      ref={host}
-      class={`pane ${multi && focused ? "focused" : ""}`}
-      data-workspace={workspace}
-      data-pane={pane}
-      onMouseDown={() => focusPane(workspace, root, pane)}
-      onContextMenu={(e) => {
-        const view = terminals.existing(workspace, pane);
-        const selection = view?.term.hasSelection() ?? false;
-        openMenu(e, [
-          { label: "Copiar", hint: "Ctrl+C", disabled: !selection, action: () => void copySelection() },
-          {
-            label: "Colar",
-            hint: "Ctrl+V",
-            action: () => void readText().then((text) => text && view?.paste(text)).catch(() => {}),
-          },
-          {
-            label: "Colar imagem",
-            hint: "Ctrl+Shift+V",
-            action: () => void view?.type(imagePasteSequence(isMac.value)).catch(() => {}),
-          },
-          { label: "Selecionar tudo", action: () => view?.term.selectAll() },
-          { label: "Limpar a tela", action: () => view?.term.clear() },
-          "separator",
-          { label: "Dividir à direita", hint: "Ctrl+Shift+D", action: () => (focusPane(workspace, root, pane), void split(SPLIT_RIGHT)) },
-          { label: "Dividir abaixo", hint: "Ctrl+Shift+E", action: () => (focusPane(workspace, root, pane), void split(SPLIT_DOWN)) },
-          ...(multi
-            ? (["separator", { label: "Fechar este painel…", danger: true, action: () => void closePane(workspace, pane) }] as const)
-            : []),
-        ]);
-      }}
-    />
+    <div class="pane-column">
+      <div
+        ref={host}
+        class={`pane ${multi && focused ? "focused" : ""}`}
+        data-workspace={workspace}
+        data-pane={pane}
+        onMouseDown={() => focusPane(workspace, root, pane)}
+        onContextMenu={(e) => {
+          const view = terminals.existing(workspace, pane);
+          const selection = view?.term.hasSelection() ?? false;
+          openMenu(e, [
+            { label: "Copiar", hint: "Ctrl+C", disabled: !selection, action: () => void copySelection() },
+            {
+              label: "Colar",
+              hint: "Ctrl+V",
+              action: () => void readText().then((text) => text && view?.paste(text)).catch(() => {}),
+            },
+            {
+              label: "Colar imagem",
+              hint: "Ctrl+Shift+V",
+              action: () => void view?.type(imagePasteSequence(isMac.value)).catch(() => {}),
+            },
+            { label: "Selecionar tudo", action: () => view?.term.selectAll() },
+            { label: "Limpar a tela", action: () => view?.term.clear() },
+            "separator",
+            { label: "Dividir à direita", hint: "Ctrl+Shift+D", action: () => (focusPane(workspace, root, pane), void split(SPLIT_RIGHT)) },
+            { label: "Dividir abaixo", hint: "Ctrl+Shift+E", action: () => (focusPane(workspace, root, pane), void split(SPLIT_DOWN)) },
+            ...(multi
+              ? (["separator", { label: "Fechar este painel…", danger: true, action: () => void closePane(workspace, pane) }] as const)
+              : []),
+          ]);
+        }}
+      />
+      {status && <AiStatusBar workspace={workspace} root={root} pane={pane} status={status} />}
+    </div>
   );
 }
 
