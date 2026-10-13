@@ -30,12 +30,13 @@ import {
   stepWorkspace,
   toggleSidebar,
   terminals,
+  workspaces,
   zoom,
   zoomReset,
 } from "./store";
 import type { TermView } from "./terminals";
 import { keysToCut } from "./cut";
-import { quotePaths } from "./text";
+import { dropText, lightPane, paneAt, shellKind } from "./drop";
 
 export function perform(action: Action): void {
   switch (action.kind) {
@@ -276,20 +277,35 @@ export function installInput(): void {
     if (!isFieldTarget(event.target)) event.preventDefault();
   });
 
-  // Files dropped on a terminal arrive as their paths, typed where the
-  // cursor is, as in any terminal.
+  // Files dropped on a terminal arrive as their paths, typed where the cursor
+  // is, as in any terminal, said as the pane's shell reads them. The pane under
+  // the pointer is lit while they are over it: it need not be the one with the
+  // keyboard.
+  let carrying = false;
   void getCurrentWebview()
     .onDragDropEvent((event) => {
-      if (event.payload.type !== "drop" || event.payload.paths.length === 0) return;
-      const ratio = window.devicePixelRatio || 1;
-      const { x, y } = event.payload.position;
-      const under = document.elementFromPoint(x / ratio, y / ratio)?.closest<HTMLElement>(".pane");
+      const payload = event.payload;
+      if (payload.type === "leave") {
+        carrying = false;
+        lightPane(null);
+        return;
+      }
+      if (payload.type === "enter") carrying = payload.paths.length > 0;
+      const under = paneAt(payload.position);
+      if (payload.type !== "drop") {
+        lightPane(carrying ? under : null);
+        return;
+      }
+      carrying = false;
+      lightPane(null);
+      if (payload.paths.length === 0) return;
       const view =
         (under?.dataset.workspace && under.dataset.pane
           ? terminals.existing(under.dataset.workspace, Number(under.dataset.pane))
           : undefined) ?? activeView();
       if (!view) return;
-      view.paste(quotePaths(event.payload.paths) + " ");
+      const command = workspaces.value.find((w) => w.name === view.workspace)?.tabs.find((t) => t.id === view.tab)?.command ?? "";
+      view.paste(dropText(payload.paths, shellKind(command)) + " ");
       view.focus();
     })
     .catch(() => {});
