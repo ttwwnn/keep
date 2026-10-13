@@ -82,8 +82,7 @@ final class ZoomControl: NSView {
     ) {
         button.isBordered = false
         if let symbol {
-            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
-                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold))
+            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
             button.imagePosition = .imageOnly
         } else {
             button.imagePosition = .noImage
@@ -106,6 +105,12 @@ final class ZoomControl: NSView {
     /// each part says it does.
     private func refresh() {
         let app = GhosttyApp.shared
+        // The glyphs and the percentage move with the zoom, in the same capsule.
+        let glyph = NSImage.SymbolConfiguration(pointSize: 11 * app.iconScale, weight: .semibold)
+        for (button, name) in [(smaller, "minus"), (larger, "plus")] {
+            button.image = NSImage(systemSymbolName: name, accessibilityDescription: button.accessibilityLabel())?
+                .withSymbolConfiguration(glyph)
+        }
         let percent = TerminalZoom.percent(app.zoomLevel)
         smaller.isEnabled = app.canZoom(by: -1)
         larger.isEnabled = app.canZoom(by: 1)
@@ -143,7 +148,7 @@ final class ZoomControl: NSView {
         let centred = NSMutableParagraphStyle()
         centred.alignment = .center
         level.attributedTitle = NSAttributedString(string: level.title, attributes: [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11 * GhosttyApp.shared.iconScale, weight: .medium),
             .foregroundColor: ink,
             .paragraphStyle: centred,
         ])

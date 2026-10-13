@@ -266,7 +266,7 @@ final class GhosttyApp {
         }
         // The size found above only decides which file the face is read
         // from. The size itself is libghostty's.
-        let own = configuredFontSize()
+        let own = configuredFontSize() * textBoost
         // And Keep's own choice over theirs, the same way Keep's config file
         // is loaded over theirs. Without this the surfaces would take a face
         // chosen here and everything the app draws terminal text with — the
@@ -978,7 +978,12 @@ final class GhosttyApp {
         // Keep's own settings go in the same file, and it is loaded after
         // the person's config, so what has been chosen here wins and what has
         // not been chosen is not mentioned at all.
-        let chosen = prefs.configLines
+        //
+        // Except the size: 100% is the person's own, a quarter up (asked for
+        // 13/10/2026: the conversation's text was too small), so that is
+        // written first and a size Keep's zoom has chosen comes after it.
+        let base = "font-size = \(String(format: "%g", configuredFontSize() * textBoost))"
+        let chosen = ([base] + prefs.configLines)
             .map { $0 + "\n" }
             .joined()
         let body = """

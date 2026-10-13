@@ -989,7 +989,7 @@ final class TabCellView: NSView {
 
     /// The size a tab's title is written at: twelve points at 100%, and the
     /// zoom's share of that at any other step, as in the sidebar.
-    static var titleFontSize: CGFloat { 12 * GhosttyApp.shared.zoomLevel }
+    static var titleFontSize: CGFloat { 12 * GhosttyApp.shared.textScale }
 
     /// How tall a tab's capsule is: what the titlebar row left it at thirteen
     /// points off each edge, and the same across as the chrome buttons. Kept

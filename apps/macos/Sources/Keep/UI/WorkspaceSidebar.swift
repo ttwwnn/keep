@@ -32,6 +32,8 @@ struct WorkspaceSidebar: View {
     /// The zoom's share, which the names here are written at (see
     /// `TerminalZoom`). Held as state so that a step redraws the rows.
     @State private var titleZoom = GhosttyApp.shared.zoomLevel
+    /// The text follows the zoom a quarter up; the icons, as drawn, only the zoom.
+    private var textZoom: Double { titleZoom * GhosttyApp.textBoost }
     /// The workspace whose lock the pointer is over.
     @State private var hoveredLock: String?
     /// A header's +, which brightens under the pointer. Apart from `hovered`,
@@ -126,7 +128,7 @@ struct WorkspaceSidebar: View {
 
     /// The terminal's own face, for the strings the terminal would also print.
     private var identifier: Font {
-        Font(GhosttyApp.shared.terminalFont(size: 12.5 * titleZoom))
+        Font(GhosttyApp.shared.terminalFont(size: 12.5 * textZoom))
     }
 
     private var counter: Font {
@@ -541,13 +543,13 @@ struct WorkspaceSidebar: View {
                 // when the tab is waiting on you: see `Attention`.
                 if wantsYou {
                     Image(systemName: Attention.symbol)
-                        .font(.system(size: 10 * titleZoom, weight: .semibold))
+                        .font(.system(size: 10 * textZoom, weight: .semibold))
                         .foregroundStyle(Palette.attentionInk)
                 } else if tab.busy {
-                    BusyMark(program: tab.command, font: .system(size: 10 * titleZoom))
+                    BusyMark(program: tab.command, font: .system(size: 10 * textZoom))
                 }
                 Text(tab.title)
-                    .font(.system(size: 12 * titleZoom, weight: wantsYou || chosen ? .semibold : .regular))
+                    .font(.system(size: 12 * textZoom, weight: wantsYou || chosen ? .semibold : .regular))
                     .accessibilityIdentifier("sidebar-title-\(tab.id)")
                     .foregroundStyle(titleInk(for: tab, chosen: chosen, hovered: hoveredHere))
                     .lineLimit(1)
@@ -567,7 +569,7 @@ struct WorkspaceSidebar: View {
                     lines: UsageMonitor.shared.lines)
                 if !program.isEmpty {
                     Text(program)
-                        .font(.system(size: 12 * titleZoom))
+                        .font(.system(size: 12 * textZoom))
                         .foregroundStyle(wantsYou ? Palette.attentionInk.opacity(0.62) : Palette.inkFaint)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
@@ -674,10 +676,10 @@ struct WorkspaceSidebar: View {
         let chosen = tab.isActive && row.isActive
         return HStack(spacing: 6) {
             if tab.busy {
-                BusyMark(program: tab.command, font: .system(size: 10 * titleZoom))
+                BusyMark(program: tab.command, font: .system(size: 10 * textZoom))
             }
             nameField(for: .tab(tab.id), prompt: "The program's title")
-                .font(.system(size: 12 * titleZoom, weight: chosen ? .medium : .regular))
+                .font(.system(size: 12 * textZoom, weight: chosen ? .medium : .regular))
             // The close button's room, as on the row.
             Color.clear.frame(width: 12, height: 1)
         }

@@ -447,7 +447,7 @@ struct UsageFooter: View {
     /// The terminal's zoom, which the footer's text follows as the sidebar's
     /// names do: at 100% it was too small to read, so it also sits a step up.
     @State private var zoom = GhosttyApp.shared.zoomLevel
-    private var scale: CGFloat { CGFloat(zoom) * 1.2 }
+    private var scale: CGFloat { CGFloat(zoom) * 1.2 * CGFloat(GhosttyApp.textBoost) }
     @State private var hoverFold = false
     @State private var hoverMeasure = false
     @State private var hoverArrow: String?

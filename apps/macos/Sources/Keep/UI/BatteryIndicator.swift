@@ -26,14 +26,16 @@ final class BatteryIndicator: NSView {
 
     private static let tipWidth: CGFloat = 1.5
     /// The bolt, left of the cell while it charges, and its gap.
-    private static let boltWidth: CGFloat = 8
+    private static var boltWidth: CGFloat { 8 * GhosttyApp.shared.iconScale }
     private static let boltGap: CGFloat = 3
     /// Room round the figure inside the cell.
-    /// As tall as the red close button of the window (a traffic light is 12 across).
-    private static let height: CGFloat = 12
+    /// As tall as the red close button of the window (a traffic light is 12 across) at 100%, then with the zoom.
+    private static var height: CGFloat { 12 * GhosttyApp.shared.iconScale }
     private static let padding: CGFloat = 2
     /// The zoom control's percentage, face and size exactly.
-    private static var font: NSFont { NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium) }
+    private static var font: NSFont {
+        NSFont.monospacedDigitSystemFont(ofSize: 11 * GhosttyApp.shared.iconScale, weight: .medium)
+    }
 
     init() {
         super.init(frame: .zero)
@@ -223,7 +225,7 @@ final class BatteryIndicator: NSView {
         // A bolt beside the cell while it charges.
         if reading.charging,
            let bolt = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8, weight: .bold))
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8 * GhosttyApp.shared.iconScale, weight: .bold))
         {
             let tinted = NSImage(size: bolt.size, flipped: false) { rect in
                 bolt.draw(in: rect)
