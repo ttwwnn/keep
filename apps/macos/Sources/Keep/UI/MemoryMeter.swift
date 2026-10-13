@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import Darwin
 
 /// The computer's RAM in use, read the way Activity Monitor adds it up:
@@ -92,10 +93,61 @@ struct MemoryMeter: View {
             .frame(height: 16)
             .padding(.horizontal, 17)
             .padding(.bottom, 8)
-            .help("Memória RAM do computador em uso (\(Int(reading.percent.rounded()))%)")
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Memória RAM em uso: \(figures)")
         }
+        // The whole panel is the button, the gap round the bar included.
+        .contentShape(Rectangle())
+        .onTapGesture { ActivityMonitor.showMemory() }
+        .help("Memória RAM do computador em uso (\(Int(reading.percent.rounded()))%). Clique para ver os processos.")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Memória RAM em uso: \(figures)")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { ActivityMonitor.showMemory() }
+    }
+}
+
+/// The system's own Activity Monitor, on its Memory tab: the processes that
+/// are using the computer's RAM, most hungry first.
+enum ActivityMonitor {
+    private static let bundleID = "com.apple.ActivityMonitor"
+    private static let memoryTab = 1
+
+    @MainActor
+    static func showMemory() {
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first
+        // Already on the Memory tab: bring it forward, nothing to restart.
+        if let running, selectedTab() == memoryTab {
+            running.activate()
+            return
+        }
+        // The app reads its tab when it starts, and offers no way to be told
+        // another from outside without Accessibility permission; so the tab is
+        // written to its preferences and an open instance is closed first.
+        CFPreferencesSetAppValue("SelectedTab" as CFString, memoryTab as CFNumber, bundleID as CFString)
+        CFPreferencesAppSynchronize(bundleID as CFString)
+        guard let running else { return launch() }
+        running.terminate()
+        Task { @MainActor in
+            for _ in 0..<40 where !running.isTerminated {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            if running.isTerminated {
+                // It writes its preferences on the way out; the tab is ours again.
+                CFPreferencesSetAppValue("SelectedTab" as CFString, memoryTab as CFNumber, bundleID as CFString)
+                CFPreferencesAppSynchronize(bundleID as CFString)
+            }
+            launch()
+        }
+    }
+
+    private static func selectedTab() -> Int? {
+        CFPreferencesAppSynchronize(bundleID as CFString)
+        return (CFPreferencesCopyAppValue("SelectedTab" as CFString, bundleID as CFString) as? NSNumber)?.intValue
+    }
+
+    @MainActor
+    private static func launch() {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
+        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
     }
 }
 
