@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 
 /// AppKit at the top; SwiftUI only where it earns its keep (the sidebar).
 ///
@@ -13,6 +14,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var claudeModes: ClaudeModeWatcher?
     private var tabAccounts: AITabWatcher?
     private var chores: AIChores?
+    /// Watches the footer's list for what the tabs' names are made of.
+    private var accountList: AnyCancellable?
     private let windowStore = WindowStateStore()
     /// Set the moment quitting becomes certain. On the way out AppKit closes
     /// every window, and each of those is indistinguishable — from here —
@@ -280,6 +283,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         claudeModes.start()
         self.claudeModes = claudeModes
         UsageMonitor.shared.start()
+        // A tab is named by its account's place in the footer's list: when
+        // the order (or the Claude account the order is on) changes, the
+        // sidebar is drawn again.
+        accountList = UsageMonitor.shared.$lines
+            .map { $0.map { "\($0.account.id)|\($0.account.isActive)" } }
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak session] _ in session?.noteAccountListChanged() }
         let tabAccounts = AITabWatcher(session: session)
         tabAccounts.start()
         self.tabAccounts = tabAccounts

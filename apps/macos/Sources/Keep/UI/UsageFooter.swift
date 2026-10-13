@@ -573,7 +573,16 @@ struct UsageFooter: View {
     }
 
     /// "Claude · principal": the service and the order's name for the account.
-    private func title(_ line: AccountUsage) -> String { line.account.name }
+    /// The service: what the row's number does not say. Never the order's
+    /// own names for the accounts ("principal", "reserva"): an account is its
+    /// place in this list (13/10/2026).
+    private func title(_ line: AccountUsage) -> String { line.account.engine.title }
+
+    /// "IA-2 · Claude": what the tabs call the account, for the tooltips.
+    private func numbered(_ line: AccountUsage) -> String {
+        let number = monitor.lines.firstIndex { $0.account.id == line.account.id }.map { $0 + 1 }
+        return number.map { "\(AIChoices.name(number: $0)) · \(title(line))" } ?? title(line)
+    }
 
     /// "2 · Claude · reserva": the same, after its place in the order, which
     /// is what the arrows beside it change. The place is written only when
@@ -740,7 +749,7 @@ struct UsageFooter: View {
                     .layoutPriority(1)
             }
             .frame(height: 16 * scale)
-            .help(([title(line)] + [line.account.email].compactMap { $0 }
+            .help(([numbered(line)] + [line.account.email].compactMap { $0 }
                 + windows.map { "\($0.title): \(UsageText.percent($0.percent))" })
                 .joined(separator: "\n"))
             .accessibilityElement(children: .ignore)
@@ -905,11 +914,9 @@ struct UsageFooter: View {
 
     private func accountHelp(_ line: AccountUsage, now: Date) -> String {
         var lines: [String] = []
+        lines.append(numbered(line))
         if let email = line.account.email { lines.append(email) }
         if let plan = line.account.plan { lines.append("Plano \(plan)") }
-        if line.account.aliases.count > 1 {
-            lines.append("Também chamada: " + line.account.aliases.joined(separator: ", "))
-        }
         if line.account.isUsed(by: selectedAccount) {
             lines.append("Conta usada nesta aba")
         }

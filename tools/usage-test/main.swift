@@ -267,16 +267,18 @@ confere(!ativa.account.isUsed(by: nil) && !gptP.account.isUsed(by: nil), "ponto 
 let fila = [cheia, gptP, ativa, morta]
 let linhasClaude = AIChoices.rows(lines: fila, current: "claude:reserva", program: .claude)
 confere(linhasClaude.map(\.kind) == [.follow, .separator, .account, .account, .account, .account], "menu: seguir, separador, uma linha por conta na ordem")
-confere(linhasClaude.map(\.title) == [AIChoices.followTitle, "", "Claude · cheia · c@x — no limite", "GPT · principal · g@x",
-                                        "Claude · principal · p@x", "Claude · reserva · r@x — login recusado: entre de novo"],
-        "menu: títulos, com 'no limite' ou o aviso", "\(linhasClaude.map(\.title))")
+confere(linhasClaude.map(\.title) == [AIChoices.followTitle, "", "IA-1 · c@x — no limite", "IA-2 · g@x",
+                                        "IA-3 · p@x", "IA-4 · r@x — login recusado: entre de novo"],
+        "menu: títulos pela posição na lista, com 'no limite' ou o aviso", "\(linhasClaude.map(\.title))")
 confere(linhasClaude.map(\.mark) == [.none, .none, .none, .none, .none, .on], "menu: ✓ na conta da aba", "\(linhasClaude.map(\.mark))")
 confere(linhasClaude.allSatisfy { $0.kind == .separator || $0.enabled }, "menu: tudo habilitado para o Claude")
 confere(linhasClaude.map(\.key) == [AIHelper.followOrder, nil, "claude:cheia", "gpt:principal", "claude:principal", "claude:reserva"],
         "menu: seguir a ordem pede claude:ordem, mesmo com a 1ª disponível no GPT (o núcleo resolve)", "\(linhasClaude.map(\.key))")
-confere(linhasClaude.first?.help == "Agora: GPT · principal", "menu: ajuda do seguir diz a conta de agora", "\(String(describing: linhasClaude.first?.help))")
-confere(linhasClaude.map(\.label) == ["a ordem de prioridade", "", "Claude · cheia", "GPT · principal", "Claude · principal", "Claude · reserva"],
-        "menu: cada escolha tem o nome curto com que é dita depois", "\(linhasClaude.map(\.label))")
+confere(linhasClaude.first?.help == "Agora: IA-2", "menu: ajuda do seguir diz a conta de agora pela posição", "\(String(describing: linhasClaude.first?.help))")
+confere(linhasClaude.map(\.label) == ["a ordem de prioridade", "", "IA-1", "IA-2", "IA-3", "IA-4"],
+        "menu: cada escolha é dita pela posição na lista", "\(linhasClaude.map(\.label))")
+confere(!linhasClaude.contains { $0.title.contains("principal") || $0.title.contains("reserva") || $0.title.contains("Claude ·") },
+        "menu: nenhum apelido nem nome de IA nos títulos")
 let pelaAssinatura = AIChoices.rows(lines: fila, current: "claude:assinaturas", program: .claude)
 confere(pelaAssinatura[4].mark == .on, "menu: ✓ por qualquer apelido da conta")
 let seguindo = AIChoices.rows(lines: fila, current: AIHelper.followOrder, program: .claude)
@@ -301,13 +303,19 @@ let concha = AIChoices.rows(lines: fila, current: nil, program: .shell)
 confere(concha.allSatisfy { $0.kind == .separator || $0.enabled } && concha.allSatisfy { $0.mark == .none }, "concha: tudo habilitado, nada marcado")
 confere(AIChoices.rows(lines: [], current: nil, program: .claude).map(\.kind) == [.follow], "sem contas: só seguir a ordem")
 let perto = linha(conta(.claude, "reserva", email: "r@x"), [("5h", 6), ("7d", 96)])
-confere(!AIChoices.title(perto).contains("no limite"), "menu: conta perto do limite não diz 'no limite'", AIChoices.title(perto))
-confere(AIChoices.programLabel(command: "claude", account: "claude:reserva") == "claude · reserva", "lateral: claude · <apelido> quando fixa")
-confere(AIChoices.programLabel(command: "claude", account: "claude:ordem") == "claude", "lateral: seguindo a ordem, como hoje")
-confere(AIChoices.programLabel(command: "codex", account: "claude:ordem") == "codex", "lateral: Codex seguindo a ordem, o programa")
-confere(AIChoices.programLabel(command: "codex", account: "gpt:trabalho") == "codex · trabalho", "lateral: codex · <apelido> fora do principal")
-confere(AIChoices.programLabel(command: "codex", account: "gpt:principal") == "codex", "lateral: codex no principal, como hoje")
-confere(AIChoices.programLabel(command: "zsh", account: nil) == "zsh", "lateral: sem IA, o programa")
+confere(!AIChoices.title(perto, number: 1).contains("no limite"), "menu: conta perto do limite não diz 'no limite'", AIChoices.title(perto, number: 1))
+// A lateral: a aba de IA leva só o número da conta em que roda, "(IA-n)" (13/10/2026).
+func rotulo(_ comando: String, _ conta: String?, _ rodando: String? = nil) -> String {
+    AIChoices.tabLabel(command: comando, account: conta, running: rodando, lines: fila)
+}
+confere(rotulo("claude", "claude:reserva") == "(IA-4)", "lateral: aba presa numa conta, o número dela", rotulo("claude", "claude:reserva"))
+confere(rotulo("claude", "claude:ordem") == "(IA-3)", "lateral: seguindo a ordem, sem a conta dita, a Claude ativa", rotulo("claude", "claude:ordem"))
+confere(rotulo("claude", "claude:ordem", "claude:assinaturas") == "(IA-3)", "lateral: a conta em que roda, por qualquer apelido")
+confere(rotulo("codex", "gpt:principal") == "(IA-2)", "lateral: o Codex também, pelo número", rotulo("codex", "gpt:principal"))
+confere(rotulo("2.1.296", "claude:reserva") == "(IA-4)", "lateral: o Claude chamado pela versão")
+confere(rotulo("codex", "gpt:trabalho") == "", "lateral: conta fora da lista, nada")
+confere(rotulo("zsh", nil) == "— zsh", "lateral: sem IA, o programa")
+confere(!rotulo("claude", "claude:reserva").contains("claude"), "lateral: nunca o nome da IA")
 
 // --- o programa da aba
 confere(AIProgramKind(command: "-zsh") == .shell && AIProgramKind(command: "zsh") == .shell
