@@ -64,9 +64,13 @@ fn descricao(codigo: u32) -> &'static str {
     match codigo {
         2 | 3 => "não encontrado",
         5 => "acesso negado",
+        6 => "alça inválida",
         32 => "em uso por outro processo",
         50 | 1 => "operação sem suporte neste disco (precisa ser NTFS)",
+        87 => "parâmetro inválido",
+        193 => "não é um programa do Windows",
         1314 => "falta um privilégio",
+        1337 => "SID inválido",
         1346 => "nível de representação insuficiente",
         _ => "",
     }
@@ -252,29 +256,21 @@ fn monta_dacl(sids: &[&Sid]) -> Result<Vec<u32>, String> {
     Ok(buf)
 }
 
-/// Um token restrito do processo: sem privilégios, com `desabilitar` só para
-/// negar, e acessos checados também contra `restringir`. A DACL padrão dá
-/// tudo ao usuário, ao sistema e aos SIDs do Keep, para o que um processo
-/// preso cria (pipe, memória compartilhada) abrir para os irmãos dele.
-pub fn token_restrito(
-    origem: &Alca,
-    usuario: &Sid,
-    sistema: &Sid,
-    restringir: &[&Sid],
-    desabilitar: &[Sid],
-    do_keep: &[&Sid],
-) -> Result<Alca, String> {
-    let lista = |sids: Vec<PSID>| -> Vec<SID_AND_ATTRIBUTES> {
-        sids.into_iter().map(|s| SID_AND_ATTRIBUTES { Sid: s, Attributes: 0 }).collect()
+/// A chamada a `CreateRestrictedToken` e nada mais: o token, ou o código de
+/// erro do Windows. É o que o diagnóstico repete com uma lista de cada vez
+/// para achar o SID ou a opção que o sistema não aceita.
+pub fn token_restrito_cru(origem: &Alca, flags: u32, desabilitar: &[&Sid], restringir: &[&Sid]) -> Result<Alca, u32> {
+    let lista = |sids: &[&Sid]| -> Vec<SID_AND_ATTRIBUTES> {
+        sids.iter().map(|s| SID_AND_ATTRIBUTES { Sid: s.ptr(), Attributes: 0 }).collect()
     };
-    let a_restringir = lista(restringir.iter().map(|s| s.ptr()).collect());
-    let a_desabilitar = lista(desabilitar.iter().map(|s| s.ptr()).collect());
+    let a_restringir = lista(restringir);
+    let a_desabilitar = lista(desabilitar);
     let ou_nulo = |v: &[SID_AND_ATTRIBUTES]| if v.is_empty() { null() } else { v.as_ptr() };
     let mut novo: HANDLE = null_mut();
     let ok = unsafe {
         CreateRestrictedToken(
             origem.0,
-            DISABLE_MAX_PRIVILEGE,
+            flags,
             a_desabilitar.len() as u32,
             ou_nulo(&a_desabilitar),
             0,
@@ -285,9 +281,37 @@ pub fn token_restrito(
         )
     };
     if ok == 0 {
-        return Err(falha_ultimo("CreateRestrictedToken"));
+        return Err(unsafe { GetLastError() });
     }
-    let novo = Alca(novo);
+    Ok(Alca(novo))
+}
+
+/// O que o código de erro do Windows quer dizer, para o diagnóstico.
+pub fn erro_em_texto(codigo: u32) -> String {
+    falha("erro", codigo)
+}
+
+/// Os grupos do token: o SID, em texto, e os atributos (o diagnóstico mostra
+/// quais estão ligados, quais só negam e qual é o da sessão de logon).
+pub fn grupos_do_token(token: &Alca) -> Result<Vec<(String, u32)>, String> {
+    let buf = info_do_token(token.0, TokenGroups)?;
+    grupos(&buf).iter().map(|g| Ok((Sid::copia(g.Sid).texto()?, g.Attributes))).collect()
+}
+
+/// Um token restrito do processo: sem privilégios, com `desabilitar` só para
+/// negar, e acessos checados também contra `restringir`. A DACL padrão dá
+/// tudo ao usuário, ao sistema e aos SIDs do Keep, para o que um processo
+/// preso cria (pipe, memória compartilhada) abrir para os irmãos dele.
+pub fn token_restrito(
+    origem: &Alca,
+    usuario: &Sid,
+    sistema: &Sid,
+    restringir: &[&Sid],
+    desabilitar: &[&Sid],
+    do_keep: &[&Sid],
+) -> Result<Alca, String> {
+    let novo = token_restrito_cru(origem, DISABLE_MAX_PRIVILEGE, desabilitar, restringir)
+        .map_err(|codigo| falha("CreateRestrictedToken", codigo))?;
     let mut donos: Vec<&Sid> = vec![usuario, sistema];
     donos.extend(do_keep);
     let dacl = monta_dacl(&donos)?;
@@ -609,7 +633,9 @@ pub fn criar_processo(
         )
     };
     if ok == 0 {
-        return Err(falha_ultimo(&format!("não foi possível iniciar {programa} com o token restrito")));
+        return Err(falha_ultimo(&format!(
+            "não foi possível iniciar {programa} com o token restrito (linha de comando: {linha}; pasta: {pasta})"
+        )));
     }
     Ok(Filho { processo: Alca(pi.hProcess), thread: Alca(pi.hThread), pid: pi.dwProcessId })
 }

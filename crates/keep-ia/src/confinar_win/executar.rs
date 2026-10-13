@@ -31,6 +31,15 @@ fn rastro(texto: impl FnOnce() -> String) {
     }
 }
 
+/// O perfil do usuário de verdade. `caminhos::casa()` obedece `KEEP_IA_HOME`,
+/// que os testes do crate trocam por uma casa de mentira (e apagam quando
+/// acabam, com o que estiver dentro): a IA presa roda com o perfil que o
+/// Windows deu ao usuário.
+fn perfil_real() -> String {
+    let do_windows = std::env::var("USERPROFILE").ok().filter(|v| !v.is_empty());
+    sem_prefixo(&do_windows.unwrap_or_else(|| caminhos::casa().to_string_lossy().into_owned()))
+}
+
 /// O computador de verdade, para o plano.
 struct Real;
 
@@ -138,7 +147,7 @@ fn prepara_isca(
 /// se a restrição não puder ser posta e provada, o programa nem nasce.
 pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
     let amb = Real;
-    let casa = sem_prefixo(&caminhos::casa().to_string_lossy());
+    let casa = perfil_real();
     let de_env = |n: &str| amb.var(n).map(|v| sem_prefixo(&v));
     let dados = de_env("APPDATA");
     let local = de_env("LOCALAPPDATA");
@@ -207,9 +216,6 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
         }
     }
     let (isca, pasta_da_isca) = prepara_isca(&casa, dados.as_deref(), local.as_deref(), &plano.concessoes)?;
-    // O que a prova tenta listar é o perfil do usuário de verdade, que a
-    // restrição tem de esconder (a "casa" do plano pode ser a de um teste).
-    let perfil = amb.var("USERPROFILE").map(|v| sem_prefixo(&v)).unwrap_or_else(|| casa.clone());
 
     // O programa, e como ele é chamado.
     let (app, linha) = if eh_script_do_cmd(&p.programa) {
@@ -219,6 +225,21 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
     } else {
         (p.programa.clone(), linha_de_comando(&p.programa, &p.args))
     };
+    // Os caminhos que o programa preso precisa achar, ditos um a um: o erro do
+    // Windows ("o sistema não achou o caminho", 3) não diz qual.
+    let faltam: Vec<String> = [
+        ("a pasta permitida", p.pasta.as_str(), true),
+        ("a pasta em que o programa começa", p.onde.as_str(), true),
+        ("o programa", p.programa.as_str(), false),
+        ("o que roda o programa", app.as_str(), false),
+    ]
+    .iter()
+    .filter(|(_, c, pasta)| if *pasta { !Path::new(c).is_dir() } else { !Path::new(c).is_file() })
+    .map(|(o, c, _)| format!("{o}: {c}"))
+    .collect();
+    if !faltam.is_empty() {
+        return Err(format!("não existe: {}", faltam.join("; ")));
+    }
     let ambiente = bloco_de_ambiente(&ambiente_preso(ambiente_atual(), &plano.temp, &p.pasta));
     let sem_janela = !sistema::tem_console();
     let job = sistema::job_que_mata();
@@ -229,36 +250,44 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
     if p.segurar_ctrl_c {
         sistema::nao_morrer_com_ctrl_c();
     }
+    let admins: Vec<&Sid> = administrativos.iter().collect();
     let mut tentativas: Vec<String> = Vec::new();
     for nivel in NIVEIS {
-        let sids: Vec<Sid> = sids_de_restricao(nivel, &pasta_txt, &base_txt, &logon_txt)
-            .iter()
-            .map(|s| Sid::de_texto(s))
-            .collect::<Result<_, _>>()?;
+        let ids = sids_de_restricao(nivel, &pasta_txt, &base_txt, &logon_txt);
+        let quais = format!("{nivel:?} [{}]", ids.join(" "));
+        // Cada passo que falha põe o porquê na lista e passa ao nível seguinte:
+        // a mensagem de quando nenhum serve diz o que cada um encontrou.
+        macro_rules! tenta {
+            ($e:expr) => {
+                match $e {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tentativas.push(format!("{quais}: {e}"));
+                        continue;
+                    }
+                }
+            };
+        }
+        let sids: Vec<Sid> = tenta!(ids.iter().map(|s| Sid::de_texto(s)).collect::<Result<Vec<_>, _>>());
         let a_restringir: Vec<&Sid> = sids.iter().collect();
         // A DACL padrão do token: o usuário, o sistema e a pasta. Não o SID base,
         // que todo workspace preso leva: com ele o processo de um workspace
         // abriria os objetos (e o processo) de outro.
-        let token = sistema::token_restrito(&token0, &usuario, &sistema_sid, &a_restringir, &administrativos, &[&sid_pasta])?;
+        let token = tenta!(sistema::token_restrito(&token0, &usuario, &sistema_sid, &a_restringir, &admins, &[&sid_pasta]));
         if !sistema::e_restrito(&token) {
-            return Err("o token que devia ser restrito não é".into());
+            tentativas.push(format!("{quais}: o token que devia ser restrito não é"));
+            continue;
         }
 
         // A prova: com este token o de fora é negado e a pasta funciona. Um
-        // sandbox que não contém não sobe a IA, e outro nível não o conserta.
-        let sonda = sistema::como_o_token(&token, || {
-            sondar_fs(Path::new(&p.pasta), Path::new(&isca), Path::new(&perfil), Path::new(&pasta_da_isca))
-        })?;
+        // sandbox que não contém não sobe a IA.
+        let sonda = tenta!(sistema::como_o_token(&token, || {
+            sondar_fs(Path::new(&p.pasta), Path::new(&isca), Path::new(&casa), Path::new(&pasta_da_isca))
+        }));
         rastro(|| format!("prova ({nivel:?}): {sonda:?}"));
-        sonda.conclusao()?;
+        tenta!(sonda.conclusao());
 
-        let filho = match sistema::criar_processo(&token, &app, &linha, &p.onde, &ambiente, padrao, sem_janela) {
-            Ok(f) => f,
-            Err(e) => {
-                tentativas.push(format!("{nivel:?}: {e}"));
-                continue;
-            }
-        };
+        let filho = tenta!(sistema::criar_processo(&token, &app, &linha, &p.onde, &ambiente, padrao, sem_janela));
         if let Ok(j) = &job {
             if let Err(e) = sistema::no_job(j, &filho) {
                 rastro(|| format!("fora do Job: {e}"));
@@ -267,10 +296,10 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
         if let Err(e) = sistema::abrir_o_token_ao_filho(&filho, &sid_pasta) {
             rastro(|| format!("o token do filho não foi aberto a ele: {e}"));
         }
-        sistema::retomar(&filho)?;
-        let cedo = sistema::esperar(&filho.processo, OLHADA_NA_PARTIDA_MS)?;
+        tenta!(sistema::retomar(&filho));
+        let cedo = tenta!(sistema::esperar(&filho.processo, OLHADA_NA_PARTIDA_MS));
         if let Some(c) = cedo.filter(|c| falha_de_partida(*c)) {
-            tentativas.push(format!("{nivel:?}: o programa morreu ao partir (0x{c:08X})"));
+            tentativas.push(format!("{quais}: o programa morreu ao partir (0x{c:08X})"));
             continue;
         }
         // Vivo depois do olhar: se há console aqui, ele tem de se ligar ao
@@ -278,12 +307,12 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
         // parado; dito agora, o usuário sabe por quê.
         if cedo.is_none() && !sem_janela && !ligou_ao_console(&filho) {
             sistema::matar(&filho);
-            tentativas.push(format!("{nivel:?}: o console da aba não chegou ao programa"));
+            tentativas.push(format!("{quais}: o console da aba não chegou ao programa"));
             continue;
         }
         let codigo = match cedo {
             Some(c) => c,
-            None => sistema::esperar(&filho.processo, sistema::INFINITO)?.unwrap_or(1),
+            None => tenta!(sistema::esperar(&filho.processo, sistema::INFINITO)).unwrap_or(1),
         };
         rastro(|| format!("o programa saiu com {codigo} (nível {nivel:?})"));
         if nivel != Nivel::Estrito {
@@ -291,7 +320,7 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
         }
         return Ok(codigo as i32);
     }
-    Err(format!("o Windows não deixou o programa partir com o token restrito ({})", tentativas.join("; ")))
+    Err(format!("o Windows não deixou o programa partir com o token restrito: {}", tentativas.join(" | ")))
 }
 
 /// Espera, por uns segundos, o programa se ligar ao console daqui. Quem saiu
@@ -322,8 +351,10 @@ fn rodar_livre(programa: &str, resto: &[String]) -> i32 {
 
 /// `keep ia confinar -- <programa> [argumentos…]` no Windows.
 pub fn cli(args: &[String]) -> i32 {
-    if args.first().map(String::as_str) == Some("--autoteste") {
-        return autoteste();
+    match args.first().map(String::as_str) {
+        Some("--autoteste") => return autoteste(),
+        Some("--diagnostico") => return diagnostico(),
+        _ => {}
     }
     let args: Vec<String> = match args.first().map(String::as_str) {
         Some("--") => args[1..].to_vec(),
@@ -346,7 +377,7 @@ pub fn cli(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let casa = sem_prefixo(&caminhos::casa().to_string_lossy());
+    let casa = perfil_real();
     let sistema_dirs: Vec<String> = ["SystemRoot", "ProgramFiles", "ProgramFiles(x86)", "ProgramData"]
         .iter()
         .filter_map(|n| std::env::var(n).ok())
@@ -397,7 +428,7 @@ pub fn cli(args: &[String]) -> i32 {
 /// uma linha) e confere o que eles conseguem e o que não. Dentro de uma aba do
 /// Keep confere também que o console passa ao programa preso.
 pub fn autoteste() -> i32 {
-    let casa = sem_prefixo(&caminhos::casa().to_string_lossy());
+    let casa = perfil_real();
     let raiz = junta(&casa, &format!(".keep-confine-autoteste-{}", std::process::id()));
     let (permitida, fora) = (junta(&raiz, "permitida"), junta(&raiz, "fora"));
     let preparo = (|| -> std::io::Result<()> {
@@ -422,9 +453,10 @@ pub fn autoteste() -> i32 {
     let mut roda_linha = |comando: &str, com_console: bool| -> Result<(i32, String), String> {
         passo += 1;
         let roteiro = junta(&permitida, &format!("passo{passo}.cmd"));
-        std::fs::write(&roteiro, format!("@echo off\r\n{comando}\r\nexit /b %errorlevel%\r\n")).map_err(|e| e.to_string())?;
+        std::fs::write(&roteiro, format!("@echo off\r\n{comando}\r\nexit /b %errorlevel%\r\n"))
+            .map_err(|e| format!("{roteiro}: {e}"))?;
         let saida_arq = junta(&raiz, &format!("saida{passo}.txt"));
-        let saida = std::fs::File::create(&saida_arq).map_err(|e| e.to_string())?;
+        let saida = std::fs::File::create(&saida_arq).map_err(|e| format!("{saida_arq}: {e}"))?;
         let padrao =
             if com_console { Padrao::do_processo() } else { Padrao::de_arquivos(None, Some(&saida), Some(&saida)) };
         let pedido =
@@ -486,8 +518,117 @@ pub fn autoteste() -> i32 {
 
     let _ = std::io::stdout().flush();
     let _ = std::fs::remove_dir_all(&raiz);
+    if falhas > 0 {
+        println!();
+        diagnostico();
+    }
     println!("{}", if falhas == 0 { "tudo certo" } else { "há falhas: a IA não deve ser tida como presa neste computador" });
     i32::from(falhas > 0)
+}
+
+// ------------------------------------------------------------------ o que o Windows aceita
+
+/// As letras dos atributos de um grupo do token: obrigatório, ligado por
+/// padrão, ligado, dono, só nega, e o da sessão de logon.
+fn atributos_em_texto(a: u32) -> String {
+    let mut t = String::new();
+    for (bit, letra) in [(0x1, 'M'), (0x2, 'D'), (0x4, 'E'), (0x8, 'O'), (0x10, 'N')] {
+        if a & bit != 0 {
+            t.push(letra);
+        }
+    }
+    if a & 0xC000_0000 == 0xC000_0000 {
+        t.push('L');
+    }
+    t
+}
+
+/// `keep ia confinar --diagnostico`: o token deste processo e o que
+/// `CreateRestrictedToken` aceita, uma lista de cada vez. Mostra o SID de cada
+/// lista, as opções e o código de erro de cada chamada, para achar o SID ou a
+/// opção que o Windows recusa. Não prende nada.
+pub fn diagnostico() -> i32 {
+    println!("Diagnóstico do token restrito (perfil: {})", perfil_real());
+    let token0 = match sistema::token_do_processo() {
+        Ok(t) => t,
+        Err(e) => {
+            println!("  não abriu o token do processo: {e}");
+            return 1;
+        }
+    };
+    let (usuario, logon) = match (sistema::sid_do_usuario(&token0), sistema::sid_do_logon(&token0)) {
+        (Ok(u), Ok(l)) => (u, l),
+        (u, l) => {
+            println!("  sem o SID do usuário ou o da sessão: {:?} {:?}", u.err(), l.err());
+            return 1;
+        }
+    };
+    let (usuario_txt, logon_txt) = (usuario.texto().unwrap_or_default(), logon.texto().unwrap_or_default());
+    println!("  usuário: {usuario_txt}");
+    println!("  sessão de logon: {logon_txt}");
+    println!("  restrito já: {}", sistema::e_restrito(&token0));
+    println!("  grupos do token (M obrigatório, D ligado por padrão, E ligado, O dono, N só nega, L sessão):");
+    match sistema::grupos_do_token(&token0) {
+        Ok(grupos) => {
+            for (sid, a) in grupos {
+                println!("    {sid}  0x{a:08X} {}", atributos_em_texto(a));
+            }
+        }
+        Err(e) => println!("    não leu: {e}"),
+    }
+    let administrativos = sistema::grupos_administrativos(&token0).unwrap_or_default();
+    let admins: Vec<&Sid> = administrativos.iter().collect();
+    println!("  grupos administrativos postos só para negar: {}", administrativos.len());
+
+    let da_pasta = sid_da_pasta(&usuario_txt, "diagnostico");
+    let base = sid_base(&usuario_txt);
+    // A forma antiga do SID do Keep (autoridade 5 e cinco sub-autoridades) e
+    // uma de domínio, para ver se o Windows distingue.
+    let forma_nt = da_pasta.replacen("S-1-0-", "S-1-5-1262830928-", 1);
+    let forma_dominio = da_pasta.replacen("S-1-0-", "S-1-5-21-", 1);
+    let um = |rotulo: &str, flags: u32, des: &[&Sid], restringir: &[String]| {
+        let sids: Result<Vec<Sid>, String> = restringir.iter().map(|t| Sid::de_texto(t)).collect();
+        let resultado = match sids {
+            Err(e) => format!("SID recusado: {e}"),
+            Ok(sids) => {
+                let refs: Vec<&Sid> = sids.iter().collect();
+                match sistema::token_restrito_cru(&token0, flags, des, &refs) {
+                    Ok(t) => format!("ok (restrito: {})", sistema::e_restrito(&t)),
+                    Err(c) => format!("FALHOU {}", sistema::erro_em_texto(c)),
+                }
+            }
+        };
+        println!("  [{rotulo}] opções 0x{flags:X}, {} grupo(s) só para negar, restringir a [{}] -> {resultado}", des.len(), restringir.join(" "));
+    };
+    let so = |t: &str| vec![t.to_string()];
+    um("sem nada", 0, &[], &[]);
+    um("sem privilégios", 1, &[], &[]);
+    um("negar os administrativos", 1, &admins, &[]);
+    for (rotulo, sid) in [
+        ("Todos", super::SID_TODOS.to_string()),
+        ("Restrito", super::SID_RESTRITO.to_string()),
+        ("Usuários", super::SID_USUARIOS.to_string()),
+        ("Pacotes de aplicativo", super::SID_PACOTES.to_string()),
+        ("Pacotes restritos", super::SID_PACOTES_RESTRITOS.to_string()),
+        ("Autenticados", super::SID_AUTENTICADOS.to_string()),
+        ("Interativo", super::SID_INTERATIVO.to_string()),
+        ("Local", super::SID_LOCAL.to_string()),
+        ("Console", super::SID_CONSOLE.to_string()),
+        ("sessão de logon", logon_txt.clone()),
+        ("do Keep (S-1-0)", da_pasta.clone()),
+        ("do Keep base (S-1-0)", base.clone()),
+        ("do Keep, forma antiga (S-1-5)", forma_nt),
+        ("do Keep, forma de domínio (S-1-5-21)", forma_dominio),
+        ("o próprio usuário", usuario_txt.clone()),
+    ] {
+        um(&format!("um SID: {rotulo}"), 1, &[], &so(&sid));
+    }
+    for nivel in NIVEIS {
+        let ids = sids_de_restricao(nivel, &da_pasta, &base, &logon_txt);
+        um(&format!("nível {nivel:?}, sem negar"), 1, &[], &ids);
+        um(&format!("nível {nivel:?}, negando os administrativos"), 1, &admins, &ids);
+    }
+    0
 }
 
 #[cfg(test)]

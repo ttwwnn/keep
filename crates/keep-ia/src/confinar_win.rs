@@ -99,13 +99,11 @@ pub const SID_LOCAL: &str = "S-1-2-0";
 pub const SID_CONSOLE: &str = "S-1-2-1";
 pub const SID_SISTEMA: &str = "S-1-5-18";
 
-/// A primeira sub-autoridade dos SIDs do Keep (`KEEP` em ASCII): um número
-/// que o Windows não atribui, para o SID nunca coincidir com o de um grupo
-/// ou usuário de verdade e não despertar uma consulta ao domínio.
-const SUB_AUTORIDADE: u32 = 0x4B45_4550;
-
 /// Um SID só do Keep, derivado de `usuario` (o SID do usuário) e de um
-/// rótulo: o mesmo par dá sempre o mesmo SID, outro par dá outro.
+/// rótulo: o mesmo par dá sempre o mesmo SID, outro par dá outro. Na forma do
+/// SID de restrição aleatório do Chromium: autoridade nula (`S-1-0`, que só
+/// tem o `S-1-0-0`) e quatro sub-autoridades de 32 bits. Nunca coincide com
+/// um grupo ou usuário de verdade, nem desperta uma consulta ao domínio.
 pub fn sid_do_keep(usuario: &str, rotulo: &str) -> String {
     let mut h = Sha256::new();
     h.update(b"keep-confine\0");
@@ -114,7 +112,7 @@ pub fn sid_do_keep(usuario: &str, rotulo: &str) -> String {
     h.update(rotulo.as_bytes());
     let d = h.finalize();
     let n = |i: usize| u32::from_le_bytes([d[i * 4], d[i * 4 + 1], d[i * 4 + 2], d[i * 4 + 3]]);
-    format!("S-1-5-{SUB_AUTORIDADE}-{}-{}-{}-{}", n(0), n(1), n(2), n(3))
+    format!("S-1-0-{}-{}-{}-{}", n(0), n(1), n(2), n(3))
 }
 
 /// O SID de uma pasta presa: o mesmo caminho, escrito como for (caixa,
@@ -133,11 +131,12 @@ pub fn sid_base(usuario: &str) -> String {
 /// vale para os três (o perfil do usuário fica negado em todos).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Nivel {
-    /// Só o que o Windows concede a todos e aos pacotes de aplicativo: o que
-    /// está em outras unidades e que só `Usuários` lê fica de fora.
+    /// Só o que o Windows concede a todos e aos pacotes de aplicativo (os
+    /// arquivos do sistema o dão): o que está em outras unidades e que só
+    /// `Usuários` lê fica de fora.
     Estrito,
-    /// O estrito mais `Usuários`: a lista do USER_LIMITED do Chromium (que o
-    /// Firefox e o Chrome usam). Lê o que `Usuários` lê.
+    /// A lista do USER_LIMITED do Chromium (que o Firefox e o Chrome usam):
+    /// `Usuários` em vez dos pacotes de aplicativo. Lê o que `Usuários` lê.
     Compativel,
     /// O compatível mais os grupos que todo token de uma sessão interativa
     /// leva (autenticados, interativo, local, console): para o computador em
@@ -154,16 +153,10 @@ pub const NIVEIS: [Nivel; 3] = [Nivel::Estrito, Nivel::Compativel, Nivel::Amplo]
 /// sistema. O do usuário e o dos administradores nunca entram: seriam o
 /// perfil de volta.
 pub fn sids_de_restricao(nivel: Nivel, da_pasta: &str, base: &str, logon: &str) -> Vec<String> {
-    let mut v = vec![
-        da_pasta.to_string(),
-        base.to_string(),
-        logon.to_string(),
-        SID_TODOS.to_string(),
-        SID_RESTRITO.to_string(),
-        SID_PACOTES.to_string(),
-        SID_PACOTES_RESTRITOS.to_string(),
-    ];
-    if nivel != Nivel::Estrito {
+    let mut v = vec![da_pasta.to_string(), base.to_string(), logon.to_string(), SID_TODOS.to_string(), SID_RESTRITO.to_string()];
+    if nivel == Nivel::Estrito {
+        v.extend([SID_PACOTES, SID_PACOTES_RESTRITOS].map(String::from));
+    } else {
         v.push(SID_USUARIOS.to_string());
     }
     if nivel == Nivel::Amplo {
@@ -855,24 +848,28 @@ mod testes {
         assert_ne!(a, sid_da_pasta("S-1-5-21-1-2-3-1001", r"D:\Projetos\Outro"));
         assert_ne!(a, sid_da_pasta("S-1-5-21-1-2-3-1002", r"D:\Projetos\App"));
         assert_ne!(a, sid_base("S-1-5-21-1-2-3-1001"));
+        // A forma do SID aleatório de restrição do Chromium: S-1-0 e quatro de 32 bits.
         let partes: Vec<&str> = a.split('-').collect();
-        assert_eq!(&partes[..3], ["S", "1", "5"]);
-        assert_eq!(partes[3], SUB_AUTORIDADE.to_string());
-        assert_eq!(partes.len(), 8, "{a}");
-        assert!(partes[4..].iter().all(|p| p.parse::<u32>().is_ok()), "{a}");
+        assert_eq!(&partes[..3], ["S", "1", "0"]);
+        assert_eq!(partes.len(), 7, "{a}");
+        assert!(partes[3..].iter().all(|p| p.parse::<u32>().is_ok()), "{a}");
     }
 
     #[test]
-    fn cada_nivel_acrescenta_ao_anterior_e_nenhum_traz_o_usuario() {
+    fn os_niveis_vao_do_estrito_ao_amplo_e_nenhum_traz_o_usuario() {
         let e = sids_de_restricao(Nivel::Estrito, "P", "B", "L");
         let c = sids_de_restricao(Nivel::Compativel, "P", "B", "L");
         let a = sids_de_restricao(Nivel::Amplo, "P", "B", "L");
-        assert_eq!(&e[..3], ["P", "B", "L"]);
-        assert!(e.contains(&SID_TODOS.to_string()) && e.contains(&SID_PACOTES.to_string()));
+        for lista in [&e, &c, &a] {
+            assert_eq!(&lista[..5], ["P", "B", "L", SID_TODOS, SID_RESTRITO]);
+        }
+        // O estrito tem os pacotes de aplicativo e não `Usuários`; o compatível é
+        // a lista do Chromium (`Usuários`, sem os pacotes); o amplo a acrescenta.
+        assert!(e.contains(&SID_PACOTES.to_string()) && e.contains(&SID_PACOTES_RESTRITOS.to_string()));
         assert!(!e.contains(&SID_USUARIOS.to_string()));
-        assert_eq!(c.len(), e.len() + 1);
         assert!(c.contains(&SID_USUARIOS.to_string()));
-        assert!(c.starts_with(&e));
+        assert!(!c.contains(&SID_PACOTES.to_string()) && !c.contains(&SID_PACOTES_RESTRITOS.to_string()));
+        assert_eq!(c.len(), 6);
         assert!(a.starts_with(&c));
         for s in [SID_AUTENTICADOS, SID_INTERATIVO, SID_LOCAL, SID_CONSOLE] {
             assert!(a.contains(&s.to_string()) && !c.contains(&s.to_string()), "{s}");

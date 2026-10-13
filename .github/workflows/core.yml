@@ -66,8 +66,26 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
+      # KEEP_CONFINE_PROVA: o teste que sobe programas presos de verdade (a
+      # contenção da IA no Windows) só roda com ela; só o Windows o tem.
       - name: Testes
+        env:
+          KEEP_CONFINE_PROVA: "1"
         run: cargo test --workspace --no-fail-fast -- --test-threads=4
+
+      # O mesmo roteiro com o keep.exe de verdade, sempre mostrado (o teste
+      # acima só mostra a saída quando falha): o diagnóstico do token e a prova
+      # da contenção, e o roteiro em PowerShell que o usuário roda à mão.
+      - name: Contenção da IA (keep.exe)
+        if: always() && matrix.name == 'Windows'
+        run: |
+          target/debug/keep.exe ia confinar --diagnostico
+          target/debug/keep.exe ia confinar --autoteste
+
+      - name: Contenção da IA (roteiro em PowerShell)
+        if: always() && matrix.name == 'Windows'
+        shell: pwsh
+        run: ./tools/confine-test.ps1 -Keep "$PWD/target/debug/keep.exe"
 
       - name: Binários
         run: cargo build --release -p keep -p keepd
