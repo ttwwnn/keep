@@ -196,8 +196,20 @@ ask() {  # ask <axpress arguments...>: its answer, or "(none)"
 present() {  # present <label>: yes, no
     [ "$(ask frame "$1")" = "(none)" ] && echo no || echo yes
 }
-show() {  # show <tab number>: press it in the strip
-    "$AXPRESS" "$APP_NAME" press "strip-tab-$WS/$1" >/dev/null 2>&1
+show() {  # show <tab number>: press it in the strip, until it is the tab put on screen
+    # A press can go unanswered on a machine under load (the accessibility
+    # question times out): asked again until the app's own trace says the
+    # switch happened, rather than carrying on as though it had.
+    local tries=0
+    while [ "$tries" -lt 5 ]; do
+        "$AXPRESS" "$APP_NAME" press "strip-tab-$WS/$1" >/dev/null 2>&1
+        wait_for 6 shown "$1" && return 0
+        tries=$((tries + 1))
+    done
+    return 1
+}
+shown() {  # shown <tab number>: the last tab put on screen, as the trace says
+    grep -aoE "switch +→ $WS/[0-9]+" "$WORK/app.log" | tail -1 | grep -qE "/$1\$"
 }
 divider() {  # the position of the divider between the panes on view, in points
     "$AXSPLIT" "$APP_NAME" list 2>/dev/null | awk -F'\t' 'NR == 1 { print $2 }'

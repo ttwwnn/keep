@@ -55,6 +55,62 @@ enum HibernationPolicy {
     }
 }
 
+/// What the app tells the `keep` client of a surface, beyond its tab, and
+/// what it tells the client keeping a pane once the surface is gone
+/// (crates/keep/src/keeper.rs reads both). Pure, for the test of these rules
+/// (tools/hibernate-logic-test.sh).
+enum KeeperProtocol {
+    /// The attach file's lines after the first three: follow the surface into
+    /// a mirror keeping as much history (`scrollback`, in bytes), cut into
+    /// cells as the surface cuts them, its cursor blinking or not as the
+    /// surface's does before a program says; whose end is the app's (`pid`); and,
+    /// for a pane that was kept, which client to take it over from. Nothing
+    /// when panes are never let go of: then nobody needs a mirror.
+    static func clientOptions(
+        hibernating: Bool, scrollback: UInt, grapheme: Bool, blink: Bool, pid: Int32, take: String?
+    ) -> [String] {
+        guard hibernating, scrollback > 0 else { return [] }
+        var lines = [
+            "mirror=\(scrollback)", "grapheme=\(grapheme ? 1 : 0)", "blink=\(blink ? 1 : 0)", "app=\(pid)",
+        ]
+        if let take, take.hasPrefix("/") { lines.append("take=\(take)") }
+        return lines
+    }
+
+    /// What a surface would answer about itself, for its client to answer
+    /// with when it has none: `key=value`, colours as six hex digits.
+    static func facts(
+        foreground: [UInt8]?, background: [UInt8]?, cursor: [UInt8]?, palette: [[UInt8]],
+        dark: Bool, cell: (width: UInt32, height: UInt32)?, version: String?, device: String
+    ) -> [String] {
+        var lines: [String] = []
+        if let foreground, let hex = hex(foreground) { lines.append("foreground=\(hex)") }
+        if let background, let hex = hex(background) { lines.append("background=\(hex)") }
+        // A cursor with no colour of its own is drawn, and reported, in the
+        // foreground's.
+        if let cursor = cursor ?? foreground, let hex = hex(cursor) { lines.append("cursor=\(hex)") }
+        let colours = palette.compactMap(hex)
+        if colours.count == 256 { lines.append("palette=" + colours.joined(separator: ",")) }
+        lines.append("scheme=\(dark ? "dark" : "light")")
+        if let cell, cell.width > 0, cell.height > 0 { lines.append("cell=\(cell.width),\(cell.height)") }
+        if let version, !version.isEmpty { lines.append("xtversion=ghostty \(version)") }
+        lines.append("da=\(device)")
+        return lines
+    }
+
+    static func hex(_ rgb: [UInt8]) -> String? {
+        guard rgb.count == 3 else { return nil }
+        return rgb.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// A colour the client wrote down as six hex digits.
+    static func colour(_ text: String) -> [UInt8]? {
+        let digits = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard digits.count == 6, let value = UInt32(digits, radix: 16) else { return nil }
+        return [UInt8((value >> 16) & 0xff), UInt8((value >> 8) & 0xff), UInt8(value & 0xff)]
+    }
+}
+
 /// The bytes a terminal's `text:` binding action types, for typing them
 /// where there is no terminal to do it: into a hibernated tab, through the
 /// daemon (`PaneTypist`).

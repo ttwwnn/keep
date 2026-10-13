@@ -35,11 +35,24 @@ final class SurfacePool {
 
     private var surfaces: [Key: TerminalSurfaceView] = [:]
 
-    /// The surfaces let go of by `hibernate`, while their tabs live on in the
-    /// daemon, with the directory each shell last said it was in. Kept by
-    /// window, as the surfaces are: an entry goes when that window makes the
-    /// surface again, closes, or loses the tab.
-    private var asleep: [Key: String?] = [:]
+    /// A surface let go of by `hibernate`, while its tab lives on.
+    private struct Sleeper {
+        /// The directory the shell last said it was in.
+        var directory: String?
+        /// Where the pane's client keeps it, until a surface comes back for
+        /// it (`Keeper`); nil when it could not be kept, and the daemon's
+        /// repaint is all a new surface will get.
+        let keeper: URL?
+        /// What the kept program says about itself, carried to the app.
+        var watch: KeeperWatch?
+        /// The size of a cell the surface had, for the facts.
+        let cell: (width: UInt32, height: UInt32)?
+    }
+
+    /// The surfaces let go of by `hibernate`. Kept by window, as the
+    /// surfaces are: an entry goes when that window makes the surface again,
+    /// closes, or loses the tab.
+    private var asleep: [Key: Sleeper] = [:]
 
     private init() {}
 
@@ -54,10 +67,20 @@ final class SurfacePool {
         if let existing = surfaces[key] { return existing }
         let surface = TerminalSurfaceView(workspace: workspace, tab: tab)
         surface.translatesAutoresizingMaskIntoConstraints = false
-        // Woken from hibernation: the shell says where it is only at its next
-        // prompt, and the screen the daemon repaints does not say it at all.
-        if let directory = asleep.removeValue(forKey: key) ?? nil {
-            surface.noteDirectory(directory)
+        if let sleeper = asleep.removeValue(forKey: key) {
+            sleeper.watch?.stop()
+            // Woken from hibernation: the shell says where it is only at its
+            // next prompt, and the screen handed over does not say it at all.
+            if let directory = sleeper.directory {
+                surface.noteDirectory(directory)
+            }
+            // Its client takes the pane over from the one that kept it, which
+            // then goes, its directory with it. One that is somehow still
+            // there a while later is told to go.
+            if let keeper = sleeper.keeper {
+                surface.takeOver = keeper
+                DispatchQueue.main.asyncAfter(deadline: .now() + 30) { Keeper.release(keeper) }
+            }
         }
         surfaces[key] = surface
         Trace.log("pool", "made \(window) \(workspace)/\(tab) total=\(surfaces.count)")
@@ -96,12 +119,63 @@ final class SurfacePool {
     /// stands, as when the app is opened onto a tab that kept running.
     ///
     /// The caller takes the surface out of its layout: this only lets go.
-    func hibernate(window: WindowID, workspace: String, tab: UInt32) {
+    func hibernate(
+        window: WindowID, workspace: String, tab: UInt32, onTitle: @escaping (String) -> Void
+    ) {
         let key = Key(window: window, workspace: workspace, tab: tab)
         guard let surface = surfaces[key] else { return }
-        asleep[key] = surface.currentDirectory
-        Trace.log("pool", "hibernating \(window) \(workspace)/\(tab)")
+        // Kept by its client, which follows it into a mirror, when it does:
+        // told what to answer for the surface, and that a surface will come
+        // back for the pane, before this one goes (`Keeper`).
+        var keeper: URL?
+        let cell = surface.cellPixels
+        if surface.isMirrored, let directory = surface.clientDirectory {
+            Keeper.writeFacts(to: directory, cell: cell, dark: surface.schemeIsDark)
+            let flag = directory.appendingPathComponent(Keeper.flag)
+            if FileManager.default.createFile(atPath: flag.path, contents: Data("1\n".utf8)) {
+                surface.keepsDirectory = true
+                keeper = directory
+            }
+        }
+        var sleeper = Sleeper(directory: surface.currentDirectory, keeper: keeper, watch: nil, cell: cell)
+        if let keeper {
+            sleeper.watch = KeeperWatch(
+                directory: keeper,
+                onTitle: onTitle,
+                onDirectory: { [weak self] raw in
+                    let path = raw.hasPrefix("file://") ? (URL(string: raw)?.path ?? raw) : raw
+                    guard !path.isEmpty else { return }
+                    self?.asleep[key]?.directory = path
+                })
+        }
+        asleep[key] = sleeper
+        Trace.log("pool", "hibernating \(window) \(workspace)/\(tab) kept=\(keeper != nil)")
         drop(key)
+    }
+
+    /// Tell every kept pane again what to answer for its surface: the theme
+    /// or the appearance changed. `dark` says, per window, what its surfaces
+    /// would now say.
+    func refreshFacts(dark: (WindowID) -> Bool?) {
+        for (key, sleeper) in asleep {
+            guard let keeper = sleeper.keeper, let isDark = dark(key.window) else { continue }
+            Keeper.writeFacts(to: keeper, cell: sleeper.cell, dark: isDark)
+        }
+    }
+
+    /// The app is going: no surface will come back for any kept pane.
+    func releaseKeepers() {
+        for (_, sleeper) in asleep {
+            sleeper.watch?.stop()
+            if let keeper = sleeper.keeper {
+                try? FileManager.default.removeItem(at: keeper.appendingPathComponent(Keeper.flag))
+            }
+        }
+    }
+
+    private func release(_ sleeper: Sleeper) {
+        sleeper.watch?.stop()
+        if let keeper = sleeper.keeper { Keeper.release(keeper) }
     }
 
     /// Whether this app showed the pane, and let go of its surface in every
@@ -127,7 +201,13 @@ final class SurfacePool {
     /// last heard it before being let go of.
     func currentDirectory(workspace: String, tab: UInt32) -> String? {
         if let live = anyExisting(workspace: workspace, tab: tab) { return live.currentDirectory }
-        return asleep.first { $0.key.workspace == workspace && $0.key.tab == tab }?.value ?? nil
+        return asleep.first { $0.key.workspace == workspace && $0.key.tab == tab }?.value.directory
+    }
+
+    /// Whether a pane's surface was let go of with its client keeping it,
+    /// for the tests: `isHibernated` alone says nothing of how.
+    func isKept(workspace: String, tab: UInt32) -> Bool {
+        asleep.contains { $0.key.workspace == workspace && $0.key.tab == tab && $0.value.keeper != nil }
     }
 
     /// Where to type into a pane: the surface of a window that has one, or,
@@ -153,6 +233,19 @@ final class SurfacePool {
                 .filter { !$0.isEmpty }
             Trace.log("screen", "\(surface.workspace)/\(surface.tab) \(rows.joined(separator: "|"))")
         }
+        // The whole screen, history first, a second at a time, into a file
+        // the test reads: `KEEP_SCREEN_DUMP=<directory>`.
+        guard let dump = ProcessInfo.processInfo.environment["KEEP_SCREEN_DUMP"] else { return }
+        let file = URL(fileURLWithPath: dump)
+            .appendingPathComponent("\(surface.workspace)-\(surface.tab).txt")
+        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak surface] timer in
+            guard let surface, surface.window != nil else {
+                timer.invalidate()
+                return
+            }
+            guard let text = surface.screenText() else { return }
+            try? text.write(to: file, atomically: true, encoding: .utf8)
+        }
     }
 
     /// Let go of a tab's surfaces, in every window, which tears down their
@@ -162,7 +255,7 @@ final class SurfacePool {
     /// tab is alive would be rebuilt from nothing the next time the tab is
     /// shown, which is the cost this pool exists to avoid.
     func discard(workspace: String, tab: UInt32) {
-        asleep = asleep.filter { $0.key.workspace != workspace || $0.key.tab != tab }
+        forget { $0.workspace == workspace && $0.tab == tab }
         for key in surfaces.keys where key.workspace == workspace && key.tab == tab {
             drop(key)
         }
@@ -170,7 +263,7 @@ final class SurfacePool {
 
     /// Drop every surface of a workspace, for a workspace that is being killed.
     func discardAll(workspace: String) {
-        asleep = asleep.filter { $0.key.workspace != workspace }
+        forget { $0.workspace == workspace }
         for key in surfaces.keys where key.workspace == workspace { drop(key) }
     }
 
@@ -179,8 +272,16 @@ final class SurfacePool {
     /// Only that window's: the others are still on screen, and a tab mirrored
     /// into two windows keeps the surface belonging to the one that stayed.
     func discardAll(window: WindowID) {
-        asleep = asleep.filter { $0.key.window != window }
+        forget { $0.window == window }
         for key in surfaces.keys where key.window == window { drop(key) }
+    }
+
+    /// Hibernated panes no surface will come back for: their keepers are told.
+    private func forget(where matches: (Key) -> Bool) {
+        for (key, sleeper) in asleep where matches(key) {
+            release(sleeper)
+            asleep[key] = nil
+        }
     }
 
     private func drop(_ key: Key) {

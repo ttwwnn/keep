@@ -3,6 +3,8 @@
 mod attach;
 #[cfg(windows)]
 mod console;
+#[cfg(unix)]
+mod keeper;
 mod picker;
 
 use std::io::Write;
@@ -32,13 +34,13 @@ fn run() -> Result<()> {
             // leaves the target in the working directory. Read it exactly
             // once: the read consumes the file.
             if let Some(target) = embedded_target() {
-                return enter(&socket, &target.workspace, target.tab, target.watching);
+                return enter(&socket, &target.workspace, target.tab, target.watching, target.options);
             }
 
             let workspaces = list(&socket)?;
             match picker::pick(&workspaces)? {
                 picker::Choice::Workspace(name) | picker::Choice::New(name) => {
-                    enter(&socket, &name, TAB_ANY, None)
+                    enter(&socket, &name, TAB_ANY, None, attach::Options::default())
                 }
                 picker::Choice::Cancelled => Ok(()),
             }
@@ -109,7 +111,7 @@ fn run() -> Result<()> {
                 Some(i) => args.get(i + 1).and_then(|v| v.parse().ok()).unwrap_or(TAB_ANY),
                 None => TAB_ANY,
             };
-            enter(&socket, name, tab, None)
+            enter(&socket, name, tab, None, attach::Options::default())
         }
     }
 }
@@ -119,8 +121,9 @@ fn enter(
     name: &str,
     tab: u32,
     watching: Option<std::path::PathBuf>,
+    options: attach::Options,
 ) -> Result<()> {
-    match attach::attach(socket, name, tab, watching)? {
+    match attach::attach(socket, name, tab, watching, options)? {
         attach::Outcome::Detached => {
             println!("detached from {name}");
         }
@@ -267,10 +270,16 @@ const TARGET_FILE: &str = ".keep-attach";
 /// A third line, if present, names a file the embedder keeps updated with
 /// whether its surface is on screen. That one is *not* consumed — it is read
 /// for as long as this client runs.
+///
+/// The lines after it are `key=value` options (`attach::Options`): whether
+/// to follow the surface into a mirror the tab can be kept in when the
+/// surface goes, and which kept tab to take over. A client that does not
+/// know them reads the first three and attaches as it always did.
 struct Target {
     workspace: String,
     tab: u32,
     watching: Option<std::path::PathBuf>,
+    options: attach::Options,
 }
 
 fn embedded_target() -> Option<Target> {
@@ -293,7 +302,14 @@ fn embedded_target_in(dir: &Path) -> Option<Target> {
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .map(std::path::PathBuf::from);
-    Some(Target { workspace, tab, watching })
+    #[cfg(unix)]
+    let options = keeper::Options::parse(lines);
+    #[cfg(not(unix))]
+    let options = {
+        let _ = lines;
+        attach::Options
+    };
+    Some(Target { workspace, tab, watching, options })
 }
 
 /// Look for `keepd` next to this binary first, so a build tree and an
@@ -384,6 +400,25 @@ mod embedded {
         assert!(embedded_target_in(&dir).is_some(), "first read should find it");
         assert!(embedded_target_in(&dir).is_none(), "second read should find nothing");
         assert!(!dir.join(TARGET_FILE).exists(), "file should be gone");
+    }
+
+    /// The options after the third line, for the client that knows them.
+    #[cfg(unix)]
+    #[test]
+    fn the_lines_after_the_third_are_options() {
+        let dir = scratch("options");
+        std::fs::write(
+            dir.join(TARGET_FILE),
+            "orion\n7\n/tmp/showing\nmirror=10000000\ntake=/tmp/keep-attach/old\napp=42\n",
+        )
+        .unwrap();
+        let target = embedded_target_in(&dir).expect("target");
+        assert_eq!(target.options.mirror, Some(10_000_000));
+        assert_eq!(target.options.take.as_deref(), Some(Path::new("/tmp/keep-attach/old")));
+        assert_eq!(target.options.app, Some(42));
+        // Without them, the client of before.
+        std::fs::write(dir.join(TARGET_FILE), "orion\n7\n/tmp/showing\n").unwrap();
+        assert_eq!(embedded_target_in(&dir).expect("target").options, attach::Options::default());
     }
 
     #[test]

@@ -10,6 +10,12 @@
 use std::ffi::c_void;
 use std::os::raw::c_int;
 
+mod effects;
+mod handover;
+
+pub use effects::{Device, Events, Facts};
+pub use handover::Keyboard;
+
 /// Raw FFI surface. Prefer the safe wrappers below.
 pub mod ffi {
     use std::ffi::c_void;
@@ -38,14 +44,140 @@ pub mod ffi {
     pub type WritePtyFn =
         unsafe extern "C" fn(terminal: Terminal, userdata: *mut c_void, data: *const u8, len: usize);
 
+    /// The other effects: what a terminal somebody is using does with what
+    /// a program says to it, beyond drawing it (see `Terminal::act_as_terminal`).
+    pub const OPT_XTVERSION: c_int = 4;
+    pub const OPT_TITLE_CHANGED: c_int = 5;
+    pub const OPT_SIZE: c_int = 6;
+    pub const OPT_COLOR_SCHEME: c_int = 7;
+    pub const OPT_DEVICE_ATTRIBUTES: c_int = 8;
+    pub const OPT_COLOR_FOREGROUND: c_int = 11;
+    pub const OPT_COLOR_BACKGROUND: c_int = 12;
+    pub const OPT_COLOR_CURSOR: c_int = 13;
+    pub const OPT_COLOR_PALETTE: c_int = 14;
+    pub const OPT_PWD_CHANGED: c_int = 25;
+    pub const OPT_CLIPBOARD_WRITE: c_int = 26;
+    /// How much history the terminal keeps, in bytes; see `set_scrollback_limit`.
+    pub const OPT_SCROLLBACK_MAX_BYTES: c_int = 27;
+
+    pub type TitleChangedFn = unsafe extern "C" fn(terminal: Terminal, userdata: *mut c_void);
+    pub type PwdChangedFn = unsafe extern "C" fn(terminal: Terminal, userdata: *mut c_void);
+    pub type XtversionFn = unsafe extern "C" fn(terminal: Terminal, userdata: *mut c_void) -> GhosttyString;
+    pub type SizeFn =
+        unsafe extern "C" fn(terminal: Terminal, userdata: *mut c_void, out: *mut SizeReportSize) -> bool;
+    /// `GhosttyColorScheme`: 0 light, 1 dark.
+    pub type ColorSchemeFn =
+        unsafe extern "C" fn(terminal: Terminal, userdata: *mut c_void, out: *mut c_int) -> bool;
+    pub type DeviceAttributesFn =
+        unsafe extern "C" fn(terminal: Terminal, userdata: *mut c_void, out: *mut DeviceAttributes) -> bool;
+    pub type ClipboardWriteFn =
+        unsafe extern "C" fn(terminal: Terminal, userdata: *mut c_void, write: *const ClipboardWrite);
+
+    /// `GhosttyColorRgb`.
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct ColorRgb {
+        pub r: u8,
+        pub g: u8,
+        pub b: u8,
+    }
+
+    /// `GhosttyDeviceAttributes`, the three answers to CSI c, CSI > c and
+    /// CSI = c.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct DeviceAttributesPrimary {
+        pub conformance_level: u16,
+        pub features: [u16; 64],
+        pub num_features: usize,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct DeviceAttributesSecondary {
+        pub device_type: u16,
+        pub firmware_version: u16,
+        pub rom_cartridge: u16,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct DeviceAttributesTertiary {
+        pub unit_id: u32,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct DeviceAttributes {
+        pub primary: DeviceAttributesPrimary,
+        pub secondary: DeviceAttributesSecondary,
+        pub tertiary: DeviceAttributesTertiary,
+    }
+
+    /// `GhosttySizeReportSize`.
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    pub struct SizeReportSize {
+        pub rows: u16,
+        pub columns: u16,
+        pub cell_width: u32,
+        pub cell_height: u32,
+    }
+
+    /// `GhosttyClipboardContent`: one MIME representation of a write.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct ClipboardContent {
+        pub mime: GhosttyString,
+        pub data: GhosttyString,
+    }
+
+    /// `GhosttyClipboardWriteReply`.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct ClipboardWriteReply {
+        pub size: usize,
+        pub result: c_int,
+        pub remember: bool,
+    }
+    pub const CLIPBOARD_WRITE_SUCCESS: c_int = 0;
+    pub const CLIPBOARD_LOCATION_STANDARD: c_int = 0;
+
+    pub type ClipboardWriteReplyFn =
+        unsafe extern "C" fn(write: *const ClipboardWrite, reply: *const ClipboardWriteReply);
+
+    /// `GhosttyClipboardWrite`: a program writing the clipboard (OSC 52).
+    #[repr(C)]
+    pub struct ClipboardWrite {
+        pub size: usize,
+        pub location: c_int,
+        pub contents: *const ClipboardContent,
+        pub contents_len: usize,
+        pub name: GhosttyString,
+        pub granted: bool,
+        pub can_remember: bool,
+        pub ctx: *const c_void,
+        pub reply: Option<ClipboardWriteReplyFn>,
+    }
+
     /// `GhosttyTerminalData` values we read.
     pub const DATA_COLS: c_int = 1;
     pub const DATA_ROWS: c_int = 2;
     pub const DATA_CURSOR_X: c_int = 3;
     pub const DATA_CURSOR_Y: c_int = 4;
+    /// `GhosttyTerminalScreen`: 0 the main screen, 1 the alternate one.
+    pub const DATA_ACTIVE_SCREEN: c_int = 6;
     pub const DATA_KITTY_KEYBOARD_FLAGS: c_int = 8;
     pub const DATA_TITLE: c_int = 12;
     pub const DATA_PWD: c_int = 13;
+    pub const DATA_TOTAL_ROWS: c_int = 14;
+    pub const DATA_SCROLLBACK_ROWS: c_int = 15;
+    pub const DATA_COLOR_FOREGROUND: c_int = 18;
+    pub const DATA_COLOR_BACKGROUND: c_int = 19;
+    pub const DATA_COLOR_CURSOR: c_int = 20;
+    pub const DATA_COLOR_PALETTE: c_int = 21;
+    pub const DATA_COLOR_FOREGROUND_DEFAULT: c_int = 22;
+    pub const DATA_COLOR_BACKGROUND_DEFAULT: c_int = 23;
+    pub const DATA_COLOR_CURSOR_DEFAULT: c_int = 24;
+    pub const DATA_COLOR_PALETTE_DEFAULT: c_int = 25;
+    pub const DATA_SCROLLBACK_MAX_BYTES: c_int = 34;
     pub const DATA_MODE: c_int = 37;
 
     /// `GhosttyGridRef`: a cell, resolved.
@@ -82,6 +214,8 @@ pub mod ffi {
     }
 
     pub const POINT_TAG_ACTIVE: c_int = 0;
+    /// The whole screen, history first: row 0 is the oldest kept.
+    pub const POINT_TAG_SCREEN: c_int = 2;
 
     /// `GhosttySelection`: the cells from `start` to `end`, both included.
     #[repr(C)]
@@ -94,6 +228,9 @@ pub mod ffi {
     }
 
     pub type Row = u64;
+    /// `GhosttyRowData`: whether the row's line goes on in the next row, the
+    /// right margin having broken it rather than a line feed.
+    pub const ROW_DATA_WRAP: c_int = 1;
     /// `GhosttyRowData`: whether any cell of the row may have a hyperlink.
     pub const ROW_DATA_HYPERLINK: c_int = 5;
     pub const OUT_OF_SPACE: c_int = -3;
@@ -204,7 +341,29 @@ pub mod ffi {
         ) -> c_int;
 
         pub fn ghostty_free(allocator: *const c_void, ptr: *mut u8, len: usize);
+
+        pub fn ghostty_render_state_new(allocator: *const c_void, out: *mut RenderState) -> c_int;
+        pub fn ghostty_render_state_free(state: RenderState);
+        pub fn ghostty_render_state_update(state: RenderState, terminal: Terminal) -> c_int;
+        pub fn ghostty_render_state_get(state: RenderState, data: c_int, out: *mut c_void) -> c_int;
     }
+
+    #[repr(C)]
+    pub struct RenderStateImpl {
+        _private: [u8; 0],
+    }
+    /// What a renderer would draw: here, only to read the cursor's shape,
+    /// which the terminal itself does not report.
+    pub type RenderState = *mut RenderStateImpl;
+    pub const RENDER_STATE_DATA_CURSOR_VISUAL_STYLE: c_int = 10;
+    pub const RENDER_STATE_DATA_CURSOR_BLINKING: c_int = 12;
+    /// `GhosttyTerminalCursorStyle`: bar, block, underline, hollow block.
+    pub const CURSOR_STYLE_BAR: c_int = 0;
+    pub const CURSOR_STYLE_BLOCK: c_int = 1;
+    pub const CURSOR_STYLE_UNDERLINE: c_int = 2;
+    pub const CURSOR_STYLE_BLOCK_HOLLOW: c_int = 3;
+    /// The shape CSI 0 q goes back to, and the one before any CSI q.
+    pub const OPT_DEFAULT_CURSOR_STYLE: c_int = 22;
 }
 
 /// What a formatted snapshot should look like.
@@ -246,29 +405,13 @@ impl std::error::Error for Error {}
 /// A headless terminal: feed it PTY bytes, ask it for the screen.
 pub struct Terminal {
     raw: ffi::Terminal,
-    /// The answers the terminal has written, waiting to be collected; see
-    /// [`Terminal::answer_queries`]. Boxed so the address the library holds
-    /// stays put when the terminal moves.
-    replies: Option<Box<Vec<u8>>>,
-}
-
-/// How much unanswered reply is kept. A program asking the same question in
-/// a loop with nobody collecting must not grow this without end.
-const REPLY_LIMIT: usize = 64 * 1024;
-
-unsafe extern "C" fn collect_reply(
-    _terminal: ffi::Terminal,
-    userdata: *mut c_void,
-    data: *const u8,
-    len: usize,
-) {
-    if userdata.is_null() || data.is_null() || len == 0 {
-        return;
-    }
-    let buf = unsafe { &mut *(userdata as *mut Vec<u8>) };
-    if buf.len() + len <= REPLY_LIMIT {
-        buf.extend_from_slice(unsafe { std::slice::from_raw_parts(data, len) });
-    }
+    /// What the terminal does with what a program says to it beyond the
+    /// screen: the answers it writes back ([`Terminal::answer_queries`]),
+    /// and, standing in for a terminal somebody is using
+    /// ([`Terminal::act_as_terminal`]), the title, the directory and the
+    /// clipboard. Boxed so the address the library holds stays put when the
+    /// terminal moves. None until asked for.
+    effects: Option<Box<effects::Effects>>,
 }
 
 // The handle is owned exclusively; libghostty-vt forbids concurrent writes.
@@ -281,39 +424,7 @@ impl Terminal {
         if rc != ffi::SUCCESS {
             return Err(Error(rc));
         }
-        Ok(Self { raw, replies: None })
-    }
-
-    /// Have the terminal answer what programs ask of it — where the cursor
-    /// is, which modes are set — into a buffer, collected with
-    /// [`Terminal::take_replies`].
-    ///
-    /// By default the questions go unanswered here, because whoever is
-    /// watching the tab answers them; this is for when nobody is.
-    pub fn answer_queries(&mut self) -> Result<(), Error> {
-        if self.replies.is_some() {
-            return Ok(());
-        }
-        let mut buf: Box<Vec<u8>> = Box::default();
-        let userdata = &mut *buf as *mut Vec<u8> as *const c_void;
-        let callback: ffi::WritePtyFn = collect_reply;
-        let rc = unsafe { ffi::ghostty_terminal_set(self.raw, ffi::OPT_USERDATA, userdata) };
-        if rc != ffi::SUCCESS {
-            return Err(Error(rc));
-        }
-        let rc = unsafe {
-            ffi::ghostty_terminal_set(self.raw, ffi::OPT_WRITE_PTY, callback as *const c_void)
-        };
-        if rc != ffi::SUCCESS {
-            return Err(Error(rc));
-        }
-        self.replies = Some(buf);
-        Ok(())
-    }
-
-    /// The answers written since the last call, oldest first.
-    pub fn take_replies(&mut self) -> Vec<u8> {
-        self.replies.as_mut().map(|b| std::mem::take(&mut **b)).unwrap_or_default()
+        Ok(Self { raw, effects: None })
     }
 
     /// Feed bytes read from the PTY.
@@ -321,7 +432,96 @@ impl Terminal {
         if data.is_empty() {
             return;
         }
+        // Standing in for a terminal that leaves `CSI = c` unanswered, the
+        // bytes go in around it; see `effects::Effects::tertiary`.
+        if let Some(effects) = self.effects.as_mut() {
+            if effects.screens_tertiary() {
+                let cuts = effects.tertiary_queries(data);
+                if !cuts.is_empty() {
+                    let mut at = 0;
+                    for cut in cuts {
+                        self.raw_write(&data[at..cut]);
+                        // The library answers it whatever the callback says:
+                        // what it wrote on that one byte is taken back.
+                        let before = self.effects.as_mut().map(|e| e.set_quiet(true)).unwrap_or(0);
+                        self.raw_write(&data[cut..cut + 1]);
+                        if let Some(effects) = self.effects.as_mut() {
+                            effects.unsay(before);
+                        }
+                        at = cut + 1;
+                    }
+                    self.raw_write(&data[at..]);
+                    return;
+                }
+            }
+        }
+        self.raw_write(data);
+    }
+
+    fn raw_write(&mut self, data: &[u8]) {
+        if data.is_empty() {
+            return;
+        }
         unsafe { ffi::ghostty_terminal_vt_write(self.raw, data.as_ptr(), data.len()) };
+    }
+
+    /// Keep at most about this much history, in bytes. The library prunes a
+    /// page at a time, a page being a few hundred kilobytes, so the history
+    /// kept goes up and down by about that much around it.
+    pub fn set_scrollback_limit(&mut self, bytes: usize) -> Result<(), Error> {
+        let rc = unsafe {
+            ffi::ghostty_terminal_set(
+                self.raw,
+                ffi::OPT_SCROLLBACK_MAX_BYTES,
+                &bytes as *const usize as *const c_void,
+            )
+        };
+        if rc != ffi::SUCCESS {
+            return Err(Error(rc));
+        }
+        Ok(())
+    }
+
+    /// Rows of history on the screen in use, above the rows on view.
+    pub fn scrollback_rows(&self) -> usize {
+        self.get_usize(ffi::DATA_SCROLLBACK_ROWS)
+    }
+
+    /// Rows on the screen in use, history included.
+    pub fn total_rows(&self) -> usize {
+        self.get_usize(ffi::DATA_TOTAL_ROWS)
+    }
+
+    fn get_usize(&self, data: c_int) -> usize {
+        let mut out: usize = 0;
+        let rc = unsafe {
+            ffi::ghostty_terminal_get(self.raw, data, &mut out as *mut usize as *mut c_void)
+        };
+        if rc == ffi::SUCCESS { out } else { 0 }
+    }
+
+    /// The grid, as columns and rows.
+    pub fn size(&self) -> (u16, u16) {
+        (self.get_u16(ffi::DATA_COLS), self.get_u16(ffi::DATA_ROWS))
+    }
+
+    /// Whether the program is on the alternate screen, and by which of the
+    /// three modes it went there — leaving it the same way is what puts the
+    /// cursor back where it was (1049 saves it on the way in, 47 and 1047
+    /// do not).
+    pub fn alternate_screen(&self) -> Option<u16> {
+        let mut screen: c_int = 0;
+        let rc = unsafe {
+            ffi::ghostty_terminal_get(
+                self.raw,
+                ffi::DATA_ACTIVE_SCREEN,
+                &mut screen as *mut c_int as *mut c_void,
+            )
+        };
+        if rc != ffi::SUCCESS || screen != 1 {
+            return None;
+        }
+        Some([1049u16, 1047, 47].into_iter().find(|&m| self.dec_mode(m)).unwrap_or(1049))
     }
 
     /// The title the program inside set with OSC 0/2.
@@ -866,6 +1066,12 @@ mod abi {
         assert_eq!(std::mem::size_of::<ffi::GridRef>(), 24, "GridRef");
         assert_eq!(std::mem::size_of::<ffi::Point>(), 24, "Point");
         assert_eq!(std::mem::size_of::<ffi::Selection>(), 64, "Selection");
+        assert_eq!(std::mem::size_of::<ffi::ColorRgb>(), 3, "ColorRgb");
+        assert_eq!(std::mem::size_of::<ffi::DeviceAttributes>(), 160, "DeviceAttributes");
+        assert_eq!(std::mem::size_of::<ffi::SizeReportSize>(), 12, "SizeReportSize");
+        assert_eq!(std::mem::size_of::<ffi::ClipboardContent>(), 32, "ClipboardContent");
+        assert_eq!(std::mem::size_of::<ffi::ClipboardWrite>(), 72, "ClipboardWrite");
+        assert_eq!(std::mem::size_of::<ffi::ClipboardWriteReply>(), 16, "ClipboardWriteReply");
     }
 }
 

@@ -426,7 +426,14 @@ final class TabHostView: NSView {
         for view in subviews { view.removeFromSuperview() }
         isHibernated = true
         for pane in panes {
-            SurfacePool.shared.hibernate(window: windowID, workspace: id.workspace, tab: pane)
+            // Its program still renames itself, kept by its client: told up
+            // with this tab's identity, as the surface's own titles are.
+            SurfacePool.shared.hibernate(
+                window: windowID, workspace: id.workspace, tab: pane,
+                onTitle: { [weak self] title in
+                    guard let self else { return }
+                    self.onPaneTitle?(self.id, pane, title)
+                })
         }
     }
 

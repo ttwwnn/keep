@@ -68,4 +68,52 @@ typed("an escape it does not know: nothing", "text:\\q", nil)
 typed("a broken hex escape: nothing", "text:\\x0", nil)
 typed("not a text action: nothing", "copy_to_clipboard", nil)
 
+// What the app tells a surface's client, and the client keeping a pane.
+func lines(_ name: String, _ got: [String], _ want: [String]) {
+    if got == want { print("ok   \(name)") } else {
+        failures += 1
+        print("FAIL \(name): got \(got), wanted \(want)")
+    }
+}
+lines("a client follows its surface into a mirror as long as its history",
+      KeeperProtocol.clientOptions(hibernating: true, scrollback: 10_000_000, grapheme: true, blink: true, pid: 42, take: nil),
+      ["mirror=10000000", "grapheme=1", "blink=1", "app=42"])
+lines("one that may take over a kept pane is told whose",
+      KeeperProtocol.clientOptions(hibernating: true, scrollback: 5, grapheme: false, blink: false, pid: 7, take: "/tmp/keep-attach/X"),
+      ["mirror=5", "grapheme=0", "blink=0", "app=7", "take=/tmp/keep-attach/X"])
+lines("with hibernation off, nothing: no mirror, nothing to take",
+      KeeperProtocol.clientOptions(hibernating: false, scrollback: 10_000_000, grapheme: true, blink: true, pid: 42, take: "/tmp/x"),
+      [])
+lines("a take that is not a path is not passed on",
+      KeeperProtocol.clientOptions(hibernating: true, scrollback: 1, grapheme: true, blink: true, pid: 1, take: "relative"),
+      ["mirror=1", "grapheme=1", "blink=1", "app=1"])
+let palette: [[UInt8]] = (0..<256).map { [UInt8($0), 0, 0] }
+let facts = KeeperProtocol.facts(
+    foreground: [0xff, 0xff, 0xff], background: [0x28, 0x2c, 0x34], cursor: nil, palette: palette,
+    dark: false, cell: (16, 34), version: "1.3.2-HEAD-+a53771a", device: "62;22;52/1;10;0")
+lines("the facts a kept pane answers with",
+      facts.filter { !$0.hasPrefix("palette=") },
+      ["foreground=ffffff", "background=282c34", "cursor=ffffff", "scheme=light", "cell=16,34",
+       "xtversion=ghostty 1.3.2-HEAD-+a53771a", "da=62;22;52/1;10;0"])
+lines("the palette, all 256, in order",
+      facts.filter { $0.hasPrefix("palette=") }.map { String($0.prefix(29)) },
+      ["palette=000000,010000,020000,"])
+lines("a cursor with a colour of its own keeps it; dark is said",
+      KeeperProtocol.facts(foreground: [1, 2, 3], background: nil, cursor: [9, 9, 9], palette: [],
+                           dark: true, cell: nil, version: nil, device: "d"),
+      ["foreground=010203", "cursor=090909", "scheme=dark", "da=d"])
+lines("a palette short of a colour is no palette: the client keeps its own",
+      KeeperProtocol.facts(foreground: nil, background: nil, cursor: nil, palette: Array(palette.dropLast()),
+                           dark: false, cell: nil, version: nil, device: "d").filter { $0.hasPrefix("palette=") },
+      [])
+func colour(_ name: String, _ text: String, _ want: [UInt8]?) {
+    let got = KeeperProtocol.colour(text)
+    if got == want { print("ok   \(name)") } else {
+        failures += 1
+        print("FAIL \(name): got \(String(describing: got)), wanted \(String(describing: want))")
+    }
+}
+colour("a background the client wrote", "010203\n", [1, 2, 3])
+colour("not a colour", "01020", nil)
+
 exit(failures == 0 ? 0 : 1)

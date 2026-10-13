@@ -318,6 +318,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     func applicationWillTerminate(_ notification: Notification) {
         session.flush()
+        // No surface will come back for a pane kept by its client.
+        SurfacePool.shared.releaseKeepers()
     }
 
     // MARK: - menu actions (each one is an intent)

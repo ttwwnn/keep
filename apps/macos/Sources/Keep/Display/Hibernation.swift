@@ -26,8 +26,11 @@ final class Hibernation {
         }
         backgroundObserver = NotificationCenter.default.addObserver(
             forName: GhosttyApp.backgroundDidChange, object: nil, queue: .main
-        ) { _ in
-            MainActor.assumeIsolated { Hibernation.tellSchemeToSleepers() }
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                Hibernation.tellSchemeToSleepers()
+                self?.refreshFacts()
+            }
         }
     }
 
@@ -76,6 +79,21 @@ final class Hibernation {
             hydrated[index].container.hibernate(hydrated[index].id)
         }
         Trace.log("hibernate", "let go of \(chosen.count), kept \(candidates.count - chosen.count)")
+    }
+
+    /// The theme changed, and with it what a kept pane's client answers for
+    /// its surface: the colours, and dark or light as the window now is.
+    /// A second later, as the window takes on the new ground.
+    private func refreshFacts() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self else { return }
+            let windows = self.containers.allObjects.compactMap { container -> (WindowID, Bool)? in
+                guard let window = container.window else { return nil }
+                let dark = window.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                return (container.windowID, dark)
+            }
+            SurfacePool.shared.refreshFacts { id in windows.first { $0.0 == id }?.1 }
+        }
     }
 
     /// The colours changed: a hibernated tab whose program asked to be told

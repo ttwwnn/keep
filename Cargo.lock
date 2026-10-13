@@ -584,6 +584,7 @@ dependencies = [
  "keep-ia",
  "keep-proto",
  "keep-vt",
+ "libc",
  "portable-pty",
  "windows-sys",
 ]

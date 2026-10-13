@@ -9,6 +9,8 @@ use anyhow::{Context, Result};
 use crossterm::terminal;
 use keep_proto::net::Stream;
 use keep_proto::{ClientMsg, ServerMsg};
+#[cfg(unix)]
+use std::os::unix::io::AsRawFd;
 
 /// Ctrl-\ detaches. Chosen because almost nothing binds it, so it does not
 /// shadow a key the program inside the tab wanted.
@@ -78,6 +80,13 @@ pub enum Outcome {
     Ended,
 }
 
+/// What the app asked of the client beyond the tab: see `keeper::Options`.
+#[cfg(unix)]
+pub use crate::keeper::Options;
+#[cfg(not(unix))]
+#[derive(Clone, Debug, Default)]
+pub struct Options;
+
 /// Attach to a tab and pump it until the person detaches or the shell ends.
 ///
 /// `watching` names a file an embedder may keep beside this client, holding
@@ -88,16 +97,60 @@ pub enum Outcome {
 /// voting on its size for as long as the app ran, throttling a wide window
 /// showing that same tab for a reason nobody could see. A hidden viewer
 /// reports no size at all, and the daemon leaves it out of the reckoning.
+///
+/// `options` come from the embedder too: follow the surface into a mirror,
+/// so that the tab can be kept when the surface goes (`keeper`), and take
+/// over a tab kept that way instead of attaching to it afresh.
 pub fn attach(
     socket: &std::path::Path,
     name: &str,
     tab: u32,
     watching: Option<std::path::PathBuf>,
+    options: Options,
 ) -> Result<Outcome> {
     let (cols, rows) = terminal::size().unwrap_or((80, 24));
 
-    let mut sock = Stream::connect(socket).context("connect to daemon")?;
-    ClientMsg::Attach { workspace: name.to_string(), tab, cols, rows }.write(&mut sock)?;
+    // A tab kept by the client of the surface before this one: it hands over
+    // the terminal as it stands and its own connection to the daemon, so
+    // that nothing the tab wrote meanwhile is missed or written twice. A
+    // keeper that cannot be reached is a tab attached to the ordinary way.
+    #[cfg(unix)]
+    let (cols, rows) = match options.take {
+        Some(_) => settled_size(watching.as_deref(), (cols, rows)),
+        None => (cols, rows),
+    };
+    #[cfg(unix)]
+    let handed = options.take.as_deref().and_then(|dir| crate::keeper::take(dir, cols, rows).ok());
+    #[cfg(not(unix))]
+    let handed: Option<(Stream, Vec<u8>)> = None;
+    let (mut sock, handed_screen) = match handed {
+        Some((sock, screen)) => (sock, Some(screen)),
+        None => {
+            let mut sock = Stream::connect(socket).context("connect to daemon")?;
+            ClientMsg::Attach { workspace: name.to_string(), tab, cols, rows }.write(&mut sock)?;
+            (sock, None)
+        }
+    };
+
+    // The terminal the surface shows, followed byte for byte, and the pipe
+    // the input thread says on when the surface has gone; see `keeper`.
+    #[cfg(unix)]
+    let dir = std::env::current_dir().unwrap_or_default();
+    #[cfg(unix)]
+    let mut mirror = crate::keeper::Mirror::new(cols, rows, &options, &dir);
+    #[cfg(unix)]
+    let (wake_read, wake_write) = match mirror {
+        Some(_) => {
+            // The surface going away hangs up this terminal, which kills
+            // its processes — this one among them, which is not done.
+            unsafe { libc::signal(libc::SIGHUP, libc::SIG_IGN) };
+            let mut ends = [-1; 2];
+            if unsafe { libc::pipe(ends.as_mut_ptr()) } == 0 { (ends[0], ends[1]) } else { (-1, -1) }
+        }
+        None => (-1, -1),
+    };
+    #[cfg(not(unix))]
+    let _ = &options;
 
     // The keyboard protocol the terminal we run in is speaking, and which of
     // its screens it is on, as followed from what we write to it; see
@@ -123,7 +176,15 @@ pub fn attach(
             let mut legacy = Legacy::new();
             loop {
                 let read = match stdin.read(&mut buf) {
-                    Ok(0) | Err(_) => break,
+                    Ok(0) | Err(_) => {
+                        // The terminal is gone. Said to the output loop,
+                        // which decides whether that is the end.
+                        #[cfg(unix)]
+                        if wake_write >= 0 {
+                            unsafe { libc::write(wake_write, b"x".as_ptr() as *const libc::c_void, 1) };
+                        }
+                        break;
+                    }
                     Ok(n) => n,
                 };
                 // Decoded only while the program never asked for the
@@ -162,11 +223,18 @@ pub fn attach(
     // and costs one cheap syscall every 200ms.
     let mut resize_sock = sock.try_clone().context("clone socket")?;
     let resize_flag = Arc::clone(&detached);
-    std::thread::Builder::new()
+    // Stopped, and waited for, before this client keeps the tab: from then
+    // on everything written to the daemon is the keeper's.
+    let resize_stop = Arc::new(AtomicBool::new(false));
+    let resize_stopped = Arc::clone(&resize_stop);
+    // A tab handed over is one the daemon last heard was not being looked
+    // at: the first size this client sees is news.
+    let first = if handed_screen.is_some() { (0, 0) } else { (cols, rows) };
+    let resizer = std::thread::Builder::new()
         .name("keep-resize".into())
         .spawn(move || {
-            let mut sent = (cols, rows);
-            while !resize_flag.load(Ordering::Acquire) {
+            let mut sent = first;
+            while !resize_flag.load(Ordering::Acquire) && !resize_stopped.load(Ordering::Acquire) {
                 // Ten commits a second, live. A settle-then-commit variant was
                 // tried — one clean redraw when the hand stops — and it was
                 // calmer but wrong: what is wanted is the terminal *tracking*
@@ -175,6 +243,9 @@ pub fn attach(
                 // half the latency to the first one, they read as motion. The
                 // per-tick cost while nothing changes is one syscall.
                 std::thread::sleep(Duration::from_millis(100));
+                if resize_stopped.load(Ordering::Acquire) {
+                    break;
+                }
                 // Zero means "not looking", which the daemon leaves out of
                 // the minimum. Read in the same tick as the size, since the
                 // two answer one question: how big is this viewer, if at all.
@@ -204,35 +275,69 @@ pub fn attach(
     // stdout on its way out.
     let mut failure: Option<String> = None;
     let mut flags = KittyFlags::new();
+    // The surface went away: whether that is the end is decided below.
+    #[cfg(unix)]
+    let mut hung_up = false;
+    #[cfg(not(unix))]
+    let hung_up = false;
+
+    // What a keeper handed over is the whole screen, written first.
+    if let Some(screen) = handed_screen.as_deref() {
+        flags.observe(screen);
+        kitty.store(flags.current(), Ordering::Release);
+        alternate.store(flags.on_alternate(), Ordering::Release);
+        #[cfg(unix)]
+        if let Some(mirror) = mirror.as_mut() {
+            mirror.feed(screen);
+        }
+        let written = out.write_all(screen).and_then(|_| out.flush());
+        #[cfg(unix)]
+        if written.is_err() && mirror.is_some() {
+            hung_up = true;
+        }
+        #[cfg(not(unix))]
+        written?;
+    }
+
     let outcome = loop {
-        match ServerMsg::read(&mut sock) {
+        #[cfg(unix)]
+        {
+            if hung_up {
+                break Outcome::Ended;
+            }
+            if mirror.is_some() {
+                let (ready, woke) = crate::keeper::wait(sock.as_raw_fd(), wake_read);
+                if woke && !ready {
+                    hung_up = true;
+                    break Outcome::Ended;
+                }
+            }
+        }
+        // The bytes a frame puts on the terminal, as the terminal must read
+        // them — written to it and, for keeping, followed into the mirror.
+        let bytes: Vec<u8> = match ServerMsg::read(&mut sock) {
             Ok(Some(ServerMsg::Repaint(data))) => {
                 // A repaint is the whole screen from the top, not more output
                 // after whatever this terminal was showing: without a clear,
                 // a resync painted below the old lines and left the cursor
                 // somewhere else. A daemon new enough to say declares the
                 // keyboard, flags off included, and needs nothing more.
-                out.write_all(b"\x1b[H\x1b[2J")?;
+                let mut bytes = b"\x1b[H\x1b[2J".to_vec();
                 // A daemon too old to declare the keyboard cannot say whether
                 // a pop was among the output this repaint replaces. Not
                 // knowing, the terminal's keyboard is reset and input decoded,
                 // which is how every client behaved before any of this.
                 if !KittyFlags::declared_in(&data) {
-                    out.write_all(KittyFlags::FORGET)?;
+                    bytes.extend_from_slice(KittyFlags::FORGET);
                     flags.reset();
                 }
                 flags.observe(&data);
-                kitty.store(flags.current(), Ordering::Release);
-                alternate.store(flags.on_alternate(), Ordering::Release);
-                out.write_all(&data)?;
-                out.flush()?;
+                bytes.extend_from_slice(&data);
+                bytes
             }
             Ok(Some(ServerMsg::Output(data))) => {
                 flags.observe(&data);
-                kitty.store(flags.current(), Ordering::Release);
-                alternate.store(flags.on_alternate(), Ordering::Release);
-                out.write_all(&data)?;
-                out.flush()?;
+                data
             }
             // Which tab we landed on; the caller asked for TAB_ANY.
             Ok(Some(ServerMsg::Attached { .. })) => continue,
@@ -249,9 +354,47 @@ pub fn attach(
                     Outcome::Ended
                 };
             }
+        };
+        kitty.store(flags.current(), Ordering::Release);
+        alternate.store(flags.on_alternate(), Ordering::Release);
+        #[cfg(unix)]
+        if let Some(mirror) = mirror.as_mut() {
+            // At the grid the surface will read these at.
+            if let Some(size) = pty_size() {
+                mirror.follow(size);
+            }
+            mirror.feed(&bytes);
         }
+        let written = out.write_all(&bytes).and_then(|_| out.flush());
+        #[cfg(unix)]
+        if written.is_err() && mirror.is_some() {
+            hung_up = true;
+            break Outcome::Ended;
+        }
+        written?;
     };
     drop(out);
+
+    // The surface went away. Kept, if the app said it would come back for
+    // the tab; ended as the hang-up would have ended it, if not.
+    #[cfg(unix)]
+    if hung_up {
+        if let Some(mirror) = mirror {
+            if dir.join(crate::keeper::FLAG).exists() {
+                resize_stop.store(true, Ordering::Release);
+                let _ = resizer.join();
+                crate::keeper::keep(crate::keeper::Kept {
+                    daemon: sock,
+                    mirror,
+                    flags,
+                    dir,
+                    app: options.app,
+                });
+            }
+        }
+        std::process::exit(0);
+    }
+    let _ = (&hung_up, &resize_stop, resizer);
 
     if let Some(msg) = failure {
         drop(_raw);
@@ -259,6 +402,49 @@ pub fn attach(
     }
 
     Ok(outcome)
+}
+
+/// The grid the surface this client was started for will have, once it is
+/// shown.
+///
+/// The app makes a surface inside a hidden tab and shows the tab in the same
+/// turn, and the grid reaches this terminal a moment after: started that
+/// early, a client reads whatever size the surface was born with. A tab taken
+/// over is handed over at the grid asked for — a terminal made to fit a size
+/// it will not have loses what a resize loses, and the program on the
+/// alternate screen is never asked to draw again when the daemon's size is
+/// the one it already had. So the client waits to be shown, as `watching`
+/// says, and for the size to stop moving: a few tens of milliseconds, at
+/// most two seconds.
+#[cfg(unix)]
+fn settled_size(watching: Option<&std::path::Path>, first: (u16, u16)) -> (u16, u16) {
+    let start = std::time::Instant::now();
+    let limit = Duration::from_millis(2000);
+    while start.elapsed() < limit && !watching.map(is_showing).unwrap_or(true) {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let mut last = pty_size().unwrap_or(first);
+    let mut still = std::time::Instant::now();
+    while start.elapsed() < limit {
+        std::thread::sleep(Duration::from_millis(15));
+        let now = pty_size().unwrap_or(last);
+        if now != last {
+            last = now;
+            still = std::time::Instant::now();
+        } else if still.elapsed() >= Duration::from_millis(60) {
+            break;
+        }
+    }
+    last
+}
+
+/// The size of the terminal this client writes to, as its device says: the
+/// grid of the surface on the other end.
+#[cfg(unix)]
+fn pty_size() -> Option<(u16, u16)> {
+    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut size) };
+    (rc == 0 && size.ws_col > 0 && size.ws_row > 0).then_some((size.ws_col, size.ws_row))
 }
 
 /// Where the detach key is in what was read, whichever way it was written.
@@ -373,6 +559,11 @@ impl KittyFlags {
 
     pub fn on_alternate(&self) -> bool {
         self.on_alternate
+    }
+
+    /// One screen's flags as pushed, bottom first.
+    pub fn pushed(&self, alternate: bool) -> Vec<u8> {
+        if alternate { self.alternate.clone() } else { self.main.clone() }
     }
 
     pub fn current(&self) -> u8 {

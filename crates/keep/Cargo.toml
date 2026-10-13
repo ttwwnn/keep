@@ -16,6 +16,12 @@ crossterm = "0.29.0"
 keep-ia = { version = "0.0.1", path = "../keep-ia" }
 keep-proto = { version = "0.0.1", path = "../keep-proto" }
 
+# The mirror a tab is kept in when the app lets go of its surface
+# (src/keeper.rs), and the system calls that hand a kept tab over.
+[target.'cfg(unix)'.dependencies]
+keep-vt = { path = "../keep-vt" }
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",

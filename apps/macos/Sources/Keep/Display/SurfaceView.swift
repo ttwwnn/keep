@@ -55,6 +55,19 @@ final class TerminalSurfaceView: NSView {
     /// Whether the pointer is currently showing the column-selection shape.
     private var showingColumnCursor = false
 
+    /// A kept pane to take over rather than attach to afresh: the directory
+    /// of the client that kept it (`Keeper`). Set before the view is put in
+    /// a window, which is when its client starts.
+    var takeOver: URL?
+
+    /// Whether this surface's client follows it into a mirror, so that the
+    /// pane can be kept when the surface goes. Decided when it is made.
+    private(set) var isMirrored = false
+
+    /// The surface is being let go of with its pane kept: the directory its
+    /// client is in stays, the client in it, for the next surface to find.
+    var keepsDirectory = false
+
     /// What the input system is still putting together: an accent waiting
     /// for its letter, or a word an input method has not committed yet.
     ///
@@ -103,7 +116,7 @@ final class TerminalSurfaceView: NSView {
             GhosttyApp.shared.unregister(surface: surface)
             ghostty_surface_free(surface)
         }
-        if let watchFile {
+        if let watchFile, !keepsDirectory {
             try? FileManager.default.removeItem(at: watchFile.deletingLastPathComponent())
         }
     }
@@ -148,7 +161,13 @@ final class TerminalSurfaceView: NSView {
         // `env_vars` and `initial_input` are accepted by the API and then
         // ignored, which is why the client is fixed app-wide (GhosttyApp)
         // and the target is a file the client reads and deletes.
-        guard let target = Self.makeTargetDirectory(workspace: workspace, tab: tab) else { return }
+        let options = Self.clientOptions(take: takeOver)
+        isMirrored = options.contains { $0.hasPrefix("mirror=") }
+        guard let target = Self.makeTargetDirectory(workspace: workspace, tab: tab, options: options)
+        else { return }
+        if let takeOver {
+            Trace.log("keeper", "\(workspace)/\(tab) takes over \(takeOver.lastPathComponent)")
+        }
         watchFile = target.watch
         noteShowing()  // a surface born into a hidden host is never told it is hidden
         target.path.withCString { wd in
@@ -194,10 +213,25 @@ final class TerminalSurfaceView: NSView {
     /// window showing that same tab, for a reason nothing on screen explains.
     private var watchFile: URL?
 
+    /// What the client is asked beyond its tab (crates/keep/src/keeper.rs):
+    /// to follow this surface into a mirror keeping as much history, cut into
+    /// cells the same way, so that the pane can be kept when the surface
+    /// goes — and, for a pane that was, to take it over. Nothing when panes
+    /// are never let go of (`KEEP_HYDRATED_LIMIT=off`).
+    static func clientOptions(take: URL?) -> [String] {
+        KeeperProtocol.clientOptions(
+            hibernating: HibernationPolicy.limit != nil,
+            scrollback: GhosttyApp.shared.scrollbackLimit,
+            grapheme: GhosttyApp.shared.clustersGraphemes,
+            blink: GhosttyApp.shared.cursorBlinks,
+            pid: getpid(),
+            take: take?.path)
+    }
+
     /// A private directory holding this surface's attach target, and the file
     /// it will keep answering through.
     private static func makeTargetDirectory(
-        workspace: String, tab: UInt32
+        workspace: String, tab: UInt32, options: [String]
     ) -> (path: String, watch: URL)? {
         let base = FileManager.default.temporaryDirectory
             .appendingPathComponent("keep-attach", isDirectory: true)
@@ -206,7 +240,8 @@ final class TerminalSurfaceView: NSView {
         do {
             try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
             try "1".write(to: watch, atomically: true, encoding: .utf8)
-            try "\(workspace)\n\(tab)\n\(watch.path)\n".write(
+            let lines = ["\(workspace)", "\(tab)", watch.path] + options
+            try (lines.joined(separator: "\n") + "\n").write(
                 to: base.appendingPathComponent(".keep-attach"),
                 atomically: true,
                 encoding: .utf8
@@ -707,6 +742,7 @@ final class TerminalSurfaceView: NSView {
             surface,
             dark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT
         )
+        schemeIsDark = dark
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -1516,6 +1552,24 @@ final class TerminalSurfaceView: NSView {
     /// Where the pointer last was, in points down from the top.
     private var pointerFromTop: CGFloat?
 
+    /// Everything on the screen in use, the history first: for the test of
+    /// hibernation (`SurfacePool.traceScreen`), which checks that a pane
+    /// handed back by its keeper has every line its surface had.
+    func screenText() -> String? {
+        guard let surface else { return nil }
+        let selection = ghostty_selection_s(
+            top_left: ghostty_point_s(
+                tag: GHOSTTY_POINT_SCREEN, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
+            bottom_right: ghostty_point_s(
+                tag: GHOSTTY_POINT_SCREEN, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0),
+            rectangle: false)
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_text(surface, selection, &text) else { return nil }
+        defer { ghostty_surface_free_text(surface, &text) }
+        guard let raw = text.text else { return nil }
+        return String(cString: raw)
+    }
+
     /// The rows on screen, top to bottom, and roughly which of them is under
     /// the pointer: what a ⌘-click on a path is pieced back together from
     /// when the runtime found only part of it — a path Claude Code broke
@@ -1560,8 +1614,33 @@ final class TerminalSurfaceView: NSView {
     var holdsUnsavedState: Bool {
         if markedText.length > 0 || isScrolledBack { return true }
         guard let surface else { return false }
-        return ghostty_surface_has_selection(surface)
+        if ghostty_surface_has_selection(surface) { return true }
+        // What its client could not keep: an image, which a handover
+        // cannot carry (`Keeper.unkeepable`).
+        if let directory = clientDirectory,
+           FileManager.default.fileExists(atPath: directory.appendingPathComponent(Keeper.unkeepable).path)
+        {
+            return true
+        }
+        return false
     }
+
+    /// The private directory this surface's client runs in.
+    var clientDirectory: URL? {
+        watchFile?.deletingLastPathComponent()
+    }
+
+    /// What a cell measures in pixels, as a program asking is told.
+    var cellPixels: (width: UInt32, height: UInt32)? {
+        guard let surface else { return nil }
+        let size = ghostty_surface_size(surface)
+        return (size.cell_width_px, size.cell_height_px)
+    }
+
+    /// Dark or light, as this surface tells a program that asks: what it
+    /// was last told (`applyColorScheme`), which is not always what its view
+    /// would say now — a hidden view is told nothing of a change.
+    private(set) var schemeIsDark = false
 
     // MARK: - where this shell is
 

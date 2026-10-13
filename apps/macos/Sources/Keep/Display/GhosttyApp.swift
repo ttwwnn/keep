@@ -45,6 +45,43 @@ final class GhosttyApp {
     private(set) var terminalBackgroundOpacity: Double = 1
     private(set) var terminalBackgroundBlur: Int16 = 0
 
+    /// The colours a surface starts from — the theme's, resolved for the
+    /// scheme in effect, before any program changes them — as a surface
+    /// reports them when a program asks (OSC 10, 11, 12, 4). A kept pane's
+    /// client answers with these (`Keeper.writeFacts`). From the config the
+    /// runtime settles on, as the background is; not from a program's own
+    /// colour changes, which are that program's.
+    struct ThemeColours {
+        var foreground: [UInt8]?
+        var background: [UInt8]?
+        var cursor: [UInt8]?
+        var palette: [[UInt8]] = []
+    }
+    private(set) var themeColours = ThemeColours()
+
+    /// How much history a surface keeps, in bytes (`scrollback-limit`): what
+    /// its client's mirror keeps too, so that a kept pane loses no more than
+    /// its surface would have.
+    private(set) var scrollbackLimit: UInt = 10_000_000
+
+    /// Whether a surface cuts text into cells by grapheme cluster before any
+    /// program says (`grapheme-width-method = unicode`, mode 2027): the
+    /// client's mirror must cut it the same way.
+    private(set) var clustersGraphemes = true
+
+    /// Whether a surface's cursor blinks before any program says (mode 12,
+    /// `cursor-style-blink`, which unset means yes): the client's mirror
+    /// starts the same way, for a program asking.
+    private(set) var cursorBlinks = true
+
+    /// libghostty's version, as XTVERSION reports it after "ghostty ".
+    static let version: String? = {
+        let info = ghostty_info()
+        guard let raw = info.version, info.version_len > 0 else { return nil }
+        return String(
+            decoding: UnsafeRawBufferPointer(start: raw, count: Int(info.version_len)), as: UTF8.self)
+    }()
+
     /// Whether the terminal's ground is dark: the question every colour in
     /// the chrome is an answer to, asked of the colour rather than of the
     /// system. A dark theme in a light macOS is a dark window. Nil until
@@ -142,6 +179,12 @@ final class GhosttyApp {
         if resized || chosen {
             NotificationCenter.default.post(name: Self.textSizeDidChange, object: nil)
         }
+    }
+
+    /// A program set the terminal's background (OSC 11), in a pane whose
+    /// surface was let go of: taken as `GHOSTTY_ACTION_COLOR_CHANGE` is.
+    func adoptProgramBackground(_ color: NSColor) {
+        adopt(background: color, opacity: terminalBackgroundOpacity, blur: terminalBackgroundBlur)
     }
 
     fileprivate func adopt(background: NSColor, opacity: Double, blur: Int16) {
@@ -438,6 +481,57 @@ final class GhosttyApp {
         return NSColor(color)
     }
 
+    /// The theme's own colours, as `ThemeColours` keeps them. Read from the
+    /// config handed over in the callback, as the background is, for the
+    /// same reason.
+    fileprivate static func themeColours(of config: ghostty_config_t?) -> ThemeColours {
+        var colours = ThemeColours()
+        guard let config else { return colours }
+        func colour(_ key: String) -> [UInt8]? {
+            var color = ghostty_config_color_s()
+            let found = key.withCString { ghostty_config_get(config, &color, $0, UInt(key.utf8.count)) }
+            return found ? [color.r, color.g, color.b] : nil
+        }
+        colours.foreground = colour("foreground")
+        colours.background = colour("background")
+        colours.cursor = colour("cursor-color")
+        var palette = ghostty_config_palette_s()
+        let key = "palette"
+        let found = key.withCString { ghostty_config_get(config, &palette, $0, UInt(key.utf8.count)) }
+        if found {
+            colours.palette = withUnsafeBytes(of: palette.colors) { raw in
+                raw.bindMemory(to: ghostty_config_color_s.self).map { [$0.r, $0.g, $0.b] }
+            }
+        }
+        return colours
+    }
+
+    private static func scrollbackLimit(of config: ghostty_config_t?) -> UInt? {
+        guard let config else { return nil }
+        var limit: UInt = 0
+        let key = "scrollback-limit"
+        let found = key.withCString { ghostty_config_get(config, &limit, $0, UInt(key.utf8.count)) }
+        return found && limit > 0 ? limit : nil
+    }
+
+    /// `cursor-style-blink`, when the config says; nil when it is unset.
+    private static func cursorStyleBlink(of config: ghostty_config_t?) -> Bool? {
+        guard let config else { return nil }
+        var value = false
+        let key = "cursor-style-blink"
+        let found = key.withCString { ghostty_config_get(config, &value, $0, UInt(key.utf8.count)) }
+        return found ? value : nil
+    }
+
+    private static func graphemeWidthMethod(of config: ghostty_config_t?) -> String? {
+        guard let config else { return nil }
+        var value: UnsafePointer<CChar>?
+        let key = "grapheme-width-method"
+        let found = key.withCString { ghostty_config_get(config, &value, $0, UInt(key.utf8.count)) }
+        guard found, let value else { return nil }
+        return String(cString: value)
+    }
+
     fileprivate static func backgroundOpacity(of config: ghostty_config_t?) -> Double? {
         guard let config else { return nil }
         var opacity: Double = 1
@@ -491,6 +585,11 @@ final class GhosttyApp {
         // sync after startup and reloads.
         terminalBackgroundOpacity = Self.backgroundOpacity(of: config) ?? 1
         terminalBackgroundBlur = Self.backgroundBlur(of: config) ?? 0
+        scrollbackLimit = Self.scrollbackLimit(of: config) ?? scrollbackLimit
+        clustersGraphemes = Self.graphemeWidthMethod(of: config).map { $0 != "legacy" } ?? true
+        cursorBlinks = Self.cursorStyleBlink(of: config) ?? true
+        themeColours = Self.themeColours(of: config)
+        Trace.log("config", "scrollback \(scrollbackLimit) bytes, graphemes \(clustersGraphemes ? "clustered" : "legacy")")
         let font = Self.fontSettings()
         terminalFontFamily = font.family
         terminalFontSize = font.size
@@ -656,7 +755,9 @@ final class GhosttyApp {
                 // its own (`configuredFontSize`), so once a reload, not once
                 // a tab.
                 let wholeApp = target.tag == GHOSTTY_TARGET_APP
+                let theme = GhosttyApp.themeColours(of: config)
                 DispatchQueue.main.async {
+                    GhosttyApp.shared.themeColours = theme
                     GhosttyApp.shared.adopt(background: color, opacity: opacity, blur: blur)
                     if wholeApp { GhosttyApp.shared.settleFont() }
                 }
