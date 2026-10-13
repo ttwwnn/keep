@@ -42,6 +42,10 @@ export interface TerminalHooks {
 
 export const viewKey = (workspace: string, tab: number) => `${workspace}\u0000${tab}`;
 
+/** When the window last stopped being the one with the keyboard: a copy made in another app after that is not a program's. */
+let windowBlurredAt = 0;
+if (typeof window !== "undefined") window.addEventListener("blur", () => (windowBlurredAt = Date.now()));
+
 /** What a repaint is written after: home and clear, as the terminal client does. */
 const CLEAR_FOR_REPAINT = "\x1b[H\x1b[2J";
 
@@ -54,6 +58,8 @@ export class TermView {
   readonly links: Links;
   /** The last text a program put on the clipboard (OSC 52), and when. */
   programCopied: { text: string; at: number } | null = null;
+  /** When the pointer last went down in this terminal. */
+  private pressedAt = 0;
   private readonly fit: FitAddon;
   private webgl: WebglAddon | null = null;
   private attachment: api.Attachment | null = null;
@@ -122,6 +128,7 @@ export class TermView {
     this.term.loadAddon(unicode);
     this.term.unicode.activeVersion = "11";
 
+    this.element.addEventListener("mousedown", () => (this.pressedAt = Date.now()), true);
     // The browser's own paste (Ctrl+V, Shift+Insert) goes the way any paste does.
     this.element.addEventListener(
       "paste",
@@ -335,6 +342,19 @@ export class TermView {
       // terminal, which would send an Escape to the program.
       setTimeout(() => this.focus(), 50);
     });
+  }
+
+  /**
+   * The text a program that selects with the mouse itself — Claude Code in full
+   * screen — copied when the button was let go: the pointer went down here
+   * after the window last had the keyboard, and the copy came after that. Not
+   * an old clipboard, which cutting out of the prompt would delete from text
+   * nobody selected.
+   */
+  selectionTheProgramCopied(): string | undefined {
+    const copied = this.programCopied;
+    if (!copied || copied.text === "") return undefined;
+    return copied.at >= this.pressedAt && this.pressedAt > windowBlurredAt ? copied.text : undefined;
   }
 
   /** Bytes as if typed. */

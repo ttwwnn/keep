@@ -33,7 +33,8 @@ import {
   zoomReset,
 } from "./store";
 import type { TermView } from "./terminals";
-import { cutKeys, quotePaths } from "./text";
+import { keysToCut } from "./cut";
+import { quotePaths } from "./text";
 
 export function perform(action: Action): void {
   switch (action.kind) {
@@ -152,7 +153,7 @@ export function terminalKey(view: TermView, event: KeyboardEvent): boolean {
     }
     return false;
   }
-  if (isPlainCut(event, mac) && view.term.hasSelection()) {
+  if (isPlainCut(event, mac) && (view.term.hasSelection() || view.selectionTheProgramCopied() !== undefined)) {
     if (event.type === "keydown") {
       event.preventDefault();
       cutSelection(view);
@@ -163,15 +164,21 @@ export function terminalKey(view: TermView, event: KeyboardEvent): boolean {
 }
 
 /**
- * Ctrl+X on a selection: copied, and taken out of the line the program is
- * editing when the selection is on the row the cursor is on (see `cutKeys`).
+ * Ctrl+X on a selection: copied, and taken out of what the program is editing
+ * when that can be told (see `keysToCut`): the row of the prompt the cursor is
+ * on, or the rows of Claude Code's prompt box. The selection is the terminal's,
+ * or the text a program that selects with the mouse itself just copied — which
+ * is on the clipboard already.
  */
 function cutSelection(view: TermView): void {
-  const text = view.term.getSelection();
-  void writeText(text).catch(() => navigator.clipboard?.writeText(text));
+  const own = view.term.hasSelection() ? view.term.getSelection() : undefined;
+  const selected = own ?? view.selectionTheProgramCopied();
+  if (!selected) return;
+  if (own !== undefined) void writeText(own).catch(() => navigator.clipboard?.writeText(own));
+  // Taken: the next Ctrl+X is the program's again.
+  view.programCopied = null;
   const buffer = view.term.buffer.active;
-  const row = buffer.getLine(buffer.baseY + buffer.cursorY)?.translateToString(true) ?? "";
-  const keys = cutKeys(text, row, buffer.cursorX);
+  const keys = keysToCut(selected, view.screenText().split("\n"), buffer.cursorY, buffer.cursorX);
   view.term.clearSelection();
   if (keys) void view.type(keys).catch(() => {});
 }
