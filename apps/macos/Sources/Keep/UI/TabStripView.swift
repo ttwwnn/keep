@@ -810,6 +810,16 @@ final class TabStripView: NSView {
         }
     }
 
+    /// Coming into the row is a move as well. A pointer that arrives in one
+    /// jump from elsewhere in the window — a quick flick — is told only
+    /// `mouseEntered`, and a press that followed it with no further motion
+    /// was answered with what the window was last told out in the terminal:
+    /// movable, so pressing a tab dragged the window off with it while the
+    /// tab changed place (13/10/2026, the wobble in tools/tabs-test.sh).
+    override func mouseEntered(with event: NSEvent) {
+        updateWindowDragging(pointerAt: convert(event.locationInWindow, from: nil))
+    }
+
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         updateWindowDragging(pointerAt: point)

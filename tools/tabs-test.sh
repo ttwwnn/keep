@@ -177,7 +177,7 @@ for DY in 22 30 16; do
     BEFORE=$(trace | grep -c "press on")
     "$MOUSE" drag $((LEFT + CLEAR + SLOT / 2)) "$PROBE_Y" $((LEFT + CLEAR + SLOT / 2)) "$PROBE_Y" 2 20
     sleep 0.8
-    [ "$(trace | grep -c "press on")" -gt "$BEFORE" ] && { ROW_Y=$PROBE_Y; break; }
+    [ "$(trace | grep -c "press on")" -gt "$BEFORE" ] && { ROW_Y=$PROBE_Y; ROW_DY=$DY; break; }
 done
 if [ -z "${ROW_Y:-}" ]; then
     say "no press reached a tab; the row is not where the arithmetic says"
@@ -207,6 +207,11 @@ drag_slots() {
 window_travelled() {
     [ "$(awk '{print $3}' "$WORK/window.log" | sort -u | wc -l | tr -d ' ')" -gt 2 ]
 }
+# Carried, not resized: a drag that lands in a resize area moves the edge it
+# holds, and the frame's origin with it, while the window stays where it was.
+window_carried() {
+    window_travelled && [ "$(awk '{print $4}' "$WORK/window.log" | sort -u | wc -l | tr -d ' ')" -eq 1 ]
+}
 
 check() {  # check <what> <wanted> <got>
     if [ "$3" = "$2" ]; then
@@ -224,16 +229,17 @@ check() {  # check <what> <wanted> <got>
 moved_window() {   # moved_window <what> <x> <y> <dy>
     local step
     for step in $STEPS $STEPS; do
-        window_travelled && { check "$1" "it moved" "it moved"; return; }
+        window_carried && { check "$1" "it moved" "it moved"; return; }
         say "        (still there; pushing $step across)"
+        focus_app
         "$MOUSE" watch 4 >"$WORK/window.log" 2>&1 &
         local watcher=$!
         "$MOUSE" drag "$2" "$3" $(( $2 + step )) $(( $3 + $4 )) 25 18
         wait "$watcher" 2>/dev/null
         sleep 1
     done
-    window_travelled && check "$1" "it moved" "it moved" \
-        || check "$1" "it moved" "it stayed put"
+    window_carried && check "$1" "it moved" "it moved" \
+        || check "$1" "it moved" "$(window_travelled && echo "it was resized, not moved" || echo "it stayed put")"
 }
 
 check_still() {
@@ -327,10 +333,17 @@ check "and closing it leaves the one we started with" \
 # app has been activated is regularly spent on the activation, and a drag that
 # works on any attempt is a drag that works.
 WANTED="3, 2, 1"
+# Watched across every attempt, not only the last: the window must hold still
+# under all of them. It is the first press on a tab after the window closed
+# above it, from a pointer last seen out in the terminal, and that press once
+# carried the window off as well as the tab (13/10/2026: +286, +10).
+: >"$WORK/window.log"
 for attempt in 1 2 3; do
     focus_app
+    "$MOUSE" watch 3 >>"$WORK/window.log" 2>&1 &
+    WATCHER=$!
     "$MOUSE" drag "$(slot 0)" "$ROW_Y" "$(slot 1)" $((ROW_Y + 10)) 30 18
-    sleep 2
+    wait "$WATCHER" 2>/dev/null
     [ "$(last_order)" = "$WANTED" ] && break
     say "        (attempt $attempt gave [$(last_order)], trying again)"
     # Back where it started, so the next attempt is the same attempt.
@@ -338,20 +351,30 @@ for attempt in 1 2 3; do
 done
 check "a wobble is not a tear" "$WINDOWS_BEFORE" "$(window_count)"
 check "it is a reorder" "$WANTED" "$(last_order)"
+check_still "and the window held still under it"
 
 # ------------------------------------------------- what a titlebar is still for
 
 say ""
 say "what the rest of the row is still for"
-read -r WX WY WW WH < <("$MOUSE" frame); ROW_Y=$((WY + (ROW_Y - WY)))
+# Brought to the front first, as for every other drag here, and the row
+# found again from where the window is now.
+focus_app
+read -r WX WY WW WH < <("$MOUSE" frame); ROW_Y=$((WY + ROW_DY))
+# The bare stretch is the ten points between the last tab and the Go To
+# button. Not the last points before the window's right edge: on macOS 26 the
+# top corner's resize area reaches that far in, and a drag there resized the
+# window, which moved its top edge and passed for a carried window
+# (13/10/2026: 1040x660 became 880x620).
+read -r GX _ <<<"$("$WORK/axpress" "$APP_NAME" frame "Go To" 2>/dev/null)"
+BARE_X=$(( ${GX:-$((WX + WW - 68))} - 5 ))
 "$MOUSE" watch 4 >"$WORK/window.log" 2>&1 &
 WATCHER=$!
-"$MOUSE" drag $((WX + WW - 4)) "$ROW_Y" $((WX + WW - 164)) $((ROW_Y + 40)) 25 18
+"$MOUSE" drag "$BARE_X" "$ROW_Y" $((BARE_X - 160)) $((ROW_Y + 40)) 25 18
 wait "$WATCHER" 2>/dev/null
 sleep 1
-if window_travelled || ! tiling_manager; then
-    moved_window "the bare end of the row drags the window" \
-        $((WX + WW - 4)) "$ROW_Y" 40
+if window_carried || ! tiling_manager; then
+    moved_window "the bare end of the row drags the window" "$BARE_X" "$ROW_Y" 40
 else
     # A tiling window manager will not let a window be dragged at all, so
     # whether it moved says nothing about this app. What the app owns is the
