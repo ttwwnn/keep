@@ -6,7 +6,8 @@
 # the chord going no further than the terminal; it tells no program the
 # colours changed; it goes with a shut sidebar, loses its percentage in a
 # narrow one, opens next time at the size it was left at, and takes for 100%
-# the size the person's own config gives, from whichever file.
+# the size the person's own config gives, from whichever file, a quarter up
+# (GhosttyApp.textBoost, 1.25): libghostty's 13 points make 100% 16.25.
 #
 # What is measured is what the zoom is for: the size the app writes down
 # (terminal.json, in a state directory of the test's own) and the columns and
@@ -162,6 +163,9 @@ settle_window() {
 FRONT=
 launch() {
     FRONT=$(osascript -e 'tell application "System Events" to get bundle identifier of first application process whose frontmost is true' 2>/dev/null)
+    # Each launch's trace starts empty, and the one before is kept, so a kept
+    # run holds every launch's trace, not only the last one's.
+    cat "$WORK/app.log" >>"$WORK/app-before.log" 2>/dev/null
     : >"$WORK/app.log"
     KEEP_TRACE=1 "$BIN" >"$WORK/app.log" 2>&1 &
     APP_PID=$!
@@ -343,14 +347,14 @@ say ""
 say "the buttons"
 step keep.zoom.in 110%; grid_leaves 1 "$BASE"
 check "+ says 110%" "110%" "$(level)"
-check "+ writes 110% of 13 points" 14.3 "$(written)"
+check "+ writes 110% of 16.25 points" 17.88 "$(written)"
 AT110=$(grid 1)
 check "+ gives the tab fewer columns" yes "$([ "$(cols 1)" -lt "${BASE%x*}" ] && echo yes || echo no)"
 check "+ enlarges both tab titles" yes "$(titles_resized "$TITLES100" -gt)"
 TITLES110=$(title_heights)
 step keep.zoom.out 100%; grid_is 1 "$BASE"; step keep.zoom.out 90%; grid_leaves 1 "$BASE"
 check "- twice says 90%" "90%" "$(level)"
-check "- twice writes 11.7" 11.7 "$(written)"
+check "- twice writes 14.63" 14.63 "$(written)"
 check "- gives it more columns than at 100%" yes "$([ "$(cols 1)" -gt "${BASE%x*}" ] && echo yes || echo no)"
 # SwiftUI reports the sidebar's title with its row's frame, and the row keeps
 # a floor below 100% (the close button's room, the marks beside the title):
@@ -404,7 +408,7 @@ done
 check "each press of + is the next step" yes "$walked"
 grid_leaves 1 "$BASE"
 check "seven steps up is 300%" "300%" "$(level)"
-check "39 points written" 39 "$(written)"
+check "48.75 points written" 48.75 "$(written)"
 check "300% enlarges both titles beyond 110%" yes "$(titles_resized "$TITLES110" -gt)"
 check "the enlarged title fits its tab at 300%" yes "$(title_fits_strip)"
 check "and the row grows to hold it" yes "$([ "$(row_height)" -gt "$ROW100" ] && echo yes || echo no)"
@@ -418,12 +422,24 @@ AT300=$(grid_settles 1)
 # what is posted here reaches the terminal at all, or the checks after it
 # test nothing: typed text does, to the shell's command line.
 "$SENDKEY" "$APP_PID" text "zoomprobe"; sleep 1
-check "what is typed reaches the terminal" yes "$(screen 1 | grep -q zoomprobe && echo yes || echo no)"
+# Looked for in the screen's rows run together: at 300% the pane has some
+# thirty columns, and after a prompt such as "thiago@MacBook-de-Thiago ~ % "
+# the probe wraps onto the next row.
+check "what is typed reaches the terminal" yes \
+    "$(screen 1 | tr -d '\r\n' | grep -q zoomprobe && echo yes || echo no)"
 chord 32 ctrl   # ⌃U: the probe off the command line
 # And the shell asks to be told when the ground goes light or dark, as
 # Claude Code does (mode 2031): see "no step of the zoom" below.
 "$SENDKEY" "$APP_PID" text "printf '\\033[?2031h'"; "$SENDKEY" "$APP_PID" key 36; sleep 1.5
 TOLD_FROM=$(wc -l <"$WORK/app.log")
+# Measured again just before the chords it is the measure for. At 300% the
+# sidebar's titles outgrow it and it widens to its 320 points, which takes
+# columns from the pane — not with the step but at the next layout the
+# window does, here while the probe above was typed (1.7 s after the step,
+# 13/10/2026), after the first measure.
+AT300_FIRST=$AT300
+AT300=$(grid_settles 1)
+[ "$AT300" = "$AT300_FIRST" ] || say "        (the pane went from $AT300_FIRST to $AT300 before the chords)"
 chord 24 cmd; sleep 1
 check "⌘= at 300% does not reach the pane" "300% $AT300" "$(level) $(grid 1)"
 # libghostty binds nothing to ⌘⇧= of its own, so this one is the menu's
@@ -452,7 +468,7 @@ check "⌘0 at 100% does not reach the pane" "100% $BASE" "$(level) $(grid 1)"
 say ""
 say "the palette's Bigger and Smaller text take the same steps"
 palette "bigger text"; grid_leaves 1 "$BASE"
-check "Bigger text" "110% 14.3" "$(level) $(written)"
+check "Bigger text" "110% 17.88" "$(level) $(written)"
 palette "smaller text"; grid_leaves 1 "$AT110"
 check "Smaller text" "100% none" "$(level) $(written)"
 
@@ -559,11 +575,11 @@ INNER
     launch
     unset XDG_CONFIG_HOME
     check "16 points says 100%" "100%" "$(level)"
-    check "and the app took 16 points for its own" yes \
-        "$(grep -aqE 'terminal font: .*@16\.0pt \(own 16\.0pt\)' "$WORK/app.log" && echo yes || echo no)"
+    check "and the app took 16 points, a quarter up, for its own" yes \
+        "$(grep -aqE 'terminal font: .*@20\.0pt \(own 20\.0pt\)' "$WORK/app.log" && echo yes || echo no)"
     AT16=$(grid 1)
     step keep.zoom.in 110%; grid_leaves 1 "$AT16"
-    check "+ is 110% of 16" "110% 17.6" "$(level) $(written)"
+    check "+ is 110% of 20" "110% 22" "$(level) $(written)"
     check "and the text grew: fewer columns" yes "$([ "$(cols 1)" -lt "${AT16%x*}" ] && echo yes || echo no)"
     walked=yes
     for to in 125% 150% 175% 200% 250% 300%; do
