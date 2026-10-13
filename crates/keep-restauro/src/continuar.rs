@@ -56,7 +56,9 @@ const ESPERA_MS: u64 = 120_000;
 const MAX_SEGUIDAS: u32 = 3;
 const RECOMECA_MS: u64 = 60 * 60_000;
 const ESQUECE_MS: u64 = 60 * 60_000;
-const CONFIRMA: Duration = Duration::from_secs(8);
+/// A mensagem tem este prazo para aparecer no transcrito. Um gancho UserPromptSubmit pode segurá-la antes de gravar
+/// (em 13/10/2026, no teste real, o do Jev rodou um /effort antes e ela entrou 11 s depois do Enter).
+const CONFIRMA: Duration = Duration::from_secs(30);
 const BLOCO: u64 = 64 << 10;
 const TETO_LEITURA: u64 = 16 << 20;
 

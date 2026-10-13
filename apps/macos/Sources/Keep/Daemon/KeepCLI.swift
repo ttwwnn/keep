@@ -478,7 +478,7 @@ enum TabRestore {
 
     /// The conversations that stopped on a dropped login, network or usage
     /// limit, told to continue once it is back. Blocking: a round that types
-    /// waits up to 8 s for the message to reach the transcript. Its log and
+    /// waits up to 30 s for the message to reach the transcript. Its log and
     /// state live beside the pictures (`continuar.log`).
     static func resume() {
         guard let helper else { return }
