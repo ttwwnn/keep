@@ -37,7 +37,7 @@ import {
 import type { TermView } from "./terminals";
 import { keysToCut } from "./cut";
 import { dropText, lightPane, paneAt, shellKind } from "./drop";
-import { kittyKey } from "./kittyKeys";
+import { kittyKey, watchLayout } from "./kittyKeys";
 
 export function perform(action: Action): void {
   switch (action.kind) {
@@ -246,6 +246,8 @@ const EVERYWHERE = new Set<Action["kind"]>([
 ]);
 
 export function installInput(): void {
+  // What the layout types on each key, for a program that asks for the keys themselves (kittyKeys.ts).
+  watchLayout();
   window.addEventListener("keydown", (event) => {
     // A question on screen has the keyboard to itself.
     if (dialog.value) return;
