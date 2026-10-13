@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 #
 # Hibernation (Display/Hibernation.swift, Model/HibernationPolicy.swift): a tab
-# out of sight for long enough lets go of its surfaces — renderers and the
-# `keep` clients attached through them — and gets them back when it is shown,
-# repainted by the daemon. The six tabs used last keep theirs.
+# out of sight for long enough lets go of its surfaces, and gets them back
+# when it is shown. The six tabs used last keep theirs. Its `keep` clients
+# stay without a surface and hand each pane over whole to the next one
+# (Display/Keeper.swift): what that keeps — the history, the main screen
+# under a program, the answers — is tools/hibernate-keep-test.sh's.
 #
 # Nine tabs, the first split in two with its divider off the middle. First a
 # run with hibernation off, for comparison: every tab visited, ten clients

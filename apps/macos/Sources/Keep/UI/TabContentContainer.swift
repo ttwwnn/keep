@@ -412,11 +412,10 @@ final class TabHostView: NSView {
         return surfaces.values.contains { $0 === responder }
     }
 
-    /// Let go of every surface of the tab, and with them their renderers and
-    /// their `keep` clients. The shells are the daemon's and are not touched;
-    /// `apply` builds the surfaces again from the pool, which attaches new
-    /// clients and has the daemon repaint the screen — what happens when the
-    /// app is reopened onto a tab that was running.
+    /// Let go of every surface of the tab, and with them their renderers.
+    /// Their `keep` clients keep the panes meanwhile (`Keeper`), and the
+    /// shells are the daemon's and are not touched; `apply` builds the
+    /// surfaces again from the pool, whose clients take the panes over.
     func hibernate() {
         guard !surfaces.isEmpty else { return }
         let panes = Array(surfaces.keys)

@@ -108,16 +108,28 @@ impl Terminal {
         let rows = self.format_with(self.options(false)).unwrap_or_default();
         let lead = leading_modes(&extras);
         let modes = without_screen_switches(&extras[..lead]);
-        let mut out = Vec::with_capacity(extras.len() + 64);
+        // The formatter leaves out the blank rows at the bottom. Replayed
+        // without them, a screen with history ends one row short for each:
+        // its last line lands on the bottom row, where the cursor is put back
+        // — on that line, for the next output to overwrite, rather than on
+        // the blank row below it.
+        let trailing = self.total_rows().saturating_sub(split_rows(&rows).len());
+        let below = b"\r\n".repeat(trailing);
+        let mut out = Vec::with_capacity(extras.len() + below.len() + 64);
         if extras[lead..].starts_with(&rows) {
             out.extend_from_slice(&self.rows_with_wraps_and_links(&rows).unwrap_or(rows.clone()));
+            out.extend_from_slice(&below);
             out.extend_from_slice(&modes);
             out.extend_from_slice(&extras[lead + rows.len()..]);
         } else {
-            // Not the shape this was written against: the repaint's order,
-            // which is right about everything but wraps and links.
+            // Not the shape this was written against: the rows as they come,
+            // and the cursor put back by hand, which is right about
+            // everything but wraps, links and the pen it writes with.
+            let (x, y) = self.cursor();
+            out.extend_from_slice(&rows);
+            out.extend_from_slice(&below);
             out.extend_from_slice(&modes);
-            out.extend_from_slice(&extras[lead..]);
+            out.extend_from_slice(format!("\x1b[{};{}H\x1b[0m", y + 1, x + 1).as_bytes());
         }
         out
     }
@@ -620,6 +632,25 @@ mod tests {
         assert!(!bytes.contains(" q"), "no cursor shape: {bytes:?}");
         assert!(!bytes.contains("\x1b]4;"), "no palette: {bytes:?}");
         assert!(!bytes.contains("\x1b]2;"), "no title: {bytes:?}");
+    }
+
+    /// Output that ended with a line feed leaves the cursor on a blank row
+    /// under it: the blank row comes back, and the next output goes on it,
+    /// not over the line above.
+    #[test]
+    fn the_blank_rows_at_the_bottom_come_back() {
+        for lines in [3, 50] {
+            let mut t = mirror(20, 8);
+            for n in 0..lines {
+                t.write(format!("line {n}\r\n").as_bytes());
+            }
+            let mut fresh = handed(&mut t, None);
+            assert_eq!(fresh.total_rows(), t.total_rows(), "{lines} lines: as many rows");
+            assert_eq!(fresh.cursor(), t.cursor(), "{lines} lines: the cursor on the blank row");
+            t.write(b"$ next");
+            fresh.write(b"$ next");
+            assert_eq!(plain(&fresh), plain(&t), "{lines} lines: the next output where it went");
+        }
     }
 
     /// A wide line written with autowrap off overwrites the margin; written

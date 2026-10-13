@@ -633,13 +633,23 @@ impl Terminal {
         // inside its link, before the body's last words put the cursor and
         // its style back where the program had them.
         let links = self.hyperlinks();
+        // The formatter leaves out the blank rows at the bottom of the
+        // screen, and a screen with history replayed without them ends that
+        // many rows short: its last line lands on the bottom row, where the
+        // cursor is put back — on the line, for the next output to
+        // overwrite, rather than on the blank row under it. Said as line
+        // feeds after the rows, before the cursor goes back. The body's
+        // rows are the only place it writes CR LF.
+        let written = body.windows(2).filter(|w| w == b"\r\n").count() + 1;
+        let below = b"\r\n".repeat(self.total_rows().saturating_sub(written));
         let cursor = format!("\x1b[{};{}H", self.cursor().1 + 1, self.cursor().0 + 1);
-        let at = (!links.is_empty())
+        let at = (!links.is_empty() || !below.is_empty())
             .then(|| body.windows(cursor.len()).rposition(|w| w == cursor.as_bytes()))
             .flatten();
         match at {
             Some(at) => {
                 out.extend_from_slice(&body[..at]);
+                out.extend_from_slice(&below);
                 out.extend_from_slice(&links);
                 out.extend_from_slice(&body[at..]);
             }
@@ -1022,6 +1032,27 @@ mod tests {
             fresh.text().unwrap()
         );
         assert_eq!(fresh.kitty_keyboard_flags(), 1, "the editor's keyboard lost");
+    }
+
+    /// A screen whose output ended with a line feed, with history above it:
+    /// the cursor comes back on the blank row under the last line, not on it.
+    #[test]
+    fn the_blank_row_under_the_output_comes_back() {
+        for lines in [3, 50] {
+            let mut t = Terminal::new(20, 8).unwrap();
+            for n in 0..lines {
+                t.write(format!("line {n}\r\n").as_bytes());
+            }
+            let mut fresh = replayed(&t, 20, 8);
+            assert_eq!(fresh.cursor(), t.cursor(), "{lines} lines");
+            t.write(b"$ next");
+            fresh.write(b"$ next");
+            let tail = |t: &Terminal| {
+                let text = t.text().unwrap();
+                text.lines().rev().take(2).map(str::to_owned).collect::<Vec<_>>()
+            };
+            assert_eq!(tail(&fresh), tail(&t), "{lines} lines: the next output where it went");
+        }
     }
 
     #[test]

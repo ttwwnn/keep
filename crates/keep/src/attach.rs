@@ -561,7 +561,9 @@ impl KittyFlags {
         self.on_alternate
     }
 
-    /// One screen's flags as pushed, bottom first.
+    /// One screen's flags as pushed, bottom first: what a kept tab hands
+    /// over (`keeper`).
+    #[cfg(unix)]
     pub fn pushed(&self, alternate: bool) -> Vec<u8> {
         if alternate { self.alternate.clone() } else { self.main.clone() }
     }

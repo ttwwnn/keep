@@ -111,6 +111,12 @@ unit "CSI = c answered" keep-vt crates/keep-vt/src/effects.rs \
     's/self.events.replies.truncate(before);/let _ = before;/'
 unit "the modes before the rows" keep-vt crates/keep-vt/src/handover.rs \
     's/out.extend_from_slice(\&self.rows_with_wraps_and_links(\&rows).unwrap_or(rows.clone()));/out.extend_from_slice(\&modes); out.extend_from_slice(\&self.rows_with_wraps_and_links(\&rows).unwrap_or(rows.clone()));/'
+unit "the blank rows at the bottom left out of the handover" keep-vt crates/keep-vt/src/handover.rs \
+    's/let trailing = self.total_rows().saturating_sub(split_rows(\&rows).len());/let trailing = 0usize;/'
+unit "the blank rows at the bottom left out of the daemon's repaint" keep-vt crates/keep-vt/src/lib.rs \
+    's/let below = b"\\r\\n".repeat(self.total_rows().saturating_sub(written));/let below: Vec<u8> = { let _ = written; Vec::new() };/'
+unit "an image split between two writes goes unseen" keep crates/keep/src/keeper.rs \
+    's/if contains_image(\&seen) || contains_image(bytes) {/if contains_image(bytes) {/'
 unit "the attach file's options not read" keep crates/keep/src/keeper.rs \
     's/"mirror" => options.mirror = value.parse().ok().filter(|\&n: \&usize| n > 0),/"mirror" => {}/'
 

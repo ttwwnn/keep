@@ -9,12 +9,12 @@ import Foundation
 /// grow with the number of tabs, on a machine that has eight gigabytes to
 /// share with the programs inside them.
 ///
-/// So the tabs used least recently are hibernated: their surfaces, and the
-/// `keep` clients attached through them, are let go of. Nothing else about
-/// the tab changes — it is still in the strip, the sidebar and the search,
-/// its colour and its activity still come from the daemon, which still has
-/// the shell and its screen — and showing it builds the surfaces again, the
-/// way the app does for a tab it has not shown yet.
+/// So the tabs used least recently are hibernated: their surfaces are let go
+/// of. Nothing else about the tab changes — it is still in the strip, the
+/// sidebar and the search, its colour and its activity still come from the
+/// daemon, which still has the shell — and its `keep` clients stay, without
+/// a surface, keeping everything the surface held (`Keeper`): showing the
+/// tab builds the surfaces again, and each is handed its pane whole.
 enum HibernationPolicy {
     /// How many tabs keep their surfaces, the ones on screen included.
     static let defaultLimit = 6

@@ -97,6 +97,8 @@ pub struct Mirror {
     pub terminal: Terminal,
     size: (u16, u16),
     images: bool,
+    /// The last bytes fed, for an image's introducer split between two writes.
+    tail: Vec<u8>,
     dir: PathBuf,
     options: Options,
 }
@@ -117,6 +119,7 @@ impl Mirror {
             terminal,
             size: (cols.max(1), rows.max(1)),
             images: false,
+            tail: Vec::new(),
             dir: dir.to_path_buf(),
             options: options.clone(),
         })
@@ -136,10 +139,20 @@ impl Mirror {
         // An image (the Kitty graphics protocol, the only one the surface
         // draws) is something a handover cannot carry: once one has been
         // seen, the app is told not to let go of this surface.
-        if !self.images && bytes.windows(3).any(|w| w == b"\x1b_G") {
-            self.images = true;
-            let _ = std::fs::write(self.dir.join(UNKEEPABLE), "images\n");
+        if !self.images {
+            let mut seen = std::mem::take(&mut self.tail);
+            seen.extend_from_slice(&bytes[..bytes.len().min(2)]);
+            if contains_image(&seen) || contains_image(bytes) {
+                self.images = true;
+                let _ = std::fs::write(self.dir.join(UNKEEPABLE), "images\n");
+            }
+            self.tail = bytes[bytes.len().saturating_sub(2)..].to_vec();
         }
+    }
+
+    #[cfg(test)]
+    pub fn holds_images(&self) -> bool {
+        self.images
     }
 
     /// The surface's grid, as its terminal reports it: the mirror follows
@@ -149,6 +162,11 @@ impl Mirror {
             self.size = size;
         }
     }
+}
+
+/// Whether the bytes begin a Kitty graphics command: APC `G`.
+fn contains_image(bytes: &[u8]) -> bool {
+    bytes.windows(3).any(|w| w == b"\x1b_G")
 }
 
 /// What the surface would answer, as the app wrote it: `key=value` lines,
@@ -525,6 +543,26 @@ mod tests {
         assert_eq!((device.conformance, device.features.as_slice()), (62, &[22u16, 52][..]));
         assert_eq!((device.device_type, device.firmware, device.rom, device.tertiary), (1, 10, 0, None));
         assert_eq!(parse_facts("da=62;22/1;10;0/00ab01ff\n").device.unwrap().tertiary, Some(0x00ab01ff));
+    }
+
+    /// An image, even one whose introducer two writes split, is told to the
+    /// app: a handover cannot carry it.
+    #[test]
+    fn an_image_marks_the_surface_as_not_to_be_let_go_of() {
+        for chunks in [&[&b"text \x1b_Ga=T;AAAA\x1b\\"[..]][..], &[&b"text \x1b"[..], &b"_Ga=T;AAAA\x1b\\"[..]][..]] {
+            let dir = std::env::temp_dir().join(format!("keep-image-{}-{}", std::process::id(), chunks.len()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let options = Options { mirror: Some(1_000_000), ..Options::default() };
+            let mut mirror = Mirror::new(20, 5, &options, &dir).unwrap();
+            mirror.feed(b"before");
+            assert!(!mirror.holds_images());
+            for chunk in chunks.iter() {
+                mirror.feed(chunk);
+            }
+            assert!(mirror.holds_images(), "{} write(s)", chunks.len());
+            assert!(dir.join(UNKEEPABLE).exists());
+            std::fs::remove_dir_all(&dir).ok();
+        }
     }
 
     /// The connection goes across with the bytes, still connected.

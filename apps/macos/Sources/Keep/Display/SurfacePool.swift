@@ -112,11 +112,15 @@ final class SurfacePool {
     /// Let go of one window's surface for a tab whose shell lives on.
     ///
     /// Its renderer goes — three render targets of tens of megabytes, which a
-    /// surface keeps for as long as it exists, on screen or not — and so does
-    /// its `keep` client. The shell is the daemon's and is not touched, nor is
-    /// the daemon told anything. The next `surface(window:workspace:tab:)`
-    /// makes a new one, whose client the daemon repaints with the screen as it
-    /// stands, as when the app is opened onto a tab that kept running.
+    /// surface keeps for as long as it exists, on screen or not. Its `keep`
+    /// client stays, without a surface, keeping the pane — every row of it,
+    /// the program answered, its title told — until the next
+    /// `surface(window:workspace:tab:)` makes a new one, whose client takes
+    /// the pane over from it (`Keeper`). The shell is the daemon's and is not
+    /// touched. A client that cannot keep it (built before keeping, or never
+    /// asked to follow its surface) goes with the surface, and the new one
+    /// is repainted by the daemon, as when the app is opened onto a tab that
+    /// kept running.
     ///
     /// The caller takes the surface out of its layout: this only lets go.
     func hibernate(

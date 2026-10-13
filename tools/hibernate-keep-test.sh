@@ -200,7 +200,8 @@ daemon_grid() {
         for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+x[0-9]+$/) { print $i; exit } }'
 }
 watched() {  # watched <tab>: what the daemon says of it (attached, attached ×2, idle, running)
-    "$KEEP" ls 2>/dev/null | awk -v t="$1" '$1 == "tab" && $2 == t { print $NF; exit }'
+    "$KEEP" ls 2>/dev/null | awk -v t="$1" '$1 == "tab" && $2 == t {
+        if ($NF ~ /^\xc3\x97/ || $NF ~ /^×/) print $(NF-1) " " $NF; else print $NF; exit }'
 }
 dump() { cat "$WORK/dump/$WS-$1.txt" 2>/dev/null; }
 dump_has() { dump "$1" | grep -qF -- "$2"; }
@@ -274,10 +275,13 @@ tell 1 "title tab-1" "print 3000"
 wait_for 60 dump_has 1 "P${PID[1]}-L0003000"
 check "tab 1 shows the 3000 lines it printed" "yes" "$(lines_whole 1 3000)"
 show 2 || say "  (tab 2 would not come up)"
-tell 2 "title tab-2" "print 50" "ask"
+tell 2 "title tab-2" "print 50"
 show 3 || say "  (tab 3 would not come up)"
 tell 3 "title tab-3" "print 200" "claude on" "claude count 1"
 wait_for 30 dump_has 3 "count 1"
+# Tab 2's program asks its questions with its surface still there, out of
+# sight: three tabs, the limit, and nothing let go of yet.
+tell 2 "ask"
 for n in 4 5 6 7; do
     show "$n" || say "  (tab $n would not come up)"
     tell "$n" "title tab-$n" "print 20"
@@ -371,36 +375,40 @@ give_back_front
 
 say ""
 say "a tab on screen in another window"
-# Kept now: 4, 2, 3. Hibernated: 1, 5, 6, 7.
+# The first window shows tab 2; a second window goes to it too, and then on
+# through three others. In the second window tab 2 is soon the tab used
+# least recently — but it is on screen in the first, and is not let go of.
+show 2 || say "  (tab 2 would not come up)"
+HIB2=$(trace_count "pool +hibernating w[0-9]+ $WS/2 ")
 "$AXPRESS" "$APP_NAME" menu File "New Window" >/dev/null 2>&1
 sleep 3
-"$AXPRESS" "$APP_NAME" menu Go "Go To…" >/dev/null 2>&1
-sleep 1.5
-"$SENDKEY" "$APP_PID" text "tab-2" >/dev/null 2>&1
-sleep 1.5
-"$SENDKEY" "$APP_PID" key 36 >/dev/null 2>&1
-sleep 4
+picker_to() {  # picker_to <tab title>: ⌘P, the title, return
+    "$AXPRESS" "$APP_NAME" menu Go "Go To…" >/dev/null 2>&1
+    sleep 1.5
+    "$SENDKEY" "$APP_PID" text "$1" >/dev/null 2>&1
+    sleep 1.5
+    "$SENDKEY" "$APP_PID" key 36 >/dev/null 2>&1
+    sleep 3
+}
+picker_to "tab-2"
 check "the daemon counts two viewers of tab 2" "attached×2" "$(watched 2 | tr -d ' ')"
-HIB2=$(trace_count "pool +hibernating w[0-9]+ $WS/2 ")
-# The first window goes through three other tabs: tab 2, least recently
-# shown there, would be let go of — but it is on screen in the second.
-"$AXPRESS" "$APP_NAME" menu Window "$WS" >/dev/null 2>&1
-sleep 2
-for n in 5 6 7; do
-    show "$n" || say "  (tab $n would not come up in the first window)"
-    sleep 1
-done
+SECOND=$(grep -aoE "pool +made (w[0-9]+) $WS/2 " "$WORK/app.log" | tail -1 | awk '{print $3}')
+for n in 5 6 7; do picker_to "tab-$n"; done
 sleep 4
-check "the first window did not let go of tab 2 while the second shows it" "$HIB2" \
+check "the second window went on through three other tabs" "yes" \
+    "$(grep -aqE "switch +→ $WS/7" "$WORK/app.log" && echo yes || echo no)"
+check "neither window let go of tab 2 while the first shows it" "$HIB2" \
     "$(trace_count "pool +hibernating w[0-9]+ $WS/2 ")"
+check "while tabs out of sight in the second window were let go of" "yes" \
+    "$([ -n "$SECOND" ] && grep -aqE "pool +hibernating $SECOND $WS/[56] " "$WORK/app.log" && echo yes || echo no)"
+"$AXPRESS" "$APP_NAME" menu File "Close Window" >/dev/null 2>&1
+sleep 3
 give_back_front
 
 # --- full screen -------------------------------------------------------------------------
 
 say ""
 say "full screen"
-"$AXPRESS" "$APP_NAME" menu File "Close Window" >/dev/null 2>&1
-sleep 3
 if [ "$("$FULLSCREEN" "$APP_NAME" state 2>/dev/null)" = "" ]; then
     say "  skip  the window cannot be put in full screen from here"
 else
