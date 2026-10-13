@@ -38,6 +38,7 @@ import {
 } from "./store";
 import { appearanceSteps } from "./e2eAppearance";
 import { paletteSteps } from "./e2ePalette";
+import { terminalSteps } from "./e2eTerminal";
 import { viewKey } from "./terminals";
 import { menu } from "./ui/common";
 
@@ -181,6 +182,8 @@ export async function runE2E(): Promise<void> {
     if (read !== "done") throw new Error(`leu ${String(read)}`);
     return "done";
   });
+
+  await terminalSteps(step, { waitFor, workspace: WORKSPACE, windows });
 
   await appearanceSteps(step, WORKSPACE);
 
