@@ -60,6 +60,9 @@ verdade (só compilado no CI), `[ ]` por fazer, `[-]` não se aplica.
 - [ ] Caminhos de arquivo clicáveis (relativos ao cwd, ~, :linha:col, quebrados
   em duas linhas), clique abre; menu Abrir / Mostrar no Explorer / Copiar.
 - [ ] URLs mailto: e file://; Ctrl+clique.
+- [ ] Endereços web: clique simples abre no navegador, inclusive o link OSC 8
+  atrás do texto (markdown do Claude Code) e o endereço quebrado em linhas;
+  menu Abrir link / Copiar link (Mac: 0e8c0bc).
 - [ ] OSC 52 com política; confirmar colagem multi-linha; colar arquivo copiado.
 - [ ] Soltar arquivos: realce do painel sob o ponteiro.
 - [ ] Teclado kitty (CSI u): Ctrl+Enter, desambiguação.
