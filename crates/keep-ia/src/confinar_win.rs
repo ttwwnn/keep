@@ -729,6 +729,19 @@ pub fn ambiente_preso(
     v
 }
 
+/// O ambiente com as variáveis dadas postas (as que já existiam com o mesmo
+/// nome, em qualquer caixa, saem). É o que o programa preso recebe a mais de
+/// acordo com o que ele é.
+pub fn com_variaveis(atual: Vec<(Vec<u16>, Vec<u16>)>, extras: &[(&str, &str)]) -> Vec<(Vec<u16>, Vec<u16>)> {
+    let largo = |s: &str| -> Vec<u16> { s.encode_utf16().collect() };
+    let mut v: Vec<(Vec<u16>, Vec<u16>)> =
+        atual.into_iter().filter(|(n, _)| !extras.iter().any(|(m, _)| chave_igual(n, m))).collect();
+    for (n, valor) in extras {
+        v.push((largo(n), largo(valor)));
+    }
+    v
+}
+
 fn chave_igual(nome: &[u16], outro: &str) -> bool {
     String::from_utf16_lossy(nome).eq_ignore_ascii_case(outro)
 }
@@ -990,6 +1003,16 @@ mod testes {
             assert!(linha_de_script("cmd.exe", r"C:\x.cmd", &args(&[ruim])).is_err(), "{ruim:?}");
         }
         assert!(linha_de_script("cmd.exe", "C:\\100%\\x.cmd", &[]).is_err());
+    }
+
+    #[test]
+    fn as_variaveis_a_mais_trocam_as_que_ja_existem() {
+        let largo = |t: &str| -> Vec<u16> { t.encode_utf16().collect() };
+        let atual = vec![(largo("Path"), largo("C:\\x")), (largo("claude_code_use_powershell_tool"), largo("0"))];
+        let v = com_variaveis(atual, &[("CLAUDE_CODE_USE_POWERSHELL_TOOL", "1")]);
+        assert_eq!(v.len(), 2);
+        assert!(v.contains(&(largo("CLAUDE_CODE_USE_POWERSHELL_TOOL"), largo("1"))));
+        assert!(v.contains(&(largo("Path"), largo("C:\\x"))));
     }
 
     #[test]

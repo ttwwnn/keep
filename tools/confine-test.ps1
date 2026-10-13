@@ -148,7 +148,7 @@ try {
         $leitura = Join-Path $permitida "le.js"
         Set-Content -Path $leitura -Value 'process.stdout.write(require("fs").readFileSync(process.argv[2], "utf8"))'
         Programa "node lê na pasta" @($node, $leitura, (Join-Path $permitida "a.txt")) { param($c, $t) $t -eq "dentro" }
-        Programa "node não lê o que está fora" @($node, $leitura, (Join-Path $fora "b.txt")) { param($c, $t) $t -notmatch "fora" -and $c -ne 0 }
+        Programa "node não lê o que está fora" @($node, $leitura, (Join-Path $fora "b.txt")) { param($c, $t) $t -cne "fora" -and $c -ne 0 }
         # O localhost, que o AppContainer tiraria: o servidor de desenvolvimento
         # que a IA sobe e o retorno do login.
         $laco = Join-Path $permitida "laco.js"
@@ -160,6 +160,26 @@ const s = net.createServer((c) => c.end("pong")).listen(0, "127.0.0.1", () => {
 '@
         Programa "localhost funciona" @($node, $laco) { param($c, $t) $t -eq "pong" }
     }
+    # O PowerShell preso: é a ferramenta de shell do Claude Code quando o Git
+    # Bash não sobe. Cada um só entra se está instalado.
+    foreach ($nome in @("pwsh", "powershell")) {
+        $exe = (Get-Command "$nome.exe" -ErrorAction SilentlyContinue).Source
+        if (-not $exe) { continue }
+        $base = @($exe, "-NoProfile", "-NonInteractive", "-Command")
+        $p1 = Join-Path $permitida "do-$nome.txt"
+        $p2 = Join-Path $fora "do-$nome.txt"
+        Programa "$nome preso roda um comando" ($base + "Write-Output ola") { param($c, $t) $c -eq 0 -and $t -eq "ola" }
+        Programa "$nome preso grava na pasta" ($base + "Set-Content -Path '$p1' -Value x") { param($c, $t) $c -eq 0 -and (Test-Path $p1) }
+        Programa "$nome preso não grava fora" ($base + "Set-Content -Path '$p2' -Value x") { param($c, $t) -not (Test-Path $p2) }
+        Programa "$nome preso lê na pasta" ($base + "Get-Content '$(Join-Path $permitida 'a.txt')'") { param($c, $t) $t -ceq "dentro" }
+        Programa "$nome preso não lê o que está fora" ($base + "Get-Content '$(Join-Path $fora 'b.txt')'") { param($c, $t) $t -cne "fora" }
+        Programa "$nome preso não lista a casa" ($base + "Get-ChildItem '$env:USERPROFILE' | ForEach-Object Name") { param($c, $t) $t -notmatch "Documents|Documentos|Desktop|AppData" }
+        Programa "$nome preso sabe a pasta" ($base + 'Write-Output $env:KEEP_CONFINED_TO') { param($c, $t) $t -ieq $permitida }
+        if ($git) { Programa "$nome preso chama o git" ($base + "git --version") { param($c, $t) $c -eq 0 -and $t -match "git version" } }
+        if ($node) { Programa "$nome preso chama o node" ($base + "node --version") { param($c, $t) $c -eq 0 -and $t -match "^v\d+" } }
+        Programa "$nome preso sobe um filho (cmd)" ($base + "cmd /d /c echo filho") { param($c, $t) $t -eq "filho" }
+    }
+
     # O Claude Code de verdade, se está instalado (npm i -g @anthropic-ai/claude-code):
     # sobe preso, e sem login responde que falta o login, não que falta permissão.
     $claude = (Get-Command claude.cmd -ErrorAction SilentlyContinue).Source
@@ -167,40 +187,60 @@ const s = net.createServer((c) => c.end("pong")).listen(0, "127.0.0.1", () => {
     if ($claude) {
         Programa "claude --version" @($claude, "--version") { param($c, $t) $c -eq 0 -and $t -match "\d+\.\d+\.\d+" } -mostrar
         Programa "claude -p chega ao pedido de login" @($claude, "-p", "ola") { param($c, $t) $t -match "(?i)log.?in|api key|authenticat|credential" -and $t -notmatch "(?i)EPERM|EACCES|access is denied|permission" } -mostrar
-    }
-    if ($bash) {
-        # O Git Bash (MSYS2) é o que o Claude Code usa para o Bash. O MSYS2 guarda
-        # o estado do usuário numa memória compartilhada com nome, que o primeiro
-        # bash cria com uma DACL só do usuário e do sistema; o token restrito não
-        # a abre. Confere o bash preso (1) sozinho e com filhos, (2) com dois
-        # presos ao mesmo tempo e (3) com um bash do usuário já aberto.
-        $b1 = Join-Path $permitida "do-bash.txt"
-        $b2 = Join-Path $fora "do-bash.txt"
-        Programa "o bash roda" @($bash, "-c", "echo ola") { param($c, $t) $t -eq "ola" }
-        Programa "o bash roda um programa do MSYS" @($bash, "-c", "ls / | head -n 1") { param($c, $t) $c -eq 0 -and $t.Length -gt 0 }
-        Programa "o bash dentro do bash" @($bash, "-c", "bash -c 'echo ola2'") { param($c, $t) $t -eq "ola2" }
-        Programa "o bash faz um filho e espera" @($bash, "-c", "(echo filho) | cat") { param($c, $t) $t -eq "filho" }
-        Programa "o bash grava na pasta" @($bash, "-c", ("echo bash > '" + (Posix $b1) + "'")) { param($c, $t) $c -eq 0 -and (Test-Path $b1) }
-        Programa "o bash não grava fora" @($bash, "-c", ("echo bash > '" + (Posix $b2) + "'")) { param($c, $t) -not (Test-Path $b2) }
-        Programa "o bash não lê o que está fora" @($bash, "-c", ("cat '" + (Posix (Join-Path $fora "b.txt")) + "'")) { param($c, $t) $t -notmatch "fora" -and $c -ne 0 }
-
-        # Dois presos ao mesmo tempo: o primeiro fica 15 segundos de pé.
+        # Com uma chave qualquer e um servidor que não existe, o Claude responde a
+        # primeira linha (a lista de ferramentas) antes de a chamada falhar: preso,
+        # ele tem a ferramenta PowerShell e não a Bash.
         $env:KEEP_WORKSPACE = "presa"
-        $primeiro = Start-Process -FilePath $Keep -ArgumentList @("ia", "confinar", "--", ('"' + $bash + '"'), "-c", '"sleep 15"') -PassThru -WindowStyle Hidden
-        Start-Sleep -Seconds 4
-        Programa "dois bash presos ao mesmo tempo" @($bash, "-c", "echo dois") { param($c, $t) $t -eq "dois" }
-        Wait-Process -Id $primeiro.Id -Timeout 40 -ErrorAction SilentlyContinue
+        $env:ANTHROPIC_API_KEY = "sk-ant-keep-teste-0000000000000000000000"
+        $env:ANTHROPIC_BASE_URL = "http://127.0.0.1:9"
+        $saida = Join-Path $trabalho "claude-init.jsonl"
+        $erro = Join-Path $trabalho "claude-init.err"
+        $filho = Start-Process -FilePath $Keep -ArgumentList @("ia", "confinar", "--", ('"' + $claude + '"'), "-p", "ola", "--output-format", "stream-json", "--verbose") -PassThru -WindowStyle Hidden -RedirectStandardOutput $saida -RedirectStandardError $erro
+        $ferramentas = $null
+        for ($i = 0; $i -lt 90 -and -not $ferramentas; $i++) {
+            Start-Sleep -Milliseconds 500
+            if (Test-Path $saida) {
+                foreach ($linha in (Get-Content $saida -ErrorAction SilentlyContinue)) {
+                    if ($linha -match '"subtype":"init"') { try { $ferramentas = @((ConvertFrom-Json $linha).tools) } catch { } ; break }
+                }
+            }
+            if ($filho.HasExited) { break }
+        }
+        if (-not $filho.HasExited) { Stop-Process -Id $filho.Id -Force -ErrorAction SilentlyContinue }
+        Remove-Item Env:\ANTHROPIC_API_KEY, Env:\ANTHROPIC_BASE_URL -ErrorAction SilentlyContinue
+        if ($ferramentas) {
+            Write-Host "        as ferramentas do Claude preso: $($ferramentas -join ', ')"
+            Confere "o Claude preso tem a ferramenta PowerShell" "True" ($ferramentas -contains "PowerShell")
+            Confere "o Claude preso não tem a ferramenta Bash" "False" ($ferramentas -contains "Bash")
+        } else {
+            Write-Host "  FALHOU  o Claude preso não listou as ferramentas"
+            Write-Host "        a saída:"
+            foreach ($l in @(Get-Content $saida -ErrorAction SilentlyContinue) + @(Get-Content $erro -ErrorAction SilentlyContinue)) { Write-Host "          $l" }
+            $script:falhou++
+        }
+    }
 
-        # Com um bash do usuário aberto, que é o caso de quem usa o Git Bash.
-        # As aspas são nossas: o Start-Process junta os argumentos sem pô-las.
-        $aberto = Start-Process -FilePath $bash -ArgumentList @("-c", '"sleep 120"') -PassThru -WindowStyle Hidden
-        Start-Sleep -Seconds 2
-        Programa "o bash preso com um bash do usuário aberto" @($bash, "-c", "echo ola3") { param($c, $t) $t -eq "ola3" }
-        Write-Host "  os objetos do MSYS2 que o usuário deixou, e de quem são:"
-        & $Keep ia confinar --objetos 2>&1 | ForEach-Object { Write-Host "    $_" }
-        & $Keep ia confinar --objetos --conceder 2>&1 | ForEach-Object { Write-Host "    $_" }
-        Programa "o bash preso, depois de dar os objetos do MSYS2 ao Keep" @($bash, "-c", "echo ola4") { param($c, $t) $t -eq "ola4" }
-        Stop-Process -Id $aberto.Id -Force -ErrorAction SilentlyContinue
+    # O Gerenciador de Credenciais (onde o Claude Code pode guardar o login),
+    # só para ver: o resultado vai para o registro, não conta.
+    $cred = Roda "presa" @("cmd.exe", "/d", "/c", "cmdkey /generic:keep-confine-teste /user:u /pass:p >nul && cmdkey /list:keep-confine-teste")
+    Write-Host ("  --    o Gerenciador de Credenciais preso: " + ($cred -replace '\s+', ' '))
+    cmdkey /delete:keep-confine-teste 2>&1 | Out-Null
+
+    if ($bash) {
+        # O Git Bash (MSYS2) não sobe preso, e isto é um limite conhecido: ele cria
+        # de início um canal de sinais com nome e uma DACL só do usuário e do
+        # sistema, e a segunda checagem do token restrito (que não leva o usuário)
+        # o recusa ("couldn't create signal pipe", erro 5). Só dito aqui, sem
+        # contar: se um dia subir, o aviso do Keep ao subir o Claude pode sair.
+        $env:KEEP_WORKSPACE = "presa"
+        $saida = & $Keep ia confinar -- $bash -c "echo ola" 2>&1
+        $codigo = $LASTEXITCODE
+        $texto = (($saida | ForEach-Object { "$_" }) -join " ") -replace '\s+', ' '
+        if ($codigo -eq 0 -and $texto -match "ola") {
+            Write-Host "  --    o Git Bash passou a subir preso: o aviso do Keep ao subir o Claude pode sair"
+        } else {
+            Write-Host "  --    o Git Bash não sobe preso (limite conhecido): $texto"
+        }
     }
 
     Write-Host "um workspace sem pasta"

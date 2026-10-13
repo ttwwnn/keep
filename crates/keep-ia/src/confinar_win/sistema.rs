@@ -412,12 +412,24 @@ pub fn privilegios_do_token(token: &Alca) -> Result<Vec<(String, bool)>, String>
 /// (`LUA_TOKEN`: sem privilégios, com o grupo dos administradores só para
 /// negar) e integridade média. É o token que o usuário tem de verdade; o do
 /// CI, e o de quem abre o terminal "como administrador", é o inteiro.
-pub fn token_comum(origem: &Alca) -> Result<Alca, String> {
+pub fn token_comum(origem: &Alca, usuario: &Sid, sistema: &Sid) -> Result<Alca, String> {
     let mut novo: HANDLE = null_mut();
     if unsafe { CreateRestrictedToken(origem.0, LUA_TOKEN, 0, null(), 0, null(), 0, null(), &mut novo) } == 0 {
         return Err(falha_ultimo("CreateRestrictedToken(LUA_TOKEN)"));
     }
     let novo = Alca(novo);
+    // A DACL padrão dos objetos do processo (o canal, a memória): o usuário e o
+    // sistema. A do administrador, de que o token filtrado só nega, não serve.
+    let dacl = monta_dacl(&[usuario, sistema])?;
+    let info = TOKEN_DEFAULT_DACL { DefaultDacl: dacl.as_ptr() as *mut ACL };
+    unsafe {
+        SetTokenInformation(
+            novo.0,
+            TokenDefaultDacl,
+            (&info as *const TOKEN_DEFAULT_DACL).cast(),
+            std::mem::size_of::<TOKEN_DEFAULT_DACL>() as u32,
+        );
+    }
     let medio = Sid::de_texto("S-1-16-8192")?;
     let rotulo = TOKEN_MANDATORY_LABEL { Label: SID_AND_ATTRIBUTES { Sid: medio.ptr(), Attributes: GRUPO_INTEGRIDADE } };
     // Se não aceitar, fica a integridade que o LUA_TOKEN deu.
@@ -884,6 +896,14 @@ const O_QUE_O_TOKEN_DEIXA: u32 = 0x0002_001E;
 /// dono) e antes de o filho andar. O que não der é só dito: um token que já
 /// se abre, ou que nunca se abrirá, não impede o resto.
 pub fn abrir_o_token_ao_filho(filho: &Filho, sid: &Sid) -> Result<(), String> {
+    abrir_o_token_ao_filho_com(filho, sid, O_QUE_O_TOKEN_DEIXA)
+}
+
+/// `TOKEN_ALL_ACCESS`: o que o processo de um usuário comum tem do próprio token.
+pub const TOKEN_TUDO: u32 = 0x000F_01FF;
+
+/// O mesmo, com o acesso dado.
+pub fn abrir_o_token_ao_filho_com(filho: &Filho, sid: &Sid, mascara: u32) -> Result<(), String> {
     let mut t: HANDLE = null_mut();
     // READ_CONTROL e WRITE_DAC: o que `GetSecurityInfo` e `SetSecurityInfo` pedem.
     if unsafe { OpenProcessToken(filho.processo.0, 0x0002_0000 | 0x0004_0000, &mut t) } == 0 {
@@ -899,7 +919,7 @@ pub fn abrir_o_token_ao_filho(filho: &Filho, sid: &Sid) -> Result<(), String> {
     }
     let _guarda = Local(sd);
     let ea = EXPLICIT_ACCESS_W {
-        grfAccessPermissions: O_QUE_O_TOKEN_DEIXA,
+        grfAccessPermissions: mascara,
         grfAccessMode: GRANT_ACCESS,
         grfInheritance: NO_INHERITANCE,
         Trustee: TRUSTEE_W {

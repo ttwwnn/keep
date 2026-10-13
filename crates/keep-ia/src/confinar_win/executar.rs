@@ -10,8 +10,8 @@ use std::path::Path;
 
 use super::sistema::{self, Padrao, Sid};
 use super::{
-    Ambiente, Entrada, NIVEIS, Nivel, Quem, ambiente_preso, marca, marcas_de, bloco_de_ambiente, dentro_de, eh_script_do_cmd, falha_de_partida,
-    junta, linha_de_comando, linha_de_script, lugar_da_isca, pasta_larga_demais, plano, procura_programa, sem_prefixo,
+    Ambiente, Ia, ia_de, Entrada, NIVEIS, Nivel, Quem, ambiente_preso, com_variaveis, marca, marcas_de, bloco_de_ambiente, dentro_de, eh_script_do_cmd, falha_de_partida,
+    area_privada, junta, linha_de_comando, linha_de_script, lugar_da_isca, pasta_larga_demais, plano, procura_programa, sem_prefixo,
     sid_base, sid_da_pasta, sids_de_restricao, sondar_fs,
 };
 use crate::{caminhos, confinar};
@@ -67,6 +67,9 @@ pub struct Pedido {
     /// console: quem o trata é o programa. Só depois de preparadas as
     /// permissões, que o Ctrl+C ainda pode interromper.
     pub segurar_ctrl_c: bool,
+    /// Variáveis de ambiente a mais, conforme o programa (o Claude Code usa a
+    /// ferramenta PowerShell no lugar do Git Bash, que não sobe preso).
+    pub ambiente_extra: Vec<(&'static str, &'static str)>,
 }
 
 fn ambiente_atual() -> Vec<(Vec<u16>, Vec<u16>)> {
@@ -246,7 +249,10 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
     if !faltam.is_empty() {
         return Err(format!("não existe: {}", faltam.join("; ")));
     }
-    let ambiente = bloco_de_ambiente(&ambiente_preso(ambiente_atual(), &plano.temp, &p.pasta));
+    let ambiente = bloco_de_ambiente(&com_variaveis(
+        ambiente_preso(ambiente_atual(), &plano.temp, &p.pasta),
+        &p.ambiente_extra,
+    ));
     let sem_janela = !sistema::tem_console();
     let job = sistema::job_que_mata();
     if let Err(e) = &job {
@@ -419,7 +425,30 @@ pub fn cli(args: &[String]) -> i32 {
             pasta.clone()
         }
     };
-    let pedido = Pedido { pasta, programa: exe.replace('/', "\\"), args: linha, onde, segurar_ctrl_c: true };
+    // Sem o Git Bash, que não roda preso, o Claude Code usa a ferramenta
+    // PowerShell: nega-se a Bash (por um arquivo de configuração) e liga-se a outra.
+    let (linha, ambiente_extra): (Vec<String>, Vec<(&'static str, &'static str)>) = if ia_de(programa) == Ia::Claude {
+        let local = std::env::var("LOCALAPPDATA").ok().filter(|v| !v.is_empty()).map(|v| sem_prefixo(&v));
+        let arquivo = junta(&area_privada(&local.unwrap_or_else(|| junta(&perfil_real(), "AppData\\Local"))), "claude-sem-bash.json");
+        let gravou = Path::new(&arquivo)
+            .parent()
+            .map(std::fs::create_dir_all)
+            .transpose()
+            .and_then(|_| std::fs::write(&arquivo, confinar::CONFIGURACAO_SEM_BASH));
+        match gravou {
+            Ok(()) => {
+                eprintln!("Keep: o Git Bash não roda preso à pasta; o Claude usa o PowerShell no lugar.");
+                (confinar::claude_sem_o_bash(&linha, &arquivo), vec![("CLAUDE_CODE_USE_POWERSHELL_TOOL", "1")])
+            }
+            Err(e) => {
+                eprintln!("Keep: não foi possível gravar {arquivo}: {e}. A IA não sobe sem a restrição.");
+                return 1;
+            }
+        }
+    } else {
+        (linha, Vec::new())
+    };
+    let pedido = Pedido { pasta, programa: exe.replace('/', "\\"), args: linha, onde, segurar_ctrl_c: true, ambiente_extra };
     match roda(&pedido, &Padrao::do_processo()) {
         Ok(codigo) => codigo,
         Err(e) => {
@@ -468,7 +497,14 @@ pub fn autoteste() -> i32 {
         let padrao =
             if com_console { Padrao::do_processo() } else { Padrao::de_arquivos(None, Some(&saida), Some(&saida)) };
         let pedido =
-            Pedido { pasta: permitida.clone(), programa: roteiro, args: vec![], onde: permitida.clone(), segurar_ctrl_c: false };
+            Pedido {
+                pasta: permitida.clone(),
+                programa: roteiro,
+                args: vec![],
+                onde: permitida.clone(),
+                segurar_ctrl_c: false,
+                ambiente_extra: Vec::new(),
+            };
         let codigo = roda(&pedido, &padrao)?;
         drop(padrao);
         let texto = std::fs::read_to_string(&saida_arq).unwrap_or_default();
@@ -748,12 +784,18 @@ fn como_comum(args: &[String]) -> i32 {
     let aqui = std::env::current_dir().map(|p| sem_prefixo(&p.to_string_lossy())).unwrap_or_else(|_| perfil_real());
     let rodar = || -> Result<i32, String> {
         let origem = sistema::token_do_processo()?;
-        let token = sistema::token_comum(&origem)?;
+        let usuario = sistema::sid_do_usuario(&origem)?;
+        let sistema_sid = Sid::de_texto(super::SID_SISTEMA)?;
+        let token = sistema::token_comum(&origem, &usuario, &sistema_sid)?;
         let linha = linha_de_comando(&exe, resto);
         let ambiente = bloco_de_ambiente(&ambiente_atual());
         let sem_janela = !sistema::tem_console();
         sistema::nao_morrer_com_ctrl_c();
         let filho = sistema::criar_processo(&token, &exe, &linha, &aqui, &ambiente, &Padrao::do_processo(), sem_janela)?;
+        // O token do processo de um usuário comum é dele: o processo o abre inteiro.
+        if let Err(e) = sistema::abrir_o_token_ao_filho_com(&filho, &usuario, sistema::TOKEN_TUDO) {
+            eprintln!("Keep: o token do processo não foi aberto ao usuário: {e}");
+        }
         sistema::retomar(&filho)?;
         Ok(sistema::esperar(&filho.processo, sistema::INFINITO)?.unwrap_or(1) as i32)
     };
