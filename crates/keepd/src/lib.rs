@@ -8,6 +8,7 @@
 
 pub mod registry;
 pub mod server;
+mod shellhook;
 pub mod workspace;
 pub mod tab;
 #[cfg(windows)]

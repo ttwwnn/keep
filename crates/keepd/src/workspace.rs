@@ -212,7 +212,9 @@ function global:prompt {
   if ($global:__KeepPrompt) { $s + (& $global:__KeepPrompt) } else { $s + "PS $l$('>' * ($nestedPromptLevel + 1)) " }
 }
 "#;
-    let utf16: Vec<u8> = SCRIPT.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+    // And the `claude` and `codex` of the Mac's shell (shellhook.rs).
+    let script = format!("{SCRIPT}{}", crate::shellhook::AI);
+    let utf16: Vec<u8> = script.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
     base64(&utf16)
 }
 
@@ -374,6 +376,8 @@ impl Workspace {
         {
             cmd.env("TERM_PROGRAM", "keep");
             cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+            // Where `keep` is, for the shell's `claude` and for `keep nova`.
+            crate::shellhook::with_core(&mut cmd);
         }
         cmd.env("KEEP_WORKSPACE", &self.name);
 
