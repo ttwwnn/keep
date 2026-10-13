@@ -204,13 +204,21 @@ pub fn nomes_do_app(amb: &Ambiente, nascimento_do_socket: Option<f64>) -> HashMa
 }
 
 /// Quando o socket do daemon nasceu (unix): é por ele que o app e o kit
-/// guardavam o que valia só para um daemon.
+/// guardavam o que valia só para um daemon. No Windows o daemon escuta num
+/// pipe, que não tem nascimento: vale o que o próprio daemon diz (`List3`),
+/// o mesmo relógio com que o app carimba o `names.json`.
 pub fn nascimento_do_socket(amb: &Ambiente) -> Option<f64> {
     if cfg!(windows) {
-        return None;
+        return nascimento_pelo_daemon(&amb.socket);
     }
     let m = std::fs::metadata(&amb.socket).ok()?;
     Some(super::pastas::nascimento(&m))
+}
+
+/// Quando o keepd em `socket` começou, segundo ele (`List3`), em segundos unix. Um keepd sem `List3` não diz.
+pub fn nascimento_pelo_daemon(socket: &std::path::Path) -> Option<f64> {
+    let r = crate::daemon::listar_em(socket, Some(Duration::from_secs(2))).ok()?;
+    r.exato.then(|| r.daemon.started_ms as f64 / 1000.0)
 }
 
 fn raiz_da_aba(t: &TabInfo) -> u32 {
@@ -497,4 +505,41 @@ pub fn atualizar_historico(
     }
     est.encerradas.retain(|id, e| !abertas.contains(id) && agora - e.saiu_em <= super::RETENCAO_ENCERRADAS);
     novos
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+    use keep_proto::net::Listener;
+    use keep_proto::{ClientMsg, DaemonInfo, ServerMsg};
+
+    /// Um keepd de mentira neste processo: o novo diz quando começou (`List3`); o antigo fecha a conexão nela.
+    fn daemon(endereco: &std::path::Path, novo: bool) {
+        let l = Listener::bind(endereco).unwrap();
+        std::thread::spawn(move || {
+            for _ in 0..2 {
+                let Ok((mut s, _)) = l.accept() else { return };
+                match ClientMsg::read(&mut s) {
+                    Ok(Some(ClientMsg::List3)) if novo => {
+                        ServerMsg::Workspaces3(DaemonInfo { pid: 7, started_ms: 1_791_234_567_890 }, Vec::new()).write(&mut s).ok();
+                    }
+                    Ok(Some(ClientMsg::List2)) => {
+                        ServerMsg::Workspaces2(Vec::new()).write(&mut s).ok();
+                    }
+                    _ => {}
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn o_daemon_diz_quando_comecou_em_segundos_e_o_antigo_nao_diz() {
+        let d = tempfile::tempdir().unwrap();
+        let (novo, antigo) = (d.path().join("novo.sock"), d.path().join("antigo.sock"));
+        daemon(&novo, true);
+        daemon(&antigo, false);
+        assert_eq!(nascimento_pelo_daemon(&novo), Some(1_791_234_567.89));
+        assert_eq!(nascimento_pelo_daemon(&antigo), None, "sem List3 não há como carimbar");
+        assert_eq!(nascimento_pelo_daemon(&d.path().join("ninguem.sock")), None);
+    }
 }

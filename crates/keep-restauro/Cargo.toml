@@ -17,6 +17,14 @@ serde_json = "1"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# GetLastInputInfo, for how long the person has been away from the keyboard.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_SystemInformation",
+    "Win32_UI_Input_KeyboardAndMouse",
+] }
+
 [dev-dependencies]
 keepd = { path = "../keepd" }
 tempfile = "3"

@@ -48,8 +48,8 @@ pub struct Ambiente {
     pub kit: Option<PathBuf>,
     /// O endereço do keepd (`KEEP_SOCKET`).
     pub socket: PathBuf,
-    /// A pasta de estado do app do macOS (`KEEP_STATE_DIR`): o `names.json`
-    /// com os nomes que a pessoa deu às abas.
+    /// A pasta de estado do app (`KEEP_STATE_DIR`; no Windows, `%APPDATA%\Keep`):
+    /// o `names.json` com os nomes que a pessoa deu às abas.
     pub app: Option<PathBuf>,
     /// O git (`KEEP_GIT`).
     pub git: PathBuf,
@@ -148,6 +148,14 @@ fn lixeira_padrao(casa: &std::path::Path) -> Option<PathBuf> {
     Some(var("XDG_DATA_HOME").unwrap_or_else(|| casa.join(".local").join("share")).join("Trash"))
 }
 
+/// A pasta do app quando `KEEP_STATE_DIR` não a troca: no macOS a Application Support dele; no Windows, `%APPDATA%\Keep`,
+/// onde ele guarda o `shell.txt` e o `names.json`.
 fn app_padrao(casa: &std::path::Path) -> Option<PathBuf> {
-    cfg!(target_os = "macos").then(|| casa.join("Library").join("Application Support").join("Keep"))
+    if cfg!(target_os = "macos") {
+        return Some(casa.join("Library").join("Application Support").join("Keep"));
+    }
+    if cfg!(windows) {
+        return var("APPDATA").map(|a| a.join("Keep"));
+    }
+    None
 }
