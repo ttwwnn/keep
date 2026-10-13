@@ -5,23 +5,27 @@ import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 import "./styles-appearance.css";
 import "./styles-confine.css";
+import "./styles-palette.css";
 import "./styles-tabs.css";
 import { render } from "preact";
 import { startAppearance } from "./appearance";
-import { installInput, terminalKey } from "./input";
-import { startIA } from "./iaStore";
 import { startConfinement } from "./confinementStore";
+import { installInput, terminalKey } from "./input";
+import { restoreTabs } from "./iaChores";
+import { startIA } from "./iaStore";
+import { bindCommands } from "./palette/bindings";
 import { watchSleep } from "./sleepWatch";
 import { connect, info, start } from "./store";
 import { App } from "./ui/App";
 
 async function boot() {
   installInput();
+  bindCommands();
   await start({ onKey: terminalKey });
   startAppearance();
   render(<App />, document.getElementById("app")!);
   watchSleep();
-  await connect();
+  await connect({ restore: restoreTabs });
   startConfinement();
   // The AI layer after the daemon: its tabs' AI is asked of the daemon the window found.
   await startIA();

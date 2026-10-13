@@ -46,16 +46,6 @@ export const Sidebar = () => (
   </svg>
 );
 
-export const Gear = () => (
-  <svg width="15" height="15" viewBox="0 0 14 14" aria-hidden="true" class="icon-glyph">
-    <circle cx="7" cy="7" r="2" {...stroke} />
-    <path
-      d="M7 1.5v1.6M7 10.9v1.6M1.5 7h1.6M10.9 7h1.6M3.1 3.1l1.1 1.1M9.8 9.8l1.1 1.1M3.1 10.9l1.1-1.1M9.8 4.2l1.1-1.1"
-      {...stroke}
-    />
-  </svg>
-);
-
 export const Hand = () => (
   <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true">
     <path

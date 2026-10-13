@@ -72,6 +72,21 @@ describe("chords", () => {
     expect(shortcut(key("KeyV", { ctrlKey: true, shiftKey: true }))).toEqual({ kind: "pasteImage" });
     expect(shortcut(key("KeyV", { metaKey: true, shiftKey: true }), true)).toEqual({ kind: "pasteImage" });
   });
+  it("the palette is Ctrl+Shift+Alt+P, and the bar on the screen Ctrl+Alt+F", () => {
+    expect(shortcut(key("KeyP", { ctrlKey: true, shiftKey: true, altKey: true }))).toEqual({ kind: "palette" });
+    expect(shortcut(key("KeyP", { metaKey: true, shiftKey: true, altKey: true }), true)).toEqual({ kind: "palette" });
+    expect(shortcut(key("KeyF", { ctrlKey: true, altKey: true }))).toEqual({ kind: "findOnScreen" });
+    expect(shortcut(key("KeyF", { metaKey: true, altKey: true }), true)).toEqual({ kind: "findOnScreen" });
+    // Neither takes a chord that is the program's: Alt alone, Ctrl+Alt+P, Ctrl+Alt+Shift+F.
+    expect(shortcut(key("KeyP", { altKey: true }))).toBeNull();
+    expect(shortcut(key("KeyP", { ctrlKey: true, altKey: true }))).toBeNull();
+    expect(shortcut(key("KeyF", { ctrlKey: true, shiftKey: true, altKey: true }))).toBeNull();
+    // A Mac's Ctrl is the program's.
+    expect(shortcut(key("KeyP", { ctrlKey: true, shiftKey: true, altKey: true }), true)).toBeNull();
+    // The workspaces' chords are where they were.
+    expect(shortcut(key("PageDown", { ctrlKey: true, altKey: true }))).toEqual({ kind: "nextWorkspace" });
+    expect(shortcut(key("PageDown", { ctrlKey: true, altKey: true, shiftKey: true }))).toBeNull();
+  });
   it("cuts with Ctrl+X, or ⌘X, only on its own", () => {
     expect(isPlainCut(key("KeyX", { ctrlKey: true }))).toBe(true);
     expect(isPlainCut(key("KeyX", { ctrlKey: true, shiftKey: true }))).toBe(false);
@@ -192,11 +207,15 @@ describe("the state file", () => {
       zoom: 1.25,
       appearance: "dark" as const,
       active: { workspace: "a", tab: 1 },
-      restore: [{ name: "a", tabs: [{ id: 1, cwd: "C:\\x", name: "Primeira", splitOf: 0, splitDir: 0 }] }],
-      daemon: "4242-133700000000000000",
+      daemon: "4242-1791234567890",
     };
     expect(normalizeState(JSON.parse(JSON.stringify(state)))).toEqual(state);
     expect(normalizeState({ daemon: 7 }).daemon).toBe("");
+  });
+  it("the picture of the tabs a state used to carry is not read: the core keeps it now", () => {
+    const old = { order: ["a"], restore: [{ name: "a", tabs: [{ id: 1, cwd: "C:\\x", splitOf: 0, splitDir: 0 }] }] };
+    expect("restore" in normalizeState(old)).toBe(false);
+    expect(normalizeState(old).order).toEqual(["a"]);
   });
 });
 

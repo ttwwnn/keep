@@ -1,25 +1,11 @@
 // What the window remembers between runs (src-tauri: settings.rs keeps the
 // file). The daemon owns the facts; this is only what is the window's: the
-// sidebar's order, names given, folds, zoom, look — and a picture of the
-// workspaces as they were, to open them again after a reboot empties the
-// daemon.
+// sidebar's order, names given, folds, zoom, look. The tabs themselves come
+// back after a reboot from the core (`keep restauro`, docs/restauro.md), not
+// from here.
 
 import type { Appearance } from "./theme";
 import { normalizeZoom } from "./zoom";
-
-export interface RestoreTab {
-  /** The tab's id in the daemon that made the picture, to rebuild its splits. */
-  id: number;
-  cwd: string;
-  name?: string;
-  splitOf: number;
-  splitDir: number;
-}
-
-export interface RestoreWorkspace {
-  name: string;
-  tabs: RestoreTab[];
-}
 
 /** The cursor's shape, as the terminal draws it. */
 export type CursorShape = "bar" | "block" | "underline";
@@ -61,8 +47,11 @@ export interface GuiState {
   theme: string;
   /** What the terminals do with the cursor and with what scrolls off. */
   terminal: { cursor: CursorShape; blink: boolean; scrollback: number };
-  restore: RestoreWorkspace[];
-  /** The daemon the picture above was taken from; see `api.daemonIdentity`. */
+  /**
+   * The daemon the window last saw, as `api.daemonIdentity` says it: tab numbers
+   * (the names given, the tab in front) are one daemon's, and a new one counts
+   * from one again.
+   */
   daemon: string;
 }
 
@@ -98,7 +87,6 @@ export function defaultState(): GuiState {
     font: { family: "", size: 0 },
     theme: "",
     terminal: { cursor: "bar", blink: true, scrollback: DEFAULT_SCROLLBACK },
-    restore: [],
     daemon: "",
   };
 }
@@ -143,30 +131,6 @@ export function normalizeState(raw: unknown): GuiState {
       if (list.length > 0) tabOrder[workspace] = list;
     }
   }
-  const restore: RestoreWorkspace[] = Array.isArray(raw.restore)
-    ? raw.restore.filter(isRecord).flatMap((w) =>
-        typeof w.name === "string" && Array.isArray(w.tabs)
-          ? [
-              {
-                name: w.name,
-                tabs: w.tabs.filter(isRecord).flatMap((t) =>
-                  typeof t.id === "number"
-                    ? [
-                        {
-                          id: t.id,
-                          cwd: typeof t.cwd === "string" ? t.cwd : "",
-                          name: typeof t.name === "string" && t.name ? t.name : undefined,
-                          splitOf: typeof t.splitOf === "number" ? t.splitOf : 0,
-                          splitDir: typeof t.splitDir === "number" ? t.splitDir : 0,
-                        },
-                      ]
-                    : [],
-                ),
-              },
-            ]
-          : [],
-      )
-    : [];
   const appearance = raw.appearance === "light" || raw.appearance === "dark" ? raw.appearance : "auto";
   const width = typeof sidebar.width === "number" ? sidebar.width : base.sidebar.width;
   return {
@@ -196,7 +160,6 @@ export function normalizeState(raw: unknown): GuiState {
       blink: typeof terminal.blink === "boolean" ? terminal.blink : true,
       scrollback: normalizeScrollback(terminal.scrollback),
     },
-    restore,
     daemon: typeof raw.daemon === "string" ? raw.daemon : "",
   };
 }

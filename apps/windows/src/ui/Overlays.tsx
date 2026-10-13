@@ -1,31 +1,17 @@
-// What floats over the terminal: the picker, the search across every tab,
-// the settings, and the questions the window asks before it ends something.
+// What floats over the terminal: the picker (ui/Picker.tsx: Ir para, the
+// palette, the searches), the settings with the lists of themes and faces they
+// open, and the questions the window asks before it ends something.
 //
 // Nothing is painted over the terminal behind a card (DESIGN.md): the card's
 // shadow says it is above, and says it where the card is.
 
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import * as api from "../api";
-import {
-  activeView,
-  answer,
-  createWorkspace,
-  dialog,
-  gui,
-  info,
-  orderedWorkspaces,
-  overlay,
-  select,
-  tabLabel,
-  tabsByWorkspace,
-  terminals,
-  workspaceLabel,
-  type DialogField,
-} from "../store";
-import { fuzzyScore, homeRelative, matchRanges } from "../text";
+import { activeView, answer, dialog, info, overlay, type DialogField } from "../store";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { FontPicker } from "./FontPicker";
+import { Picker } from "./Picker";
 import { ThemePicker } from "./ThemePicker";
 
 function close() {
@@ -42,213 +28,6 @@ function useFocus<T extends HTMLElement>(when = true) {
     if (ref.current instanceof HTMLInputElement) ref.current.select();
   }, [when]);
   return ref;
-}
-
-/** Keep a highlighted row in view as the arrows move it. */
-function useScrollIntoView(index: number) {
-  const list = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const row = list.current?.children[index] as HTMLElement | undefined;
-    row?.scrollIntoView({ block: "nearest" });
-  }, [index]);
-  return list;
-}
-
-function Highlighted(props: { text: string; query: string }) {
-  const ranges = matchRanges(props.query, props.text);
-  if (ranges.length === 0) return <>{props.text}</>;
-  const out = [];
-  let at = 0;
-  for (const [start, end] of ranges) {
-    if (start > at) out.push(props.text.slice(at, start));
-    out.push(<mark key={start}>{props.text.slice(start, end)}</mark>);
-    at = end;
-  }
-  out.push(props.text.slice(at));
-  return <>{out}</>;
-}
-
-interface PickerRow {
-  kind: "workspace" | "tab" | "create";
-  workspace: string;
-  tab?: number;
-  title: string;
-  detail: string;
-  score: number;
-}
-
-/** Go to any workspace or tab, by typing a few letters of it. */
-function Picker() {
-  const [query, setQuery] = useState("");
-  const [index, setIndex] = useState(0);
-  const home = info.value?.home ?? "";
-  const rows = useMemo<PickerRow[]>(() => {
-    const out: PickerRow[] = [];
-    for (const w of orderedWorkspaces.value) {
-      const label = workspaceLabel(w.name);
-      const ws = fuzzyScore(query, label);
-      if (ws !== undefined) out.push({ kind: "workspace", workspace: w.name, title: label, detail: "workspace", score: ws });
-      (tabsByWorkspace.value.get(w.name) ?? []).forEach((tab, i) => {
-        const title = tabLabel(w.name, tab, i);
-        const where = homeRelative(tab.root.cwd, home);
-        const score = fuzzyScore(query, `${label} ${title} ${where}`);
-        if (score !== undefined) {
-          out.push({ kind: "tab", workspace: w.name, tab: tab.root.id, title, detail: `${label}${where ? ` · ${where}` : ""}`, score });
-        }
-      });
-    }
-    out.sort((a, b) => a.score - b.score);
-    const name = query.trim();
-    if (name && !orderedWorkspaces.value.some((w) => w.name === name)) {
-      out.push({ kind: "create", workspace: name, title: `Criar o workspace “${name}”`, detail: "Enter", score: Infinity });
-    }
-    return out;
-  }, [query, orderedWorkspaces.value, tabsByWorkspace.value, gui.value]);
-  const list = useScrollIntoView(index);
-  const input = useFocus<HTMLInputElement>();
-  const go = (row: PickerRow | undefined) => {
-    if (!row) return;
-    close();
-    if (row.kind === "create") void createWorkspace(row.workspace, null);
-    else select(row.workspace, row.tab);
-  };
-  return (
-    <div class="card picker" role="dialog" aria-label="Ir para">
-      <input
-        ref={input}
-        class="card-input"
-        value={query}
-        placeholder="Ir para um workspace ou aba…"
-        spellcheck={false}
-        onInput={(e) => {
-          setQuery((e.currentTarget as HTMLInputElement).value);
-          setIndex(0);
-        }}
-        onKeyDown={(e) => {
-          e.stopPropagation();
-          if (e.key === "Escape") close();
-          else if (e.key === "ArrowDown") (e.preventDefault(), setIndex((i) => Math.min(rows.length - 1, i + 1)));
-          else if (e.key === "ArrowUp") (e.preventDefault(), setIndex((i) => Math.max(0, i - 1)));
-          else if (e.key === "Enter") go(rows[index]);
-        }}
-      />
-      <div class="card-list" ref={list}>
-        {rows.map((row, i) => (
-          <button
-            key={`${row.kind}${row.workspace}${row.tab ?? ""}`}
-            class={`card-row ${i === index ? "selected" : ""} ${row.kind}`}
-            onMouseMove={() => setIndex(i)}
-            onClick={() => go(row)}
-          >
-            <span class="row-title">
-              <Highlighted text={row.title} query={query} />
-            </span>
-            <span class="row-detail">{row.detail}</span>
-          </button>
-        ))}
-        {rows.length === 0 && <div class="card-empty">Nada com esse nome.</div>}
-      </div>
-    </div>
-  );
-}
-
-/** Search every tab's history, which the daemon holds. */
-function SearchAll() {
-  const [query, setQuery] = useState("");
-  const [hits, setHits] = useState<api.SearchHit[]>([]);
-  const [index, setIndex] = useState(0);
-  const [busy, setBusy] = useState(false);
-  const list = useScrollIntoView(index);
-  const input = useFocus<HTMLInputElement>();
-  useEffect(() => {
-    const q = query.trim();
-    if (!q) {
-      setHits([]);
-      return;
-    }
-    let cancelled = false;
-    setBusy(true);
-    const timer = setTimeout(() => {
-      api
-        .search(q, 60)
-        .then((found) => !cancelled && (setHits(found), setIndex(0)))
-        .catch(() => !cancelled && setHits([]))
-        .finally(() => !cancelled && setBusy(false));
-    }, 200);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [query]);
-  const go = (hit: api.SearchHit | undefined) => {
-    if (!hit) return;
-    const tabs = tabsByWorkspace.value.get(hit.workspace) ?? [];
-    const root = tabs.find((t) => t.panes.some((p) => p.id === hit.tab));
-    close();
-    if (!root) return;
-    select(hit.workspace, root.root.id);
-    // In front of the person, the match found again in the terminal itself.
-    setTimeout(() => {
-      const view = terminals.existing(hit.workspace, hit.tab);
-      view?.search.findNext(hit.text.slice(hit.matchStart, hit.matchStart + hit.matchLen), {
-        decorations: { matchOverviewRuler: "#888888", activeMatchColorOverviewRuler: "#ffaa00" },
-      });
-    }, 60);
-  };
-  const tabTitle = (hit: api.SearchHit) => {
-    const tabs = tabsByWorkspace.value.get(hit.workspace) ?? [];
-    const i = tabs.findIndex((t) => t.panes.some((p) => p.id === hit.tab));
-    return i >= 0 ? tabLabel(hit.workspace, tabs[i], i) : `aba ${hit.tab}`;
-  };
-  return (
-    <div class="card search-all" role="dialog" aria-label="Buscar em tudo">
-      <input
-        ref={input}
-        class="card-input"
-        value={query}
-        placeholder="Buscar em todas as abas…"
-        spellcheck={false}
-        onInput={(e) => setQuery((e.currentTarget as HTMLInputElement).value)}
-        onKeyDown={(e) => {
-          e.stopPropagation();
-          if (e.key === "Escape") close();
-          else if (e.key === "ArrowDown") (e.preventDefault(), setIndex((i) => Math.min(hits.length - 1, i + 1)));
-          else if (e.key === "ArrowUp") (e.preventDefault(), setIndex((i) => Math.max(0, i - 1)));
-          else if (e.key === "Enter") go(hits[index]);
-        }}
-      />
-      <div class="card-list" ref={list}>
-        {hits.map((hit, i) => (
-          <button
-            key={`${hit.workspace}${hit.tab}${hit.line}`}
-            class={`card-row hit ${i === index ? "selected" : ""}`}
-            onMouseMove={() => setIndex(i)}
-            onClick={() => go(hit)}
-          >
-            <span class="row-detail">
-              {workspaceLabel(hit.workspace)} · {tabTitle(hit)}
-            </span>
-            {hit.before.slice(-1).map((line, j) => (
-              <span key={`b${j}`} class="hit-context">
-                {line}
-              </span>
-            ))}
-            <span class="hit-line">
-              {hit.text.slice(0, hit.matchStart)}
-              <mark>{hit.text.slice(hit.matchStart, hit.matchStart + hit.matchLen)}</mark>
-              {hit.text.slice(hit.matchStart + hit.matchLen)}
-            </span>
-            {hit.after.slice(0, 1).map((line, j) => (
-              <span key={`a${j}`} class="hit-context">
-                {line}
-              </span>
-            ))}
-          </button>
-        ))}
-        {query.trim() && !busy && hits.length === 0 && <div class="card-empty">Nada encontrado.</div>}
-      </div>
-    </div>
-  );
 }
 
 function Settings() {
@@ -404,16 +183,15 @@ export function Overlays() {
     // A click outside the card closes it, as a menu does.
     const onDown = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      // The button that opened it closes it itself, on its click.
-      if (!target.closest(".card") && !target.closest("[data-overlay-toggle]")) close();
+      // The button that opened it closes it itself, on its click; and a question asked over it is answered, not clicked away.
+      if (!target.closest(".card") && !target.closest("[data-overlay-toggle]") && !target.closest(".modal-backdrop")) close();
     };
     window.addEventListener("mousedown", onDown);
     return () => window.removeEventListener("mousedown", onDown);
   }, [which]);
   return (
     <>
-      {which === "picker" && <Picker />}
-      {which === "search" && <SearchAll />}
+      {(which === "picker" || which === "palette" || which === "find" || which === "search") && <Picker key={which} mode={which} />}
       {which === "settings" && <Settings />}
       {which === "themes" && <ThemePicker />}
       {which === "fonts" && <FontPicker />}
