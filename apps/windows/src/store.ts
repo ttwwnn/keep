@@ -37,6 +37,7 @@ import { defaultsOf, planStatusLine, restoreDefaults } from "./claudeSettings";
 import { fontPreview, loadSymbolsFont, terminalFontStack } from "./fonts";
 import { chooseClaudeEffort, chooseClaudeModel, chooseCodex, type PickerIO } from "./pickers";
 import { baseName, isPathTitle, rootTabs, type RootTab } from "./layout";
+import { noteVisit } from "./recent";
 import { defaultState, normalizeState, tabKey, type GuiState, type RestoreWorkspace } from "./state";
 import { refile } from "./hibernation";
 import { keepShares, moveShares } from "./splits";
@@ -79,7 +80,12 @@ export const picking = signal<ReadonlySet<string>>(new Set());
 /** When each pane began waiting on you, in seconds: what its badge breathes from. */
 export const waitingSince = signal<ReadonlyMap<string, number>>(new Map());
 
-export type Overlay = "picker" | "search" | "settings" | "themes" | "fonts" | null;
+/**
+ * What floats over the terminal: Ir para, the command palette, the search of
+ * the pane in front (find) and of everything (search) — one card, four
+ * questions — the settings, and the lists of themes and faces they open.
+ */
+export type Overlay = "picker" | "palette" | "find" | "search" | "settings" | "themes" | "fonts" | null;
 export const overlay = signal<Overlay>(null);
 export const findOpen = signal(false);
 /** Where a tab's name is typed: over its title in the row, or in the sidebar. */
@@ -872,6 +878,7 @@ export function select(workspace: string, tab?: number): void {
     s.active = { workspace, tab: id };
     s.lastTab[workspace] = id;
   });
+  if (id !== undefined) noteVisit(workspace, id);
   requestAnimationFrame(() => focusActive());
 }
 
@@ -920,13 +927,13 @@ export function goToTab(index: number | "last"): void {
   if (tab) select(ws, tab.root.id);
 }
 
-export async function newTab(workspace = activeWorkspace.value ?? undefined): Promise<number | null> {
+export async function newTab(workspace = activeWorkspace.value ?? undefined, folder?: string): Promise<number | null> {
   if (!workspace) {
     await newWorkspace();
     return null;
   }
   const { cols, rows } = guessSize();
-  const cwd = activePane.value?.cwd || workspaceCwd(workspace) || info.value?.home || null;
+  const cwd = folder || activePane.value?.cwd || workspaceCwd(workspace) || info.value?.home || null;
   const id = await api.newTab(workspace, cwd, cols, rows);
   await refresh();
   select(workspace, id);

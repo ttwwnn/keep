@@ -5,18 +5,21 @@ import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 import "./styles-appearance.css";
 import "./styles-confine.css";
+import "./styles-palette.css";
 import "./styles-tabs.css";
 import { render } from "preact";
 import { startAppearance } from "./appearance";
+import { startConfinement } from "./confinementStore";
 import { installInput, terminalKey } from "./input";
 import { startIA } from "./iaStore";
-import { startConfinement } from "./confinementStore";
+import { bindCommands } from "./palette/bindings";
 import { watchSleep } from "./sleepWatch";
 import { connect, info, start } from "./store";
 import { App } from "./ui/App";
 
 async function boot() {
   installInput();
+  bindCommands();
   await start({ onKey: terminalKey });
   startAppearance();
   render(<App />, document.getElementById("app")!);

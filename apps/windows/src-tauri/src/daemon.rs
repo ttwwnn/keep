@@ -279,6 +279,36 @@ pub fn preview(workspace: &str, tab: u32) -> Result<String> {
     }
 }
 
+/// A tab's screen with its colours, and the grid it is held on. The sequences
+/// say where everything goes by rows and columns of that grid — a picture of
+/// the screen drawn on another one is a picture of something else — so the size
+/// comes with them, asked for in the same breath, rather than from a listing
+/// that may be a second old and a window resize behind.
+#[derive(Serialize, Clone, Debug)]
+pub struct Screen {
+    pub cols: u16,
+    pub rows: u16,
+    pub text: String,
+}
+
+/// The same screen as `preview`, with its colours still on it: the sequences
+/// the daemon repaints an attaching client with. A daemon that predates the
+/// question closes the connection, which the page takes as its cue to ask
+/// `preview`.
+pub fn preview_vt(workspace: &str, tab: u32) -> Result<Screen> {
+    let size = list()?
+        .into_iter()
+        .find(|w| w.name == workspace)
+        .and_then(|w| w.tabs.into_iter().find(|t| t.id == tab))
+        .map(|t| (t.cols, t.rows))
+        .unwrap_or((80, 24));
+    match ask(ClientMsg::PreviewVt { workspace: workspace.into(), tab })? {
+        ServerMsg::PreviewText(text) => Ok(Screen { cols: size.0, rows: size.1, text }),
+        ServerMsg::Error(e) => bail!(e),
+        other => bail!("resposta inesperada: {other:?}"),
+    }
+}
+
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Hit {
