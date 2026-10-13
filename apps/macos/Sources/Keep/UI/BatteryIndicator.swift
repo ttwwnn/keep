@@ -29,9 +29,11 @@ final class BatteryIndicator: NSView {
     private static let boltWidth: CGFloat = 8
     private static let boltGap: CGFloat = 3
     /// Room round the figure inside the cell.
-    private static let padding: CGFloat = 4
-    /// Smaller than a tab's name: the figure has to fit inside the cell.
-    private static var font: NSFont { GhosttyApp.shared.terminalFont(size: 10 * GhosttyApp.shared.zoomLevel) }
+    /// As tall as the red close button of the window (a traffic light is 12 across).
+    private static let height: CGFloat = 12
+    private static let padding: CGFloat = 2
+    /// The zoom control's percentage, face and size exactly.
+    private static var font: NSFont { NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium) }
 
     init() {
         super.init(frame: .zero)
@@ -155,12 +157,12 @@ final class BatteryIndicator: NSView {
     /// The cell: as wide as "100%" with room round it, as tall as the text.
     private var bodySize: NSSize {
         let widest = NSAttributedString(string: "100%", attributes: [.font: Self.font]).size().width
-        let height = ceil(Self.font.ascender - Self.font.descender) + 3
+        let height = Self.height
         return NSSize(width: ceil(widest) + 2 * Self.padding, height: height)
     }
 
     /// How tall the indicator is.
-    var fittingHeight: CGFloat { bodySize.height + 2 }
+    var fittingHeight: CGFloat { bodySize.height }
 
     /// How wide the indicator is: the bolt while charging, the cell, its tip.
     var fittingWidth: CGFloat {
@@ -191,12 +193,12 @@ final class BatteryIndicator: NSView {
         tip.fill()
 
         // The charge, in its colour.
-        let inner = body.insetBy(dx: 2, dy: 2)
+        let inner = body.insetBy(dx: 1.5, dy: 1.5)
         let charge = NSRect(
             x: inner.minX, y: inner.minY,
             width: max(2, inner.width * CGFloat(reading.percent) / 100), height: inner.height)
         Self.fill(reading).setFill()
-        NSBezierPath(roundedRect: charge, xRadius: radius - 2, yRadius: radius - 2).fill()
+        NSBezierPath(roundedRect: charge, xRadius: radius - 1.5, yRadius: radius - 1.5).fill()
 
         // The percentage inside the cell: dark ink over the charge, the
         // terminal's own over the empty part, so it reads at any level.

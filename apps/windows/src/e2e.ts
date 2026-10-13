@@ -526,7 +526,7 @@ async function aiSteps(step: StepRunner, real: boolean): Promise<void> {
     const rows = await openTabMenu(first.root.id);
     if (!rows[0]?.includes("Seguir a ordem de prioridade")) throw new Error(`sem seguir a ordem: ${rows.join(" | ")}`);
     // The account with no login of its own, by its place and its address.
-    if (!rows.some((r) => /IA-\d+ · carla@exemplo\.com — sem login próprio/.test(r))) {
+    if (!rows.some((r) => /IA·\d+ · carla@exemplo\.com — sem login próprio/.test(r))) {
       throw new Error(`sem a conta sem login: ${rows.join(" | ")}`);
     }
     if (rows.some((r) => /semlogin|trabalho|principal|Claude · |GPT · /.test(r))) {
@@ -547,7 +547,7 @@ async function aiSteps(step: StepRunner, real: boolean): Promise<void> {
     const message = said.message ?? "";
     await api.e2eShot("precisa-login");
     answer("ok");
-    if (!/^Falta aprovar IA-\d+ no navegador$/.test(title)) throw new Error(`${title}: ${message}`);
+    if (!/^Falta aprovar IA·\d+ no navegador$/.test(title)) throw new Error(`${title}: ${message}`);
     const shown = activeTab.value?.root.id;
     if (shown === first.root.id) throw new Error("a aba do login não veio para a frente");
     return `${title} — aba do login ${shown}: ${message.slice(0, 160)}`;
@@ -611,19 +611,19 @@ function sidebarSuffix(tab: number): string | null {
 
 /**
  * The sidebar names an AI tab's account by its place in the footer's list
- * only — "(IA-3)", never the AI or the order's own names — and the number
+ * only — "(IA·3)", never the AI or the order's own names — and the number
  * follows the list when its order changes: the Codex stand-in's tab, on the
  * GPT account, as that account goes one place down the list and back.
  */
 async function sidebarSteps(step: StepRunner): Promise<void> {
-  await step("barra lateral: a aba de IA diz só (IA-n), e o número segue a ordem do rodapé", async () => {
+  await step("barra lateral: a aba de IA diz só (IA·n), e o número segue a ordem do rodapé", async () => {
     const codexTab = [...(tabsByWorkspace.value.get(WORKSPACE) ?? [])]
       .reverse()
       .find((t) => programOf(t.root.command, t.root.title) === "codex" && statuses.value.has(viewKey(WORKSPACE, t.root.id)));
     if (!codexTab) throw new Error("sem a aba do Codex falso");
     const gpt = usageLines.value.findIndex((l) => l.account.engine === "codex");
     if (gpt < 0) throw new Error("sem a conta do GPT no rodapé");
-    const wanted = (at: number) => `(IA-${at + 1})`;
+    const wanted = (at: number) => `(IA·${at + 1})`;
     const seen: string[] = [];
     const expect = async (at: number) => {
       const shown = await waitFor(() => (sidebarSuffix(codexTab.root.id) === wanted(at) ? wanted(at) : null), 15000).catch(() => {
@@ -640,7 +640,7 @@ async function sidebarSteps(step: StepRunner): Promise<void> {
     await expect(gpt);
     // After a title: an AI's account by its number only, another program by its name — no account's own name.
     const suffixes = [...document.querySelectorAll(".sidebar .tab-program")].map((e) => e.textContent?.trim() ?? "");
-    const odd = suffixes.filter((t) => !/^\(IA-\d+\)$/.test(t) && !/^— [^·]+$/.test(t));
+    const odd = suffixes.filter((t) => !/^\(IA·\d+\)$/.test(t) && !/^— [^·]+$/.test(t));
     const named = suffixes.filter((t) => /principal|reserva|semlogin|trabalho/i.test(t));
     if (odd.length > 0 || named.length > 0) throw new Error(`na barra lateral: ${[...odd, ...named].join(" | ")}`);
     return `${seen.join(" → ")}; todas: ${suffixes.join(" | ")}`;

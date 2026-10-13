@@ -308,7 +308,7 @@ struct WorkspaceSidebar: View {
                 Spacer(minLength: 8)
                 // The lock's and the +'s room, kept here so the fold stays at
                 // the far end.
-                Color.clear.frame(width: 10 + 8 + 10, height: 1)
+                Color.clear.frame(width: 14 + 8 + 14, height: 1)
                 disclosure(row)
             }
             .padding(.horizontal, 12)
@@ -424,16 +424,16 @@ struct WorkspaceSidebar: View {
                 dispatch(.toggleDisclosure(row.name))
             } label: {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.system(size: 10.5 * titleZoom, weight: .semibold))
                     .foregroundStyle(Palette.inkFaint)
                     .rotationEffect(.degrees(row.expanded ? 90 : 0))
-                    .frame(width: 10)
+                    .frame(width: 14)
                     .contentShape(Rectangle().inset(by: -6))
             }
             .buttonStyle(.plain)
             .animation(.easeOut(duration: 0.14), value: row.expanded)
         } else {
-            Spacer().frame(width: 10)
+            Spacer().frame(width: 14)
         }
     }
 
@@ -448,10 +448,10 @@ struct WorkspaceSidebar: View {
     @ViewBuilder
     private func confinementButton(_ row: SessionSnapshot.SidebarRow) -> some View {
         let hovering = hoveredLock == row.name
-        let glyph = Image(systemName: row.confinedTo == nil ? "lock.open" : "lock.fill")
-            .font(.system(size: 9, weight: .semibold))
+        let glyph = Image(systemName: row.confinedTo == nil ? "folder" : "folder.fill")
+            .font(.system(size: 12 * titleZoom, weight: .semibold))
             .foregroundStyle(row.confinedTo != nil || hovering ? Palette.inkResting : Palette.inkFaint)
-            .frame(width: 10)
+            .frame(width: 14)
             .contentShape(Rectangle().inset(by: -6))
         Group {
             if let folder = row.confinedTo {
@@ -482,9 +482,9 @@ struct WorkspaceSidebar: View {
             dispatch(.newTab(in: row.name))
         } label: {
             Image(systemName: "plus")
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: 12 * titleZoom, weight: .semibold))
                 .foregroundStyle(hoveredNewTab == row.name ? Palette.inkResting : Palette.inkFaint)
-                .frame(width: 10)
+                .frame(width: 14)
                 .contentShape(Rectangle().inset(by: -6))
         }
         .buttonStyle(.plain)
@@ -560,7 +560,7 @@ struct WorkspaceSidebar: View {
                     .onHover { inside in notePointer(inside, onNameOf: .tab(tab.id)) }
                 // The program — "— bash" —, or for an AI only the number of
                 // the account it runs on, its place in the footer's list:
-                // "(IA-3)". Read, not watched (see `accountGlyph`): the
+                // "(IA·3)". Read, not watched (see `accountGlyph`): the
                 // session republishes when the list's order changes.
                 let program = AIChoices.tabLabel(
                     command: tab.command, account: tab.account, running: tab.runningAccount,
@@ -771,7 +771,7 @@ struct WorkspaceSidebar: View {
         _ tab: SessionSnapshot.SidebarTab, visible: Bool, onBadge: Bool
     ) -> some View {
         MenuGlyph(
-            symbol: "chevron.down", pointSize: 8, weight: .bold,
+            symbol: "chevron.down", pointSize: 10.5 * titleZoom, weight: .bold,
             label: "Escolher a IA da aba \(tab.title)",
             identifier: "sidebar-ia-\(tab.id)",
             help: "IA e conta desta aba",

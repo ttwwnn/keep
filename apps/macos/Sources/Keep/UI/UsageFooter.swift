@@ -578,7 +578,7 @@ struct UsageFooter: View {
     /// place in this list (13/10/2026).
     private func title(_ line: AccountUsage) -> String { line.account.engine.title }
 
-    /// "IA-2 · Claude": what the tabs call the account, for the tooltips.
+    /// "IA·2 · Claude": what the tabs call the account, for the tooltips.
     private func numbered(_ line: AccountUsage) -> String {
         let number = monitor.lines.firstIndex { $0.account.id == line.account.id }.map { $0 + 1 }
         return number.map { "\(AIChoices.name(number: $0)) · \(title(line))" } ?? title(line)

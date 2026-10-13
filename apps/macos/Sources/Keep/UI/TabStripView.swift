@@ -1173,6 +1173,8 @@ final class TabCellView: NSView {
         // Seen on the tab you are in, and on any other under the pointer —
         // quiet at rest, like the close button beside it. On a lone tab,
         // which is the window's title, only under the pointer.
+        accountButton.setSymbol(
+            "chevron.down", pointSize: 10.5 * GhosttyApp.shared.zoomLevel, weight: .bold)
         accountButton.wanted = chevron
             && (hovered || (!alone && item?.isActive == true))
 

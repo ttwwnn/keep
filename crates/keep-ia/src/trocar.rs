@@ -65,7 +65,7 @@ pub struct Pedido {
     pub conta: Option<String>,
 }
 
-/// O nome de uma conta para quem lê: `IA-n`, a posição dela na lista do
+/// O nome de uma conta para quem lê: `IA·n`, a posição dela na lista do
 /// rodapé "Consumo de IA" (a ordem efetiva, Claude e GPT juntos, contando de
 /// 1). Pedido de 13/10/2026: nada de "principal" ou "reserva" para a pessoa;
 /// as chaves (`claude:ana`) ficam só por dentro. `None` para a ordem de
@@ -74,7 +74,7 @@ pub fn nome_em(contas: &[Conta], chave: &str) -> Option<String> {
     if chave == SEGUIR_ORDEM {
         return None;
     }
-    contas.iter().position(|c| c.e(chave)).map(|i| format!("IA-{}", i + 1))
+    contas.iter().position(|c| c.e(chave)).map(|i| format!("IA·{}", i + 1))
 }
 
 /// `nome_em`, para uma mensagem: a ordem de prioridade se diz assim, e uma
@@ -91,7 +91,7 @@ pub fn rotulo(chave: &str) -> String {
     rotulo_em(&contas::listar(false), chave)
 }
 
-/// O mesmo, com o artigo: "a IA-2", "a ordem de prioridade".
+/// O mesmo, com o artigo: "a IA·2", "a ordem de prioridade".
 pub fn com_artigo(contas: &[Conta], chave: &str) -> String {
     match nome_em(contas, chave) {
         Some(n) => format!("a {n}"),
@@ -1069,7 +1069,7 @@ mod ponta_a_ponta {
 
         // Claude → Codex: conversa nova, com o contexto da anterior.
         let feito = trocar(&p("gpt:principal", true)).unwrap();
-        assert_eq!(feito, "abriu conversa nova na IA-3 com o contexto da tarefa anterior");
+        assert_eq!(feito, "abriu conversa nova na IA·3 com o contexto da tarefa anterior");
         assert!(tela_tem("T", tab, "FALSO codex"));
         assert!(tela_tem("T", tab, contexto::PROMPT_TROCA.trim_end()));
         let codex = ia_da_aba(tab);
@@ -1078,28 +1078,28 @@ mod ponta_a_ponta {
         // Codex → seguir a ordem: volta ao Claude da frente da fila, mesmo
         // com o GPT no topo dela (o GPT nunca entra sozinho) — e sobe no
         // armazém da aba, só com o acesso da conta. Para a pessoa, cada conta
-        // é a posição dela na lista: GPT IA-1, ana IA-2, bia IA-3.
+        // é a posição dela na lista: GPT IA·1, ana IA·2, bia IA·3.
         std::fs::write(c.raiz.join(".claude/contas/.ordem"), "gpt:principal\nclaude:ana\nclaude:bia\n").unwrap();
         let feito = trocar(&p("claude:ordem", false)).unwrap();
-        assert_eq!(feito, "abriu conversa nova na IA-2 (seguindo a ordem) com o contexto da tarefa anterior");
+        assert_eq!(feito, "abriu conversa nova na IA·2 (seguindo a ordem) com o contexto da tarefa anterior");
         let abas_dir = caminhos::abas().to_string_lossy().into_owned();
         assert!(tela_tem("T", tab, &format!("escolha=claude:ordem fixa={abas_dir}/")), "{}", daemon::tela("T", tab).unwrap_or_default());
         assert!(tela_tem("T", tab, "conta=G"), "o Claude lê o acesso da Ana no armazém da aba");
-        assert_eq!(trocar(&p("claude:ordem", false)).unwrap(), "a aba já está na IA-2");
+        assert_eq!(trocar(&p("claude:ordem", false)).unwrap(), "a aba já está na IA·2");
         let claude = ia_da_aba(tab);
         assert_eq!((claude.conta.as_str(), claude.atual.as_deref()), ("claude:ordem", Some("claude:ana")));
 
         // Claude → Claude noutra conta, com o Claude aberto: a quente. O mesmo
         // processo (a mesma conversa) passa a falar pela Bia; nada é digitado.
         let tela_antes = daemon::tela("T", tab).unwrap_or_default();
-        assert_eq!(trocar(&p("claude:bia", false)).unwrap(), "passou para a IA-3 sem sair do Claude");
+        assert_eq!(trocar(&p("claude:bia", false)).unwrap(), "passou para a IA·3 sem sair do Claude");
         assert_eq!(daemon::tela("T", tab).unwrap_or_default(), tela_antes, "a troca a quente digitou na aba");
         let bia = ia_da_aba(tab);
         assert_eq!((bia.pid, bia.conta.as_str(), bia.atual.as_deref()), (claude.pid, "claude:bia", Some("claude:bia")));
         assert!(digita("T", tab, "um", true).unwrap());
         assert!(tela_tem("T", tab, "Feito: um, conta=F"), "{}", daemon::tela("T", tab).unwrap_or_default());
-        assert_eq!(trocar(&p("claude:bia", false)).unwrap(), "a aba já está na IA-3");
-        assert_eq!(trocar(&p("claude:ordem", false)).unwrap(), "passou para a IA-2 sem sair do Claude (seguindo a ordem)");
+        assert_eq!(trocar(&p("claude:bia", false)).unwrap(), "a aba já está na IA·3");
+        assert_eq!(trocar(&p("claude:ordem", false)).unwrap(), "passou para a IA·2 sem sair do Claude (seguindo a ordem)");
         assert!(digita("T", tab, "dois", true).unwrap());
         assert!(tela_tem("T", tab, "Feito: dois, conta=G"));
         assert_eq!(ia_da_aba(tab).pid, claude.pid, "o mesmo Claude");
@@ -1117,7 +1117,7 @@ mod ponta_a_ponta {
         let r = crate::sincronizar::rodada();
         assert_eq!(r["alvo"], "claude:bia", "{r}");
         assert_eq!(r["alteradas"].as_array().map(Vec::len), Some(1), "{r}");
-        assert_eq!(r["alteradas"][0]["feito"], "passou para a IA-3 sem sair do Claude (seguindo a ordem)", "{r}");
+        assert_eq!(r["alteradas"][0]["feito"], "passou para a IA·3 sem sair do Claude (seguindo a ordem)", "{r}");
         assert_eq!(daemon::tela("T", tab).unwrap_or_default(), tela_antes, "a rodada digitou na aba");
         let seguindo = ia_da_aba(tab);
         assert_eq!(
@@ -1242,10 +1242,10 @@ mod nomes {
         let l = contas::listar(true);
         assert_eq!(contas::ordem_efetiva(&l), ["claude:bia", "gpt:principal", "claude:ana"]);
         // Claude e GPT juntos, na ordem da lista, contando de 1.
-        assert_eq!(rotulo_em(&l, "claude:bia"), "IA-1");
-        assert_eq!(rotulo_em(&l, "gpt:principal"), "IA-2");
-        assert_eq!(rotulo_em(&l, "claude:ana"), "IA-3");
-        assert_eq!(com_artigo(&l, "claude:ana"), "a IA-3");
+        assert_eq!(rotulo_em(&l, "claude:bia"), "IA·1");
+        assert_eq!(rotulo_em(&l, "gpt:principal"), "IA·2");
+        assert_eq!(rotulo_em(&l, "claude:ana"), "IA·3");
+        assert_eq!(com_artigo(&l, "claude:ana"), "a IA·3");
         assert_eq!(rotulo_em(&l, SEGUIR_ORDEM), "a ordem de prioridade");
         assert_eq!(com_artigo(&l, SEGUIR_ORDEM), "a ordem de prioridade");
         assert_eq!(nome_em(&l, "claude:ninguem"), None);
@@ -1253,6 +1253,6 @@ mod nomes {
         // Subir uma conta na lista muda o nome dela, não a chave.
         contas::mover("claude:ana", true).unwrap();
         let l = contas::listar(false);
-        assert_eq!((rotulo_em(&l, "claude:ana"), rotulo_em(&l, "gpt:principal")), ("IA-2".into(), "IA-3".into()));
+        assert_eq!((rotulo_em(&l, "claude:ana"), rotulo_em(&l, "gpt:principal")), ("IA·2".into(), "IA·3".into()));
     }
 }

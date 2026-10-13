@@ -345,12 +345,12 @@ enum AIChoices {
     }
 
     /// An account is called by its place in the footer's list, "Consumo de
-    /// IA", from 1: "IA-2". Never by the order's own names for the accounts
+    /// IA", from 1: "IA·2". Never by the order's own names for the accounts
     /// (asked for 13/10/2026: "não use mais a nomenclatura principal e
     /// reserva, deve ser só a posição das contas na lista").
-    static func name(number: Int) -> String { "IA-\(number)" }
+    static func name(number: Int) -> String { "IA·\(number)" }
 
-    /// "IA-2 · ds.lw.tm@… — no limite": the account's place in the list, the
+    /// "IA·2 · ds.lw.tm@… — no limite": the account's place in the list, the
     /// address the service knows it by, and — when it cannot take work now —
     /// why.
     static func title(_ line: AccountUsage, number: Int) -> String {
@@ -368,7 +368,7 @@ enum AIChoices {
     }
 
     /// What the sidebar writes after a tab's title. For a tab running an AI,
-    /// only the number of the account it runs on — "(IA-3)", never the AI's
+    /// only the number of the account it runs on — "(IA·3)", never the AI's
     /// name (asked for 13/10/2026) —, the one it was put on when the core has
     /// not said, and for a tab following the order the Claude login the
     /// tabs share; nothing when no account can be told. For any other

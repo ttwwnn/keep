@@ -365,7 +365,7 @@ fn login_claude(conta: Option<&str>, email_dado: Option<&str>, apelido_dado: Opt
                 n += 1;
             }
             // O apelido é só a chave por dentro (`claude:<apelido>`): para a
-            // pessoa, a conta é a posição dela na lista (IA-n).
+            // pessoa, a conta é a posição dela na lista (IA·n).
             let ap = apelido_dado.map(str::to_string).unwrap_or(base);
             if !contas::apelido_valido(&ap) || ap == "ordem" || usados.contains(&Motor::Claude.chave(&ap)) {
                 desfaz(&pasta);

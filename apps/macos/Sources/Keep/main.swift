@@ -292,6 +292,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             .map { $0.map { "\($0.account.id)|\($0.account.isActive)" } }
             .removeDuplicates()
             .dropFirst()
+            // `$lines` publishes before the new value is stored: one turn later
+            // the sidebar reads the list as it now is.
+            .receive(on: DispatchQueue.main)
             .sink { [weak session] _ in session?.noteAccountListChanged() }
         let tabAccounts = AITabWatcher(session: session)
         tabAccounts.start()
