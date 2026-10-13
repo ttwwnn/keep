@@ -4,7 +4,10 @@
 // terminal's background, a step further back for the sidebar, and its inks
 // are white (or black) at three strengths. Colour is left to state.
 
+import type { ISearchDecorationOptions } from "@xterm/addon-search";
 import type { ITheme } from "@xterm/xterm";
+import { contrast, isDark, mix, parseHex, rgba, scale, toHex, type Rgb } from "./color";
+import { themeColors, themeFor, type ThemeColors } from "./themes";
 
 export type Appearance = "auto" | "light" | "dark";
 
@@ -14,79 +17,158 @@ export interface Palette {
   ground: string;
   /** The sidebar: a step further back. */
   recessed: string;
+  /** The cards': the ground a step further back still, a little translucent over the blur. */
+  overlay: string;
   terminal: ITheme;
+  /** How a search marks its matches in the terminal, legible on this ground. */
+  search: ISearchDecorationOptions;
+}
+
+/** The amber of a hit in the lists, which a search in the terminal wears too. */
+const HIT: Rgb = [255, 214, 10];
+
+/**
+ * How a search marks its matches on `ground`, for text in `ink`: the amber
+ * mixed in as far as the text still reads on it — a highlight, not a block —
+ * so a light ground gets a pale yellow and a dark one a dark amber, where a
+ * fixed colour would suit only one of them. The match in front also has a
+ * border.
+ */
+function searchOn(ground: Rgb, ink: Rgb): ISearchDecorationOptions {
+  const reads = (most: number, ratio: number): string => {
+    for (let share = most; share > 0.1; share -= 0.02) {
+      const colour = mix(ground, HIT, share);
+      if (contrast(ink, colour) >= ratio) return toHex(colour);
+    }
+    return toHex(mix(ground, HIT, 0.1));
+  };
+  return {
+    matchBackground: reads(0.4, 4.5),
+    activeMatchBackground: reads(0.7, 3),
+    activeMatchBorder: "#ff9f0a",
+    matchOverviewRuler: "#888888",
+    activeMatchColorOverviewRuler: "#ffaa00",
+  };
+}
+
+/**
+ * What the window wears around a terminal's ground, from the ground alone
+ * (the macOS app's KeepWindow.recessed and PickerView.deepened): dark or
+ * light by how much light it gives off, the sidebar a step further back, the
+ * cards a little further, the hue always the ground's own.
+ */
+function around(terminal: ITheme & { background: string; foreground: string }): Palette {
+  const ground = parseHex(terminal.background) ?? [0, 0, 0];
+  const dark = isDark(ground);
+  // The cards take their step by the ground's brightness, as the macOS picker does, not by its luminance.
+  const deep = Math.max(...ground) >= 128 ? 0.94 : 0.78;
+  return {
+    dark,
+    ground: terminal.background,
+    recessed: toHex(scale(ground, dark ? 0.72 : 0.955)),
+    overlay: rgba(scale(ground, deep), dark ? 0.86 : 0.9),
+    terminal,
+    search: searchOn(ground, parseHex(terminal.foreground) ?? [255, 255, 255]),
+  };
 }
 
 /** Keep Escuro: Ghostty's own background, letter and palette. */
-const KEEP_ESCURO: Palette = {
-  dark: true,
-  ground: "#282c34",
-  recessed: "#1d2025",
-  terminal: {
-    background: "#282c34",
-    foreground: "#ffffff",
-    cursor: "#ffffff",
-    cursorAccent: "#282c34",
-    selectionBackground: "rgba(255, 255, 255, 0.26)",
-    black: "#1d1f21",
-    red: "#cc6666",
-    green: "#b5bd68",
-    yellow: "#f0c674",
-    blue: "#81a2be",
-    magenta: "#b294bb",
-    cyan: "#8abeb7",
-    white: "#c5c8c6",
-    brightBlack: "#666666",
-    brightRed: "#d54e53",
-    brightGreen: "#b9ca4a",
-    brightYellow: "#e7c547",
-    brightBlue: "#7aa6da",
-    brightMagenta: "#c397d8",
-    brightCyan: "#70c0b1",
-    brightWhite: "#eaeaea",
-  },
-};
+const KEEP_ESCURO: Palette = around({
+  background: "#282c34",
+  foreground: "#ffffff",
+  cursor: "#ffffff",
+  cursorAccent: "#282c34",
+  selectionBackground: "rgba(255, 255, 255, 0.26)",
+  black: "#1d1f21",
+  red: "#cc6666",
+  green: "#b5bd68",
+  yellow: "#f0c674",
+  blue: "#81a2be",
+  magenta: "#b294bb",
+  cyan: "#8abeb7",
+  white: "#c5c8c6",
+  brightBlack: "#666666",
+  brightRed: "#d54e53",
+  brightGreen: "#b9ca4a",
+  brightYellow: "#e7c547",
+  brightBlue: "#7aa6da",
+  brightMagenta: "#c397d8",
+  brightCyan: "#70c0b1",
+  brightWhite: "#eaeaea",
+});
 
 /**
  * Keep Claro: a white ground, as Claude Code's light theme assumes, and
  * GitHub Light's palette, made to read on white (its "yellow" is a dark
  * brown on purpose).
  */
-const KEEP_CLARO: Palette = {
-  dark: false,
-  ground: "#ffffff",
-  recessed: "#f4f4f4",
-  terminal: {
-    background: "#ffffff",
-    foreground: "#1f2328",
-    cursor: "#1f2328",
-    cursorAccent: "#ffffff",
-    selectionBackground: "#b4d5ff",
-    selectionForeground: "#1f2328",
-    black: "#24292f",
-    red: "#cf222e",
-    green: "#116329",
-    yellow: "#4d2d00",
-    blue: "#0969da",
-    magenta: "#8250df",
-    cyan: "#1b7c83",
-    white: "#6e7781",
-    brightBlack: "#57606a",
-    brightRed: "#a40e26",
-    brightGreen: "#1a7f37",
-    brightYellow: "#633c01",
-    brightBlue: "#218bff",
-    brightMagenta: "#a475f9",
-    brightCyan: "#3192aa",
-    brightWhite: "#8c959f",
-  },
-};
+const KEEP_CLARO: Palette = around({
+  background: "#ffffff",
+  foreground: "#1f2328",
+  cursor: "#1f2328",
+  cursorAccent: "#ffffff",
+  selectionBackground: "#b4d5ff",
+  selectionForeground: "#1f2328",
+  black: "#24292f",
+  red: "#cf222e",
+  green: "#116329",
+  yellow: "#4d2d00",
+  blue: "#0969da",
+  magenta: "#8250df",
+  cyan: "#1b7c83",
+  white: "#6e7781",
+  brightBlack: "#57606a",
+  brightRed: "#a40e26",
+  brightGreen: "#1a7f37",
+  brightYellow: "#633c01",
+  brightBlue: "#218bff",
+  brightMagenta: "#a475f9",
+  brightCyan: "#3192aa",
+  brightWhite: "#8c959f",
+});
+
+const ANSI_NAMES = [
+  "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+  "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
+] as const;
+
+const worn = new WeakMap<ThemeColors, Palette>();
+
+/**
+ * A Ghostty theme as the terminal and as the window around it. The same
+ * theme gives the same palette object, so what follows a palette is not
+ * redone when nothing about it changed.
+ */
+export function paletteOf(colors: ThemeColors): Palette {
+  const known = worn.get(colors);
+  if (known) return known;
+  const terminal = {
+    background: colors.background,
+    foreground: colors.foreground,
+    cursor: colors.cursor ?? colors.foreground,
+    cursorAccent: colors.cursorText ?? colors.background,
+    // A theme that names no selection gets the cells swapped, as Ghostty draws one.
+    selectionBackground: colors.selectionBackground ?? colors.foreground,
+    selectionForeground: colors.selectionForeground ?? (colors.selectionBackground ? undefined : colors.background),
+    ...Object.fromEntries(ANSI_NAMES.map((name, slot) => [name, colors.ansi[slot]])),
+  };
+  const palette = around(terminal);
+  worn.set(colors, palette);
+  return palette;
+}
 
 const systemDark = () =>
   typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches === true;
 
-export function resolvePalette(appearance: Appearance): Palette {
+/**
+ * The palette of an appearance and of the theme chosen, if one: the theme's
+ * own when the catalogue has it, else Keep's dark or light.
+ */
+export function resolvePalette(appearance: Appearance, choice = ""): Palette {
   const dark = appearance === "dark" || (appearance === "auto" && systemDark());
+  const name = themeFor(choice, dark);
+  const colors = name ? themeColors(name) : undefined;
+  if (colors) return paletteOf(colors);
   return dark ? KEEP_ESCURO : KEEP_CLARO;
 }
 
@@ -132,7 +214,7 @@ export function applyPalette(palette: Palette): void {
     "--rule": `rgba(${ink}, 0.08)`,
     // The card of the picker: the terminal's ground, a step further back (x0.78
     // dark, x0.94 light), a little translucent over the blur.
-    "--overlay": palette.dark ? "rgba(31, 34, 41, 0.86)" : "rgba(240, 240, 240, 0.9)",
+    "--overlay": palette.overlay,
     "--card-select": palette.dark ? "rgba(255, 255, 255, 0.2)" : "rgba(0, 0, 0, 0.1)",
     "--shadow": "0 18px 48px rgba(0, 0, 0, 0.62)",
     // DESIGN.md's state dots, in OKLCH: attached, busy, idle.
