@@ -65,15 +65,37 @@ pub struct Pedido {
     pub conta: Option<String>,
 }
 
-/// O nome que uma chave tem para quem lê.
-pub fn rotulo(chave: &str) -> String {
+/// O nome de uma conta para quem lê: `IA-n`, a posição dela na lista do
+/// rodapé "Consumo de IA" (a ordem efetiva, Claude e GPT juntos, contando de
+/// 1). Pedido de 13/10/2026: nada de "principal" ou "reserva" para a pessoa;
+/// as chaves (`claude:ana`) ficam só por dentro. `None` para a ordem de
+/// prioridade e para uma chave de conta nenhuma.
+pub fn nome_em(contas: &[Conta], chave: &str) -> Option<String> {
     if chave == SEGUIR_ORDEM {
-        return "Claude (ordem de prioridade)".into();
+        return None;
     }
-    match chave.split_once(':') {
-        Some(("gpt", ap)) => format!("GPT · {ap}"),
-        Some((_, ap)) => format!("Claude · {ap}"),
-        None => chave.into(),
+    contas.iter().position(|c| c.e(chave)).map(|i| format!("IA-{}", i + 1))
+}
+
+/// `nome_em`, para uma mensagem: a ordem de prioridade se diz assim, e uma
+/// chave de conta nenhuma, "uma conta que o Keep não tem".
+pub fn rotulo_em(contas: &[Conta], chave: &str) -> String {
+    if chave == SEGUIR_ORDEM {
+        return "a ordem de prioridade".into();
+    }
+    nome_em(contas, chave).unwrap_or_else(|| "uma conta que o Keep não tem".into())
+}
+
+/// `rotulo_em` com as contas lidas agora.
+pub fn rotulo(chave: &str) -> String {
+    rotulo_em(&contas::listar(false), chave)
+}
+
+/// O mesmo, com o artigo: "a IA-2", "a ordem de prioridade".
+pub fn com_artigo(contas: &[Conta], chave: &str) -> String {
+    match nome_em(contas, chave) {
+        Some(n) => format!("a {n}"),
+        None => rotulo_em(contas, chave),
     }
 }
 
@@ -110,9 +132,9 @@ fn destino(p: &Pedido, contas: &[Conta]) -> Result<Destino, Recusa> {
         }
         if let Some(chave) = &p.conta {
             let c = contas::achar(contas, chave)
-                .ok_or_else(|| Recusa::nova("sem-conta", format!("Não há a conta {}.", rotulo(chave))))?;
+                .ok_or_else(|| Recusa::nova("sem-conta", "A conta que a ordem pedia não está mais no Keep."))?;
             let ambiente = contas::ambiente(c).map_err(|_| {
-                Recusa::nova("sem-conta", format!("A conta {} não tem login em que uma aba rode.", rotulo(chave)))
+                Recusa::nova("sem-conta", format!("A conta {} não tem login em que uma aba rode.", rotulo_em(contas, chave)))
             })?;
             return Ok(Destino { escolha: p.para.clone(), conta: c.clone(), ambiente });
         }
@@ -138,16 +160,16 @@ fn destino(p: &Pedido, contas: &[Conta]) -> Result<Destino, Recusa> {
             "Não há conta em que uma aba possa rodar. Entre numa pelo + do rodapé.",
         ));
     }
-    let c = contas::achar(contas, &p.para).ok_or_else(|| {
-        Recusa::nova("sem-conta", format!("Não há a conta {}. Entre nela pelo + do rodapé.", rotulo(&p.para)))
-    })?;
+    let c = contas::achar(contas, &p.para)
+        .ok_or_else(|| Recusa::nova("sem-conta", "Essa conta não está no Keep. Entre nela pelo + do rodapé."))?;
     match contas::ambiente(c) {
         Ok(ambiente) => Ok(Destino { escolha: p.para.clone(), conta: c.clone(), ambiente }),
         Err(Falta::PrecisaLogin { apelido, .. }) => {
             let email = c.email.clone().unwrap_or_default();
             let (ws_login, aba_login, abriu) =
                 crate::login::abre_login_da_conta(&apelido, &email, &c.key, &p.ws, p.aba, &p.para).map_err(erro)?;
-            let nome = format!("Entrar no Claude · {apelido}");
+            let ia = rotulo_em(contas, &p.para);
+            let nome = format!("Entrar na {ia}");
             let onde = if abriu {
                 format!("Abri a aba “{nome}” neste workspace")
             } else {
@@ -156,15 +178,15 @@ fn destino(p: &Pedido, contas: &[Conta]) -> Result<Destino, Recusa> {
             let mut r = Recusa::nova(
                 "precisa-login",
                 format!(
-                    "A conta {apelido} ainda não tem o login próprio das abas (uma aprovação no navegador, uma vez só). \
-                     {onde}: aprove lá e esta aba passa para Claude · {apelido} sozinha. A conversa desta aba não foi mexida."
+                    "A conta {ia} ainda não tem o login próprio das abas (uma aprovação no navegador, uma vez só). \
+                     {onde}: aprove lá e esta aba passa para a {ia} sozinha. A conversa desta aba não foi mexida."
                 ),
             );
             r.extras.insert("ws_login".into(), json!(ws_login));
             r.extras.insert("aba_login".into(), json!(aba_login));
             Err(r)
         }
-        Err(Falta::SemConta(_)) => Err(Recusa::nova("sem-conta", format!("Não há a conta {}.", rotulo(&p.para)))),
+        Err(Falta::SemConta(_)) => Err(Recusa::nova("sem-conta", "Essa conta não está no Keep.")),
     }
 }
 
@@ -544,9 +566,9 @@ fn troca_a_quente(p: &Pedido, r: &Retrato, contas: &[Conta]) -> Result<String, R
     // `claude attach <job>`: a conta é a do processo do job.
     let pid = job_anexado(v.frente).map(|j| j.pid).unwrap_or(v.frente);
     match quente::trocar_processo(pid, v.shell, &p.ws, p.aba, &p.para, p.conta.as_deref(), contas) {
-        Ok(quente::Feito::Ja(conta)) => Ok(format!("a aba já está em {}", rotulo(&conta))),
+        Ok(quente::Feito::Ja(conta)) => Ok(format!("a aba já está na {}", rotulo_em(contas, &conta))),
         Ok(quente::Feito::Trocou(conta)) => {
-            let mut feito = format!("passou para {} sem sair do Claude", rotulo(&conta));
+            let mut feito = format!("passou para a {} sem sair do Claude", rotulo_em(contas, &conta));
             if p.para == SEGUIR_ORDEM {
                 feito.push_str(" (seguindo a ordem)");
             }
@@ -634,7 +656,7 @@ pub fn trocar(p: &Pedido) -> Result<String, Recusa> {
         && escolha_agora.as_deref() == Some(destino.escolha.as_str())
         && atual_agora.as_deref() == Some(destino.conta.order_key.as_str())
     {
-        return Ok(format!("a aba já está em {}", rotulo(&destino.conta.order_key)));
+        return Ok(format!("a aba já está na {}", rotulo_em(&contas, &destino.conta.order_key)));
     }
     let sessao = if prog == Programa::Claude && anexo.is_none() { frente.and_then(sessoes::sessao_claude) } else { None };
 
@@ -925,8 +947,8 @@ pub fn trocar(p: &Pedido) -> Result<String, Recusa> {
     });
     let mut feito = format!(
         "{} {}",
-        if ident.is_some() { "retomou" } else { "abriu conversa nova em" },
-        rotulo(&destino.conta.order_key)
+        if ident.is_some() { "retomou a conversa na" } else { "abriu conversa nova na" },
+        rotulo_em(&contas, &destino.conta.order_key)
     );
     if destino.escolha == SEGUIR_ORDEM {
         feito.push_str(" (seguindo a ordem)");
@@ -1047,7 +1069,7 @@ mod ponta_a_ponta {
 
         // Claude → Codex: conversa nova, com o contexto da anterior.
         let feito = trocar(&p("gpt:principal", true)).unwrap();
-        assert_eq!(feito, "abriu conversa nova em GPT · principal com o contexto da tarefa anterior");
+        assert_eq!(feito, "abriu conversa nova na IA-3 com o contexto da tarefa anterior");
         assert!(tela_tem("T", tab, "FALSO codex"));
         assert!(tela_tem("T", tab, contexto::PROMPT_TROCA.trim_end()));
         let codex = ia_da_aba(tab);
@@ -1055,28 +1077,29 @@ mod ponta_a_ponta {
 
         // Codex → seguir a ordem: volta ao Claude da frente da fila, mesmo
         // com o GPT no topo dela (o GPT nunca entra sozinho) — e sobe no
-        // armazém da aba, só com o acesso da conta.
+        // armazém da aba, só com o acesso da conta. Para a pessoa, cada conta
+        // é a posição dela na lista: GPT IA-1, ana IA-2, bia IA-3.
         std::fs::write(c.raiz.join(".claude/contas/.ordem"), "gpt:principal\nclaude:ana\nclaude:bia\n").unwrap();
         let feito = trocar(&p("claude:ordem", false)).unwrap();
-        assert_eq!(feito, "abriu conversa nova em Claude · ana (seguindo a ordem) com o contexto da tarefa anterior");
+        assert_eq!(feito, "abriu conversa nova na IA-2 (seguindo a ordem) com o contexto da tarefa anterior");
         let abas_dir = caminhos::abas().to_string_lossy().into_owned();
         assert!(tela_tem("T", tab, &format!("escolha=claude:ordem fixa={abas_dir}/")), "{}", daemon::tela("T", tab).unwrap_or_default());
         assert!(tela_tem("T", tab, "conta=G"), "o Claude lê o acesso da Ana no armazém da aba");
-        assert_eq!(trocar(&p("claude:ordem", false)).unwrap(), "a aba já está em Claude · ana");
+        assert_eq!(trocar(&p("claude:ordem", false)).unwrap(), "a aba já está na IA-2");
         let claude = ia_da_aba(tab);
         assert_eq!((claude.conta.as_str(), claude.atual.as_deref()), ("claude:ordem", Some("claude:ana")));
 
         // Claude → Claude noutra conta, com o Claude aberto: a quente. O mesmo
         // processo (a mesma conversa) passa a falar pela Bia; nada é digitado.
         let tela_antes = daemon::tela("T", tab).unwrap_or_default();
-        assert_eq!(trocar(&p("claude:bia", false)).unwrap(), "passou para Claude · bia sem sair do Claude");
+        assert_eq!(trocar(&p("claude:bia", false)).unwrap(), "passou para a IA-3 sem sair do Claude");
         assert_eq!(daemon::tela("T", tab).unwrap_or_default(), tela_antes, "a troca a quente digitou na aba");
         let bia = ia_da_aba(tab);
         assert_eq!((bia.pid, bia.conta.as_str(), bia.atual.as_deref()), (claude.pid, "claude:bia", Some("claude:bia")));
         assert!(digita("T", tab, "um", true).unwrap());
         assert!(tela_tem("T", tab, "Feito: um, conta=F"), "{}", daemon::tela("T", tab).unwrap_or_default());
-        assert_eq!(trocar(&p("claude:bia", false)).unwrap(), "a aba já está em Claude · bia");
-        assert_eq!(trocar(&p("claude:ordem", false)).unwrap(), "passou para Claude · ana sem sair do Claude (seguindo a ordem)");
+        assert_eq!(trocar(&p("claude:bia", false)).unwrap(), "a aba já está na IA-3");
+        assert_eq!(trocar(&p("claude:ordem", false)).unwrap(), "passou para a IA-2 sem sair do Claude (seguindo a ordem)");
         assert!(digita("T", tab, "dois", true).unwrap());
         assert!(tela_tem("T", tab, "Feito: dois, conta=G"));
         assert_eq!(ia_da_aba(tab).pid, claude.pid, "o mesmo Claude");
@@ -1094,7 +1117,7 @@ mod ponta_a_ponta {
         let r = crate::sincronizar::rodada();
         assert_eq!(r["alvo"], "claude:bia", "{r}");
         assert_eq!(r["alteradas"].as_array().map(Vec::len), Some(1), "{r}");
-        assert_eq!(r["alteradas"][0]["feito"], "passou para Claude · bia sem sair do Claude (seguindo a ordem)", "{r}");
+        assert_eq!(r["alteradas"][0]["feito"], "passou para a IA-3 sem sair do Claude (seguindo a ordem)", "{r}");
         assert_eq!(daemon::tela("T", tab).unwrap_or_default(), tela_antes, "a rodada digitou na aba");
         let seguindo = ia_da_aba(tab);
         assert_eq!(
@@ -1203,3 +1226,33 @@ mod pasta_de_partida {
     }
 }
 
+#[cfg(test)]
+mod nomes {
+    use super::*;
+    use crate::contas::testes::{casa, perfis};
+
+    #[test]
+    fn a_conta_se_diz_pela_posicao_na_lista_do_consumo() {
+        let c = casa("nomes");
+        perfis(&[("G", "u-1", "ana@x.com"), ("F", "u-2", "bia@y.com")]);
+        c.global("G", "r");
+        c.fixa("k-2", Some(("F", "r")), Some(("bia", "bia@y.com", "u-2")));
+        c.codex(&c.raiz.join(".codex"), "ana@x.com", "acct-1");
+        c.ordem(&["claude:bia", "gpt:principal", "claude:ana"]);
+        let l = contas::listar(true);
+        assert_eq!(contas::ordem_efetiva(&l), ["claude:bia", "gpt:principal", "claude:ana"]);
+        // Claude e GPT juntos, na ordem da lista, contando de 1.
+        assert_eq!(rotulo_em(&l, "claude:bia"), "IA-1");
+        assert_eq!(rotulo_em(&l, "gpt:principal"), "IA-2");
+        assert_eq!(rotulo_em(&l, "claude:ana"), "IA-3");
+        assert_eq!(com_artigo(&l, "claude:ana"), "a IA-3");
+        assert_eq!(rotulo_em(&l, SEGUIR_ORDEM), "a ordem de prioridade");
+        assert_eq!(com_artigo(&l, SEGUIR_ORDEM), "a ordem de prioridade");
+        assert_eq!(nome_em(&l, "claude:ninguem"), None);
+        assert_eq!(rotulo_em(&l, "claude:ninguem"), "uma conta que o Keep não tem");
+        // Subir uma conta na lista muda o nome dela, não a chave.
+        contas::mover("claude:ana", true).unwrap();
+        let l = contas::listar(false);
+        assert_eq!((rotulo_em(&l, "claude:ana"), rotulo_em(&l, "gpt:principal")), ("IA-2".into(), "IA-3".into()));
+    }
+}

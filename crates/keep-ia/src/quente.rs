@@ -44,7 +44,7 @@ use crate::abas::SEGUIR_ORDEM;
 use crate::contas::credencial::{self, Lido, Local, Oauth};
 use crate::contas::{self, Armazem, Conta, Metadados, Motor, donos};
 use crate::renovar::{TRAVA_GRAVAR, TRAVA_RENOVAR, TravaDoCli};
-use crate::trocar::{Recusa, rotulo};
+use crate::trocar::{Recusa, rotulo_em};
 use crate::{caminhos, daemon, processos, uso, vinculo};
 
 /// A variável que diz ao Claude Code onde está o login.
@@ -555,11 +555,20 @@ pub fn preparar(ws: &str, shell: u32, escolha: Option<&str>, conta: Option<&Cont
         Some(c) => Some(c),
         None => conta_da_escolha(&lista, &escolha, None),
     }
-    .ok_or_else(|| Recusa::nova("sem-conta", format!("Não há a conta {} para esta aba.", rotulo(&escolha))))?;
+    .ok_or_else(|| {
+        if escolha == SEGUIR_ORDEM {
+            Recusa::nova("sem-conta", "Não há conta do Claude em que esta aba possa rodar. Entre numa pelo + do rodapé.")
+        } else {
+            Recusa::nova("sem-conta", "Essa conta não está no Keep. Entre nela pelo + do rodapé.")
+        }
+    })?;
     let f = fonte_renovando(alvo).ok_or_else(|| {
         Recusa::nova(
             "precisa-login",
-            format!("A conta {} não tem um login em dia que o Keep renove; entre nela pelo + do rodapé.", rotulo(&alvo.order_key)),
+            format!(
+                "A conta {} não tem um login em dia que o Keep renove; entre nela pelo + do rodapé.",
+                rotulo_em(&lista, &alvo.order_key)
+            ),
         )
     })?;
     let _e = trava_estado().map_err(|e| Recusa::nova("erro", e))?;
@@ -692,9 +701,18 @@ pub fn trocar_processo(
         _ => conta_da_escolha(lista, para, None),
     }
     .filter(|c| c.engine == Motor::Claude)
-    .ok_or_else(|| Recusa::nova("sem-conta", format!("Não há a conta {}. Entre nela pelo + do rodapé.", rotulo(para))))?;
+    .ok_or_else(|| {
+        if para == SEGUIR_ORDEM {
+            Recusa::nova("sem-conta", "Não há conta do Claude em que esta aba possa rodar. Entre numa pelo + do rodapé.")
+        } else {
+            Recusa::nova("sem-conta", "Essa conta não está no Keep. Entre nela pelo + do rodapé.")
+        }
+    })?;
     let f = fonte_renovando(alvo).ok_or_else(|| {
-        Recusa::nova("precisa-login", format!("A conta {} não tem um login em dia para as abas.", rotulo(&alvo.order_key)))
+        Recusa::nova(
+            "precisa-login",
+            format!("A conta {} não tem um login em dia para as abas.", rotulo_em(lista, &alvo.order_key)),
+        )
     })?;
     let _e = trava_estado().map_err(|e| Recusa::nova("erro", e))?;
     let mut estado = le_estado();
@@ -795,8 +813,14 @@ fn espalha_um(r: &mut Registro, lista: &[Conta]) -> Result<Passo, String> {
         &agora_lista
     };
     let manter = conta_por_dono(lista, &r.dono);
-    let alvo = conta_da_escolha(lista, &r.escolha, manter).ok_or_else(|| format!("não há a conta {}", rotulo(&r.escolha)))?;
-    let f = fonte(alvo).ok_or_else(|| format!("a conta {} está sem login em dia", rotulo(&alvo.order_key)))?;
+    let alvo = conta_da_escolha(lista, &r.escolha, manter).ok_or_else(|| {
+        if r.escolha == SEGUIR_ORDEM {
+            "não há conta do Claude em que a aba possa rodar".to_string()
+        } else {
+            "a conta da aba não está mais no Keep".to_string()
+        }
+    })?;
+    let f = fonte(alvo).ok_or_else(|| format!("a conta {} está sem login em dia", rotulo_em(lista, &alvo.order_key)))?;
     let gravou = grava_travado(&t, &r.pasta, &so_acesso(&f.oauth))?;
     let trocou = alvo.key != r.dono;
     r.dono = alvo.key.clone();

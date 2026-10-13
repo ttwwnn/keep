@@ -56,6 +56,11 @@ Uma conta do Claude é um **armazém de credenciais** do Claude Code:
 
 ### Chaves e ordem
 
+- Para a pessoa, uma conta é a posição dela na lista do rodapé "Consumo de IA": `IA-n`, contando de
+  1, Claude e GPT juntos, na ordem efetiva (pedido de 13/10/2026: nada de "principal" ou "reserva").
+  Todo texto do núcleo para quem usa (`feito`, `detalhe`, o que a aba do login imprime) diz assim; as
+  chaves abaixo ficam só por dentro e no JSON.
+
 - Chave de conta: `claude:<apelido>`, `gpt:<apelido>`. Especial: `claude:ordem` = seguir a ordem.
 - Ordem de prioridade: `~/.claude/contas/.ordem`, uma chave por linha (`#` e linhas vazias
   ignoradas). Contas que não estão no arquivo entram no fim (Claude: a global primeiro, depois por
@@ -312,7 +317,7 @@ Toda resposta é um objeto JSON numa linha, com `"versao": 1` e `"ok"`. Recusa: 
   (`claude`|`codex`), "conta" (a escolha: `claude:ordem` ou a chave da conta), "atual" (a chave da
   conta em que ela roda agora, ou `null`), "vinculo" (`exato`), "pid", "conversa" (id ou `null`)}]}`.
   `keepd.inicioMs` é o `started_ms` do `List3`: o app ignora a resposta de outro daemon.
-- `trocar` → `{"feito": texto}` (a quente: "passou para Claude · <ap> sem sair do Claude"). Recusas:
+- `trocar` → `{"feito": texto}` (a quente: "passou para a IA-2 sem sair do Claude"). Recusas:
   `ocupada` (o app pergunta "Interromper e trocar agora" e repete com `--interromper`),
   `precisa-login` (com `ws_login` e `aba_login`: a aba do login, aberta pelo Keep; a troca acontece
   sozinha quando ele termina), `claude-global`, `pasta-compartilhada`, `armazem-desconhecido`,
