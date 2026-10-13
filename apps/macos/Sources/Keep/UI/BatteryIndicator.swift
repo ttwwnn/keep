@@ -24,13 +24,14 @@ final class BatteryIndicator: NSView {
     private var groundObserver: NSObjectProtocol?
     private var zoomObserver: NSObjectProtocol?
 
-    private static let tipWidth: CGFloat = 2
+    private static let tipWidth: CGFloat = 1.5
     /// The bolt, left of the cell while it charges, and its gap.
     private static let boltWidth: CGFloat = 8
     private static let boltGap: CGFloat = 3
     /// Room round the figure inside the cell.
-    private static let padding: CGFloat = 6
-    private static var font: NSFont { GhosttyApp.shared.tabNameFont }
+    private static let padding: CGFloat = 4
+    /// Smaller than a tab's name: the figure has to fit inside the cell.
+    private static var font: NSFont { GhosttyApp.shared.terminalFont(size: 10 * GhosttyApp.shared.zoomLevel) }
 
     init() {
         super.init(frame: .zero)
@@ -154,7 +155,7 @@ final class BatteryIndicator: NSView {
     /// The cell: as wide as "100%" with room round it, as tall as the text.
     private var bodySize: NSSize {
         let widest = NSAttributedString(string: "100%", attributes: [.font: Self.font]).size().width
-        let height = ceil(Self.font.ascender - Self.font.descender) + 4
+        let height = ceil(Self.font.ascender - Self.font.descender) + 3
         return NSSize(width: ceil(widest) + 2 * Self.padding, height: height)
     }
 
@@ -177,14 +178,14 @@ final class BatteryIndicator: NSView {
             width: size.width, height: size.height)
 
         // The cell and its tip.
-        let radius = min(5, size.height / 3)
+        let radius = min(4, size.height / 3)
         let outline = NSBezierPath(
             roundedRect: body.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
         outline.lineWidth = 1
         palette.dimText.withAlphaComponent(0.7).setStroke()
         outline.stroke()
         let tip = NSBezierPath(roundedRect: NSRect(
-            x: body.maxX + 0.5, y: body.midY - 3, width: Self.tipWidth - 0.5, height: 6),
+            x: body.maxX + 0.5, y: body.midY - 2.5, width: Self.tipWidth - 0.5, height: 5),
             xRadius: 0.75, yRadius: 0.75)
         palette.dimText.withAlphaComponent(0.7).setFill()
         tip.fill()
@@ -220,7 +221,7 @@ final class BatteryIndicator: NSView {
         // A bolt beside the cell while it charges.
         if reading.charging,
            let bolt = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 9, weight: .bold))
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8, weight: .bold))
         {
             let tinted = NSImage(size: bolt.size, flipped: false) { rect in
                 bolt.draw(in: rect)
