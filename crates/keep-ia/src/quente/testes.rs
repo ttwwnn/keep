@@ -413,6 +413,7 @@ fn comando_precisa_estar_na_caixa_sem_rascunho_junto() {
     assert!(comando_na_caixa(&format!("histórico\n❯ \n{regua}\nrodapé"), ""));
     assert!(comando_na_caixa(&format!("❯ \x1b[2mTry edit\x1b[0m\n\x1b[2m{regua}\x1b[0m"), ""));
     assert!(comando_na_caixa(&format!("histórico\n❯ {RECONECTAR_CHROME}\n{regua}\nrodapé"), RECONECTAR_CHROME));
+    assert!(comando_na_caixa(&format!("❯ \x1b[2m/mcp\x1b[22m reconnect claude-in-chrome\n{regua}"), RECONECTAR_CHROME));
     assert!(!comando_na_caixa(&format!("❯ {RECONECTAR_CHROME}\nresposta\n❯ meu rascunho\n{regua}"), RECONECTAR_CHROME));
     assert!(!comando_na_caixa(&format!("❯ \nsegunda linha do rascunho\n{regua}"), ""));
     assert!(!comando_na_caixa("❯ meu rascunho", ""));

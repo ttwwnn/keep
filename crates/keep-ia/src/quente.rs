@@ -776,7 +776,10 @@ const CACHE_LOGIN_MS: u64 = 32_000;
 fn comando_na_caixa(tela: &str, comando: &str) -> bool {
     let (linhas, limpas) = crate::tela::as_duas(tela);
     let Some(i) = linhas.iter().rposition(|l| l.trim().starts_with('❯')) else { return false };
-    if limpas[i].trim().strip_prefix('❯').map(str::trim) != Some(comando) {
+    // A sugestão da caixa vazia é esmaecida; o nome de um comando local
+    // válido também é. Ao confirmar o comando, precisamos do nome inteiro.
+    let linha = if comando.is_empty() { &limpas[i] } else { &linhas[i] };
+    if linha.trim().strip_prefix('❯').map(str::trim) != Some(comando) {
         return false;
     }
     // Uma primeira linha vazia não significa que um rascunho multilinha está vazio.
