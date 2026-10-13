@@ -156,7 +156,8 @@ passa a falar pela conta nova. Nada é digitado na aba.
   entra no fim da ordem), e o refresh a mais é descartado quando tem. O armazém fica só com o acesso.
 - Abas de antes: um Claude numa pasta fixa só dele (nenhum outro processo raiz com a mesma variável)
   tem a pasta convertida na troca: marcada `"aba": true`, registrada como `fixa-<nome>` (legada), e
-  o login inteiro sai dela — muda para uma pasta fixa nova se ela era a única dona da conta. Pasta
+  o login inteiro sai dela — muda para uma pasta fixa nova se ela era a única dona da conta (com o
+  kit, o global não conta como outra dona: ele muda de conta quando o kit quer). Pasta
   fixa usada por mais de um Claude: `pasta-compartilhada`. Claude no login global (sem variável):
   `claude-global` — a conta dele muda com a ordem global, junto com as outras abas no global; o
   próximo Claude aberto na aba já vem no armazém dela.
