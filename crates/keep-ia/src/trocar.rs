@@ -276,7 +276,7 @@ fn subiu(ws: &str, tab: u32, agente: &str, segundos: u64) -> bool {
 }
 
 /// A situação da aba: a tela, e a sessão do Claude quando ela prova mais.
-fn situacao(a: &daemon::Aba, prog: &Programa, sessao: Option<&SessaoClaude>) -> (Estado, String) {
+pub(crate) fn situacao(a: &daemon::Aba, prog: &Programa, sessao: Option<&SessaoClaude>) -> (Estado, String) {
     if let Programa::Shell(_) = prog {
         return if a.info.busy { (Estado::Ocupada, "o shell está rodando algo".into()) } else { (Estado::Livre, String::new()) };
     }
