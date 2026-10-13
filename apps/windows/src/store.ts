@@ -38,6 +38,7 @@ import { chooseClaudeEffort, chooseClaudeModel, chooseCodex, type PickerIO } fro
 import { baseName, isPathTitle, rootTabs, type RootTab } from "./layout";
 import { defaultState, normalizeState, tabKey, type GuiState, type RestoreWorkspace } from "./state";
 import { TerminalManager, viewKey, type TermView } from "./terminals";
+import { TrustWatch, type TrustPane } from "./trust";
 import { DEFAULT_FONT_SIZE, applyPalette, defaultFontFamily, onSystemAppearanceChange, resolvePalette } from "./theme";
 import {
   listingPids,
@@ -289,7 +290,6 @@ export async function refresh(): Promise<void> {
   }
 }
 
-/** Bring the window's own state in line with what the daemon says exists. */
 let soonTimer: ReturnType<typeof setTimeout> | undefined;
 
 /**
@@ -310,6 +310,7 @@ export function refreshSoon(): void {
   }, 120);
 }
 
+/** Bring the window's own state in line with what the daemon says exists. */
 function reconcile(list: WorkspaceInfo[]): void {
   const names = new Set(list.map((w) => w.name));
   const alive = new Set<string>();
@@ -442,8 +443,11 @@ function guessSize(): { cols: number; rows: number } {
 
 // ------------------------------------------------------------------ reading Claude Code
 
+const trustWatch = new TrustWatch();
+
 /** Read the screens of the panes running Claude Code or Codex. */
 function readScreens(): void {
+  const claudePanes: TrustPane[] = [];
   const nextActivities = new Map<string, ClaudeActivity>();
   const nextModes = new Map<string, ClaudeMode | null>();
   const forBar: BarInput[] = [];
@@ -464,6 +468,7 @@ function readScreens(): void {
         forBar.push({ key, program: "codex", shellPid: pane.shellPid, screen: text, activity: kept });
         continue;
       }
+      if (view) claudePanes.push({ key, screen: text, shellPid: pane.shellPid, send: (keys) => view.type(keys) });
       // Undefined is "cannot tell": what was known stands.
       const m = text ? declaredMode(text) : undefined;
       if (m !== undefined) nextModes.set(key, m);
@@ -475,6 +480,14 @@ function readScreens(): void {
     }
   }
   void readBars(forBar);
+  // Claude Code asking whether to trust a folder is answered for the person who typed `claude` there.
+  void trustWatch.look(claudePanes, {
+    home: info.value?.home ?? "",
+    windows: isWindows.value,
+    markerExists: (path) => api.pathExists(path),
+    log,
+    now: Date.now,
+  });
   const since = new Map<string, number>();
   const seconds = Date.now() / 1000;
   for (const [key, activity] of nextActivities) {
@@ -1076,6 +1089,7 @@ export async function start(options: StartOptions): Promise<void> {
       cwd: (view) => workspaces.value.find((w) => w.name === view.workspace)?.tabs.find((t) => t.id === view.tab)?.cwd ?? "",
       home: () => info.value?.home ?? "",
       say: (message) => say(message),
+      titleChanged: () => refreshSoon(),
       // A second question waits for no one: it is a no.
       confirm: async (q) => {
         if (dialog.value) return false;
@@ -1089,7 +1103,6 @@ export async function start(options: StartOptions): Promise<void> {
           ],
         });
         return answered?.button === "yes";
-      titleChanged: () => refreshSoon(),
       },
     },
     { name: startup.platform, windowsBuild: startup.windowsBuild },
