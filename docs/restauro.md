@@ -63,6 +63,12 @@ própria (antes ele guardava um retrato no `state.json` e abria as abas em JavaS
 - o estado é `%APPDATA%\Keep\restauro` (ou `restauro` dentro de `KEEP_STATE_DIR`, num app de testes): o
   app passa `KEEP_STATE_DIR` e `KEEP_RESTAURO_ESTADO` a cada chamada, e o keep que roda dentro de uma aba
   chega ao mesmo lugar sem variável nenhuma;
+- o que o app guarda por número de aba (a ordem em que as abas estão na barra e na faixa, a última de cada
+  workspace, a que está à frente) é de um keepd só: o `restaurar --fase=abas` diz as `criadas` (o número
+  que cada aba refeita tinha no keepd do retrato e o que tem agora) e o app leva esses três para os números
+  novos, em vez de zerá-los; o que era de uma aba que não voltou vai com ela. Os workspaces guardados
+  (`hidden`) valem por nome e seguem guardados: a poda dos que não rodam só acontece depois do restauro. O
+  workspace padrão com o nome da pessoa só nasce se nada voltou;
 - a identidade do keepd, para o app saber que o daemon é outro, é `<pid>-<início em ms>` com o início que
   ele mesmo diz (`List3`), e os nomes que a pessoa deu às abas valem para um keepd só, porque os números
   das abas recomeçam em 1: ao mudar o keepd o app esquece os nomes do anterior, e os das abas que voltam
