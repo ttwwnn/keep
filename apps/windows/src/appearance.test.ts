@@ -1,7 +1,7 @@
 // The look the settings change: the face, what a program that asks is told of
 // the ground, the window's title, and what the state keeps of it all.
 import { describe, expect, it } from "vitest";
-import { SYMBOLS_FAMILY, isFixedPitch, quoteFamily, terminalFontStack } from "./fonts";
+import { SYMBOLS_FAMILY, isFixedPitch, isTextFace, quoteFamily, terminalFontStack } from "./fonts";
 import { SchemeReporter, schemeReport } from "./schemeReport";
 import { DEFAULT_SCROLLBACK, SCROLLBACK_MAX, defaultState, normalizeScrollback, normalizeState } from "./state";
 import { windowTitle } from "./windowTitle";
@@ -47,6 +47,19 @@ describe("which faces are monospaced", () => {
   it("takes nothing measured, or nothing wide, for neither", () => {
     expect(isFixedPitch([])).toBe(false);
     expect(isFixedPitch([0, 0, 0])).toBe(false);
+  });
+});
+
+describe("which families are for text", () => {
+  it("leaves out the ones that draw symbols where the letters would be", () => {
+    for (const name of ["Zapf Dingbats", "Wingdings 2", "Webdings", "Apple Braille", "Bodoni Ornaments", "Segoe UI Emoji", "Apple Symbols", "Symbol", SYMBOLS_FAMILY, "Marlett", "Segoe MDL2 Icons"]) {
+      expect(isTextFace(name), name).toBe(false);
+    }
+  });
+  it("keeps the monospaced faces people set a terminal in", () => {
+    for (const name of ["Cascadia Mono", "Cascadia Code", "Consolas", "Courier New", "Menlo", "Monaco", "JetBrains Mono", "FiraCode Nerd Font Mono", "Source Code Pro", "Lucida Console", "DejaVu Sans Mono"]) {
+      expect(isTextFace(name), name).toBe(true);
+    }
   });
 });
 

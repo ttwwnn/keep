@@ -62,6 +62,20 @@ export function isFixedPitch(widths: readonly number[]): boolean {
   return widest > 0 && widest - Math.min(...widths) < widest * 0.01;
 }
 
+/**
+ * Families that draw symbols or ornaments where the letters would be (Zapf
+ * Dingbats, Wingdings, Apple Braille, the emoji and the Nerd Font symbols):
+ * their glyphs are as wide as one another, which passes the measure below
+ * without being what makes a face monospaced. They say what they are in
+ * their names.
+ */
+const NOT_FOR_TEXT = /dingbats|ornaments|wingdings|webdings|braille|emoji|symbols?\b|marlett|\bicons?\b/i;
+
+/** Whether a family is one a terminal could be set in, as far as its name says. */
+export function isTextFace(family: string): boolean {
+  return !NOT_FOR_TEXT.test(family);
+}
+
 const PROBE = ["i", "l", ".", "m", "W"];
 let canvas: CanvasRenderingContext2D | null = null;
 
@@ -101,13 +115,14 @@ export async function listMonospaceFonts(): Promise<string[]> {
   const found: string[] = [];
   let measured = 0;
   for (const family of new Set(families)) {
+    if (!isTextFace(family)) continue;
     let fixed = classified.get(family);
     if (fixed === undefined) {
       fixed = isFixedPitch(measure(family));
       classified.set(family, fixed);
       if (++measured % 60 === 0) await frame();
     }
-    if (fixed && family !== SYMBOLS_FAMILY) found.push(family);
+    if (fixed) found.push(family);
   }
   return found.sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }));
 }
