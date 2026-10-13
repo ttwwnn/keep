@@ -1,5 +1,6 @@
 // The look the settings change: the face, what a program that asks is told of
 // the ground, the window's title, and what the state keeps of it all.
+import xterm from "@xterm/xterm";
 import { describe, expect, it } from "vitest";
 import { filterNames } from "./catalog";
 import { SYMBOLS_FAMILY, isFixedPitch, isTextFace, monospacedNames, quoteFamily, terminalFontStack } from "./fonts";
@@ -212,6 +213,56 @@ describe("telling a program the ground is dark or light", () => {
     new SchemeReporter(term, true);
     for (const handler of csi.values()) expect(handler([2031, 996])).toBe(false);
     for (const handler of esc.values()) expect(handler()).toBe(false);
+  });
+});
+
+// xterm.js's own parser, which runs without a page until the terminal is opened:
+// what the handlers above promise about the sequences passing on is checked
+// against the real thing.
+describe("telling a real terminal's program the ground is dark or light", () => {
+  const { Terminal } = xterm as unknown as typeof import("@xterm/xterm");
+  type Term = InstanceType<typeof Terminal>;
+  const wrote = (term: Term, data: string) => new Promise<void>((resolve) => term.write(data, resolve));
+  function rig(dark: boolean) {
+    const term = new Terminal({ allowProposedApi: true });
+    const heard: string[] = [];
+    term.onData((data) => heard.push(data));
+    return { term, heard, reporter: new SchemeReporter(term, dark) };
+  }
+
+  it("answers the mode being switched on, and the terminal still takes the other modes in the sequence", async () => {
+    const { term, heard } = rig(true);
+    await wrote(term, "\x1b[?2004;2031h");
+    expect(heard).toEqual(["\x1b[?997;1n"]);
+    expect(term.modes.bracketedPasteMode).toBe(true);
+  });
+  it("tells again when the ground turns, and not after the mode is switched off", async () => {
+    const { term, heard, reporter } = rig(true);
+    await wrote(term, "\x1b[?2031h");
+    reporter.setDark(false);
+    expect(heard).toEqual(["\x1b[?997;1n", "\x1b[?997;2n"]);
+    await wrote(term, "\x1b[?2031l");
+    reporter.setDark(true);
+    expect(heard).toHaveLength(2);
+  });
+  it("answers the question about the scheme, with the mode on or off", async () => {
+    const { term, heard } = rig(false);
+    await wrote(term, "\x1b[?996n");
+    expect(heard).toEqual(["\x1b[?997;2n"]);
+  });
+  it("leaves the terminal's own answers where they were", async () => {
+    const { term, heard } = rig(true);
+    // A cursor position report is the terminal's, and comes whole between the program's own bytes.
+    await wrote(term, "ab\x1b[6ncd");
+    expect(heard).toEqual(["\x1b[1;3R"]);
+  });
+  it("forgets the mode when the terminal is reset", async () => {
+    const { term, heard, reporter } = rig(true);
+    await wrote(term, "\x1b[?2031h");
+    await wrote(term, "\x1bc");
+    heard.length = 0;
+    reporter.setDark(false);
+    expect(heard).toEqual([]);
   });
 });
 
