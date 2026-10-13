@@ -209,12 +209,7 @@ fn email_valido(e: &str) -> bool {
 fn apaga_login_da_pasta(pasta: &Path) {
     if cfg!(target_os = "macos") {
         let servico = credencial::servico_de(&pasta.to_string_lossy());
-        let security = std::env::var("KEEP_IA_SECURITY").unwrap_or_else(|_| "/usr/bin/security".into());
-        let _ = std::process::Command::new(security)
-            .args(["delete-generic-password", "-a", &credencial::conta_do_item(), "-s", &servico])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+        let _ = credencial::apagar(&credencial::Local::Chaveiro(servico));
     }
     let _ = std::fs::remove_file(pasta.join(".credentials.json"));
 }

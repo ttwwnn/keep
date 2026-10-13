@@ -342,3 +342,16 @@ fn apelidos_de_email_sao_limpos_e_unicos() {
     let contas = listar(true);
     assert_eq!(chaves(&contas), ["claude:ana", "claude:ana-2"]);
 }
+
+#[test]
+fn uma_casa_de_teste_sem_o_chaveiro_de_teste_nunca_chega_ao_de_verdade() {
+    let _c = casa("sem-chaveiro");
+    // SAFETY: a casa (e a trava) está de pé.
+    unsafe { std::env::remove_var("KEEP_IA_SECURITY") };
+    let item = credencial::Local::Chaveiro(credencial::SERVICO_GLOBAL.into());
+    assert!(matches!(credencial::ler(&item), credencial::Lido::Ausente));
+    assert!(matches!(credencial::global(), credencial::Lido::Ausente | credencial::Lido::Ilegivel(_)));
+    // (Só o apagar prova a recusa: sem ela, ele não acharia o item de uma
+    // conta "teste" e nada mudaria; um gravar sem ela gravaria de verdade.)
+    assert!(credencial::apagar(&item).unwrap_err().contains("casa de teste"));
+}

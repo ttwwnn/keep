@@ -115,10 +115,27 @@ fn decodifica(texto: &str) -> Lido {
     }
 }
 
+/// O `security` a chamar: o de verdade, ou o de mentira dos testes
+/// (`KEEP_IA_SECURITY`). Numa casa de teste (`KEEP_IA_HOME`) sem o `security`
+/// de mentira, nenhum: o Chaveiro de verdade não tem item de casa falsa
+/// nenhuma, e um teste esquecido ali leria (e gravaria) as contas da pessoa.
+fn security() -> Result<String, String> {
+    match std::env::var("KEEP_IA_SECURITY") {
+        Ok(s) if !s.is_empty() => Ok(s),
+        _ if std::env::var_os("KEEP_IA_HOME").is_some() => {
+            Err("casa de teste sem o Chaveiro de teste (KEEP_IA_SECURITY): o de verdade fica de fora".into())
+        }
+        _ => Ok("/usr/bin/security".into()),
+    }
+}
+
 /// Lê um item do Chaveiro com o `security` (ou `KEEP_IA_SECURITY`, nos testes).
 #[cfg(target_os = "macos")]
 fn chaveiro(servico: &str) -> Lido {
-    let security = std::env::var("KEEP_IA_SECURITY").unwrap_or_else(|_| "/usr/bin/security".into());
+    let security = match security() {
+        Ok(s) => s,
+        Err(_) => return Lido::Ausente,
+    };
     let mut filho = match std::process::Command::new(&security)
         .args(["find-generic-password", "-a", &conta_do_item(), "-w", "-s", servico])
         .stdin(std::process::Stdio::null())
@@ -213,8 +230,7 @@ pub fn local_fixa(pasta: &Path) -> Local {
 pub fn apagar(local: &Local) -> Result<(), String> {
     match local {
         Local::Chaveiro(servico) => {
-            let security = std::env::var("KEEP_IA_SECURITY").unwrap_or_else(|_| "/usr/bin/security".into());
-            let st = std::process::Command::new(security)
+            let st = std::process::Command::new(security()?)
                 .args(["delete-generic-password", "-a", &conta_do_item(), "-s", servico])
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
@@ -270,7 +286,7 @@ pub fn gravar(local: &Local, valor: &Value) -> Result<(), String> {
 pub(crate) fn grava_chaveiro(servico: &str, texto: &str) -> Result<(), String> {
     use std::io::Write as _;
     const LIMITE_LINHA_INTERATIVA: usize = 4032;
-    let security = std::env::var("KEEP_IA_SECURITY").unwrap_or_else(|_| "/usr/bin/security".into());
+    let security = security()?;
     let hex: String = texto.bytes().map(|b| format!("{b:02x}")).collect();
     let conta = conta_do_item();
     let linha = format!("add-generic-password -U -a \"{conta}\" -s \"{servico}\" -X \"{hex}\"\n");
