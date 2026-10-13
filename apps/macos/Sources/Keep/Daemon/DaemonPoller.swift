@@ -264,7 +264,7 @@ final class ClaudeModeWatcher {
         trustAnswered = trustAnswered.filter { tabs.contains($0.key) }
         for id in tabs {
             if let at = trustAnswered[id], Date().timeIntervalSince(at) < 10 { continue }
-            guard let surface = SurfacePool.shared.anyExisting(workspace: id.workspace, tab: id.root)
+            guard let surface = SurfacePool.shared.typist(workspace: id.workspace, tab: id.root)
             else { continue }
             trustAnswered[id] = Date()
             Trace.log("trust", "\(id.workspace)/\(id.root) asked to trust the folder: yes")

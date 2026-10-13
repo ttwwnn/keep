@@ -100,6 +100,8 @@ enum Daemon {
     private static let tagList: UInt8 = 0x01
     private static let tagList2: UInt8 = 0x0d
     private static let tagList3: UInt8 = 0x0e
+    private static let tagAttach: UInt8 = 0x02
+    private static let tagInput: UInt8 = 0x14
     private static let tagNewTab: UInt8 = 0x03
     private static let tagKill: UInt8 = 0x06
     private static let tagCloseTab: UInt8 = 0x07
@@ -112,6 +114,7 @@ enum Daemon {
     private static let tagSessions3: UInt8 = 0x9c
     private static let tagError: UInt8 = 0x84
     private static let tagOk: UInt8 = 0x85
+    private static let tagAttached: UInt8 = 0x87
     private static let tagTabCreated: UInt8 = 0x88
     private static let tagPreviewText: UInt8 = 0x89
     private static let tagRearrange: UInt8 = 0x0a
@@ -329,6 +332,50 @@ enum Daemon {
         case tagError: throw Failure.protocolError(try r.string())
         default: throw Failure.protocolError("unexpected reply tag \(tag)")
         }
+    }
+
+    /// Type into a tab no surface of this app is attached to.
+    ///
+    /// For a tab whose surface was hibernated (`SurfacePool.hibernate`): the
+    /// shell goes on in the daemon, and the app may still have a word to say
+    /// to it. Attaches as the `keep` client does, but as a viewer of zero by
+    /// zero — "not looking", which the daemon leaves out when it sizes the
+    /// tab, so nothing is resized for a keystroke — writes the bytes, and
+    /// hangs up. Blocking, a few seconds at most: call it off the main thread.
+    static func sendInput(_ bytes: [UInt8], workspace: String, tab: UInt32) throws {
+        let sock = try connect()
+        defer { close(sock) }
+        var limit = timeval(tv_sec: 2, tv_usec: 0)
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &limit, socklen_t(MemoryLayout<timeval>.size))
+
+        var w = Writer()
+        w.string(workspace)
+        w.u32(tab)
+        w.u16(0)
+        w.u16(0)
+        try send(sock, tag: tagAttach, payload: w.data)
+
+        let (tag, payload) = try recv(sock)
+        if tag == tagError {
+            var r = Reader(payload)
+            throw Failure.protocolError(try r.string())
+        }
+        guard tag == tagAttached else {
+            throw Failure.protocolError("unexpected reply tag \(tag)")
+        }
+        // The screen it is handed on attaching is read out of the way, so
+        // that nothing is left unread when this side closes.
+        _ = try recv(sock)
+
+        try send(sock, tag: tagInput, payload: Data(bytes))
+        // Hung up from this side, the daemon reads the input before it reads
+        // the end. Its answer — the end of the connection — is waited for a
+        // moment, reading what it streams meanwhile, and no longer: a program
+        // that never stops drawing would keep the stream going for good.
+        shutdown(sock, SHUT_WR)
+        let deadline = Date().addingTimeInterval(2)
+        var scrap = [UInt8](repeating: 0, count: 4096)
+        while Date() < deadline, read(sock, &scrap, scrap.count) > 0 {}
     }
 
     static func closeTab(_ tab: UInt32, in workspace: String) throws {

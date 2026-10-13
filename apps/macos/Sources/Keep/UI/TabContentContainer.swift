@@ -7,6 +7,11 @@ import AppKit
 /// built and its surfaces — each a renderer plus a `keep` client process —
 /// are borrowed from the pool. From then on the tab's cost of appearing is
 /// two `isHidden` flips. Nothing here ever touches a window.
+///
+/// Mounted is not the same as hydrated. A tab out of sight for long enough
+/// has its surfaces let go of (`Hibernation`): the host stays mounted, with
+/// its place in the strip, the menu and the search, and gets its surfaces
+/// back the next time it is presented — the same path as the first time.
 @MainActor
 final class TabContentContainer: NSView {
     /// Which window this container is in. Carried so the surfaces it mounts
@@ -15,6 +20,22 @@ final class TabContentContainer: NSView {
 
     private(set) var hosts: [TabID: TabHostView] = [:]
     private(set) var visibleTab: TabID?
+
+    /// When each tab was last put on screen here, on a clock shared by every
+    /// window, so that "least recently used" can be asked across them.
+    private(set) var shownAt: [TabID: UInt64] = [:]
+
+    /// A pane is being carried. Nothing is let go of meanwhile: the drag can
+    /// spring tabs open and land on any of them.
+    private(set) var isCarrying = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        Hibernation.shared.register(self)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
 
     /// A pane took the keyboard. Wired by the controller into an intent, so
     /// which pane has focus stays a model fact rather than something the UI
@@ -68,6 +89,11 @@ final class TabContentContainer: NSView {
         guard let window else { return }
         let start = event.locationInWindow
         var carrying = false
+        isCarrying = true
+        defer {
+            isCarrying = false
+            Hibernation.shared.shown()
+        }
         window.trackEvents(
             matching: [.leftMouseDragged, .leftMouseUp],
             timeout: .infinity,
@@ -163,6 +189,15 @@ final class TabContentContainer: NSView {
 
     func markVisible(_ id: TabID) {
         visibleTab = id
+        shownAt[id] = Hibernation.shared.tick()
+        Hibernation.shared.shown()
+    }
+
+    /// Let go of a hidden tab's surfaces, keeping the host where it is.
+    /// Never the one on screen.
+    func hibernate(_ id: TabID) {
+        guard id != visibleTab, let host = hosts[id] else { return }
+        host.hibernate()
     }
 
     /// A tab the daemon no longer has. The surfaces' lifetime is the pool's
@@ -170,6 +205,7 @@ final class TabContentContainer: NSView {
     func unmount(_ id: TabID) {
         guard let host = hosts.removeValue(forKey: id) else { return }
         host.removeFromSuperview()
+        shownAt[id] = nil
         if visibleTab == id { visibleTab = nil }
         Trace.log("mount", "unmounted \(id) hosts=\(hosts.count)")
     }
@@ -192,6 +228,13 @@ final class TabHostView: NSView {
     private var focusedPane: UInt32?
     private var splitViews: [NSSplitView] = []
     private var surfaces: [UInt32: TerminalSurfaceView] = [:]
+    /// The surfaces were let go of. `tree` is kept: it says what to build
+    /// again, and where a pane dropped on this tab should hang.
+    private(set) var isHibernated = false
+    /// Where each divider stood when the surfaces were let go of, as the
+    /// near side's share of its split, outermost first: put back when the
+    /// same arrangement is built again, rather than halving every split.
+    private var restingDividers: [CGFloat] = []
     /// Somebody picked a pane up. The drag itself belongs to the container:
     /// it can cross into another tab, and this view is hidden the moment it
     /// does.
@@ -324,8 +367,11 @@ final class TabHostView: NSView {
     @discardableResult
     func apply(root: UInt32, panes: [PaneState]) -> Bool {
         let next = PaneTree.build(root: root, panes: panes)
-        guard next != tree else { return false }
+        guard next != tree || isHibernated else { return false }
+        let dividers = isHibernated && next == tree ? restingDividers : []
         tree = next
+        isHibernated = false
+        restingDividers = []
 
         splitViews.removeAll()
         surfaces.removeAll()
@@ -340,12 +386,48 @@ final class TabHostView: NSView {
         // size of its own until its parent has given it one, and halving zero
         // is how a pane ends up with no height at all.
         layoutSubtreeIfNeeded()
-        for split in splitViews {
-            equalize(split)
+        for (index, split) in splitViews.enumerated() {
+            if dividers.indices.contains(index) {
+                place(split, at: dividers[index])
+            } else {
+                equalize(split)
+            }
             split.layoutSubtreeIfNeeded()
         }
         applyResting()
         return true
+    }
+
+    // MARK: - hibernating
+
+    /// Whether this tab has surfaces to let go of.
+    var isHydrated: Bool { !surfaces.isEmpty }
+
+    /// Whether letting go of this tab's surfaces would lose something that
+    /// the daemon cannot give back: a selection, a composition under way, or
+    /// the keyboard itself.
+    var holdsUnsavedState: Bool {
+        if surfaces.values.contains(where: \.holdsUnsavedState) { return true }
+        guard let responder = window?.firstResponder else { return false }
+        return surfaces.values.contains { $0 === responder }
+    }
+
+    /// Let go of every surface of the tab, and with them their renderers and
+    /// their `keep` clients. The shells are the daemon's and are not touched;
+    /// `apply` builds the surfaces again from the pool, which attaches new
+    /// clients and has the daemon repaint the screen — what happens when the
+    /// app is reopened onto a tab that was running.
+    func hibernate() {
+        guard !surfaces.isEmpty else { return }
+        let panes = Array(surfaces.keys)
+        restingDividers = splitViews.map(share(of:))
+        splitViews.removeAll()
+        surfaces.removeAll()
+        for view in subviews { view.removeFromSuperview() }
+        isHibernated = true
+        for pane in panes {
+            SurfacePool.shared.hibernate(window: windowID, workspace: id.workspace, tab: pane)
+        }
     }
 
     private func build(_ node: PaneTree) -> NSView {
@@ -372,6 +454,9 @@ final class TabHostView: NSView {
             let split = NSSplitView()
             split.dividerStyle = .thin
             split.isVertical = vertical
+            // For the tests, which move a divider through the accessibility
+            // tree (tools/axsplit.swift) and tell it from the sidebar's.
+            split.setAccessibilityIdentifier("pane-split")
             // Recorded before its children, so `splitViews` runs outermost
             // first — the order the equalizing pass needs.
             splitViews.append(split)
@@ -382,9 +467,21 @@ final class TabHostView: NSView {
     }
 
     private func equalize(_ split: NSSplitView) {
+        place(split, at: 0.5)
+    }
+
+    /// Put a split's divider at a share of its length.
+    private func place(_ split: NSSplitView, at share: CGFloat) {
         let total = split.isVertical ? split.bounds.width : split.bounds.height
         guard total > 0, split.arrangedSubviews.count == 2 else { return }
-        split.setPosition(total / 2, ofDividerAt: 0)
+        split.setPosition((total * share).rounded(), ofDividerAt: 0)
+    }
+
+    /// Where a split's divider stands, as a share of its length.
+    private func share(of split: NSSplitView) -> CGFloat {
+        let total = split.isVertical ? split.bounds.width : split.bounds.height
+        guard total > 0, let near = split.arrangedSubviews.first else { return 0.5 }
+        return (split.isVertical ? near.frame.width : near.frame.height) / total
     }
 
     /// Mark the pane holding the keyboard.
@@ -487,8 +584,11 @@ final class TabHostView: NSView {
     /// A pane to hang something off when a drop names the tab and not a
     /// place in it: the one with the keyboard, or the root.
     var anchorPane: UInt32? {
-        if let focusedPane, surfaces[focusedPane] != nil { return focusedPane }
-        return surfaces.keys.contains(id.root) ? id.root : surfaces.keys.first
+        // Asleep, the panes are what the tree says: a drop on the tab in the
+        // strip lands here whether or not anything is drawn.
+        let panes = isHibernated ? (tree?.leaves ?? []) : Array(surfaces.keys)
+        if let focusedPane, panes.contains(focusedPane) { return focusedPane }
+        return panes.contains(id.root) ? id.root : panes.first
     }
 
     func surface(for tab: UInt32) -> TerminalSurfaceView? {

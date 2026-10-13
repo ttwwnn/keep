@@ -1,0 +1,102 @@
+import AppKit
+
+/// Puts `HibernationPolicy` to work across every window: the limit is the
+/// app's, not a window's, since it is the app that pays for the surfaces.
+///
+/// Asked a second after a tab is put on screen, and every fifteen seconds for
+/// what that leaves out — a tab that held a selection last time, a drag that
+/// was under way. Never during a drag, never in the middle of a switch.
+@MainActor
+final class Hibernation {
+    static let shared = Hibernation()
+
+    private let containers = NSHashTable<TabContentContainer>.weakObjects()
+    private var clock: UInt64 = 0
+    private var pending: DispatchWorkItem?
+    private var timer: Timer?
+    private var backgroundObserver: NSObjectProtocol?
+
+    private init() {}
+
+    func register(_ container: TabContentContainer) {
+        containers.add(container)
+        guard timer == nil else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.settle() }
+        }
+        backgroundObserver = NotificationCenter.default.addObserver(
+            forName: GhosttyApp.backgroundDidChange, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { Hibernation.tellSchemeToSleepers() }
+        }
+    }
+
+    /// The order tabs were put on screen in, across windows.
+    func tick() -> UInt64 {
+        clock += 1
+        return clock
+    }
+
+    /// A tab was put on screen. Looked at a second after the last of a run
+    /// of these, so that going through tabs one after the other lets go of
+    /// nothing until it stops.
+    func shown() {
+        pending?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.settle() }
+        }
+        pending = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
+    }
+
+    /// Hibernate what the policy picks.
+    func settle() {
+        guard let limit = HibernationPolicy.limit else { return }
+        // A window that has closed shows nothing and holds nothing to count.
+        let live = containers.allObjects.filter { $0.window != nil }
+        guard !live.contains(where: \.isCarrying) else { return }
+        // On screen in any window is on screen: a tab one window shows is
+        // kept whole in every window that has it.
+        let onScreen = Set(live.compactMap(\.visibleTab))
+
+        var hydrated: [(container: TabContentContainer, id: TabID)] = []
+        var candidates: [HibernationPolicy.Candidate] = []
+        for container in live {
+            for (id, host) in container.hosts where host.isHydrated {
+                hydrated.append((container, id))
+                candidates.append(.init(
+                    visible: onScreen.contains(id),
+                    lastShown: container.shownAt[id] ?? 0,
+                    blocked: host.holdsUnsavedState))
+            }
+        }
+        let chosen = HibernationPolicy.sleepers(candidates, limit: limit)
+        guard !chosen.isEmpty else { return }
+        for index in chosen {
+            hydrated[index].container.hibernate(hydrated[index].id)
+        }
+        Trace.log("hibernate", "let go of \(chosen.count), kept \(candidates.count - chosen.count)")
+    }
+
+    /// The colours changed: a hibernated tab whose program asked to be told
+    /// (mode 2031) is told through the daemon, as a surface tells its own
+    /// (`TerminalSurfaceView.tellScheme`), a second later as a surface does.
+    private static func tellSchemeToSleepers() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            guard let dark = GhosttyApp.shared.groundIsDark else { return }
+            for pane in SurfacePool.shared.hibernatedPanes() {
+                DispatchQueue.global(qos: .utility).async {
+                    let screen = (try? Daemon.colouredPreview(workspace: pane.workspace, tab: pane.tab)) ?? ""
+                    guard screen.contains("\u{1b}[?2031h") else { return }
+                    DispatchQueue.main.async {
+                        // Woken meanwhile, it tells its program itself.
+                        guard SurfacePool.shared.isHibernated(workspace: pane.workspace, tab: pane.tab)
+                        else { return }
+                        SurfacePool.shared.typist(workspace: pane.workspace, tab: pane.tab)?
+                            .perform("text:\\x1b[?997;\(dark ? 1 : 2)n")
+                    }
+                }
+            }
+        }
+    }
+}

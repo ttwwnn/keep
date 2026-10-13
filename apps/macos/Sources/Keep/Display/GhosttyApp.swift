@@ -636,8 +636,11 @@ final class GhosttyApp {
                 // rate the instant output arrives.
                 guard target.tag == GHOSTTY_TARGET_SURFACE,
                     let surface = target.target.surface else { return false }
+                let bar = action.action.scrollbar
                 DispatchQueue.main.async {
-                    GhosttyApp.shared.view(for: surface)?.noteActivity()
+                    let view = GhosttyApp.shared.view(for: surface)
+                    view?.noteActivity()
+                    view?.noteScrolled(back: bar.offset + bar.len < bar.total)
                 }
                 return false
 

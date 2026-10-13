@@ -1538,6 +1538,27 @@ final class TerminalSurfaceView: NSView {
         return (lines, row)
     }
 
+    // MARK: - what only this surface holds
+
+    /// Scrolled up into the history, as the runtime last reported it
+    /// (`GHOSTTY_ACTION_SCROLLBAR`). The place is this surface's alone, and
+    /// so is most of the history: the daemon keeps about a screenful.
+    private(set) var isScrolledBack = false
+
+    func noteScrolled(back: Bool) {
+        isScrolledBack = back
+    }
+
+    /// Something the person is in the middle of that lives only here — a
+    /// selection, a composition not yet committed (an accent, an input
+    /// method's word), a place scrolled back to — and that the daemon could
+    /// not give back if this surface were let go of (`Hibernation`).
+    var holdsUnsavedState: Bool {
+        if markedText.length > 0 || isScrolledBack { return true }
+        guard let surface else { return false }
+        return ghostty_surface_has_selection(surface)
+    }
+
     // MARK: - where this shell is
 
     /// The directory the shell in this pane is in, as it last announced it.

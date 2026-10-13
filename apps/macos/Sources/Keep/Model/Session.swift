@@ -688,8 +688,7 @@ final class Session {
                     // A pane splits off the work in front of you, so it opens
                     // where that work is rather than at home.
                     cwd: SurfacePool.shared
-                        .anyExisting(workspace: workspace.name, tab: target)?
-                        .currentDirectory ?? "",
+                        .currentDirectory(workspace: workspace.name, tab: target) ?? "",
                     splitOf: target,
                     splitDir: direction)
                 // Re-list first: a tab only accepts focus on a pane it owns,
@@ -1381,8 +1380,7 @@ final class Session {
         else { return "" }
         let pane = tab.owns(pane: tab.focusedPane) ? tab.focusedPane : tab.id.root
         return SurfacePool.shared
-            .anyExisting(workspace: workspace, tab: pane)?
-            .currentDirectory ?? ""
+            .currentDirectory(workspace: workspace, tab: pane) ?? ""
     }
 
     /// The moves that let a pane leave without taking anything with it.
