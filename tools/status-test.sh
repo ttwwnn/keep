@@ -37,7 +37,18 @@ sed 's/return line == "❯" || line == ">"/return true/' "$SOURCE" > "$WORK/Sabo
 build "$WORK/Sabotaged.swift" || exit 1
 if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
 
-echo "sabotage: any screen with the words is taken for the question"
-sed 's/return t.hasPrefix("❯") \&\& t.contains("Yes, I trust this folder")/return true/' "$SOURCE" > "$WORK/Sabotaged.swift"
+echo "sabotage: the words are taken for the question wherever the pointer is"
+sed 's/guard t.hasPrefix("❯") else { continue }/_ = t/' "$SOURCE" > "$WORK/Sabotaged.swift"
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
+echo "sabotage: a choice is found by the start of its name alone"
+sed 's/if rest.isEmpty || rest.first == " " || rest.first == "(" || rest.first == "…" { return n }/return n/' "$SOURCE" > "$WORK/Sabotaged.swift"
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
+echo "sabotage: Codex's footer read without its effort"
+sed 's/private static let effortPattern = "minimal|low|medium|high|xhigh|max|ultra|none"/private static let effortPattern = "none"/' "$SOURCE" > "$WORK/Sabotaged.swift"
+grep -q 'effortPattern = "none"' "$WORK/Sabotaged.swift" || { echo "sabotage did not apply"; exit 1; }
 build "$WORK/Sabotaged.swift" || exit 1
 if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi

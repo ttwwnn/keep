@@ -8,6 +8,7 @@ mod daemon;
 mod ia;
 mod sessions;
 mod settings;
+mod status;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -256,6 +257,19 @@ async fn ia_trash(app: AppHandle, items: Vec<ia::Going>, pids: Vec<u32>) -> Answ
         .map_err(|e| e.to_string())
 }
 
+/// What Claude Code's status line saved for each of these shells (the model
+/// and the effort it runs with): the JSON text, by shell pid; see `status`.
+#[tauri::command]
+async fn claude_statuses(shells: Vec<u32>) -> Answer<std::collections::HashMap<u32, String>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        status::directory(|name| std::env::var(name).ok())
+            .map(|dir| status::read(&dir, &shells))
+            .unwrap_or_default()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// For the scripted check: whether a path is still there.
 #[tauri::command]
 fn path_exists(path: String) -> bool {
@@ -364,6 +378,7 @@ pub fn run() {
             ia,
             ia_signature,
             ia_trash,
+            claude_statuses,
             path_exists,
             e2e_shot,
             e2e_fake,

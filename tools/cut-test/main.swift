@@ -27,4 +27,22 @@ check("not on the cursor's row", CutSelection.keys(selected: "zzz", row: row, cu
 check("nothing selected", CutSelection.keys(selected: "", row: row, cursorColumn: 5), nil)
 check("as an action",
       CutSelection.action(for: R + B), "text:\\x1b[C\\x7f")
+
+let screen = [
+    "conversa",
+    String(repeating: "─", count: 40),
+    "❯ primeira linha do pedido que",
+    "  continua aqui",
+    String(repeating: "─", count: 40),
+    "  ⏵⏵ bypass permissions on",
+]
+check("the prompt box, gutter off", CutSelection.promptBox(screen, cursorRow: 3)?.joined(separator: "|"),
+      "primeira linha do pedido que|continua aqui")
+check("no box around the cursor", CutSelection.promptBox(screen, cursorRow: 0) == nil ? "nil" : "box", "nil")
+let n = "primeira linha do pedido que".count + "continua aqui".count + 2
+check("the whole prompt selected, wrapped or not: emptied",
+      CutSelection.keysEmptying(selected: "primeira linha do pedido que\ncontinua aqui", box: ["primeira linha do pedido que", "continua aqui"]),
+      String(repeating: R, count: n) + String(repeating: B, count: n))
+check("part of it across rows: not emptied",
+      CutSelection.keysEmptying(selected: "pedido que\ncontinua", box: ["primeira linha do pedido que", "continua aqui"]), nil)
 exit(failures == 0 ? 0 : 1)

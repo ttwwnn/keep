@@ -444,6 +444,10 @@ struct UsageFooter: View {
     let dispatch: (Intent) -> Void
     var selectedAccount: String? = nil
     /// Quiet at rest, legible under the pointer (PRODUCT.md).
+    /// The terminal's zoom, which the footer's text follows as the sidebar's
+    /// names do: at 100% it was too small to read, so it also sits a step up.
+    @State private var zoom = GhosttyApp.shared.zoomLevel
+    private var scale: CGFloat { CGFloat(zoom) * 1.2 }
     @State private var hoverFold = false
     @State private var hoverMeasure = false
     @State private var hoverArrow: String?
@@ -462,10 +466,13 @@ struct UsageFooter: View {
             TimelineView(.periodic(from: .now, by: 30)) { context in
                 footer(now: context.date)
             }
+            .onReceive(NotificationCenter.default.publisher(for: GhosttyApp.textSizeDidChange)) { _ in
+                zoom = GhosttyApp.shared.zoomLevel
+            }
         }
     }
 
-    private var numbers: Font { Font(GhosttyApp.shared.terminalFont(size: 11)) }
+    private var numbers: Font { Font(GhosttyApp.shared.terminalFont(size: 11 * scale)) }
 
     private func footer(now: Date) -> some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -478,7 +485,7 @@ struct UsageFooter: View {
                 .padding(.bottom, folded ? 4 : 5)
             if let notice = monitor.notice {
                 Text(notice)
-                    .font(.system(size: 10))
+                    .font(.system(size: 10 * scale))
                     .foregroundStyle(UsageInk.attention)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -517,10 +524,10 @@ struct UsageFooter: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .semibold))
+                        .font(.system(size: 8 * scale, weight: .semibold))
                         .rotationEffect(.degrees(folded ? 0 : 90))
                     Text("Consumo de IA")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 11 * scale, weight: .semibold))
                 }
                 .contentShape(Rectangle())
             }
@@ -550,7 +557,7 @@ struct UsageFooter: View {
                 monitor.measureNow()
             } label: {
                 Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 9 * scale, weight: .semibold))
                     .frame(width: 16, height: 14)
                     .contentShape(Rectangle())
             }
@@ -605,7 +612,7 @@ struct UsageFooter: View {
             // one the order means, the address says which one the service does.
             if let email = line.account.email {
                 Text(email)
-                    .font(.system(size: 10.5))
+                    .font(.system(size: 10.5 * scale))
                     .foregroundStyle(UsageInk.inkResting)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -621,7 +628,7 @@ struct UsageFooter: View {
 
             if let note = note(line, now: now) {
                 Text(note)
-                    .font(.system(size: 10))
+                    .font(.system(size: 10 * scale))
                     .foregroundStyle(line.reading?.limitReached == true ? UsageInk.critical : UsageInk.inkFaint)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -651,7 +658,7 @@ struct UsageFooter: View {
             monitor.move(line, by: up ? -1 : 1)
         } label: {
             Image(systemName: up ? "chevron.up" : "chevron.down")
-                .font(.system(size: 7.5, weight: .bold))
+                .font(.system(size: 7.5 * scale, weight: .bold))
                 .frame(width: 12, height: 12)
                 .contentShape(Rectangle())
         }
@@ -672,7 +679,7 @@ struct UsageFooter: View {
         let until = UsageText.until(window.resetsAt, now: now)
         return HStack(spacing: 6) {
             Text(window.label)
-                .font(.system(size: 10))
+                .font(.system(size: 10 * scale))
                 .foregroundStyle(UsageInk.inkResting)
                 .lineLimit(1)
                 // The middle: an additional limit's label ends in the window
@@ -694,7 +701,7 @@ struct UsageFooter: View {
                 .foregroundStyle(level == .normal ? UsageInk.inkResting : UsageInk.fill(level))
                 .frame(width: 34, alignment: .trailing)
             Text(until ?? "")
-                .font(.system(size: 10))
+                .font(.system(size: 10 * scale))
                 .foregroundStyle(UsageInk.inkFaint)
                 .lineLimit(1)
                 .frame(width: 40, alignment: .trailing)
@@ -778,7 +785,7 @@ struct UsageFooter: View {
             }
             if let note = jevNote(jev, now: now) {
                 Text(note)
-                    .font(.system(size: 10))
+                    .font(.system(size: 10 * scale))
                     .foregroundStyle(UsageInk.inkFaint)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -792,7 +799,7 @@ struct UsageFooter: View {
         let level = UsageText.level(spent)
         return HStack(spacing: 6) {
             Text(label)
-                .font(.system(size: 10))
+                .font(.system(size: 10 * scale))
                 .foregroundStyle(UsageInk.inkResting)
                 .lineLimit(1)
                 .frame(width: 34, alignment: .leading)

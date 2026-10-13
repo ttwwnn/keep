@@ -35,3 +35,8 @@ echo "sabotage: an ambiguous match is taken as the first"
 sed 's/guard starts.count == 1, let start/guard starts.count >= 1, let start/' "$SOURCE" > "$WORK/Sabotaged.swift"
 build "$WORK/Sabotaged.swift" || exit 1
 if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
+echo "sabotage: any selection empties the whole prompt"
+sed 's/guard !squeezed(selected).isEmpty, squeezed(selected) == squeezed(all) else { return nil }/_ = all/' "$SOURCE" > "$WORK/Sabotaged.swift"
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi

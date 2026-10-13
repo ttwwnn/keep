@@ -224,6 +224,29 @@ final class AIChores {
     }
 }
 
+/// Codex's model cache, read again only when the file changes: the poller
+/// asks every second while a Codex tab is open, and the file is large.
+final class CodexModelsCache: @unchecked Sendable {
+    static let shared = CodexModelsCache()
+    private let lock = NSLock()
+    private var stamp: Date?
+    private var cached: [CodexModel] = []
+
+    func models() -> [CodexModel] {
+        let home = ProcessInfo.processInfo.environment["CODEX_HOME"]
+            ?? (NSHomeDirectory() as NSString).appendingPathComponent(".codex")
+        let path = (home as NSString).appendingPathComponent("models_cache.json")
+        let modified = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+        lock.lock()
+        defer { lock.unlock() }
+        if modified != stamp || cached.isEmpty {
+            cached = CodexStatusReader.models(cache: path)
+            stamp = modified
+        }
+        return cached
+    }
+}
+
 /// Reads Claude Code's permission mode off the screens of the tabs running it.
 ///
 /// Claude Code tells nobody when shift-tab changes its mode — no hook fires
@@ -252,23 +275,38 @@ final class ClaudeModeWatcher {
         }
     }
 
-    /// When each tab was last answered, so that a question still on screen a
-    /// second later (the answer not yet taken) is not answered twice.
-    private var trustAnswered: [TabID: Date] = [:]
+    /// What was last sent to each tab's trust question, and when: a key the
+    /// question has not taken yet is not sent again, and Enter goes once.
+    private var trustAnswered: [TabID: (at: Date, sent: ClaudeTrustDialog.Pointer)] = [:]
 
     /// Claude Code asks whether to trust a folder the first time it opens in
-    /// it. Typing `claude` there is the person saying yes, so Enter is sent
-    /// on the first choice. Only through a surface the app already has: a
-    /// tab nobody has opened here is not one somebody just typed into.
-    private func answerTrustQuestions(_ tabs: [TabID]) {
-        trustAnswered = trustAnswered.filter { tabs.contains($0.key) }
-        for id in tabs {
-            if let at = trustAnswered[id], Date().timeIntervalSince(at) < 10 { continue }
+    /// it, with the pointer on "No, exit". Typing `claude` there is the
+    /// person saying yes: the pointer is taken down to the yes and, when the
+    /// next look finds it there, Enter is sent — never Enter on the no, and
+    /// never a key before the question is up (an early key is read as Esc,
+    /// which is "No, exit" too). Only through a surface the app already has.
+    private func answerTrustQuestions(_ tabs: [TabID: ClaudeTrustDialog.Pointer]) {
+        trustAnswered = trustAnswered.filter { tabs.keys.contains($0.key) }
+        for (id, pointer) in tabs {
+            if let last = trustAnswered[id] {
+                let since = Date().timeIntervalSince(last.at)
+                // After Enter, the question gets ten seconds to go away; after
+                // the arrow, a moment to be drawn with the pointer moved.
+                if last.sent == .onYes && since < 10 { continue }
+                if last.sent == .onNo && since < (pointer == .onYes ? 0.5 : 1.5) { continue }
+            }
             guard let surface = SurfacePool.shared.typist(workspace: id.workspace, tab: id.root)
             else { continue }
-            trustAnswered[id] = Date()
-            Trace.log("trust", "\(id.workspace)/\(id.root) asked to trust the folder: yes")
-            surface.perform("text:\\x0d")
+            switch pointer {
+            case .onNo:
+                Trace.log("trust", "\(id.workspace)/\(id.root) trust question: pointer down to the yes")
+                surface.perform("text:\\x1b[B")
+                trustAnswered[id] = (Date(), .onNo)
+            case .onYes:
+                Trace.log("trust", "\(id.workspace)/\(id.root) trust question: yes")
+                surface.perform("text:\\x0d")
+                trustAnswered[id] = (Date(), .onYes)
+            }
         }
     }
 
@@ -285,18 +323,36 @@ final class ClaudeModeWatcher {
             var modes: [TabID: ClaudeMode?] = [:]
             var activities: [TabID: ClaudeActivity] = [:]
             var statuses: [TabID: ClaudeStatus] = [:]
-            var trusting: [TabID] = []
+            var trusting: [TabID: ClaudeTrustDialog.Pointer] = [:]
             for (id, program) in tabs {
                 guard let screen = try? Daemon.preview(workspace: id.workspace, tab: id.root)
                 else { continue }
                 if program == "codex" {
-                    if let activity = ClaudeActivity.readCodex(onScreen: screen) { activities[id] = activity }
+                    let activity = ClaudeActivity.readCodex(onScreen: screen)
+                    if let activity { activities[id] = activity }
+                    // Codex says its model and effort under its prompt; the
+                    // cache gives the slug and the name for what it said.
+                    if let said = CodexStatusReader.read(onScreen: screen) {
+                        let model = CodexStatusReader.model(named: said.model, in: CodexModelsCache.shared.models())
+                        statuses[id] = ClaudeStatus(
+                            program: "codex", modelID: model?.slug ?? said.model.lowercased(),
+                            modelName: model?.name ?? said.model, effort: said.effort, agents: nil,
+                            canType: activity == .done && CodexStatusReader.promptIsEmpty(onScreen: screen))
+                    }
                     continue
                 }
                 if let declared = ClaudeMode.declared(onScreen: screen) { modes[id] = declared }
                 // A dialog in front hides the mode but is itself the answer
                 // to where the turn stands.
-                if ClaudeTrustDialog.isAsking(onScreen: screen) { trusting.append(id) }
+                // Unless the shell's own watcher (`keep-confiar-pasta`, started
+                // by `claude()`) is answering it: two arrows would overshoot.
+                if let pointer = ClaudeTrustDialog.pointer(onScreen: screen),
+                    !(shells[id].map { FileManager.default.fileExists(
+                        atPath: (NSHomeDirectory() as NSString)
+                            .appendingPathComponent(".local/state/keep/trust/\($0)")) } ?? false)
+                {
+                    trusting[id] = pointer
+                }
                 let activity = ClaudeActivity.read(onScreen: screen)
                 if let activity { activities[id] = activity }
                 if let file = shells[id].flatMap(ClaudeStatusReader.read(shellPid:)) {

@@ -126,6 +126,7 @@ const tab = (id: number, splitOf = 0, splitDir = 0): TabInfo => ({
   cwd: "",
   lastActive: 0,
   command: "",
+  shellPid: 0,
 });
 
 describe("splits", () => {

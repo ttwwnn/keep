@@ -182,6 +182,9 @@ pub struct Tab {
     pub cwd: String,
     pub last_active: u64,
     pub command: String,
+    /// The tab's shell, which names the file Claude Code's status line writes
+    /// for it (`status::read`). Zero from a daemon that predates `List3`.
+    pub shell_pid: u32,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -205,6 +208,7 @@ impl From<TabInfo> for Tab {
             cwd: t.cwd,
             last_active: t.last_active,
             command: t.command,
+            shell_pid: t.shell_pid,
         }
     }
 }
@@ -215,14 +219,20 @@ impl From<WorkspaceInfo> for Workspace {
     }
 }
 
+/// The tabs, with the shell of each. `List3` carries it; a daemon from before
+/// `List3` — they outlive the apps, so one can be running still — closes the
+/// connection on it, and is asked the older question, which does not.
 pub fn list() -> Result<Vec<Workspace>> {
-    match ask(ClientMsg::List2)? {
-        ServerMsg::Workspaces2(list) | ServerMsg::Workspaces(list) => {
-            Ok(list.into_iter().map(Workspace::from).collect())
-        }
-        ServerMsg::Error(e) => bail!(e),
-        other => bail!("resposta inesperada: {other:?}"),
-    }
+    let list = match ask(ClientMsg::List3) {
+        Ok(ServerMsg::Workspaces3(_, list)) => list,
+        Ok(ServerMsg::Error(e)) => bail!(e),
+        _ => match ask(ClientMsg::List2)? {
+            ServerMsg::Workspaces2(list) | ServerMsg::Workspaces(list) => list,
+            ServerMsg::Error(e) => bail!(e),
+            other => bail!("resposta inesperada: {other:?}"),
+        },
+    };
+    Ok(list.into_iter().map(Workspace::from).collect())
 }
 
 pub fn new_tab(
