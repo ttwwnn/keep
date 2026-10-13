@@ -613,6 +613,14 @@ else
         # Dock moving it back to the desktop. Nothing to measure in it then.
         say "  skip  full screen: the system took the window out of it again, as it does any app's here"
         SKIPPED=$((SKIPPED + 1))
+        # The same tabs shown as in full screen, for what follows to start
+        # from where it would have.
+        show 1 || say "  (tab 1 would not come up)"
+        for n in 3 4 5; do
+            show "$n" || say "  (tab $n would not come up)"
+            sleep 1
+        done
+        sleep 3
     else
         FULL=$(grep -aoE "layout +$WS/[0-9]+ grid [0-9]+x[0-9]+" "$WORK/app.log" | tail -1 | awk '{print $NF}')
         check "the window is in full screen" "1" "$("$FULLSCREEN" "$APP_NAME" state 2>/dev/null)"
