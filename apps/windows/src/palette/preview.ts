@@ -39,7 +39,7 @@ export function topFor(index: number, shown: number, bottom: number): number {
   return Math.min(Math.max(0, index - Math.floor(shown / 2)), Math.max(0, bottom));
 }
 
-/** How much history a preview of this target keeps: none for a plain screen, all there is (up to the limit) for a hit. */
-export function historyFor(target: PreviewTarget): number {
-  return target.hit ? Math.min(MAX_HISTORY, target.hit.total + target.rows) : 0;
+/** How much history a preview of this target keeps: none for a plain screen, all there is (up to the limit) for a hit. `rows` is the grid the screen is drawn on. */
+export function historyFor(target: PreviewTarget, rows: number): number {
+  return target.hit ? Math.min(MAX_HISTORY, target.hit.total + rows) : 0;
 }

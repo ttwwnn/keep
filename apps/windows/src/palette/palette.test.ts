@@ -616,9 +616,11 @@ describe("fitting a screen in its frame", () => {
   });
   it("a hit keeps the history it is in, a plain screen none", () => {
     const base = { workspace: "p", pane: 1, cols: 80, rows: 24 };
-    expect(historyFor(base)).toBe(0);
-    expect(historyFor({ ...base, hit: { text: "x", line: 3, total: 100 } })).toBe(124);
-    expect(historyFor({ ...base, hit: { text: "x", line: 3, total: 90_000 } })).toBe(MAX_HISTORY);
+    expect(historyFor(base, 24)).toBe(0);
+    expect(historyFor({ ...base, hit: { text: "x", line: 3, total: 100 } }, 24)).toBe(124);
+    // The grid the daemon holds it on now, not the one the list said.
+    expect(historyFor({ ...base, hit: { text: "x", line: 3, total: 100 } }, 43)).toBe(143);
+    expect(historyFor({ ...base, hit: { text: "x", line: 3, total: 90_000 } }, 24)).toBe(MAX_HISTORY);
   });
 });
 

@@ -153,9 +153,10 @@ async fn preview(workspace: String, tab: u32) -> Answer<String> {
         .map_err(text)
 }
 
-/// A tab's screen with its colours (the sequences the daemon repaints with).
+/// A tab's screen with its colours (the sequences the daemon repaints with),
+/// and the grid it is held on.
 #[tauri::command]
-async fn preview_vt(workspace: String, tab: u32) -> Answer<String> {
+async fn preview_vt(workspace: String, tab: u32) -> Answer<daemon::Screen> {
     tauri::async_runtime::spawn_blocking(move || daemon::preview_vt(&workspace, tab))
         .await
         .map_err(|e| e.to_string())?

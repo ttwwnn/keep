@@ -30,12 +30,17 @@ function look(theme: ITheme): ITheme {
   return { ...theme, background: "#00000000", cursor: "#00000000" };
 }
 
-/** The screen with its colours; an older daemon refuses the question, and the plain screen is better than none. */
-async function screenOf(target: PreviewTarget): Promise<string> {
+/**
+ * The screen with its colours, on the grid the daemon holds it on right now;
+ * an older daemon refuses the question, and the plain screen — on the grid the
+ * list last said — is better than none.
+ */
+async function screenOf(target: PreviewTarget): Promise<api.Screen> {
   try {
     return await api.previewVt(target.workspace, target.pane);
   } catch {
-    return plainAsScreen(await api.preview(target.workspace, target.pane));
+    const text = plainAsScreen(await api.preview(target.workspace, target.pane));
+    return { cols: target.cols, rows: target.rows, text };
   }
 }
 
@@ -132,7 +137,7 @@ export function Preview(props: { target: PreviewTarget | null; title: string; sh
     if (!target) return;
     let cancelled = false;
     const wait = setTimeout(async () => {
-      let screen: string;
+      let screen: api.Screen;
       try {
         screen = await screenOf(target);
       } catch {
@@ -144,10 +149,10 @@ export function Preview(props: { target: PreviewTarget | null; title: string; sh
       await read(current);
       if (cancelled) return;
       current.reset();
-      current.resize(Math.max(2, target.cols), Math.max(1, target.rows));
-      current.options.scrollback = historyFor(target);
+      current.resize(Math.max(2, screen.cols), Math.max(1, screen.rows));
+      current.options.scrollback = historyFor(target, screen.rows);
       // The cursor hidden: a picture of a screen has no one typing in it.
-      current.write(`${screen}\x1b[?25l`, () => {
+      current.write(`${screen.text}\x1b[?25l`, () => {
         if (cancelled || !frame.current) return;
         mark.current = settle(current, shown, frame.current, target, dark);
         shown.style.visibility = "";
