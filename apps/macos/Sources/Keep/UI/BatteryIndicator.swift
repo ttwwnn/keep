@@ -1,13 +1,13 @@
 import AppKit
 import IOKit.ps
 
-/// The battery, as the menu bar draws it: the percentage, the cell, and its
-/// charge in a colour — green while there is plenty or the Mac is charging,
-/// amber from 20% down, red from 10%.
+/// The battery: a cell with its percentage written inside it, and its charge
+/// in a colour — green while there is plenty or the Mac is charging, amber
+/// from 20% down, red from 10%.
 ///
-/// It stands in the titlebar row of a full-screen window (`CenteringHost`),
-/// where the menu bar that carries the system's own is out of sight. A Mac
-/// without a battery has nothing to show, and `isPresent` says so.
+/// It stands in the sidebar's top row whenever the menu bar, which carries
+/// the system's own, is out of sight (`SidebarHost`). A Mac without a battery
+/// has nothing to show, and `isPresent` says so.
 @MainActor
 final class BatteryIndicator: NSView {
     struct Reading: Equatable {
@@ -24,9 +24,12 @@ final class BatteryIndicator: NSView {
     private var groundObserver: NSObjectProtocol?
     private var zoomObserver: NSObjectProtocol?
 
-    private static let bodySize = NSSize(width: 22, height: 11)
-    private static let tipWidth: CGFloat = 1.5
-    private static let gap: CGFloat = 5
+    private static let tipWidth: CGFloat = 2
+    /// The bolt, left of the cell while it charges, and its gap.
+    private static let boltWidth: CGFloat = 8
+    private static let boltGap: CGFloat = 3
+    /// Room round the figure inside the cell.
+    private static let padding: CGFloat = 6
     private static var font: NSFont { GhosttyApp.shared.tabNameFont }
 
     init() {
@@ -60,7 +63,11 @@ final class BatteryIndicator: NSView {
             }
         }
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refresh() }
+            MainActor.assumeIsolated {
+                self?.refresh()
+                // The menu bar may have been hidden or shown by the system's setting.
+                self?.superview?.needsLayout = true
+            }
         }
     }
 
@@ -97,7 +104,7 @@ final class BatteryIndicator: NSView {
     func refresh() {
         let next = Self.read()
         guard next != reading else { return }
-        let appeared = (next == nil) != (reading == nil)
+        let appeared = (next == nil) != (reading == nil) || next?.charging != reading?.charging
         reading = next
         toolTip = next.map { Self.sentence($0) }
         setAccessibilityLabel(next.map { Self.sentence($0) })
@@ -144,73 +151,86 @@ final class BatteryIndicator: NSView {
             alpha: 1)
     }
 
-    private var text: NSAttributedString {
-        let palette = TabStripView.Palette.current
-        return NSAttributedString(string: "\(reading?.percent ?? 0)%", attributes: [
-            .font: Self.font,
-            .foregroundColor: palette.dimText,
-        ])
+    /// The cell: as wide as "100%" with room round it, as tall as the text.
+    private var bodySize: NSSize {
+        let widest = NSAttributedString(string: "100%", attributes: [.font: Self.font]).size().width
+        let height = ceil(Self.font.ascender - Self.font.descender) + 4
+        return NSSize(width: ceil(widest) + 2 * Self.padding, height: height)
     }
 
-    /// How wide the indicator is: the figure, a gap, the cell and its tip.
+    /// How tall the indicator is.
+    var fittingHeight: CGFloat { bodySize.height + 2 }
+
+    /// How wide the indicator is: the bolt while charging, the cell, its tip.
     var fittingWidth: CGFloat {
-        // Room for "100%", so the cell does not shuffle as the figure grows.
-        let widest = NSAttributedString(string: "100%", attributes: [.font: Self.font]).size().width
-        return ceil(widest) + Self.gap + Self.bodySize.width + Self.tipWidth
+        let bolt = reading?.charging == true ? Self.boltWidth + Self.boltGap : 0
+        return bolt + bodySize.width + Self.tipWidth
     }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let reading else { return }
         let palette = TabStripView.Palette.current
-        let figure = text
+        let size = bodySize
         let body = NSRect(
-            x: bounds.maxX - Self.tipWidth - Self.bodySize.width,
-            y: ((bounds.height - Self.bodySize.height) / 2).rounded(),
-            width: Self.bodySize.width, height: Self.bodySize.height)
-
-        // The percentage, flush against the cell.
-        let size = figure.size()
-        figure.draw(at: NSPoint(
-            x: body.minX - Self.gap - size.width,
-            y: ((bounds.height - size.height) / 2).rounded()))
+            x: bounds.maxX - Self.tipWidth - size.width,
+            y: ((bounds.height - size.height) / 2).rounded(),
+            width: size.width, height: size.height)
 
         // The cell and its tip.
-        let outline = NSBezierPath(roundedRect: body.insetBy(dx: 0.5, dy: 0.5), xRadius: 3, yRadius: 3)
+        let radius = min(5, size.height / 3)
+        let outline = NSBezierPath(
+            roundedRect: body.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
         outline.lineWidth = 1
         palette.dimText.withAlphaComponent(0.7).setStroke()
         outline.stroke()
         let tip = NSBezierPath(roundedRect: NSRect(
-            x: body.maxX + 0.5, y: body.midY - 2, width: Self.tipWidth, height: 4),
+            x: body.maxX + 0.5, y: body.midY - 3, width: Self.tipWidth - 0.5, height: 6),
             xRadius: 0.75, yRadius: 0.75)
         palette.dimText.withAlphaComponent(0.7).setFill()
         tip.fill()
 
         // The charge, in its colour.
         let inner = body.insetBy(dx: 2, dy: 2)
-        let width = max(2, inner.width * CGFloat(reading.percent) / 100)
+        let charge = NSRect(
+            x: inner.minX, y: inner.minY,
+            width: max(2, inner.width * CGFloat(reading.percent) / 100), height: inner.height)
         Self.fill(reading).setFill()
-        NSBezierPath(
-            roundedRect: NSRect(x: inner.minX, y: inner.minY, width: width, height: inner.height),
-            xRadius: 1.5, yRadius: 1.5).fill()
+        NSBezierPath(roundedRect: charge, xRadius: radius - 2, yRadius: radius - 2).fill()
 
-        // A bolt over the cell while it charges.
+        // The percentage inside the cell: dark ink over the charge, the
+        // terminal's own over the empty part, so it reads at any level.
+        func figure(_ color: NSColor) -> NSAttributedString {
+            NSAttributedString(string: "\(reading.percent)%", attributes: [
+                .font: Self.font, .foregroundColor: color,
+            ])
+        }
+        let sample = figure(.black)
+        let mark = sample.size()
+        let at = NSPoint(x: body.midX - mark.width / 2, y: body.midY - mark.height / 2)
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: charge).addClip()
+        figure(NSColor.black.withAlphaComponent(0.85)).draw(at: at)
+        NSGraphicsContext.restoreGraphicsState()
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: NSRect(
+            x: charge.maxX, y: body.minY, width: max(0, body.maxX - charge.maxX), height: body.height)).addClip()
+        figure(palette.text).draw(at: at)
+        NSGraphicsContext.restoreGraphicsState()
+
+        // A bolt beside the cell while it charges.
         if reading.charging,
            let bolt = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8, weight: .bold))
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 9, weight: .bold))
         {
-            let mark = bolt.size
-            let spot = NSRect(
-                x: body.midX - mark.width / 2, y: body.midY - mark.height / 2,
-                width: mark.width, height: mark.height)
-            // Dark ink over the colour, drawn into an image of its own so
-            // the tint reaches the glyph and nothing else.
-            let dark = NSImage(size: mark, flipped: false) { rect in
+            let tinted = NSImage(size: bolt.size, flipped: false) { rect in
                 bolt.draw(in: rect)
-                NSColor.black.withAlphaComponent(0.85).set()
+                Self.fill(reading).set()
                 rect.fill(using: .sourceIn)
                 return true
             }
-            dark.draw(in: spot)
+            tinted.draw(in: NSRect(
+                x: body.minX - Self.boltGap - bolt.size.width, y: body.midY - bolt.size.height / 2,
+                width: bolt.size.width, height: bolt.size.height))
         }
     }
 
