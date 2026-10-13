@@ -16,8 +16,13 @@ struct MemoryReading: Equatable {
     /// nil when the kernel does not answer.
     static func now() -> MemoryReading? {
         var stats = vm_statistics64()
+        // Counted up to the fields read below, not the whole struct: an SDK
+        // newer than the running kernel declares more of it than the kernel
+        // fills (104 integers against its 62 on macOS 26), and the kernel
+        // logs a larger count as a bug in the caller, at every reading.
+        // This is C's HOST_VM_INFO64_REV1_COUNT.
         var count = mach_msg_type_number_t(
-            MemoryLayout<vm_statistics64>.stride / MemoryLayout<integer_t>.stride)
+            MemoryLayout<vm_statistics64>.offset(of: \.swapped_count)! / MemoryLayout<integer_t>.stride)
         let status = withUnsafeMutablePointer(to: &stats) { pointer in
             pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
                 host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
