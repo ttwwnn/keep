@@ -290,6 +290,26 @@ export async function refresh(): Promise<void> {
 }
 
 /** Bring the window's own state in line with what the daemon says exists. */
+let soonTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * Ask the daemon again in a moment, rather than at the second's turn: a
+ * program changed its tab's title, which the daemon already has. Asks are
+ * gathered, since a title can spin.
+ */
+export function refreshSoon(): void {
+  if (soonTimer !== undefined) return;
+  soonTimer = setTimeout(function ask() {
+    // One at a time: a question already on its way is waited for.
+    if (refreshing) {
+      soonTimer = setTimeout(ask, 60);
+      return;
+    }
+    soonTimer = undefined;
+    void refresh();
+  }, 120);
+}
+
 function reconcile(list: WorkspaceInfo[]): void {
   const names = new Set(list.map((w) => w.name));
   const alive = new Set<string>();
@@ -1069,6 +1089,7 @@ export async function start(options: StartOptions): Promise<void> {
           ],
         });
         return answered?.button === "yes";
+      titleChanged: () => refreshSoon(),
       },
     },
     { name: startup.platform, windowsBuild: startup.windowsBuild },

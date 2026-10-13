@@ -38,6 +38,8 @@ export interface TerminalHooks {
   say(message: string): void;
   /** A question the person answers before something goes on: true on the yes. */
   confirm(question: Question): Promise<boolean>;
+  /** The program set the tab's title (OSC 0 or 2). */
+  titleChanged(view: TermView, title: string): void;
 }
 
 export const viewKey = (workspace: string, tab: number) => `${workspace}\u0000${tab}`;
@@ -140,6 +142,8 @@ export class TermView {
       true,
     );
 
+    // The title is the program's, said as it changes: the daemon has it before this does.
+    this.term.onTitleChange((title) => this.hooks.titleChanged(this, title));
     this.term.attachCustomKeyEventHandler((event) => this.hooks.key(this, event));
     this.term.onData((data) => void this.attachment?.input(data).catch(() => {}));
     this.term.onBinary((data) => {
