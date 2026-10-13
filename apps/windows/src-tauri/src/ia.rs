@@ -384,6 +384,64 @@ pub fn trash(resources: Option<&Path>, daemon: &Path, items: Vec<Going>, pids: V
     problems
 }
 
+/// The worktrees of tabs that closed without the question — the shell
+/// exited, the workspace ended another way, the computer restarted and the
+/// tab did not come back — as the core finds them (`keep worktrees orfas`),
+/// sent where the question would have sent them: the Recycle Bin, by
+/// `trash`'s steps, with no tab left to wait for. A registration whose folder
+/// is already gone leaves the repository on its own (`esquecer`). The consent
+/// is the person's standing rule; the care is the core's (an orphan waits
+/// twenty minutes, and anything in doubt stays). What did not go, one line
+/// each. The macOS app's `Worktrees.sweep`, step for step.
+pub fn sweep(resources: Option<&Path>, daemon: &Path) -> Vec<String> {
+    let args = vec!["worktrees".to_string(), "orfas".into(), "--json".into()];
+    let answer = match run(resources, daemon, &args, Duration::from_secs(120)) {
+        Ok(answer) => answer,
+        Err(why) => return vec![format!("o keep worktrees orfas falhou: {why}")],
+    };
+    // A core from before the sweep does not know the question; another round
+    // under way in the core is no round here.
+    if answer.get("_saida").and_then(Value::as_i64) == Some(2)
+        || answer.get("ocupado").and_then(Value::as_bool) == Some(true)
+    {
+        return Vec::new();
+    }
+    let listed = |key: &str| -> Vec<Going> {
+        answer
+            .get(key)
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| {
+                        Some(Going {
+                            caminho: item.get("caminho")?.as_str()?.to_string(),
+                            nasceu_ns: item.get("nasceu_ns").filter(|v| v.is_number()).map(Value::to_string),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let mut problems = trash(resources, daemon, listed("lixeira"), Vec::new());
+    let home = home();
+    for item in listed("registros") {
+        let mut args = vec!["worktrees".to_string(), "esquecer".into(), item.caminho.clone()];
+        if let Some(born) = item.nasceu_ns.as_ref().filter(|b| !b.is_empty()) {
+            args.extend(["--nasceu".to_string(), born.clone()]);
+        }
+        match run(resources, daemon, &args, Duration::from_secs(30)) {
+            Err(why) => problems.push(format!("{}: {why}", tilde(&item.caminho, &home))),
+            Ok(answer) if answer.get("ok").and_then(Value::as_bool) != Some(true) => {
+                let why = text(&answer, "motivo").unwrap_or_else(|| "registro mantido".into());
+                problems.push(format!("{}: {why}", tilde(&item.caminho, &home)));
+            }
+            Ok(_) => {}
+        }
+    }
+    problems
+}
+
 fn text(answer: &Value, key: &str) -> Option<String> {
     answer.get(key).and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string)
 }
@@ -578,6 +636,60 @@ pub fn recorded_path(data: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The sweep against a stand-in core (a shell script named by
+    /// `KEEP_IA_BIN`): what it asks, in what order, and what it reports. The
+    /// Recycle Bin itself is Windows', so here the move is the error it says.
+    #[cfg(unix)]
+    #[test]
+    fn the_sweep_moves_what_the_core_lists_and_forgets_what_is_gone() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("keep-sweep-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (log, listing, code, fake) = (dir.join("log"), dir.join("orfas.json"), dir.join("saida"), dir.join("keep"));
+        let script = format!(
+            "#!/bin/sh\necho \"$@\" >> '{}'\ncase \"$2\" in\n  orfas) cat '{}'; exit $(cat '{}' 2>/dev/null || echo 0);;\n  \
+             preparar|concluir) echo '{{\"versao\":1,\"ok\":true}}';;\n  \
+             esquecer) if [ \"$3\" = /x/recusado ]; then echo '{{\"versao\":1,\"ok\":false,\"motivo\":\"travada: teste\"}}'; \
+             else echo '{{\"versao\":1,\"ok\":true}}'; fi;;\nesac\n",
+            log.display(),
+            listing.display(),
+            code.display()
+        );
+        std::fs::write(&fake, script).unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // SAFETY: the only test in this binary that runs the core.
+        unsafe { std::env::set_var("KEEP_IA_BIN", &fake) };
+        let calls = || std::fs::read_to_string(&log).unwrap_or_default().lines().map(String::from).collect::<Vec<_>>();
+        std::fs::write(
+            &listing,
+            r#"{"versao":1,"lixeira":[{"caminho":"/x/orfa","nasceu_ns":1790000000987654321}],
+                "registros":[{"caminho":"/x/sumiu","nasceu_ns":1790000000111111111},{"caminho":"/x/recusado"}],
+                "aguardando":[{"caminho":"/x/espera","motivo":"aba fechada há 3 min"}],"mantidas":[],"avisos":[]}"#,
+        )
+        .unwrap();
+        let problems = sweep(None, Path::new("/tmp/sock"));
+        assert_eq!(
+            calls(),
+            vec![
+                "worktrees orfas --json",
+                "worktrees preparar /x/orfa --nasceu 1790000000987654321",
+                "worktrees esquecer /x/sumiu --nasceu 1790000000111111111",
+                "worktrees esquecer /x/recusado",
+            ]
+        );
+        assert_eq!(problems, vec!["/x/orfa: a Lixeira do Windows só existe no Windows", "/x/recusado: travada: teste"]);
+        // A core from before the sweep (exit 2), and one already sweeping: nothing more.
+        for (answer, exit) in [("keep worktrees: desconhecido", "2"), (r#"{"versao":1,"ocupado":true}"#, "0")] {
+            std::fs::remove_file(&log).ok();
+            std::fs::write(&listing, answer).unwrap();
+            std::fs::write(&code, exit).unwrap();
+            assert!(sweep(None, Path::new("/tmp/sock")).is_empty(), "{answer}");
+            assert_eq!(calls(), vec!["worktrees orfas --json"], "{answer}");
+        }
+        unsafe { std::env::remove_var("KEEP_IA_BIN") };
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn the_answer_carries_its_exit_code() {
