@@ -535,19 +535,32 @@ HIB2=$(trace_count "pool +hibernating w[0-9]+ $WS/2 ")
 FIRST_WINDOW=$("$WORK/mousedrag" windows 2>/dev/null | head -1 | awk '{print $1}')
 # In front for this: with the app behind, a key the menu answers (⌘P) goes
 # to one window and the return after it to the other.
-osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" \
-    >/dev/null 2>&1
-sleep 1
-# A second window: ⌘⇧N, and File > New Window should the chord not land —
-# it did not, once, with the app put in front a moment before.
+# Put in front again before every key: the person at the machine may take
+# the front between two keys, and a key then lands in the other window or
+# loses its modifiers (seen: ⌘⇧N typed as "n", the return of ⌘P landing in
+# the other window).
+front_app() {
+    osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" \
+        >/dev/null 2>&1
+    sleep 0.7
+}
+front_app
+# A second window: ⌘⇧N, and File > New Window should the chord not land.
 "$SENDKEY" "$APP_PID" key 45 cmd shift >/dev/null 2>&1        # ⌘⇧N
 until_true 5 '[ "$(window_count)" -ge 2 ]' ||
     "$AXPRESS" "$APP_NAME" menu File "New Window" >/dev/null 2>&1
 until_true 5 '[ "$(window_count)" -ge 2 ]'
 sleep 2
-"$SENDKEY" "$APP_PID" key 35 cmd >/dev/null 2>&1              # ⌘P
-sleep 2
-"$SENDKEY" "$APP_PID" key 36 >/dev/null 2>&1                  # return
+for attempt in 1 2 3; do
+    front_app
+    "$SENDKEY" "$APP_PID" key 35 cmd >/dev/null 2>&1          # ⌘P
+    sleep 2
+    front_app
+    "$SENDKEY" "$APP_PID" key 36 >/dev/null 2>&1              # return
+    until_true 10 '[ "$(watched 2 | tr -d " ")" = attached×2 ]' && break
+    "$SENDKEY" "$APP_PID" key 53 >/dev/null 2>&1              # escape: a picker left open
+    sleep 1
+done
 until_true 20 '[ "$(watched 2 | tr -d " ")" = attached×2 ]'
 check "the daemon counts two viewers of tab 2" "attached×2" "$(watched 2 | tr -d ' ')"
 SECOND=$(grep -aoE "pool +made (w[0-9]+) $WS/2 " "$WORK/app.log" | tail -1 | awk '{print $3}')
