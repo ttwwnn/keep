@@ -1,0 +1,231 @@
+/* Tabs, panes and the moves between them: carrying a tab along the row or the
+   sidebar, the mark of a tab that holds panes. */
+
+/* ------------------------------------------------------------ the row, a tab carried */
+
+/* The others slide aside for the carried one; let go, they stop where they are
+   (no transition then, so the new order does not slide back). */
+.strip.reordering .tab {
+  transition: transform 140ms var(--ease), background-color 120ms ease-out, color 120ms ease-out;
+}
+
+.strip.reordering .tab.carried {
+  z-index: 3;
+  transition: none;
+  box-shadow: inset 0 0 0 1px var(--tab-edge), 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+
+/* ------------------------------------------------------------ the sidebar, a tab or a workspace carried */
+
+.sidebar-list.moving .tab-row,
+.sidebar-list.moving .workspace {
+  transition: transform 140ms var(--ease), background-color 120ms ease-out, color 120ms ease-out;
+}
+
+/* Where it was picked up it stays, dimmed, in the place it would land. */
+.tab-row.carried,
+.workspace-row.carried {
+  opacity: 0.4;
+}
+
+/* Over another workspace's header or tab: the one it would go to lights. */
+.tab-row.offered,
+.workspace-row.offered {
+  background: var(--tab-hover);
+  color: var(--ink-resting);
+}
+
+.workspace-row.offered {
+  border-radius: 12px;
+}
+
+/* A copy of the row hangs from the pointer. */
+.drag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 1000;
+  margin: 0 !important;
+  pointer-events: none;
+  opacity: 0.92;
+  background-color: var(--recessed);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  transition: none !important;
+}
+
+.tab-row.drag-ghost.selected {
+  background-image: linear-gradient(var(--tab-fill), var(--tab-fill));
+}
+
+.workspace-row.drag-ghost {
+  border-radius: 12px;
+}
+
+/* ------------------------------------------------------------ the mark of a tab with panes */
+
+.pane-mark {
+  display: inline-block;
+  flex: none;
+  vertical-align: -0.14em;
+  margin-left: 0.5em;
+  width: 1em;
+  height: 1em;
+  opacity: 0.85;
+}
+
+.tab-label > .pane-mark {
+  margin-left: 0;
+}
+
+/* ------------------------------------------------------------ the divider between panes */
+
+.split-divider {
+  position: relative;
+  z-index: 4;
+}
+
+/* A hair of a line, with a hand's width of reach on either side of it. */
+.split-divider::after {
+  content: "";
+  position: absolute;
+}
+
+.side-by-side > .split-divider::after {
+  inset: 0 -3px;
+  cursor: col-resize;
+}
+
+.stacked > .split-divider::after {
+  inset: -3px 0;
+  cursor: row-resize;
+}
+
+/* The cursor stays what it is while the divider is held, wherever the pointer strays. */
+body.resizing-cols,
+body.resizing-cols * {
+  cursor: col-resize !important;
+}
+
+body.resizing-rows,
+body.resizing-rows * {
+  cursor: row-resize !important;
+}
+
+/* ------------------------------------------------------------ carrying a pane */
+
+.pane-column {
+  position: relative;
+}
+
+/* The handle: untinted at rest, brighter under the pointer, brightest held. */
+.pane-grip {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  z-index: 6;
+  width: 44px;
+  height: 14px;
+  margin-left: -22px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--control-fill);
+  color: rgba(var(--ink-rgb), 0.4);
+  cursor: grab;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+
+.pane-grip:hover {
+  background: var(--control-hover);
+  color: rgba(var(--ink-rgb), 0.8);
+}
+
+.pane-grip.dragging {
+  background: var(--control-hover);
+  color: rgba(var(--ink-rgb), 0.95);
+  cursor: grabbing;
+}
+
+/* Where the carried pane would land: the system's accent, lightly. */
+.pane-landing {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  border-radius: 4px;
+  background: rgba(10, 132, 255, 0.28);
+  background: color-mix(in srgb, AccentColor 28%, transparent);
+}
+
+/* The pane's text on a card that hangs off the pointer. */
+.pane-card {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 900;
+  width: 300px;
+  height: 190px;
+  padding: 8px;
+  overflow: hidden;
+  pointer-events: none;
+  border: 1px solid rgba(var(--ink-rgb), 0.18);
+  border-radius: 8px;
+  background: var(--ground);
+  box-shadow: var(--shadow);
+  opacity: 0.92;
+}
+
+.pane-card pre {
+  margin: 0;
+  overflow: hidden;
+  color: rgba(var(--ink-rgb), 0.75);
+  font: 7px/1.25 var(--mono);
+  white-space: pre;
+}
+
+/* ------------------------------------------------------------ the size of a pane, said while it changes */
+
+.size-badge {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 5;
+  padding: 4px 8px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font: 500 12px var(--ui-font);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 250ms ease-out;
+}
+
+.size-badge.shown {
+  opacity: 1;
+  transition-duration: 80ms;
+}
+
+/* The panes not holding the keyboard step back under a veil of the terminal's
+   own ground rather than by fading the terminal itself, so the size and the
+   handle stay as bright as they are. */
+.split .pane:not(.focused) .term-root {
+  opacity: 1;
+}
+
+.split .pane::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: var(--ground);
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.split .pane:not(.focused)::after {
+  opacity: 0.5;
+}

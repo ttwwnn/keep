@@ -37,6 +37,16 @@ export interface GuiState {
   active: { workspace: string; tab: number } | null;
   /** The tab last shown in each workspace, to come back to it. */
   lastTab: Record<string, number>;
+  /**
+   * The order the tabs of each workspace are listed in, as root ids. The
+   * daemon keeps no order of its own, so this is the window's (the macOS
+   * app's tab-order.json); ids are one daemon's, see `daemon`.
+   */
+  tabOrder: Record<string, number[]>;
+  /** Workspaces taken out of the sidebar: still running, a Go To away. */
+  hidden: string[];
+  /** The tabs live in the sidebar and the row above the terminal steps aside. */
+  verticalTabs: boolean;
   /** The zoom, as a share of the base size (1 = 100%). */
   zoom: number;
   appearance: Appearance;
@@ -79,6 +89,9 @@ export function defaultState(): GuiState {
     workspaceNames: {},
     active: null,
     lastTab: {},
+    tabOrder: {},
+    hidden: [],
+    verticalTabs: false,
     zoom: 1,
     appearance: "auto",
     sidebar: { visible: true, width: 250 },
@@ -92,6 +105,11 @@ export function defaultState(): GuiState {
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : []);
+const idList = (v: unknown): number[] => {
+  const out: number[] = [];
+  if (Array.isArray(v)) for (const n of v) if (Number.isInteger(n) && n >= 0 && !out.includes(n)) out.push(n);
+  return out;
+};
 const stringMap = (v: unknown): Record<string, string> => {
   const out: Record<string, string> = {};
   if (isRecord(v)) for (const [k, s] of Object.entries(v)) if (typeof s === "string" && s.trim()) out[k] = s;
@@ -117,6 +135,13 @@ export function normalizeState(raw: unknown): GuiState {
   const lastTab: Record<string, number> = {};
   if (isRecord(raw.lastTab)) {
     for (const [k, v] of Object.entries(raw.lastTab)) if (typeof v === "number") lastTab[k] = v;
+  }
+  const tabOrder: Record<string, number[]> = {};
+  if (isRecord(raw.tabOrder)) {
+    for (const [workspace, ids] of Object.entries(raw.tabOrder)) {
+      const list = idList(ids);
+      if (list.length > 0) tabOrder[workspace] = list;
+    }
   }
   const restore: RestoreWorkspace[] = Array.isArray(raw.restore)
     ? raw.restore.filter(isRecord).flatMap((w) =>
@@ -152,6 +177,9 @@ export function normalizeState(raw: unknown): GuiState {
     workspaceNames: stringMap(raw.workspaceNames),
     active,
     lastTab,
+    tabOrder,
+    hidden: [...new Set(strings(raw.hidden))],
+    verticalTabs: raw.verticalTabs === true,
     zoom: normalizeZoom(raw.zoom),
     appearance,
     sidebar: {
