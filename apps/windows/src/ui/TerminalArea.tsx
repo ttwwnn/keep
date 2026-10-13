@@ -6,6 +6,7 @@
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { PaneTree } from "../layout";
+import { shareOf, splitKey } from "../splits";
 import { tabKey } from "../state";
 import {
   activePane,
@@ -20,6 +21,7 @@ import {
   isMac,
   loaded,
   orderedWorkspaces,
+  shownWorkspaces,
   split,
   statuses,
   tabsByWorkspace,
@@ -31,7 +33,9 @@ import { imagePasteSequence } from "../keys";
 import { viewKey } from "../terminals";
 import { AiStatusBar } from "./AiStatusBar";
 import { openMenu } from "./common";
+import { centreDivider, startDividerDrag } from "./divider";
 import * as icon from "./icons";
+import { PaneCarryOverlay, PaneGrip } from "./PaneCarry";
 
 function PaneHost(props: { workspace: string; root: number; pane: number; visible: boolean; focused: boolean; multi: boolean }) {
   const { workspace, root, pane, visible, focused, multi } = props;
@@ -47,6 +51,7 @@ function PaneHost(props: { workspace: string; root: number; pane: number; visibl
   const status = statuses.value.get(viewKey(workspace, pane));
   return (
     <div class="pane-column">
+      {multi && <PaneGrip workspace={workspace} root={root} pane={pane} />}
       <div
         ref={host}
         class={`pane ${multi && focused ? "focused" : ""}`}
@@ -74,7 +79,14 @@ function PaneHost(props: { workspace: string; root: number; pane: number; visibl
             { label: "Dividir à direita", hint: "Ctrl+Shift+D", action: () => (focusPane(workspace, root, pane), void split(SPLIT_RIGHT)) },
             { label: "Dividir abaixo", hint: "Ctrl+Shift+E", action: () => (focusPane(workspace, root, pane), void split(SPLIT_DOWN)) },
             ...(multi
-              ? (["separator", { label: "Fechar este painel…", danger: true, action: () => void closePane(workspace, pane) }] as const)
+              ? ([
+                  "separator",
+                  // Said here, where a person looks for what a pane can do; the chords are the window's own.
+                  { label: "Mover o foco entre painéis", hint: "Alt+setas", disabled: true, action: () => {} },
+                  { label: "Redimensionar o painel", hint: "Alt+Shift+setas", disabled: true, action: () => {} },
+                  "separator",
+                  { label: "Fechar este painel…", danger: true, action: () => void closePane(workspace, pane) },
+                ] as const)
               : []),
           ]);
         }}
@@ -99,13 +111,22 @@ function TreeView(props: { workspace: string; root: number; tree: PaneTree; visi
       />
     );
   }
+  // How the two halves share the room: one half each until a divider is moved.
+  const key = splitKey(tabKey(props.workspace, props.root), tree);
+  const share = shareOf(key);
   return (
-    <div class={`split ${tree.vertical ? "side-by-side" : "stacked"}`}>
-      <div class="split-half">
+    <div class={`split ${tree.vertical ? "side-by-side" : "stacked"}`} data-split={key}>
+      <div class="split-half" style={{ flexGrow: share }}>
         <TreeView {...props} tree={tree.first} />
       </div>
-      <div class="split-divider" />
-      <div class="split-half">
+      <div
+        class="split-divider"
+        role="separator"
+        aria-orientation={tree.vertical ? "vertical" : "horizontal"}
+        onPointerDown={(e) => startDividerDrag(e, key, tree.vertical)}
+        onDblClick={() => centreDivider(key)}
+      />
+      <div class="split-half" style={{ flexGrow: 1 - share }}>
         <TreeView {...props} tree={tree.second} />
       </div>
     </div>
@@ -210,7 +231,14 @@ export function TerminalArea() {
           <p class="hint">Ctrl+Shift+N</p>
         </div>
       )}
+      {loaded.value && all.length > 0 && shownWorkspaces.value.length === 0 && (
+        <div class="empty">
+          <p>Todos os workspaces estão fora da barra lateral.</p>
+          <p class="hint">Ctrl+Shift+P para voltar a um</p>
+        </div>
+      )}
       {findOpen.value && <FindBar />}
+      <PaneCarryOverlay />
     </main>
   );
 }

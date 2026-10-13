@@ -281,14 +281,33 @@ function scheduleSave(): void {
 
 // ------------------------------------------------------------------ the daemon
 
-let refreshing = false;
+let running: Promise<void> | null = null;
+let again = false;
 /** Tab moves under way: the window's list waits for them, which re-file what the window keeps. */
 let moves = 0;
 
-/** Ask the daemon for its workspaces, and make the window agree. */
-export async function refresh(): Promise<void> {
-  if (refreshing || moves > 0) return;
-  refreshing = true;
+/**
+ * Ask the daemon for its workspaces, and make the window agree. Asked while
+ * one answer is on its way, it asks once more when that arrives — the one in
+ * flight may be older than what the caller just did — and the promise is of
+ * that last one.
+ */
+export function refresh(): Promise<void> {
+  if (running) {
+    again = true;
+    return running;
+  }
+  running = (async () => {
+    do {
+      again = false;
+      await refreshOnce();
+    } while (again);
+  })().finally(() => (running = null));
+  return running;
+}
+
+async function refreshOnce(): Promise<void> {
+  if (moves > 0) return;
   try {
     const list = await api.list();
     // A move began while this was on its way: the answer may be from either side of it.
@@ -301,8 +320,6 @@ export async function refresh(): Promise<void> {
     // Started again if it went away: the first launch after it was killed,
     // say. Its tabs are gone with it, which the restore picture is for.
     void api.ensureDaemon().catch(() => {});
-  } finally {
-    refreshing = false;
   }
 }
 

@@ -76,3 +76,108 @@
 .tab-label > .pane-mark {
   margin-left: 0;
 }
+
+/* ------------------------------------------------------------ the divider between panes */
+
+.split-divider {
+  position: relative;
+  z-index: 4;
+}
+
+/* A hair of a line, with a hand's width of reach on either side of it. */
+.split-divider::after {
+  content: "";
+  position: absolute;
+}
+
+.side-by-side > .split-divider::after {
+  inset: 0 -3px;
+  cursor: col-resize;
+}
+
+.stacked > .split-divider::after {
+  inset: -3px 0;
+  cursor: row-resize;
+}
+
+/* The cursor stays what it is while the divider is held, wherever the pointer strays. */
+body.resizing-cols,
+body.resizing-cols * {
+  cursor: col-resize !important;
+}
+
+body.resizing-rows,
+body.resizing-rows * {
+  cursor: row-resize !important;
+}
+
+/* ------------------------------------------------------------ carrying a pane */
+
+.pane-column {
+  position: relative;
+}
+
+/* The handle: untinted at rest, brighter under the pointer, brightest held. */
+.pane-grip {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  z-index: 6;
+  width: 44px;
+  height: 14px;
+  margin-left: -22px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--control-fill);
+  color: rgba(var(--ink-rgb), 0.4);
+  cursor: grab;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+
+.pane-grip:hover {
+  background: var(--control-hover);
+  color: rgba(var(--ink-rgb), 0.8);
+}
+
+.pane-grip.dragging {
+  background: var(--control-hover);
+  color: rgba(var(--ink-rgb), 0.95);
+  cursor: grabbing;
+}
+
+/* Where the carried pane would land: the system's accent, lightly. */
+.pane-landing {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  border-radius: 4px;
+  background: rgba(10, 132, 255, 0.28);
+  background: color-mix(in srgb, AccentColor 28%, transparent);
+}
+
+/* The pane's text on a card that hangs off the pointer. */
+.pane-card {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 900;
+  width: 300px;
+  height: 190px;
+  padding: 8px;
+  overflow: hidden;
+  pointer-events: none;
+  border: 1px solid rgba(var(--ink-rgb), 0.18);
+  border-radius: 8px;
+  background: var(--ground);
+  box-shadow: var(--shadow);
+  opacity: 0.92;
+}
+
+.pane-card pre {
+  margin: 0;
+  overflow: hidden;
+  color: rgba(var(--ink-rgb), 0.75);
+  font: 7px/1.25 var(--mono);
+  white-space: pre;
+}

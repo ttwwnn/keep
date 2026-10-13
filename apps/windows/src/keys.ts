@@ -29,7 +29,14 @@ export type Action =
   | { kind: "selectAll" }
   | { kind: "clearScreen" }
   | { kind: "fullscreen" }
-  | { kind: "settings" };
+  | { kind: "settings" }
+  | { kind: "focusPane"; direction: PaneWay }
+  | { kind: "resizePane"; direction: PaneWay };
+
+/** The way an arrow points between panes. */
+export type PaneWay = "left" | "right" | "up" | "down";
+
+const ARROWS: Record<string, PaneWay> = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" };
 
 export interface KeyLike {
   key: string;
@@ -52,6 +59,11 @@ export function shortcut(ev: KeyLike, mac = false): Action | null {
   const otherMod = mac ? ev.ctrlKey : ev.metaKey;
   if (ev.code === "F2" && !mod && !ev.shiftKey && !ev.altKey) return { kind: "rename" };
   if (ev.code === "F11" && !mod && !ev.shiftKey && !ev.altKey && !otherMod) return { kind: "fullscreen" };
+  // Between the panes of a tab, as in Windows Terminal: Alt and an arrow go to
+  // the pane beside, with Shift they move its divider.
+  if (ev.altKey && !ev.ctrlKey && !ev.metaKey && ARROWS[ev.code]) {
+    return { kind: ev.shiftKey ? "resizePane" : "focusPane", direction: ARROWS[ev.code] };
+  }
   // Workspace to workspace: Ctrl+Alt+PageDown / PageUp (Ctrl+Alt+Tab is the system's).
   if (mod && ev.altKey && !ev.shiftKey && !otherMod) {
     if (ev.code === "PageDown") return { kind: "nextWorkspace" };
