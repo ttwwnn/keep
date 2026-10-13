@@ -359,3 +359,21 @@ describe("telling two statuses apart", () => {
     expect(sameStatus(a, { ...a, program: "codex" })).toBe(false);
   });
 });
+
+describe("Codex 0.162.1 as it was on screen (12/10)", () => {
+  const idle = [
+    "  >_ OpenAI Codex (v0.162.1)",
+    "     ~/Developer/keep",
+    "",
+    "› Ask Codex to do anything",
+    "",
+    "  GPT-6-Astra max · ~/Developer/keep",
+    "  ← for agents · ? for shortcuts",
+  ].join("\n");
+  it("reads the model and Max under the prompt", () => {
+    expect(readCodexModel(idle)).toEqual({ model: "GPT-6-Astra", effort: "max" });
+  });
+  it("reads Ultra", () => {
+    expect(readCodexModel(idle.replace("max ·", "ultra ·"))?.effort).toBe("ultra");
+  });
+});

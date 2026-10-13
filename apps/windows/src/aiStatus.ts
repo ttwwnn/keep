@@ -148,7 +148,7 @@ export const CLAUDE_MODELS: readonly { name: string; id: string }[] = [
 
 // ---------------------------------------------------------------- Codex
 
-const CODEX_EFFORT = "minimal|low|medium|high|xhigh|none";
+const CODEX_EFFORT = "minimal|low|medium|high|xhigh|max|ultra|none";
 /** A model's name as Codex prints it (`gpt-5.1-codex-max`, `o3`, `gpt-oss:20b`): it has a digit or a hyphen. */
 const CODEX_MODEL = String.raw`[A-Za-z][\w.:/-]*`;
 
