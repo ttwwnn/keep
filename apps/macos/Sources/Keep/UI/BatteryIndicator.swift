@@ -29,9 +29,11 @@ final class BatteryIndicator: NSView {
     private static let boltWidth: CGFloat = 8
     private static let boltGap: CGFloat = 3
     /// Room round the figure inside the cell.
+    /// As tall as the red close button of the window (a traffic light is 12 across).
+    private static let height: CGFloat = 12
     private static let padding: CGFloat = 2
-    /// The size of the zoom control's percentage (11 at 100%), moving with the zoom.
-    private static var font: NSFont { GhosttyApp.shared.terminalFont(size: 11 * GhosttyApp.shared.zoomLevel) }
+    /// The zoom control's percentage, face and size exactly.
+    private static var font: NSFont { NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium) }
 
     init() {
         super.init(frame: .zero)
@@ -155,12 +157,12 @@ final class BatteryIndicator: NSView {
     /// The cell: as wide as "100%" with room round it, as tall as the text.
     private var bodySize: NSSize {
         let widest = NSAttributedString(string: "100%", attributes: [.font: Self.font]).size().width
-        let height = ceil(Self.font.capHeight) + 4
+        let height = Self.height
         return NSSize(width: ceil(widest) + 2 * Self.padding, height: height)
     }
 
     /// How tall the indicator is.
-    var fittingHeight: CGFloat { bodySize.height + 2 }
+    var fittingHeight: CGFloat { bodySize.height }
 
     /// How wide the indicator is: the bolt while charging, the cell, its tip.
     var fittingWidth: CGFloat {
