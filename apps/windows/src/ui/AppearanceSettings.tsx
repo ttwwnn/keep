@@ -4,10 +4,9 @@
 // and the chosen one is shown here as it will look.
 
 import { useState } from "preact/hooks";
-import { clearTheme, applyFont, setCursorBlink, setCursorShape, setScrollback } from "../appearance";
+import { applyFont, clearTheme, resetText, setCursorBlink, setCursorShape, setScrollback } from "../appearance";
 import { firstFamily, previewSample } from "../fonts";
-import type { CursorShape } from "../state";
-import { SCROLLBACK_MAX } from "../state";
+import { SCROLLBACK_MAX, type CursorShape } from "../state";
 import { fontFamily, gui, info, overlay, palette, setAppearance, setFont } from "../store";
 import { isSingleTheme } from "../themes";
 import { DEFAULT_FONT_SIZE, defaultFontFamily } from "../theme";
@@ -116,6 +115,17 @@ export function AppearanceSettings() {
             }}
           />
           <span class="unit">px</span>
+          {(face || state.font.size !== 0 || state.zoom !== 1) && (
+            <button
+              class="small-button reset"
+              onClick={() => {
+                resetText();
+                setSize(DEFAULT_FONT_SIZE);
+              }}
+            >
+              Redefinir o texto
+            </button>
+          )}
         </div>
         <p class="hint">O zoom (Ctrl+= e Ctrl+-) multiplica este tamanho.</p>
       </fieldset>

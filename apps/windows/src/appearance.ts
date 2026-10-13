@@ -43,6 +43,21 @@ export function previewFont(family: string | null): void {
   fontPreview.value = family;
 }
 
+/**
+ * The text as it was at the start: the platform's face at the base size, with
+ * no zoom. The macOS app's "reset the text size" puts the face back as well,
+ * and its zoom is the size, so one gesture undoes both.
+ */
+export function resetText(): void {
+  batch(() => {
+    update((state) => {
+      state.zoom = 1;
+      state.font = { family: "", size: 0 };
+    });
+    fontPreview.value = null;
+  });
+}
+
 export function setCursorShape(shape: CursorShape): void {
   update((state) => void (state.terminal.cursor = shape));
 }

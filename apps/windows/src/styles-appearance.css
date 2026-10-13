@@ -119,7 +119,8 @@
   color: var(--ink);
 }
 
-.choice button {
+.choice button,
+.small-button {
   flex: none;
   height: 26px;
   padding: 0 10px;
@@ -129,8 +130,13 @@
   color: var(--ink);
 }
 
-.choice button:hover {
+.choice button:hover,
+.small-button:hover {
   background: var(--wash-strong);
+}
+
+.small-button.reset {
+  margin-left: auto;
 }
 
 .sample-line {
