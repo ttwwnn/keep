@@ -6,6 +6,7 @@
 
 mod claude_settings;
 mod daemon;
+mod fonts;
 mod ia;
 mod links;
 mod memory;
@@ -40,6 +41,8 @@ struct Startup {
     platform: &'static str,
     windows_build: u32,
     home: String,
+    /// The login name: what a daemon with nothing in it first names a workspace.
+    user: String,
     address: String,
     version: &'static str,
     /// Set by tests: the page runs its scripted check and reports here.
@@ -57,6 +60,7 @@ fn startup() -> Startup {
         home: std::env::var("USERPROFILE")
             .or_else(|_| std::env::var("HOME"))
             .unwrap_or_default(),
+        user: std::env::var("USERNAME").or_else(|_| std::env::var("USER")).unwrap_or_default(),
         address: daemon::address().display().to_string(),
         version: env!("CARGO_PKG_VERSION"),
         e2e_report: std::env::var("KEEP_E2E_REPORT").ok(),
@@ -227,6 +231,14 @@ fn shells() -> ShellChoice {
 #[tauri::command]
 fn choose_shell(command: String) -> Answer<()> {
     settings::choose_shell(&command).map_err(text)
+}
+
+/// The font families installed here, for the settings' list of faces: each
+/// the names a family goes by, best first; the page keeps the monospaced ones.
+/// See `fonts`.
+#[tauri::command]
+async fn installed_fonts() -> Answer<Vec<Vec<String>>> {
+    tauri::async_runtime::spawn_blocking(fonts::installed_families).await.map_err(|e| e.to_string())
 }
 
 /// Whether the core is here to ask about AI accounts and worktrees.
@@ -499,6 +511,7 @@ pub fn run() {
             save_state,
             shells,
             choose_shell,
+            installed_fonts,
             ia_info,
             memory_now,
             memory_monitor,

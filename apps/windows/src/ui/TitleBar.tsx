@@ -5,46 +5,66 @@
 
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { SPLIT_DOWN, SPLIT_RIGHT } from "../api";
+import { endedADrag } from "../drag";
 import type { RootTab } from "../layout";
+import { mayArmRename, slowRename } from "../naming";
 import { tabKey } from "../state";
 import {
   activeTab,
   activeWorkspace,
   closeTab,
-  editing,
+  editingTabOn,
+  finishTabName,
   gui,
   isMac,
   isWindows,
   maximized,
   overlay,
-  renameTab,
   select,
   split,
+  startRename,
   tabsByWorkspace,
   toggleSidebar,
+  toggleVerticalTabs,
 } from "../store";
 import { AccountChevron } from "./AccountMenu";
 import { InlineEditor, openMenu } from "./common";
 import * as icon from "./icons";
+import { PaneMark } from "./paneIcons";
+import { startStripDrag, stripMove } from "./tabDrag";
 import { tabLook, useBreath } from "./tabLook";
 
-function TabCapsule(props: { workspace: string; tab: RootTab; index: number; selected: boolean; alone: boolean; count: number }) {
-  const { workspace, tab, index, selected, alone, count } = props;
+function TabCapsule(props: {
+  workspace: string;
+  tab: RootTab;
+  tabs: RootTab[];
+  index: number;
+  selected: boolean;
+  alone: boolean;
+  count: number;
+}) {
+  const { workspace, tab, tabs, index, selected, alone, count } = props;
   const look = tabLook(workspace, tab, index, selected);
   const badge = useBreath(look.breathing);
-  const renaming =
-    editing.value?.kind === "tab" && editing.value.workspace === workspace && editing.value.tab === tab.root.id;
-  const startRename = () => (editing.value = { kind: "tab", workspace, tab: tab.root.id });
+  const renaming = editingTabOn("strip", workspace, tab.root.id);
+  const rename = () => startRename(workspace, tab.root.id, "strip");
   const close = () => void closeTab(workspace, tab, look.label);
   // The ninth is the last, as in a browser; past the ninth there is no number.
   const key = index < 8 ? index + 1 : index === count - 1 ? 9 : 0;
+  // Carried along the row by hand: this one follows the pointer, the others slide aside.
+  const carry = stripMove.value?.workspace === workspace ? stripMove.value : null;
+  const carried = carry !== null && carry.from === index;
+  const slid = carry && !carried ? carry.slid[index] : 0;
+  const transform = carried ? `translateX(${carry.dx}px)` : slid ? `translateX(${slid}px)` : undefined;
+  const style = look.wantsYou || transform ? { background: look.wantsYou ? look.fill : undefined, transform } : undefined;
   return (
     <div
       ref={badge as never}
-      class={`tab ${selected ? "selected" : ""} ${look.wantsYou ? "attention" : ""} ${alone ? "alone" : ""}`}
-      style={look.wantsYou ? { background: look.fill } : undefined}
+      class={`tab ${selected ? "selected" : ""} ${look.wantsYou ? "attention" : ""} ${alone ? "alone" : ""} ${carried ? "carried" : ""}`}
+      style={style}
       title={tab.root.cwd || undefined}
       data-tab={tabKey(workspace, tab.root.id)}
+      onPointerDown={(e) => startStripDrag(e, workspace, tabs, index)}
       onMouseDown={(e) => {
         // The middle button closes, as in a browser — after asking.
         if (e.button === 1) {
@@ -52,11 +72,21 @@ function TabCapsule(props: { workspace: string; tab: RootTab; index: number; sel
           close();
         }
       }}
-      onClick={() => select(workspace, tab.root.id)}
-      onDblClick={startRename}
+      onClick={(e) => {
+        // The click that ends a drag is not a click on the tab.
+        if (endedADrag()) return;
+        select(workspace, tab.root.id);
+        // Finder's slow click: the name of the tab already in front, clicked once, opens for typing.
+        slowRename.disarm();
+        const onName = (e.target as HTMLElement).closest(".tab-title") !== null;
+        if (mayArmRename({ wasChosen: selected, onName, dragged: false, count: e.detail })) {
+          slowRename.arm(rename, () => activeWorkspace.value === workspace && activeTab.value?.root.id === tab.root.id);
+        }
+      }}
+      onDblClick={() => (slowRename.disarm(), rename())}
       onContextMenu={(e) =>
         openMenu(e, [
-          { label: "Renomear", hint: "F2", action: startRename },
+          { label: "Renomear", hint: "F2", action: rename },
           { label: "Dividir à direita", hint: "Ctrl+Shift+D", action: () => (select(workspace, tab.root.id), void split(SPLIT_RIGHT)) },
           { label: "Dividir abaixo", hint: "Ctrl+Shift+E", action: () => (select(workspace, tab.root.id), void split(SPLIT_DOWN)) },
           "separator",
@@ -81,13 +111,10 @@ function TabCapsule(props: { workspace: string; tab: RootTab; index: number; sel
       {renaming ? (
         <InlineEditor
           value={gui.value.tabNames[tabKey(workspace, tab.root.id)] ?? look.label}
-          onDone={(value) => {
-            editing.value = null;
-            if (value !== null) renameTab(workspace, tab.root.id, value);
-          }}
+          onDone={(value, keyboard) => finishTabName(workspace, tab.root.id, value, keyboard)}
         />
       ) : (
-        <span class="tab-title" style={look.color ? { color: look.color } : undefined}>
+        <span class="tab-title" style={look.color ? { color: look.color } : undefined} onPointerLeave={() => slowRename.disarm()}>
           {look.wantsYou && (
             <span class="hand">
               <icon.Hand />
@@ -95,6 +122,7 @@ function TabCapsule(props: { workspace: string; tab: RootTab; index: number; sel
           )}
           {look.mark && <span class="busy-mark">{look.mark.glyph} </span>}
           {look.label}
+          {tab.panes.length > 1 && <PaneMark />}
         </span>
       )}
       {!renaming && <AccountChevron workspace={workspace} tab={tab} label={look.label} />}
@@ -130,6 +158,8 @@ export function TitleBar() {
   const tabs = ws ? tabsByWorkspace.value.get(ws) ?? [] : [];
   const current = activeTab.value;
   const sidebarHidden = !gui.value.sidebar.visible;
+  // The tabs live in the sidebar alone: the row steps aside.
+  const vertical = gui.value.verticalTabs;
   return (
     <header class={`titlebar ${isMac.value && sidebarHidden ? "inset" : ""}`} data-tauri-drag-region>
       {sidebarHidden && (
@@ -137,13 +167,27 @@ export function TitleBar() {
           <icon.Sidebar />
         </button>
       )}
-      <nav class="strip" data-tauri-drag-region aria-label="Abas">
+      <nav
+        class={`strip ${stripMove.value ? "reordering" : ""}`}
+        data-tauri-drag-region
+        aria-label="Abas"
+        onContextMenu={(e) =>
+          openMenu(e, [
+            {
+              label: vertical ? "Mostrar a fileira de abas" : "Abas só na barra lateral",
+              action: toggleVerticalTabs,
+            },
+          ])
+        }
+      >
         {ws &&
+          !vertical &&
           tabs.map((tab, i) => (
             <TabCapsule
               key={tabKey(ws, tab.root.id)}
               workspace={ws}
               tab={tab}
+              tabs={tabs}
               index={i}
               selected={tab === current}
               alone={tabs.length === 1}

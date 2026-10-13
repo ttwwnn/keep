@@ -164,11 +164,6 @@ button {
   color: var(--ink);
 }
 
-/* Where a workspace being moved will land: above this one. */
-.workspace-row.drop-before {
-  box-shadow: inset 0 2px 0 var(--ink-resting);
-}
-
 .workspace-name {
   flex: 0 1 auto;
   min-width: 0;
