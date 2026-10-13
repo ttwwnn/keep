@@ -168,7 +168,13 @@ confere(mostra("FALSO codex", em: aba), "o Codex falso subiu na aba", tela(aba))
 agora = conta(aba)
 confere(programa(aba) == .codex && agora.escolha == "gpt:principal" && agora.roda == "gpt:principal",
         "abas: Codex no principal", "\(agora) \(programa(aba))")
-confere(AIChoices.programLabel(command: "codex", account: agora.escolha) == "codex", "lateral: Codex no principal diz só codex")
+// A lateral diz só o número da conta em que a aba roda (13/10/2026): o GPT é a IA-3.
+switch AIHelper.usage(.cached) {
+case .success(let resposta):
+    let lateral = AIChoices.tabLabel(command: "codex", account: agora.escolha, running: agora.roda, lines: resposta.linhas)
+    confere(lateral == "(IA-3)", "lateral: o Codex na IA-3 diz só o número", lateral)
+case .failure(let p): confere(false, "lateral: as contas do núcleo", "\(p)")
+}
 
 // --- Codex → seguir a ordem: o Claude da frente da fila
 switch AIHelper.switchAccount(workspace: ws, tab: aba, to: AIHelper.followOrder, interrupt: false) {
@@ -202,8 +208,8 @@ case .success(let resposta):
     let menu = AIChoices.rows(lines: resposta.linhas, current: agora.escolha, running: agora.roda, program: programa(aba))
     confere(menu.first?.mark == .on && menu.first?.key == AIHelper.followOrder, "menu: ✓ em seguir a ordem, que pede claude:ordem")
     let traco = menu.filter { $0.mark == .mixed }.map(\.label)
-    confere(traco == ["Claude · bia"], "menu: o traço na conta em que a aba roda", "\(traco)")
-    confere(menu.contains { $0.title.hasPrefix("Claude · ana") && $0.title.hasSuffix("— no limite") },
+    confere(traco == ["IA-2"], "menu: o traço na conta em que a aba roda", "\(traco)")
+    confere(menu.contains { $0.title.hasPrefix("IA-1 · ana@x.com") && $0.title.hasSuffix("— no limite") },
             "menu: a ana diz que está no limite", "\(menu.map(\.title))")
     switch AIHelper.sync() {
     case .success(let rodada):
