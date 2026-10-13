@@ -134,6 +134,25 @@ export const iaTrash = (items: { caminho: string; nasceu_ns: string | null }[], 
 export const iaSweep = () => invoke<string[]>("ia_sweep");
 /** What Claude Code's status line saved for each of these shells: its JSON text, by shell pid. */
 export const claudeStatuses = (shells: number[]) => invoke<Record<string, string>>("claude_statuses", { shells });
+/** Claude Code's settings file as it stands, and the status line script installed with the app. */
+export interface ClaudeSettings {
+  path: string;
+  /** The file's text; null when there is no file. */
+  text: string | null;
+  /** Whether Claude Code's folder is there: where it is not, it has not run here. */
+  folder: boolean;
+  /** The `keep-statusline.ps1` installed with the app; null when it is not there. */
+  script: string | null;
+}
+export const claudeSettings = () => invoke<ClaudeSettings>("claude_settings");
+/** Write Claude Code's settings file if it still holds `expected` (null: no file); false when it changed meanwhile. */
+export const writeClaudeSettings = (expected: string | null, text: string) =>
+  invoke<boolean>("write_claude_settings", { expected, text });
+/** Codex's model cache when it is not the version `known`: its stamp (null: no cache) and, when it changed, its text. */
+export const codexModels = (known: string | null) =>
+  invoke<{ stamp: string | null; text: string | null }>("codex_models", { known });
+/** A line for the app's log. */
+export const appLog = (line: string) => invoke<void>("app_log", { line });
 export const pathExists = (path: string) => invoke<boolean>("path_exists", { path });
 export const e2eShot = (name: string) => invoke<void>("e2e_shot", { name });
 export const e2eFake = (state: unknown) => invoke<void>("e2e_fake", { state });

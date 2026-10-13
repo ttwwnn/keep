@@ -5,9 +5,13 @@ import { describe, expect, it } from "vitest";
 import {
   CANNOT_TYPE_NOTE,
   CLAUDE_EFFORTS,
+  CODEX_EFFORTS,
+  PICKING_NOTE,
   agentsLabel,
   claudePromptIsEmpty,
   claudeStatus,
+  codexEffortFor,
+  codexModelNamed,
   codexPromptIsEmpty,
   codexStatus,
   countAgents,
@@ -15,10 +19,14 @@ import {
   effortLabel,
   menuNote,
   modelChoices,
+  parseCodexModels,
   parseStatusFile,
   readCodexModel,
   sameStatus,
   shortModelName,
+  type BarAction,
+  type Choice,
+  type CodexModel,
 } from "./aiStatus";
 
 const RULE = "─".repeat(40);
@@ -285,36 +293,138 @@ describe("the status of a Codex pane", () => {
   });
 });
 
+/** What each choice does, in a form a test can compare. */
+const actions = (choices: Choice[]) => choices.map((c) => c.action);
+const marked = (choices: Choice[]) => choices.filter((c) => c.current).map((c) => c.label);
+
+/** Codex's cache as Codex 0.162.1 keeps it, cut to what is read (12/10). */
+const CODEX_CACHE = JSON.stringify({
+  fetched_at: "2026-10-12T23:46:00Z",
+  client_version: "0.162.1",
+  models: [
+    {
+      slug: "gpt-6-sol",
+      display_name: "GPT-6-Sol",
+      visibility: "list",
+      priority: 3,
+      default_reasoning_level: "medium",
+      supported_reasoning_levels: [{ effort: "low" }, { effort: "medium" }, { effort: "high" }, { effort: "xhigh" }, { effort: "max" }, { effort: "ultra" }],
+    },
+    {
+      slug: "gpt-reserve",
+      display_name: "GPT-Reserve",
+      visibility: "hide",
+      priority: 0,
+      supported_reasoning_levels: [{ effort: "low" }],
+    },
+    {
+      slug: "gpt-6.1-sol",
+      display_name: "GPT-6.1-Sol",
+      visibility: "list",
+      priority: 1,
+      default_reasoning_level: "low",
+      supported_reasoning_levels: [{ effort: "low" }, { effort: "medium" }, { effort: "high" }, { effort: "xhigh" }],
+    },
+    {
+      slug: "gpt-6-astra",
+      display_name: "GPT-6-Astra",
+      visibility: "list",
+      priority: 2,
+      default_reasoning_level: "medium",
+      supported_reasoning_levels: [{ effort: "low" }, { effort: "medium" }, { effort: "high" }, { effort: "xhigh" }, { effort: "max" }, { effort: "ultra" }],
+    },
+  ],
+});
+
+describe("Codex's model cache", () => {
+  it("lists the models it shows, in its order, with their names and levels", () => {
+    const models = parseCodexModels(CODEX_CACHE);
+    expect(models.map((m) => m.slug)).toEqual(["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol"]);
+    expect(models[1]).toEqual({
+      slug: "gpt-6-astra",
+      name: "GPT-6-Astra",
+      efforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+      defaultEffort: "medium",
+    });
+  });
+
+  it("takes levels written as words too, and a model without a name goes by its slug", () => {
+    const text = JSON.stringify({
+      models: [{ slug: "o9", visibility: "list", supported_reasoning_levels: ["low", { effort: "high" }, 7, { effort: "" }] }],
+    });
+    expect(parseCodexModels(text)).toEqual([{ slug: "o9", name: "o9", efforts: ["low", "high"], defaultEffort: null }]);
+  });
+
+  it("models without a priority come last, in the order written", () => {
+    const text = JSON.stringify({
+      models: [
+        { slug: "b", visibility: "list" },
+        { slug: "a", visibility: "list", priority: 5 },
+        { slug: "c", visibility: "list" },
+      ],
+    });
+    expect(parseCodexModels(text).map((m) => m.slug)).toEqual(["a", "b", "c"]);
+  });
+
+  it("nothing from what is not a cache", () => {
+    expect(parseCodexModels("")).toEqual([]);
+    expect(parseCodexModels("{")).toEqual([]);
+    expect(parseCodexModels("[]")).toEqual([]);
+    expect(parseCodexModels(JSON.stringify({ models: {} }))).toEqual([]);
+    expect(parseCodexModels(JSON.stringify({ models: [null, 3, { slug: 5 }, { slug: "x" }] }))).toEqual([]);
+    expect(parseCodexModels("\uFEFF" + CODEX_CACHE)).toHaveLength(3);
+  });
+
+  it("a name on screen finds its model by the slug or the display name, in any case", () => {
+    const models = parseCodexModels(CODEX_CACHE);
+    expect(codexModelNamed("GPT-6-Astra", models)?.slug).toBe("gpt-6-astra");
+    expect(codexModelNamed("gpt-6-astra", models)?.slug).toBe("gpt-6-astra");
+    expect(codexModelNamed("GPT-6.1-SOL", models)?.slug).toBe("gpt-6.1-sol");
+    expect(codexModelNamed("gpt-reserve", models)).toBeNull();
+    expect(codexModelNamed("gpt-9", models)).toBeNull();
+  });
+
+  it("gives a Codex pane its slug and its name", () => {
+    const models = parseCodexModels(CODEX_CACHE);
+    const screen = "• ok\n› Ask Codex to do anything\n\n  GPT-6-Astra max · ~/x";
+    expect(codexStatus(screen, "done", null, models)).toMatchObject({
+      modelId: "gpt-6-astra",
+      modelName: "GPT-6-Astra",
+      effort: "max",
+      canType: true,
+    });
+    // Without the cache: what the screen says, the id in lower case.
+    expect(codexStatus(screen, "done")).toMatchObject({ modelId: "gpt-6-astra", modelName: "GPT-6-Astra" });
+  });
+});
+
 describe("the menus", () => {
   const claude = claudeStatus(
     { modelId: "claude-opus-5-5[1m]", modelName: "Opus 5.5 (1M)", effort: "high" },
     claudeScreen("❯"),
     "done",
   )!;
+  const models = parseCodexModels(CODEX_CACHE);
+  const codex = codexStatus("•\n›\n  GPT-6-Astra max · ~/x", "done", null, models)!;
 
-  it("Claude Code's efforts are typed as /effort, the one in use marked", () => {
+  it("Claude Code's efforts go through its /effort rule, the one in use marked", () => {
     const choices = effortChoices(claude);
     expect(choices.map((c) => c.label)).toEqual([...CLAUDE_EFFORTS]);
-    expect(choices.map((c) => c.command)).toEqual([
-      "/effort low",
-      "/effort medium",
-      "/effort high",
-      "/effort xhigh",
-      "/effort max",
-    ]);
-    expect(choices.filter((c) => c.current).map((c) => c.label)).toEqual(["high"]);
+    expect(actions(choices)).toEqual(CLAUDE_EFFORTS.map((level) => ({ kind: "claudeEffort", level })));
+    expect(marked(choices)).toEqual(["high"]);
   });
 
-  it("Claude Code's models are typed as /model <id>, the one in use marked", () => {
+  it("Claude Code's models go through its /model list, but the 1M Opus by its id with the default put back", () => {
     const choices = modelChoices(claude);
-    expect(choices.map((c) => c.command)).toEqual([
-      "/model claude-fable-5-1",
-      "/model claude-opus-5-5",
-      "/model claude-opus-5-5[1m]",
-      "/model claude-sonnet-5-5",
-      "/model claude-haiku-5-5",
+    expect(choices.map((c) => c.label)).toEqual(["Fable 5.1", "Opus 5.5", "Opus 5.5 (1M)", "Sonnet 5.5", "Haiku 5.5"]);
+    expect(actions(choices)).toEqual<BarAction[]>([
+      { kind: "claudeModel", label: "Fable 5.1" },
+      { kind: "claudeModel", label: "Opus 5.5" },
+      { kind: "type", command: "/model claude-opus-5-5[1m]", keepDefaults: true },
+      { kind: "claudeModel", label: "Sonnet 5.5" },
+      { kind: "claudeModel", label: "Haiku 5.5" },
     ]);
-    expect(choices.filter((c) => c.current).map((c) => c.label)).toEqual(["Opus 5.5 (1M)"]);
+    expect(marked(choices)).toEqual(["Opus 5.5 (1M)"]);
   });
 
   it("no effort is marked when the model has none", () => {
@@ -322,16 +432,59 @@ describe("the menus", () => {
     expect(effortChoices(plain).some((c) => c.current)).toBe(false);
   });
 
-  it("Codex has its own selector, opened by /model, for both", () => {
-    const codex = codexStatus("•\n›\n gpt-6.1-sol high · 100% context left", "done")!;
-    expect(modelChoices(codex).map((c) => c.command)).toEqual(["/model"]);
-    expect(effortChoices(codex).map((c) => c.command)).toEqual(["/model"]);
+  it("Codex's efforts are the levels the model takes, each through its picker with the model kept", () => {
+    const choices = effortChoices(codex, models);
+    expect(choices.map((c) => c.label)).toEqual(["low", "medium", "high", "xhigh", "max", "ultra"]);
+    expect(marked(choices)).toEqual(["max"]);
+    const astra = codexModelNamed("gpt-6-astra", models)!;
+    expect(choices[2].action).toEqual({ kind: "codex", model: astra, effort: "high" });
+    const sol = codexStatus("•\n›\n  GPT-6.1-Sol low · ~/x", "done", null, models)!;
+    expect(effortChoices(sol, models).map((c) => c.label)).toEqual(["low", "medium", "high", "xhigh"]);
   });
 
-  it("the note appears only when typing is off", () => {
+  it("Codex's efforts without the model in the cache: all of them, its name as on screen", () => {
+    const unknown = codexStatus("•\n›\n  gpt-9-x high · ~/x", "done")!;
+    const choices = effortChoices(unknown, models);
+    expect(choices.map((c) => c.label)).toEqual([...CODEX_EFFORTS]);
+    expect(choices[0].action).toEqual({
+      kind: "codex",
+      model: { slug: "gpt-9-x", name: "gpt-9-x", efforts: [], defaultEffort: null },
+      effort: "low",
+    });
+  });
+
+  it("Codex's models are the cache's, each keeping the effort when it takes it", () => {
+    const choices = modelChoices(codex, models);
+    expect(choices.map((c) => c.label)).toEqual(["GPT-6.1-Sol", "GPT-6-Astra", "GPT-6-Sol"]);
+    expect(marked(choices)).toEqual(["GPT-6-Astra"]);
+    // GPT-6.1-Sol has no max: its own default, low.
+    expect(actions(choices).map((a) => (a.kind === "codex" ? `${a.model.slug} ${a.effort}` : a.kind))).toEqual([
+      "gpt-6.1-sol low",
+      "gpt-6-astra max",
+      "gpt-6-sol max",
+    ]);
+  });
+
+  it("Codex without a cache: its picker opened for the person to choose", () => {
+    expect(modelChoices(codex)).toEqual([
+      { label: "Escolher no seletor do Codex (/model)", current: false, action: { kind: "type", command: "/model", keepDefaults: false } },
+    ]);
+  });
+
+  it("the level a model is changed to", () => {
+    const model: CodexModel = { slug: "m", name: "M", efforts: ["low", "high"], defaultEffort: "low" };
+    expect(codexEffortFor(model, "high")).toBe("high");
+    expect(codexEffortFor(model, "max")).toBe("low");
+    expect(codexEffortFor(model, null)).toBe("low");
+    expect(codexEffortFor({ ...model, defaultEffort: null }, "max")).toBe("medium");
+  });
+
+  it("the note appears only when typing is off, or a pick is under way", () => {
     expect(menuNote(claude)).toBeNull();
     expect(menuNote({ ...claude, canType: false })).toBe(CANNOT_TYPE_NOTE);
     expect(CANNOT_TYPE_NOTE).toBe("Disponível com o turno terminado e o prompt vazio");
+    expect(menuNote(claude, true)).toBe(PICKING_NOTE);
+    expect(menuNote({ ...claude, canType: false }, true)).toBe(PICKING_NOTE);
   });
 
   it("words on the chips", () => {
