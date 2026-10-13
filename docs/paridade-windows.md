@@ -16,19 +16,41 @@ verdade (só compilado no CI), `[ ]` por fazer, `[-]` não se aplica.
 
 ## Fatia `palette` (seletor, paleta, busca)
 
-- [ ] Ir para (Ctrl+Shift+P): recentes primeiro (a 1ª linha é a última aba de
-  OUTRO workspace), cabeçalhos "terminals" e "open in", linha rica, teclas
-  Ctrl+J/K/N/P, duplo clique, Ctrl+D fecha a aba da linha, rodapé "Abrir /
-  Ações Ctrl+K".
-- [ ] Pastas do zoxide (ou, sem zoxide, as pastas das abas) que criam workspace.
-- [ ] Prévia colorida da tela (PreviewVt do keepd) no seletor e na busca.
-- [ ] Painel de ações (Ctrl+K e botão direito): ir, nova aba, mostrar no
-  Explorer, copiar o caminho, fechar; ações de pasta, de linha da busca, de
-  comando, de tema e de fonte.
-- [ ] Paleta de comandos (Ctrl+Shift+Alt+P e botão redondo): os 17 comandos do
-  Mac, em 3 grupos, com as teclas desenhadas e os destrutivos em vermelho.
-- [ ] Busca no painel (Ctrl+F, pelo keepd) e em tudo (Ctrl+Shift+F): escopo,
-  contador, prévia, ida à linha exata e foco no painel do resultado.
+Um cartão só (ui/Picker.tsx), como o PickerView do Mac, com quatro perguntas:
+Ir para (Ctrl+Shift+P), Comandos (Ctrl+Shift+Alt+P), Buscar neste painel
+(Ctrl+F) e Buscar em tudo (Ctrl+Shift+F). A barra de busca do xterm ficou em
+Ctrl+Alt+F e no menu do painel ("Procurar na tela").
+
+- [x] Ir para: recentes primeiro (a 1ª linha é a última aba de OUTRO
+  workspace), cabeçalhos "terminais" e "abrir em", linha rica, busca em colunas
+  com as letras acesas, ↑↓ / Ctrl+J / Ctrl+N / Ctrl+P, duplo clique escolhe,
+  Ctrl+D fecha a aba da linha (com a pergunta e a nota das worktrees), rodapé
+  "Abrir / Ações Ctrl+K". Ctrl+K abre as ações (no Mac é ⌘K; o ⌃K de subir da
+  lista do Mac colide com ele aqui, e subir fica em ↑ e Ctrl+P).
+- [~] Pastas do zoxide (ou, sem zoxide, as pastas das abas e a pasta pessoal)
+  que criam workspace. Testado no Mac; no Windows só compilado (a janela do
+  `zoxide` escondida é `#[cfg(windows)]`).
+- [x] Prévia colorida da tela (PreviewVt do keepd) no seletor e na busca: um
+  xterm só para olhar, na grade que o keepd guarda; na busca, o painel do
+  resultado com a linha achada e o trecho em destaque.
+- [~] Painel de ações (Ctrl+K e botão direito): ir, nova aba, mostrar no
+  Explorer, copiar o caminho, fechar; ações de pasta, de linha da busca e de
+  comando. Testado no Mac; "Mostrar no Explorer" no Windows só compilado.
+- [ ] Ações de tema e de fonte: dependem dos catálogos da fatia `appearance`
+  (o gancho é `registerCatalog` em commands.ts; o componente da lista tem as
+  próprias ações).
+- [x] Paleta de comandos: os 17 do Mac em 3 grupos, com as teclas desenhadas e
+  os destrutivos em vermelho, mais Configurações, Tela cheia e Colar imagem. O
+  botão redondo da fileira de abas virou "Comandos" (a engrenagem é um comando
+  e segue em Ctrl+,).
+- [ ] Quatro comandos ficam cinza até a fatia dona deles ligar o comando com
+  `registerCommand` (commands.ts): Alternar abas verticais (`tabs`), Nova janela
+  (`windows`), Remover este workspace da janela (`tabs`) e Usar o tema do Keep
+  (`appearance`). "Mudar o tema…" e "Mudar a fonte…" abrem as Configurações até
+  haver catálogo registrado.
+- [x] Busca no painel (Ctrl+F, pelo keepd) e em tudo (Ctrl+Shift+F): escopo,
+  contador "3 de 47", prévia, ida à aba, ao painel e à linha exata (contada do
+  fim, como o Mac), com a linha marcada por instantes.
 
 ## Fatia `appearance` (temas, fontes, janela)
 
