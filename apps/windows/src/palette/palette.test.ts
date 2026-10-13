@@ -8,6 +8,7 @@ import { capsFor } from "./caps";
 import { MAX_HISTORY, historyFor, plainAsScreen, rowsToSkip, topFor } from "./preview";
 import { actionsFor, chordAction, filterActions } from "./actions";
 import { columnOf, locateLine, matchSpan, type Cells, type Lines } from "./hits";
+import { plainLetters } from "./letters";
 import {
   commandItems,
   createItem,
@@ -642,5 +643,41 @@ describe("a matched string, cut for drawing", () => {
       { text: "ab", on: false },
       { text: "c", on: true },
     ]);
+  });
+});
+
+describe("matching without the accents", () => {
+  it("each accented letter is its plain one, and the length does not change", () => {
+    expect(plainLetters("Configurações")).toBe("Configuracoes");
+    expect(plainLetters("à ação ÇÃO ü")).toBe("a acao CAO u");
+    expect(plainLetters("😀 ok")).toBe("😀 ok");
+    for (const text of ["Configurações", "ação", "São Paulo", "naïve café"]) expect(plainLetters(text)).toHaveLength(text.length);
+  });
+
+  it("a letter written as a base and a mark keeps both, so the length holds", () => {
+    const decomposed = "ac\u0327a\u0303o";
+    expect(plainLetters(decomposed)).toHaveLength(decomposed.length);
+    expect(plainLetters(decomposed).startsWith("ac")).toBe(true);
+  });
+
+  it("the palette finds Configurações by configuracoes, and Dividir à direita by dividir a dir", () => {
+    const commands = commandItems();
+    const title = (query: string) => filterItems(commands, query).kept.map((i) => i.title);
+    expect(title("configuracoes")).toContain("Configurações");
+    expect(title("dividir a dir")).toEqual(["Dividir à direita"]);
+    expect(title("DIVIDIR À DIR")).toEqual(["Dividir à direita"]);
+  });
+
+  it("what lit up is a range of the text as written", () => {
+    const { kept, lit } = filterItems(commandItems(), "configuracoes");
+    const row = kept.find((i) => i.title === "Configurações")!;
+    expect(lit.get(row.id)).toEqual({ column: "title", ranges: [[0, 13]] });
+  });
+
+  it("the actions are narrowed the same way", () => {
+    const entries = actionsFor(commandItems().find((i) => i.id === "cmd:settings")!);
+    expect(filterActions(entries, "configuracoes").map((e) => e.title)).toEqual(["Configurações"]);
+    const [running] = goToItems(input({ workspaces: [space("proj", [tab("proj", 1, 0, { cwd: "C:\\w" })])] }));
+    expect(filterActions(actionsFor(running), "ir PARA").map((e) => e.title)).toEqual(["Ir para este terminal"]);
   });
 });

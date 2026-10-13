@@ -6,6 +6,7 @@
 import { commandSpec } from "../commands";
 import type { GlyphName } from "./glyphs";
 import type { PickerItem } from "./items";
+import { plainLetters } from "./letters";
 
 export type ActionId =
   /** What Enter already does. In the list anyway, because a menu of what can be done to a row that leaves out the main thing reads as a menu of afterthoughts. */
@@ -84,10 +85,10 @@ export function actionsFor(item: PickerItem): ActionEntry[] {
   }
 }
 
-/** The entries whose titles hold what was typed. */
+/** The entries whose titles hold what was typed, accents or not. */
 export function filterActions(entries: readonly ActionEntry[], typed: string): ActionEntry[] {
-  const needle = typed.trim().toLowerCase();
-  return needle === "" ? [...entries] : entries.filter((e) => e.title.toLowerCase().includes(needle));
+  const needle = plainLetters(typed.trim()).toLowerCase();
+  return needle === "" ? [...entries] : entries.filter((e) => plainLetters(e.title).toLowerCase().includes(needle));
 }
 
 /**

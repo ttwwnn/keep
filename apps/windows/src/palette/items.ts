@@ -11,6 +11,7 @@ import { baseName } from "../layout";
 import { tabKey } from "../state";
 import { fuzzyScore, homeRelative, matchRanges } from "../text";
 import { matchSpan } from "./hits";
+import { plainLetters } from "./letters";
 
 export type ItemKind =
   /** A tab that exists, in some workspace. */
@@ -350,13 +351,13 @@ export function previewName(item: PickerItem): string {
  * first.
  */
 export function filterItems(items: readonly PickerItem[], query: string): { kept: PickerItem[]; lit: Map<string, Lit> } {
-  // A folder is found by `www/acaua` or by `www\acaua`: both slashes are read as one, in the query and in the text, which keeps its length and so its ranges.
-  const needle = query.trim().replace(/\\/g, "/");
+  // A folder is found by `www/acaua` or by `www\acaua`, and `Configurações` by `configuracoes`: both slashes are read as one and every letter as its plain one, in the query and in the text, which keeps its length and so its ranges.
+  const needle = plainLetters(query.trim()).replace(/\\/g, "/");
   if (!needle) return { kept: [...items], lit: new Map() };
   const scored: { item: PickerItem; score: number; position: number; lit: Lit }[] = [];
   items.forEach((item, position) => {
     for (const column of COLUMNS) {
-      const text = item[column].replace(/\\/g, "/");
+      const text = plainLetters(item[column]).replace(/\\/g, "/");
       const score = text ? fuzzyScore(needle, text) : undefined;
       if (score === undefined) continue;
       scored.push({ item, score, position, lit: { column, ranges: matchRanges(needle, text) } });
