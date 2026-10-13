@@ -6,6 +6,7 @@ import {
   CANNOT_TYPE_NOTE,
   CLAUDE_EFFORTS,
   CODEX_EFFORTS,
+  PICKING_NOTE,
   agentsLabel,
   claudePromptIsEmpty,
   claudeStatus,
@@ -478,10 +479,12 @@ describe("the menus", () => {
     expect(codexEffortFor({ ...model, defaultEffort: null }, "max")).toBe("medium");
   });
 
-  it("the note appears only when typing is off", () => {
+  it("the note appears only when typing is off, or a pick is under way", () => {
     expect(menuNote(claude)).toBeNull();
     expect(menuNote({ ...claude, canType: false })).toBe(CANNOT_TYPE_NOTE);
     expect(CANNOT_TYPE_NOTE).toBe("Disponível com o turno terminado e o prompt vazio");
+    expect(menuNote(claude, true)).toBe(PICKING_NOTE);
+    expect(menuNote({ ...claude, canType: false }, true)).toBe(PICKING_NOTE);
   });
 
   it("words on the chips", () => {

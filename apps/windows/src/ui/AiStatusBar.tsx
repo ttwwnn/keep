@@ -26,15 +26,20 @@ import { openMenuAt, type MenuItem } from "./common";
 const ROW = 28;
 const MENU_PADDING = 12;
 
-function menuItems(status: AiStatus, choices: Choice[], run: (choice: Choice) => void): (MenuItem | "separator")[] {
-  const note = menuNote(status);
+function menuItems(
+  status: AiStatus,
+  choices: Choice[],
+  busy: boolean,
+  run: (choice: Choice) => void,
+): (MenuItem | "separator")[] {
+  const note = menuNote(status, busy);
   const items: (MenuItem | "separator")[] = [];
   if (note) items.push({ label: note, disabled: true, action: () => {} }, "separator");
   for (const choice of choices) {
     items.push({
       label: choice.label,
       mark: choice.current ? "on" : null,
-      disabled: !status.canType,
+      disabled: busy || !status.canType,
       action: () => run(choice),
     });
   }
@@ -58,8 +63,7 @@ export function AiStatusBar(props: { workspace: string; root: number; pane: numb
     event.stopPropagation();
     focusPane(workspace, root, pane);
     // While a picker is being walked, the menu says so and offers nothing.
-    const shown = busy ? { ...status, canType: false } : status;
-    const items = menuItems(shown, choices, (choice) => void runChoice(workspace, pane, choice));
+    const items = menuItems(status, choices, busy, (choice) => void runChoice(workspace, pane, choice));
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
     const height = items.length * ROW + MENU_PADDING;
     openMenuAt(rect.left, Math.max(6, rect.top - height - 4), items, true);

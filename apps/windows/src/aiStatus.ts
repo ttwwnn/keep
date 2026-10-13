@@ -43,6 +43,8 @@ export interface AiStatus {
 
 /** Said in a menu whose items are off. */
 export const CANNOT_TYPE_NOTE = "Disponível com o turno terminado e o prompt vazio";
+/** Said in a menu while a pick is being walked through the program's picker. */
+export const PICKING_NOTE = "Trocando pelo seletor do programa…";
 
 // ---------------------------------------------------------------- the screen
 
@@ -397,7 +399,8 @@ export function codexEffortFor(model: CodexModel, effort: string | null): string
 }
 
 /** The note a menu opens with when its items are off, or null when they are on. */
-export function menuNote(status: AiStatus): string | null {
+export function menuNote(status: AiStatus, picking = false): string | null {
+  if (picking) return PICKING_NOTE;
   return status.canType ? null : CANNOT_TYPE_NOTE;
 }
 

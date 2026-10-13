@@ -68,7 +68,7 @@ export const modes = signal<ReadonlyMap<string, ClaudeMode | null>>(new Map());
 export const statuses = signal<ReadonlyMap<string, AiStatus>>(new Map());
 /** The models Codex offers, from its cache: what the bar's Codex menus list. */
 export const codexModels = signal<readonly CodexModel[]>([]);
-/** The panes whose program's picker the bar is walking just now: a second pick waits for the first. */
+/** The panes whose program's picker the bar is walking just now: their menus offer nothing until it is done. */
 export const picking = signal<ReadonlySet<string>>(new Set());
 /** When each pane began waiting on you, in seconds: what its badge breathes from. */
 export const waitingSince = signal<ReadonlyMap<string, number>>(new Map());
@@ -507,7 +507,8 @@ async function readBars(inputs: BarInput[]): Promise<void> {
         status = claudeStatus(text ? parseStatusFile(text) : null, input.screen, input.activity);
       } else {
         const before = previous.get(input.key);
-        const kept = before?.program === "codex" ? { model: before.modelId, effort: before.effort } : null;
+        // By its name on screen, which the cache knows as well as the slug, and which reads the same without it.
+        const kept = before?.program === "codex" ? { model: before.modelName, effort: before.effort } : null;
         status = codexStatus(input.screen, input.activity, kept, codexModels.value);
       }
       if (status) next.set(input.key, status);
@@ -560,8 +561,8 @@ function pickerIO(view: TermView, program: string): PickerIO {
 /**
  * Do what a pick in the bar says, in the pane it was picked under: walk
  * Claude Code's or Codex's own picker by keys, or type a command and Enter.
- * One at a time per pane: a second pick while a picker is being walked waits
- * for nobody and is dropped.
+ * One at a time per pane: a pick made while another is being walked is
+ * dropped.
  */
 export async function runChoice(workspace: string, pane: number, choice: Choice): Promise<void> {
   const view = terminals.existing(workspace, pane);

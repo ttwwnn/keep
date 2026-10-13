@@ -35,6 +35,8 @@ const out = process.stdout;
 const ESC = "\x1b";
 /** Bytes as written down: Enter and Esc spelled out. */
 const spelled = (bytes) => bytes.replace(/\r/g, "<CR>").replace(/\x1b/g, "<ESC>");
+/** A change's keys as said on screen: an arrow in either of its forms said as `<ESC>[B`. */
+const walked = (bytes) => spelled(bytes.replace(/\x1bO([ABCD])/g, "\x1b[$1"));
 
 function note(file, line) {
   try {
@@ -291,7 +293,7 @@ function claude() {
     }
   }
 
-  return { draw, press, start: statusLine, record: (bytes) => (walk += spelled(bytes)) };
+  return { draw, press, start: statusLine, record: (bytes) => (walk += walked(bytes)) };
 }
 
 // ---------------------------------------------------------------- Codex
@@ -388,7 +390,7 @@ function codex() {
     }
   }
 
-  return { draw, press, start: () => {}, record: (bytes) => (walk += spelled(bytes)) };
+  return { draw, press, start: () => {}, record: (bytes) => (walk += walked(bytes)) };
 }
 
 // ---------------------------------------------------------------- the terminal
