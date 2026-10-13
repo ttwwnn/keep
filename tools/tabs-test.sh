@@ -356,8 +356,14 @@ fi
 
 say ""
 say "a window with one tab"
-"$SENDKEY" "$APP_PID" key 13 cmd; sleep 2     # cmd-w
-"$SENDKEY" "$APP_PID" key 13 cmd; sleep 2     # cmd-w
+# Two tabs closed with a click, File > Close Tab: no chord closes anything
+# in Keep (`swallowUnwantedKeys`). A question before closing, if one comes
+# up, is answered as a person who meant it answers it.
+for _ in 1 2; do
+    focus_app
+    "$WORK/axpress" "$APP_NAME" menu File "Close Tab" >/dev/null 2>&1; sleep 2
+    "$WORK/axpress" "$APP_NAME" button "Fechar Aba" >/dev/null 2>&1 && sleep 2
+done
 read -r WX WY WW WH < <("$MOUSE" frame)
 "$MOUSE" watch 4 >"$WORK/window.log" 2>&1 &
 WATCHER=$!
