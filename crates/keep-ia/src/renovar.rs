@@ -568,6 +568,9 @@ pub fn rodada(forcar: bool) -> Rodada {
     for (chave, motivo) in &saida.abas.falhas {
         registra(&format!("aba {chave}: {motivo}"));
     }
+    for (chave, resultado) in crate::quente::reconectar_chrome() {
+        registra(&format!("aba {chave}: {resultado}"));
+    }
     let _ = trava.unlock();
     saida
 }

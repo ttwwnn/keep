@@ -174,6 +174,8 @@ fn trocar_regrava_o_armazem_do_claude_aberto_sem_tocar_nos_donos() {
         let lista = contas::listar(true);
         let t = |para: &str| trocar_processo(claude.pid(), shell.pid(), "T", 1, para, None, &lista);
         assert_eq!(t("claude:bia").unwrap(), Feito::Trocou("claude:bia".into()));
+        let pendente = registro_da_pasta(&p.pasta).unwrap().1.chrome_pendente_desde;
+        assert!(pendente.is_some(), "a ponte persistente precisa acompanhar a nova conta");
         assert_eq!(acesso(&p.pasta), "F");
         assert_eq!(
             crate::abas::conta_do_processo(claude.pid(), "claude", &lista),
@@ -181,6 +183,7 @@ fn trocar_regrava_o_armazem_do_claude_aberto_sem_tocar_nos_donos() {
             "a conta da aba vem do armazém, não do ambiente de quando ele subiu"
         );
         assert_eq!(t("claude:bia").unwrap(), Feito::Ja("claude:bia".into()));
+        assert_eq!(registro_da_pasta(&p.pasta).unwrap().1.chrome_pendente_desde, pendente);
         assert_eq!(t(SEGUIR_ORDEM).unwrap(), Feito::Trocou("claude:ana".into()));
         assert_eq!(acesso(&p.pasta), "G");
         assert_eq!(
@@ -317,6 +320,7 @@ fn espalhar_leva_o_acesso_renovado_e_apaga_o_armazem_da_aba_que_acabou() {
         let r = espalhar(&lista);
         assert_eq!((r.atualizadas, r.trocadas.len(), r.apagadas.len()), (1, 0, 0), "{r:?}");
         assert_eq!(acesso(&a.pasta), "G2");
+        assert!(registro_da_pasta(&a.pasta).unwrap().1.chrome_pendente_desde.is_none(), "mesma conta não reconecta");
         assert_eq!(acesso(&b.pasta), "F", "a outra conta não muda");
         sem_refresh_nas_abas();
         // O shell da aba A acabou: o armazém dela sai (item e pasta).
@@ -372,6 +376,47 @@ fn com_o_kit_quem_segue_a_ordem_vai_para_a_ativa_e_a_presa_fica() {
     assert_eq!(acesso(&p.pasta), "A1", "a aba presa numa conta não segue a ordem");
     let (_, ro) = registro_da_pasta(&o.pasta).unwrap();
     assert_eq!((ro.escolha.as_str(), ro.conta.as_str()), (SEGUIR_ORDEM, "claude:bia"));
+    assert!(ro.chrome_pendente_desde.is_some(), "a troca automática também renova a ponte");
+    assert!(registro_da_pasta(&p.pasta).unwrap().1.chrome_pendente_desde.is_none());
+}
+
+#[test]
+fn confirmar_uma_reconexao_nao_apaga_outra_troca() {
+    let c = casa("reconectar-chrome");
+    duas_contas(&c);
+    let shell = Filho::novo(&[]);
+    let p = preparar("T", shell.pid(), None, None).unwrap();
+    let mut estado = le_estado();
+    estado.abas.get_mut(&p.chave).unwrap().chrome_pendente_desde = Some(50);
+    grava_estado(&estado).unwrap();
+    concluir_reconexao(&p.chave, "u-2", 50).unwrap();
+    assert_eq!(
+        registro_da_pasta(&p.pasta).unwrap().1.chrome_pendente_desde,
+        Some(50)
+    );
+    concluir_reconexao(&p.chave, "u-1", 40).unwrap();
+    assert_eq!(
+        registro_da_pasta(&p.pasta).unwrap().1.chrome_pendente_desde,
+        Some(50)
+    );
+    concluir_reconexao(&p.chave, "u-1", 50).unwrap();
+    assert!(registro_da_pasta(&p.pasta)
+        .unwrap()
+        .1
+        .chrome_pendente_desde
+        .is_none());
+}
+
+#[test]
+fn comando_precisa_estar_na_caixa_sem_rascunho_junto() {
+    let regua = "────────────────";
+    assert!(comando_na_caixa(&format!("histórico\n❯ \n{regua}\nrodapé"), ""));
+    assert!(comando_na_caixa(&format!("histórico\n❯ {RECONECTAR_CHROME}\n{regua}\nrodapé"), RECONECTAR_CHROME));
+    assert!(!comando_na_caixa(&format!("❯ {RECONECTAR_CHROME}\nresposta\n❯ meu rascunho\n{regua}"), RECONECTAR_CHROME));
+    assert!(!comando_na_caixa(&format!("❯ \nsegunda linha do rascunho\n{regua}"), ""));
+    assert!(!comando_na_caixa("❯ meu rascunho", ""));
+    assert!(!comando_na_caixa("sem prompt", ""));
+    assert!(!comando_na_caixa("histórico de uma caixa antiga: \n❯ ", ""));
 }
 
 #[test]

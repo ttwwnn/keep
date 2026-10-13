@@ -122,7 +122,8 @@ Nenhuma conta cai, nem a parada: o que a Clínica faz com as contas dela (`renov
 
 Pedido de 12/10/2026: "pra trocar entre contas do claude não é pra colocar exit, é só trocar". Trocar
 a conta do Claude de uma aba é regravar o armazém de login dele; o mesmo processo, na mesma conversa,
-passa a falar pela conta nova. Nada é digitado na aba.
+passa a falar pela conta nova. A conexão persistente do Chrome acompanha por uma reconexão local,
+assim que o cache de login venceu e a aba ficou livre.
 
 - Cada Claude que o Keep abre roda no armazém da aba (`CLAUDE_SECURESTORAGE_CONFIG_DIR=
   ~/.claude/contas/abas/<shell>-<nascimento>`), que tem o `claudeAiOauth` da conta da aba com
@@ -131,6 +132,14 @@ passa a falar pela conta nova. Nada é digitado na aba.
   da pasta, relido quando muda) e, sem refresh, nunca tenta renovar nem grava o login. Provado em
   12/10/2026 com o Claude Code 2.1.296: a conta mudou em até 30 s, sem /exit, e um acesso inválido no
   armazém, regravado com um válido, deixou a mesma sessão voltar.
+- A ponte do Chrome já conectada conserva a autenticação anterior até reconectar. Toda mudança
+  de dono, manual ou pela ordem, marca `chrome_pendente_desde` no armazém da aba. A rodada de
+  `renovar` aguarda pelo menos 32 s e envia `/mcp reconnect claude-in-chrome` quando a mesma aba
+  está livre, sem diálogo nem rascunho, com vínculo exato ao processo. É um comando local:
+  não inicia uma resposta do modelo, não sai do Claude e não muda a conversa ou o login global.
+  Renovar o token da mesma conta não marca reconexão. Se o Claude já reiniciou depois da troca,
+  a pendência é descartada; uma nova troca não é apagada pela conclusão da anterior.
+  `keep ia reconectar-chrome --json` processa as mesmas pendências para diagnóstico.
 - `keep ia preparar --ws=<W> --shell=<pid> [--escolha=<chave>]` cria (ou atualiza) o armazém da aba
   do shell e devolve a pasta. O shell é o dado ou o ancestral dele cujo pai é o keepd (um script na
   aba acha a aba). Sem escolha, fica a que a aba já tinha, senão seguir a ordem. Quem chama: a função

@@ -73,6 +73,9 @@ pub struct Registro {
     pub legada: bool,
     /// A última gravação (ms).
     pub em: u64,
+    /// A ponte relê a conta quando o cache de login venceu e a aba está livre.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chrome_pendente_desde: Option<u64>,
     /// O problema que a renovação viu neste armazém, até ele passar.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub falha: Option<String>,
@@ -595,6 +598,7 @@ pub fn preparar(ws: &str, shell: u32, escolha: Option<&str>, conta: Option<&Cont
             nascimento,
             legada,
             em: agora(),
+            chrome_pendente_desde: None,
             falha: None,
         },
     );
@@ -736,6 +740,7 @@ pub fn trocar_processo(
         nascimento: shell_vivo.unwrap_or(antes.nascimento),
         legada: legada || antes.legada,
         em: agora(),
+        chrome_pendente_desde: if antes.dono != dono { Some(agora()) } else { antes.chrome_pendente_desde },
         falha: None,
     };
     if legada {
@@ -759,6 +764,135 @@ pub fn trocar_processo(
     estado.abas.insert(chave, registro_de(&alvo.order_key, &alvo.key));
     grava_estado(&estado).map_err(|e| Recusa::nova("erro", e))?;
     Ok(if igual { Feito::Ja(alvo.order_key.clone()) } else { Feito::Trocou(alvo.order_key.clone()) })
+}
+
+// ---------------------------------------------------------------- conexão do Chrome
+
+const RECONECTAR_CHROME: &str = "/mcp reconnect claude-in-chrome";
+// O Claude 2.1.296 guarda o login em cache por 30 s. Reconectar antes disso
+// pode autenticar de novo a ponte na conta anterior.
+const CACHE_LOGIN_MS: u64 = 32_000;
+
+fn comando_na_caixa(tela: &str, comando: &str) -> bool {
+    let linhas: Vec<_> = tela.lines().collect();
+    let Some(i) = linhas.iter().rposition(|l| l.trim().starts_with('❯')) else { return false };
+    if linhas[i].trim().strip_prefix('❯').map(str::trim) != Some(comando) {
+        return false;
+    }
+    // Uma primeira linha vazia não significa que um rascunho multilinha está vazio.
+    for linha in &linhas[i + 1..] {
+        let linha = linha.trim();
+        if linha.chars().take_while(|c| matches!(c, '─' | '▔' | '━')).count() >= 8 {
+            return true;
+        }
+        if !linha.is_empty() {
+            return false;
+        }
+    }
+    false
+}
+
+fn concluir_reconexao(chave: &str, dono: &str, desde: u64) -> Result<(), String> {
+    let _e = trava_estado()?;
+    let mut estado = le_estado();
+    if let Some(r) = estado.abas.get_mut(chave) {
+        // Uma troca posterior ainda precisa de sua própria reconexão.
+        if r.dono == dono && r.chrome_pendente_desde == Some(desde) {
+            r.chrome_pendente_desde = None;
+            grava_estado(&estado)?;
+        }
+    }
+    Ok(())
+}
+
+/// A conta de inferência é relida pelo Claude, mas uma conexão MCP já
+/// aberta continua autenticada na conta anterior. Usa o comando local do
+/// Claude para renovar somente essa conexão, sem inferência, /exit ou login.
+/// Nunca digita em aba trabalhando, diálogo, rascunho ou vínculo deduzido.
+pub fn reconectar_chrome() -> Vec<(String, String)> {
+    let pendentes: Vec<_> = le_estado()
+        .abas
+        .into_iter()
+        .filter_map(|(chave, r)| {
+            let desde = r.chrome_pendente_desde?;
+            (agora().saturating_sub(desde) >= CACHE_LOGIN_MS).then_some((chave, r, desde))
+        })
+        .collect();
+    if pendentes.is_empty() {
+        return vec![];
+    }
+    let Ok(retrato) = crate::daemon::listar() else {
+        return vec![];
+    };
+    if !retrato.exato {
+        return vec![];
+    }
+    let mut saida = vec![];
+    for (chave, r, desde) in pendentes {
+        let Some(aba) = retrato.aba(&r.ws, r.aba) else {
+            continue;
+        };
+        if aba.info.shell_pid != r.shell || !mesmo_processo(r.shell, r.nascimento) {
+            continue;
+        }
+        let pid = aba.info.pid;
+        if usize::from(aba.info.cols) < RECONECTAR_CHROME.chars().count() + 2 {
+            continue;
+        }
+        if crate::tela::programa(&aba.info.command) != crate::tela::Programa::Claude
+            || processos::variavel(pid, VAR).as_deref() != r.pasta.to_str()
+        {
+            continue;
+        }
+        // Uma sessão que abriu depois da troca já nasceu na conta nova.
+        if processos::inicio_ms(pid).is_some_and(|inicio| inicio >= desde) {
+            let _ = concluir_reconexao(&chave, &r.dono, desde);
+            continue;
+        }
+        let sessao = crate::sessoes::sessao_claude(pid);
+        if crate::trocar::situacao(aba, &crate::tela::Programa::Claude, sessao.as_ref()).0
+            != crate::tela::Estado::Livre
+        {
+            continue;
+        }
+        // Relê a identidade imediatamente antes de tocar no terminal.
+        let Ok(atual) = crate::daemon::listar() else {
+            continue;
+        };
+        let Some(aba) = atual
+            .aba(&r.ws, r.aba)
+            .filter(|a| atual.exato && a.info.pid == pid && a.info.shell_pid == r.shell)
+        else {
+            continue;
+        };
+        let Ok(tela) = crate::daemon::tela(&r.ws, r.aba) else {
+            continue;
+        };
+        if !comando_na_caixa(&tela, "") {
+            continue;
+        }
+        let Ok(mut teclado) = crate::daemon::Teclado::liga(aba) else {
+            continue;
+        };
+        if teclado.manda(RECONECTAR_CHROME.as_bytes()).is_err() {
+            continue;
+        }
+        let visto =
+            crate::daemon::espera(Duration::from_secs(3), Duration::from_millis(100), || {
+                let tela = crate::daemon::tela(&r.ws, r.aba).ok()?;
+                comando_na_caixa(&tela, RECONECTAR_CHROME).then_some(())
+            });
+        if visto.is_some() && teclado.manda(b"\r").is_ok() {
+            let _ = concluir_reconexao(&chave, &r.dono, desde);
+            saida.push((
+                chave,
+                "reconexão do Chrome solicitada na conta da aba".into(),
+            ));
+        }
+        // No máximo uma interação com terminal por rodada de renovação.
+        break;
+    }
+    saida
 }
 
 // ---------------------------------------------------------------- espalhar
@@ -826,6 +960,9 @@ fn espalha_um(r: &mut Registro, lista: &[Conta]) -> Result<Passo, String> {
     let f = fonte(alvo).ok_or_else(|| format!("a conta {} está sem login em dia", rotulo_em(lista, &alvo.order_key)))?;
     let gravou = grava_travado(&t, &r.pasta, &so_acesso(&f.oauth))?;
     let trocou = alvo.key != r.dono;
+    if trocou {
+        r.chrome_pendente_desde = Some(agora());
+    }
     r.dono = alvo.key.clone();
     r.conta = alvo.order_key.clone();
     if gravou || trocou {
