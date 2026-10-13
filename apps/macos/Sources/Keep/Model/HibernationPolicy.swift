@@ -106,6 +106,24 @@ enum KeeperProtocol {
     /// person, or — `deny` — not at all.
     enum ClipboardRead: Equatable { case answer, ask, refuse }
 
+    /// The size in pixels that gives a surface its program's grid: the size
+    /// it has, moved by a whole cell for each column and row its grid is off
+    /// by. libghostty takes the grid from what the size leaves past the
+    /// padding, a whole cell a column or a row, so a whole cell more or less
+    /// moves it by exactly one. Nil where the grid is the program's already,
+    /// or there is nothing to go by.
+    static func pixels(
+        _ size: (width: Double, height: Double), grid: (cols: Int, rows: Int),
+        cell: (width: Double, height: Double), program: (cols: Int, rows: Int)
+    ) -> (width: Double, height: Double)? {
+        guard program.cols > 0, program.rows > 0, cell.width > 0, cell.height > 0,
+              program.cols != grid.cols || program.rows != grid.rows
+        else { return nil }
+        return (
+            width: max(1, size.width + Double(program.cols - grid.cols) * cell.width),
+            height: max(1, size.height + Double(program.rows - grid.rows) * cell.height))
+    }
+
     static func clipboardRead(policy: String?) -> ClipboardRead {
         switch policy {
         case "allow": return .answer
