@@ -5,7 +5,9 @@
 
 import * as api from "./api";
 import { SPLIT_RIGHT } from "./api";
+import { parseStatusFile } from "./aiStatus";
 import { busyMark, programOf, readActivity } from "./claude";
+import { defaultsOf, parseSettings, statusLineCommand } from "./claudeSettings";
 import { lineId } from "./ia";
 import { chooseAccount, e2eHooks, iaAvailable, measureNow, moveOrder, signIn, usageLines } from "./iaStore";
 import {
@@ -18,10 +20,13 @@ import {
   info,
   newTab,
   newWorkspace,
+  picking,
   refresh,
   renameTab,
   select,
   split,
+  statuses,
+  statusLineSetup,
   tabBusy,
   tabLabel,
   tabsByWorkspace,
@@ -30,6 +35,7 @@ import {
   workspaces,
   zoom,
 } from "./store";
+import { viewKey } from "./terminals";
 import { menu } from "./ui/common";
 
 interface Step {
@@ -196,6 +202,8 @@ export async function runE2E(): Promise<void> {
       await api.e2eShot("marcas");
       return seen.join("; ");
     });
+
+    await barSteps(step);
   }
 
   const tab = firstTab();
@@ -207,8 +215,216 @@ export async function runE2E(): Promise<void> {
     platform: info.value?.platform,
     windowsBuild: info.value?.windowsBuild,
     renderer: document.querySelector(".tab-view.shown canvas") ? "webgl" : "dom",
+    barra,
   };
   await api.e2eReport(JSON.stringify(report, null, 2));
+}
+
+// ---------------------------------------------------------------- the bar
+
+/** What the bar's steps leave for run.ps1 to check from outside: the shell, the settings file. */
+const barra: { shellPid?: number; settings?: string | null; script?: string | null; statusLine?: string } = {};
+
+/** The bar under a pane as drawn: which program, and its chips' text. */
+function barOf(pane: number): { program: string; model: string; effort: string; agents: string } | null {
+  const bar = document.querySelector<HTMLElement>(`.ai-status-bar[data-bar-pane="${pane}"]`);
+  if (!bar) return null;
+  const chip = (name: string) => bar.querySelector(`[data-chip="${name}"]`)?.textContent?.trim() ?? "";
+  return { program: bar.dataset.program ?? "", model: chip("model"), effort: chip("effort"), agents: chip("agents") };
+}
+
+/** The keys of the last change the stand-in in a pane was walked through, as it says on its first line. */
+function lastWalk(pane: number): string | null {
+  const screen = terminals.existing(WORKSPACE, pane)?.screenText() ?? "";
+  return /e2e: (.*)$/m.exec(screen)?.[1]?.trim() ?? null;
+}
+
+/**
+ * Open a tab, start a stand-in program in it (e2e/barra-falsa.mjs, by the
+ * claude.cmd and codex.cmd run.ps1 wrote in KEEP_E2E_BARRA, so the daemon
+ * names it as it does the real ones) and bring it to the front.
+ */
+async function openStandIn(program: "claude" | "codex"): Promise<number> {
+  const id = await newTab(WORKSPACE);
+  if (id === null) throw new Error("não abriu a aba");
+  const find = () => (tabsByWorkspace.value.get(WORKSPACE) ?? []).find((t) => t.root.id === id);
+  await waitFor(() => {
+    const s = screenOf(id);
+    return find() && s.includes("PS ") && s.includes(">");
+  }, 30000);
+  terminals.existing(WORKSPACE, id)?.term.input(`cmd /c "$env:KEEP_E2E_BARRA\\${program}.cmd"\r`, true);
+  await waitFor(() => {
+    const t = find();
+    return t && programOf(t.root.command, t.root.title) === program ? t : null;
+  }, 30000);
+  select(WORKSPACE, id);
+  return id;
+}
+
+/**
+ * Pick in a chip's menu as a click does: the chip, then the item. Only once
+ * the bar can type (the turn over, the prompt empty) and no picker is being
+ * walked. The menu's items are returned as shown.
+ */
+async function pickInBar(pane: number, chip: "model" | "effort", item: string): Promise<string[]> {
+  const key = viewKey(WORKSPACE, pane);
+  await waitFor(() => statuses.value.get(key)?.canType && !picking.value.has(key), 20000);
+  menu.value = null;
+  const button = await waitFor(
+    () => document.querySelector<HTMLElement>(`.ai-status-bar[data-bar-pane="${pane}"] [data-chip="${chip}"]`),
+    5000,
+  );
+  button.click();
+  const rows = await waitFor(() => {
+    const shown = [...document.querySelectorAll<HTMLElement>(".context-menu .menu-item")];
+    return menu.value && shown.length > 0 ? shown : null;
+  }, 3000);
+  const labels = rows.map((r) => r.querySelector(".menu-label")?.textContent ?? "");
+  const target = rows.find((r) => r.querySelector(".menu-label")?.textContent === item);
+  if (!target) throw new Error(`sem "${item}" no menu: ${labels.join(" | ")}`);
+  if ((target as HTMLButtonElement).disabled) throw new Error(`"${item}" desligado no menu: ${labels.join(" | ")}`);
+  target.click();
+  return labels;
+}
+
+/** Wait for the change a pick started: the bar saying `wanted`, and the stand-in the keys it was walked through. */
+async function afterPick(pane: number, chip: "model" | "effort", wanted: string, keys: string): Promise<string> {
+  const read = () => barOf(pane)?.[chip] ?? "";
+  try {
+    await waitFor(() => read() === wanted, 30000);
+  } catch {
+    throw new Error(`a barra diz "${read()}", não "${wanted}"; as teclas: ${lastWalk(pane)}`);
+  }
+  const walked = await waitFor(() => lastWalk(pane), 5000).catch(() => null);
+  if (walked !== keys) throw new Error(`as teclas foram ${walked}, não ${keys}`);
+  return `${wanted} — ${keys}`;
+}
+
+/**
+ * The bar under Claude Code and Codex on a real Windows, against stand-ins
+ * that draw their screens and pickers (e2e/barra-falsa.mjs): the status line
+ * the app set up in Claude Code's settings, run as Claude Code runs it, saving
+ * the stand-in's model and effort under the tab's shell; the bar showing them,
+ * and Codex's off its screen and its cache; and each pick walking the
+ * program's own picker by keys — Claude Code's for this conversation only,
+ * the 1M Opus by its id with the default put back.
+ */
+async function barSteps(step: StepRunner): Promise<void> {
+  let claude = 0;
+  let codex = 0;
+
+  await step("barra: a statusLine automática no settings.json do Claude Code", async () => {
+    const setup = await statusLineSetup;
+    const settings = await api.claudeSettings();
+    barra.settings = settings.text;
+    barra.script = settings.script;
+    if (settings.script === null) throw new Error("o app não achou o keep-statusline.ps1 instalado");
+    const line = parseSettings(settings.text)?.statusLine as { type?: string; command?: string } | undefined;
+    if (line?.type !== "command" || line.command !== statusLineCommand(settings.script)) {
+      throw new Error(`statusLine: ${JSON.stringify(line)} (${setup})`);
+    }
+    if (!(await api.pathExists(settings.script))) throw new Error(`o script não está em ${settings.script}`);
+    barra.statusLine = line.command;
+    return `${setup}`;
+  });
+
+  await step("barra: o keep-statusline.ps1 grava o JSON do Claude falso no arquivo do shell da aba", async () => {
+    claude = await openStandIn("claude");
+    const shell = await waitFor(
+      () => (tabsByWorkspace.value.get(WORKSPACE) ?? []).find((t) => t.root.id === claude)?.root.shellPid || null,
+      10000,
+    );
+    barra.shellPid = shell;
+    const text = await waitForAsync(async () => {
+      const files = await api.claudeStatuses([shell]);
+      const found = files[String(shell)];
+      return found?.includes("keep-e2e-claude") ? found : null;
+    }, 90000);
+    const said = parseStatusFile(text);
+    return `${shell}.json: ${said?.modelId} ${said?.effort}`;
+  });
+
+  await step("barra: o modelo, o esforço e os agentes do Claude falso", async () => {
+    const wanted = { program: "claude", model: "Opus 5.5 (1M) ▾", effort: "esforço xhigh ▾", agents: "3 agentes" };
+    const bar = await waitFor(() => {
+      const b = barOf(claude);
+      return b && JSON.stringify(b) === JSON.stringify(wanted) ? b : null;
+    }, 30000).catch(() => {
+      throw new Error(`a barra: ${JSON.stringify(barOf(claude))}`);
+    });
+    await api.e2eShot("barra-claude");
+    return `${bar.model} · ${bar.effort} · ${bar.agents}`;
+  });
+
+  await step("barra: o esforço do Claude pelo /effort dele, só nesta conversa", async () => {
+    const before = defaultsOf((await api.claudeSettings()).text);
+    const items = await pickInBar(claude, "effort", "max");
+    if (items.join("|") !== "low|medium|high|xhigh|max") throw new Error(`o menu: ${items.join(" | ")}`);
+    const done = await afterPick(claude, "effort", "esforço max ▾", "/effort<CR><ESC>[Cs");
+    const after = defaultsOf((await api.claudeSettings()).text);
+    if (after !== before) throw new Error(`o padrão mudou: ${before} → ${after}`);
+    return done;
+  });
+
+  await step("barra: o modelo do Claude pelo /model dele, a troca confirmada", async () => {
+    const before = defaultsOf((await api.claudeSettings()).text);
+    const items = await pickInBar(claude, "model", "Sonnet 5.5");
+    const done = await afterPick(claude, "model", "Sonnet 5.5 ▾", "/model<CR><ESC>[B<ESC>[Bs<CR>");
+    const after = defaultsOf((await api.claudeSettings()).text);
+    if (after !== before) throw new Error(`o padrão mudou: ${before} → ${after}`);
+    return `${items.join(" | ")} — ${done}`;
+  });
+
+  await step("barra: o Opus 5.5 (1M) por /model <id>, e o padrão salvo devolvido", async () => {
+    const before = defaultsOf((await api.claudeSettings()).text);
+    await pickInBar(claude, "model", "Opus 5.5 (1M)");
+    // What the stand-in saves as the default, as Claude Code does, seen before it is put back.
+    const saved = await waitForAsync(async () => {
+      const now = defaultsOf((await api.claudeSettings()).text);
+      return now.includes("claude-opus-5-5[1m]") ? now : null;
+    }, 10000, 100);
+    const done = await afterPick(claude, "model", "Opus 5.5 (1M) ▾", "/model claude-opus-5-5[1m]<CR>");
+    await waitForAsync(async () => defaultsOf((await api.claudeSettings()).text) === before, 15000, 250).catch(() => {
+      throw new Error(`o padrão não voltou a ${before}`);
+    });
+    const settings = await api.claudeSettings();
+    if (parseSettings(settings.text)?.statusLine === undefined) throw new Error("a devolução levou a statusLine");
+    return `${done}; salvo ${saved}, devolvido ${before}`;
+  });
+
+  await step("barra: o modelo e o esforço do Codex falso, com o nome do cache", async () => {
+    codex = await openStandIn("codex");
+    const wanted = { program: "codex", model: "GPT-6-Astra ▾", effort: "esforço max ▾", agents: "" };
+    const bar = await waitFor(() => {
+      const b = barOf(codex);
+      return b && JSON.stringify(b) === JSON.stringify(wanted) ? b : null;
+    }, 30000).catch(() => {
+      throw new Error(`a barra: ${JSON.stringify(barOf(codex))}`);
+    });
+    await api.e2eShot("barra-codex");
+    return `${bar.model} · ${bar.effort}`;
+  });
+
+  await step("barra: o esforço do Codex pelo seletor dele", async () => {
+    const items = await pickInBar(codex, "effort", "high");
+    if (items.join("|") !== "low|medium|high|xhigh|max|ultra") throw new Error(`o menu: ${items.join(" | ")}`);
+    return afterPick(codex, "effort", "esforço high ▾", "/model<CR>23");
+  });
+
+  await step("barra: o modelo do Codex pelo seletor, com o esforço mantido", async () => {
+    const items = await pickInBar(codex, "model", "GPT-6-Sol");
+    if (items.join("|") !== "GPT-6.1-Sol|GPT-6-Astra|GPT-6-Sol") throw new Error(`o menu: ${items.join(" | ")}`);
+    const done = await afterPick(codex, "model", "GPT-6-Sol ▾", "/model<CR>33");
+    if (barOf(codex)?.effort !== "esforço high ▾") throw new Error(`o esforço: ${barOf(codex)?.effort}`);
+    return done;
+  });
+
+  await step("barra: o Ultra do Codex por More reasoning", async () => {
+    await pickInBar(codex, "effort", "ultra");
+    const done = await afterPick(codex, "effort", "esforço ultra ▾", "/model<CR>352");
+    await api.e2eShot("barra-codex-ultra");
+    return done;
+  });
 }
 
 type StepRunner = (name: string, run: () => Promise<string>) => Promise<void>;

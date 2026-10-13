@@ -26,10 +26,15 @@ import {
   claudeStatus,
   codexStatus,
   ENTER_DELAY_MS,
+  parseCodexModels,
   parseStatusFile,
   sameStatus,
   type AiStatus,
+  type Choice,
+  type CodexModel,
 } from "./aiStatus";
+import { defaultsOf, planStatusLine, restoreDefaults } from "./claudeSettings";
+import { chooseClaudeEffort, chooseClaudeModel, chooseCodex, type PickerIO } from "./pickers";
 import { baseName, isPathTitle, rootTabs, type RootTab } from "./layout";
 import { defaultState, normalizeState, tabKey, type GuiState, type RestoreWorkspace } from "./state";
 import { TerminalManager, viewKey, type TermView } from "./terminals";
@@ -61,6 +66,10 @@ export const activities = signal<ReadonlyMap<string, ClaudeActivity>>(new Map())
 export const modes = signal<ReadonlyMap<string, ClaudeMode | null>>(new Map());
 /** What the bar under each Claude Code or Codex pane shows, by pane; a pane with none has no bar. */
 export const statuses = signal<ReadonlyMap<string, AiStatus>>(new Map());
+/** The models Codex offers, from its cache: what the bar's Codex menus list. */
+export const codexModels = signal<readonly CodexModel[]>([]);
+/** The panes whose program's picker the bar is walking just now: a second pick waits for the first. */
+export const picking = signal<ReadonlySet<string>>(new Set());
 /** When each pane began waiting on you, in seconds: what its badge breathes from. */
 export const waitingSince = signal<ReadonlyMap<string, number>>(new Map());
 
@@ -488,6 +497,7 @@ async function readBars(inputs: BarInput[]): Promise<void> {
         return; // cannot read now: the bars stand as they are
       }
     }
+    if (inputs.some((i) => i.program === "codex")) await readCodexModels();
     const previous = statuses.value;
     const next = new Map<string, AiStatus>();
     for (const input of inputs) {
@@ -498,7 +508,7 @@ async function readBars(inputs: BarInput[]): Promise<void> {
       } else {
         const before = previous.get(input.key);
         const kept = before?.program === "codex" ? { model: before.modelId, effort: before.effort } : null;
-        status = codexStatus(input.screen, input.activity, kept);
+        status = codexStatus(input.screen, input.activity, kept, codexModels.value);
       }
       if (status) next.set(input.key, status);
     }
@@ -509,19 +519,155 @@ async function readBars(inputs: BarInput[]): Promise<void> {
   }
 }
 
-/** Type a command into a pane's prompt and send it: the bar's clicks. */
-export async function runCommand(workspace: string, pane: number, command: string): Promise<void> {
-  const view = terminals.existing(workspace, pane);
-  if (!view) return;
+/** Which version of Codex's model cache `codexModels` came from, and when it was last asked. */
+let codexCache: { stamp: string | null; asked: number } = { stamp: null, asked: 0 };
+
+/** Codex's model cache read again when it changed, asked at most every few seconds. */
+async function readCodexModels(): Promise<void> {
+  if (Date.now() - codexCache.asked < 3000) return;
+  codexCache = { ...codexCache, asked: Date.now() };
   try {
-    await view.type(command);
-    await new Promise((resolve) => setTimeout(resolve, ENTER_DELAY_MS));
-    await view.type("\r");
-    view.focus();
+    const answer = await api.codexModels(codexCache.stamp);
+    if (answer.stamp === null) {
+      if (codexModels.value.length > 0) codexModels.value = [];
+      codexCache = { ...codexCache, stamp: null };
+    } else if (answer.text !== null) {
+      codexModels.value = parseCodexModels(answer.text);
+      codexCache = { ...codexCache, stamp: answer.stamp };
+    }
   } catch {
-    // The tab is not attached just now; nothing was sent that matters.
+    // Asked again in a few seconds.
   }
 }
+
+/** A line in the app's log, with the time it was said. */
+export function log(line: string): void {
+  void api.appLog(`${new Date().toISOString()} ${line}`).catch(() => {});
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** A pane's keyboard and screen, for walking its program's picker. */
+function pickerIO(view: TermView, program: string): PickerIO {
+  return {
+    key: (keys) => view.type(keys),
+    screen: async () => view.screenText(),
+    sleep,
+    log: (line) => log(`${program} ${view.workspace}/${view.tab}: ${line}`),
+  };
+}
+
+/**
+ * Do what a pick in the bar says, in the pane it was picked under: walk
+ * Claude Code's or Codex's own picker by keys, or type a command and Enter.
+ * One at a time per pane: a second pick while a picker is being walked waits
+ * for nobody and is dropped.
+ */
+export async function runChoice(workspace: string, pane: number, choice: Choice): Promise<void> {
+  const view = terminals.existing(workspace, pane);
+  const key = viewKey(workspace, pane);
+  if (!view || picking.value.has(key)) return;
+  picking.value = new Set([...picking.value, key]);
+  const action = choice.action;
+  try {
+    switch (action.kind) {
+      case "claudeModel":
+        await chooseClaudeModel(pickerIO(view, "claude"), action.label);
+        break;
+      case "claudeEffort":
+        await chooseClaudeEffort(pickerIO(view, "claude"), action.level);
+        break;
+      case "codex":
+        await chooseCodex(pickerIO(view, "codex"), action.model, action.effort);
+        break;
+      case "type":
+        await typeCommand(view, action.command, action.keepDefaults);
+        break;
+    }
+  } catch (error) {
+    // The tab went away or let go; nothing typed after that matters.
+    log(`bar ${workspace}/${pane}: ${String(error)}`);
+  } finally {
+    const rest = new Set(picking.value);
+    rest.delete(key);
+    picking.value = rest;
+    view.focus();
+  }
+}
+
+/**
+ * Type a command into a pane's prompt and send it. With `keepDefaults`, the
+ * keys of Claude Code's settings that it saves as the default for new
+ * sessions (`/model <id>` does) are put back as they were, two and five
+ * seconds on — the file read again each time, so nothing written meanwhile
+ * is lost, and written only over what was read.
+ */
+async function typeCommand(view: TermView, command: string, keepDefaults: boolean): Promise<void> {
+  const before = keepDefaults ? await api.claudeSettings().then((s) => defaultsOf(s.text)).catch(() => null) : null;
+  await view.type(command);
+  await sleep(ENTER_DELAY_MS);
+  await view.type("\r");
+  if (before === null) return;
+  for (const delay of [2000, 5000]) setTimeout(() => void putDefaultsBack(before), delay);
+}
+
+async function putDefaultsBack(before: string): Promise<void> {
+  try {
+    const settings = await api.claudeSettings();
+    const text = restoreDefaults(settings.text, before);
+    if (text === null) return;
+    const written = await api.writeClaudeSettings(settings.text, text);
+    log(written ? `settings.json: defaults put back (${before})` : "settings.json changed meanwhile: defaults left for the next look");
+  } catch (error) {
+    log(`settings.json: defaults not put back: ${String(error)}`);
+  }
+}
+
+/**
+ * Claude Code's status line set to the script installed with the app, so
+ * the bar learns its model and effort: in a settings file that has none —
+ * the key added, nothing else changed — and in a new one where Claude Code's
+ * folder is there without it. One with another status line is left alone;
+ * what was done goes to the log either way. Windows only: elsewhere the app
+ * is for development, and its settings are somebody's own.
+ */
+export async function setUpStatusLine(): Promise<string> {
+  if (info.value?.platform !== "windows") return "fora do Windows";
+  let said: string;
+  try {
+    const settings = await api.claudeSettings();
+    if (settings.script === null) {
+      said = "o keep-statusline.ps1 não está junto do app";
+    } else if (settings.text === null && !settings.folder) {
+      said = `sem a pasta do Claude Code (${settings.path}): ele ainda não rodou aqui`;
+    } else {
+      const plan = planStatusLine(settings.text, settings.script);
+      switch (plan.kind) {
+        case "write":
+          said = (await api.writeClaudeSettings(settings.text, plan.text))
+            ? `gravada em ${settings.path}: ${plan.command}`
+            : `${settings.path} mudou enquanto era lido: fica para a próxima abertura`;
+          break;
+        case "ours":
+          said = "já é a do Keep";
+          break;
+        case "other":
+          said = `${settings.path} já tem outra (${plan.command}): não foi tocada`;
+          break;
+        case "unreadable":
+          said = `${settings.path} não foi tocado: ${plan.why}`;
+          break;
+      }
+    }
+  } catch (error) {
+    said = `não deu para ler o settings.json: ${String(error)}`;
+  }
+  log(`statusLine: ${said}`);
+  return said;
+}
+
+/** What setting the status line up did, once it is done: the scripted check waits on it. */
+export let statusLineSetup: Promise<string> = Promise.resolve("");
 
 // ------------------------------------------------------------------ actions
 
@@ -914,6 +1060,9 @@ export async function start(options: StartOptions): Promise<void> {
   const win = getCurrentWindow();
   void win.isMaximized().then((m) => (maximized.value = m)).catch(() => {});
   void win.onResized(() => void win.isMaximized().then((m) => (maximized.value = m)).catch(() => {}));
+
+  // Not waited on: the window draws while it is being done.
+  statusLineSetup = setUpStatusLine();
 }
 
 /** Find the daemon — starting it if needed — and keep asking it. */

@@ -37,6 +37,42 @@ pub fn save(path: &Path, value: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
+/// The app's log: `app.log` in `KEEP_STATE_DIR` (a test's), else in
+/// `%LOCALAPPDATA%\Keep` beside the daemon's, else in `~/.local/state/keep`.
+pub fn log_file() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("KEEP_STATE_DIR") {
+        return Some(PathBuf::from(dir).join("app.log"));
+    }
+    if let Ok(dir) = std::env::var("LOCALAPPDATA") {
+        return Some(Path::new(&dir).join("Keep").join("app.log"));
+    }
+    let home = std::env::var("HOME").ok()?;
+    Some(Path::new(&home).join(".local").join("state").join("keep").join("app.log"))
+}
+
+/// Past this the log starts again, the previous one kept as `app.log.1`.
+const LOG_BYTES: u64 = 512 * 1024;
+
+/// One line at the end of the app's log; nothing when it cannot be written.
+pub fn log(line: &str) {
+    let Some(path) = log_file() else { return };
+    append(&path, line, LOG_BYTES);
+}
+
+fn append(path: &Path, line: &str, limit: u64) {
+    use std::io::Write;
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if std::fs::metadata(path).map(|m| m.len() > limit).unwrap_or(false) {
+        let _ = std::fs::rename(path, path.with_extension("log.1"));
+    }
+    let one = line.replace(['\r', '\n'], " ");
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{one}");
+    }
+}
+
 /// Where the daemon looks for the shell chosen here: `%APPDATA%\Keep\shell.txt`.
 /// Read by keepd for every new tab, so a choice applies without restarting
 /// the daemon that holds the tabs already open.
@@ -149,4 +185,24 @@ pub fn windows_build() -> u32 {
     }
     #[cfg(not(windows))]
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_log_takes_one_line_at_a_time_and_starts_again_when_long() {
+        let dir = std::env::temp_dir().join(format!("keep-app-log-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("app.log");
+        append(&path, "um", 64);
+        append(&path, "dois\ncom quebra", 64);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "um\ndois com quebra\n");
+        append(&path, &"x".repeat(80), 64);
+        append(&path, "depois", 64);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "depois\n");
+        assert!(std::fs::read_to_string(path.with_extension("log.1")).unwrap().ends_with(&format!("{}\n", "x".repeat(80))));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

@@ -1,10 +1,10 @@
 // The bar under a Claude Code or Codex conversation: the model and the effort
 // it runs with, how many agents it has going, and what a click may change.
 //
-// A port of ClaudeStatus.swift in the macOS app (apps/macos/Sources/Keep/Model),
-// plus the Codex half, which macOS does not have. Everything here is a pure
-// function of text (a status file, a screen), so the rules are tested without
-// a Windows, a daemon or a terminal; store.ts only gathers the text.
+// A port of ClaudeStatus.swift in the macOS app (apps/macos/Sources/Keep/Model).
+// Everything here is a pure function of text (a status file, a screen, Codex's
+// model cache), so the rules are tested without a Windows, a daemon or a
+// terminal; store.ts only gathers the text.
 //
 // Where the facts come from:
 //  - Claude Code: its status line command (tools/keep-statusline.ps1) saves
@@ -13,20 +13,27 @@
 //    screen, where Claude Code lists them under the prompt.
 //  - Codex: it has no status line command, so the model and the effort are
 //    read off its own screen (the footer, the header it prints at the start,
-//    the line it prints when the model changes).
+//    the line it prints when the model changes), and its model cache
+//    (`models_cache.json`) says what each model is called and the levels it
+//    takes.
+//
+// A pick in the bar walks the program's own picker (pickers.ts).
 
 import type { ClaudeActivity } from "./claude";
+import { claudePickerLabel, type CodexModel } from "./pickers";
+
+export type { CodexModel } from "./pickers";
 
 export type StatusProgram = "claude" | "codex";
 
 /** What the bar shows for one pane. */
 export interface AiStatus {
   program: StatusProgram;
-  /** What identifies the model: Claude Code's id (`claude-opus-5-5[1m]`), Codex's slug. */
+  /** What identifies the model: Claude Code's id (`claude-opus-5-5[1m]`), Codex's slug (`gpt-6-astra`). */
   modelId: string;
   /** How it is called on screen (`Opus 5.5 (1M)`). */
   modelName: string;
-  /** `low`, `medium`, `high`, `xhigh` or `max` (Codex: also `minimal`, `none`); null when none was said. */
+  /** `low`, `medium`, `high`, `xhigh` or `max` (Codex: also `ultra`, `minimal`, `none`); null when none was said. */
   effort: string | null;
   /** How many agents run; null where they are not counted (Codex). */
   agents: number | null;
@@ -81,6 +88,9 @@ export function claudePromptIsEmpty(screen: string): boolean {
 
 // ---------------------------------------------------------------- Claude Code
 
+const record = (v: unknown): Record<string, unknown> | null =>
+  typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+
 export interface ClaudeFile {
   modelId: string;
   modelName: string;
@@ -105,8 +115,6 @@ export function parseStatusFile(text: string): ClaudeFile | null {
   } catch {
     return null;
   }
-  const record = (v: unknown): Record<string, unknown> | null =>
-    typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
   const root = record(json);
   const model = record(root?.model);
   if (!root || !model) return null;
@@ -169,12 +177,13 @@ const CODEX_CHANGED = new RegExp(
 const CODEX_CHOICE = /^[❯›»]\s*\d+[.)]\s+/;
 const isCodexPrompt = (line: string) => (line.startsWith("›") || line.startsWith("»")) && !CODEX_CHOICE.test(line);
 
-export interface CodexModel {
+/** What a Codex screen says: the model as it is written there, and the effort. */
+export interface CodexSaid {
   model: string;
   effort: string | null;
 }
 
-function codexMatch(m: RegExpExecArray | null): CodexModel | null {
+function codexMatch(m: RegExpExecArray | null): CodexSaid | null {
   if (!m || !hasDigitOrHyphen(m[1])) return null;
   return { model: m[1], effort: m[2] ? m[2].toLowerCase() : null };
 }
@@ -185,7 +194,7 @@ function codexMatch(m: RegExpExecArray | null): CodexModel | null {
  * last thing Codex printed about it in the conversation: the header box it
  * opens with, or the line it prints when the model changes.
  */
-export function readCodexModel(screen: string): CodexModel | null {
+export function readCodexModel(screen: string): CodexSaid | null {
   const lines = screen.split("\n").map((l) => l.trim());
   const prompt = lastIndex(lines, isCodexPrompt);
   if (prompt >= 0) {
@@ -219,21 +228,67 @@ export function codexPromptIsEmpty(screen: string): boolean {
   return text === "" || CODEX_HINTS.test(text);
 }
 
+/** The efforts Codex's levels go by, for a model whose levels its cache does not say. */
+export const CODEX_EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"] as const;
+
+/**
+ * The models Codex offers, in its order, from its cache
+ * (`$CODEX_HOME/models_cache.json`): the ones it lists (`visibility: "list"`),
+ * by `priority`, each with its slug, its name on screen and the levels it
+ * takes. None for a file that is not one.
+ */
+export function parseCodexModels(text: string): CodexModel[] {
+  let json: unknown;
+  try {
+    json = JSON.parse(text.replace(/^\uFEFF/, ""));
+  } catch {
+    return [];
+  }
+  const list = record(json)?.models;
+  if (!Array.isArray(list)) return [];
+  const found: { priority: number; at: number; model: CodexModel }[] = [];
+  list.forEach((item, at) => {
+    const m = record(item);
+    if (!m || typeof m.slug !== "string" || m.slug === "" || m.visibility !== "list") return;
+    const levels = Array.isArray(m.supported_reasoning_levels) ? m.supported_reasoning_levels : [];
+    const efforts = levels
+      .map((level) => (typeof level === "string" ? level : record(level)?.effort))
+      .filter((effort): effort is string => typeof effort === "string" && effort !== "");
+    const name = typeof m.display_name === "string" && m.display_name !== "" ? m.display_name : m.slug;
+    const defaultEffort = typeof m.default_reasoning_level === "string" ? m.default_reasoning_level : null;
+    found.push({
+      priority: typeof m.priority === "number" ? m.priority : 1000,
+      at,
+      model: { slug: m.slug, name, efforts, defaultEffort },
+    });
+  });
+  return found.sort((a, b) => a.priority - b.priority || a.at - b.at).map((f) => f.model);
+}
+
+/** The model a name on screen stands for: its slug or its display name, in any case. */
+export function codexModelNamed(name: string, models: readonly CodexModel[]): CodexModel | null {
+  const wanted = name.toLowerCase();
+  return models.find((m) => m.slug.toLowerCase() === wanted || m.name.toLowerCase() === wanted) ?? null;
+}
+
 /**
  * The status of a Codex pane: from its screen, or from what was last read
- * (`kept`) when the screen shows nothing of it now.
+ * (`kept`) when the screen shows nothing of it now; the cache gives the slug
+ * and the name for the model it said.
  */
 export function codexStatus(
   screen: string,
   activity: ClaudeActivity | undefined,
-  kept?: CodexModel | null,
+  kept?: CodexSaid | null,
+  models: readonly CodexModel[] = [],
 ): AiStatus | null {
   const said = readCodexModel(screen) ?? kept ?? null;
   if (!said) return null;
+  const model = codexModelNamed(said.model, models);
   return {
     program: "codex",
-    modelId: said.model,
-    modelName: said.model,
+    modelId: model?.slug ?? said.model.toLowerCase(),
+    modelName: model?.name ?? said.model,
     effort: said.effort,
     agents: null,
     canType: activity === "done" && codexPromptIsEmpty(screen),
@@ -255,32 +310,90 @@ export function sameStatus(a: AiStatus | undefined, b: AiStatus | undefined): bo
 
 // ---------------------------------------------------------------- the clicks
 
-/** One choice in the bar's menus: what to show, what to type, whether it is the one in use. */
+/** What a pick in the bar does. */
+export type BarAction =
+  /** Claude Code's `/model` list: the pointer taken to this item, then "s" — this conversation only. */
+  | { kind: "claudeModel"; label: string }
+  /** Claude Code's `/effort` rule: the marker taken to this level, then "s" — this conversation only. */
+  | { kind: "claudeEffort"; level: string }
+  /**
+   * Typed into the prompt, then Enter. `keepDefaults`: what it saves as
+   * Claude Code's default for new sessions is put back afterwards.
+   */
+  | { kind: "type"; command: string; keepDefaults: boolean }
+  /** Codex's own picker, walked to this model and level. */
+  | { kind: "codex"; model: CodexModel; effort: string };
+
+/** One choice in the bar's menus: what to show, whether it is the one in use, what picking it does. */
 export interface Choice {
   label: string;
-  /** Typed into the prompt, then Enter. */
-  command: string;
   current: boolean;
+  action: BarAction;
 }
 
 /**
- * The effort menu. Claude Code takes `/effort <level>`. Codex has no such
- * command: its `/model` opens a selector of its own, where the effort is the
- * second question, so that is the one choice offered.
+ * The effort menu. Claude Code's five levels, each through its `/effort`
+ * rule; Codex's, the levels its cache says the model takes (all of them when
+ * it does not say), each through its picker with the model kept.
  */
-export function effortChoices(status: AiStatus): Choice[] {
-  if (status.program === "codex") return [codexSelector()];
-  return CLAUDE_EFFORTS.map((level) => ({ label: level, command: `/effort ${level}`, current: level === status.effort }));
+export function effortChoices(status: AiStatus, models: readonly CodexModel[] = []): Choice[] {
+  if (status.program === "codex") {
+    const model = codexModelNamed(status.modelId, models) ?? {
+      slug: status.modelId,
+      name: status.modelName,
+      efforts: [],
+      defaultEffort: null,
+    };
+    const efforts = model.efforts.length > 0 ? model.efforts : [...CODEX_EFFORTS];
+    return efforts.map((effort) => ({
+      label: effort,
+      current: effort === status.effort,
+      action: { kind: "codex", model, effort },
+    }));
+  }
+  return CLAUDE_EFFORTS.map((level) => ({
+    label: level,
+    current: level === status.effort,
+    action: { kind: "claudeEffort", level },
+  }));
 }
 
-/** The model menu: Claude Code's models by `/model <id>`; for Codex, its own selector. */
-export function modelChoices(status: AiStatus): Choice[] {
-  if (status.program === "codex") return [codexSelector()];
-  return CLAUDE_MODELS.map((m) => ({ label: m.name, command: `/model ${m.id}`, current: m.id === status.modelId }));
+/**
+ * The model menu. Claude Code's models through its `/model` list — but the
+ * 1M-context Opus, which the list does not have, by `/model <id>` with the
+ * default it saves put back. Codex's, the ones its cache lists, through its
+ * picker; with no cache, its picker opened for the person to choose in.
+ */
+export function modelChoices(status: AiStatus, models: readonly CodexModel[] = []): Choice[] {
+  if (status.program === "codex") {
+    if (models.length === 0) {
+      return [
+        {
+          label: "Escolher no seletor do Codex (/model)",
+          current: false,
+          action: { kind: "type", command: "/model", keepDefaults: false },
+        },
+      ];
+    }
+    return models.map((model) => ({
+      label: model.name,
+      current: model.slug === status.modelId,
+      action: { kind: "codex", model, effort: codexEffortFor(model, status.effort) },
+    }));
+  }
+  return CLAUDE_MODELS.map((m) => {
+    const label = claudePickerLabel(m.id);
+    const action: BarAction = label
+      ? { kind: "claudeModel", label }
+      : { kind: "type", command: `/model ${m.id}`, keepDefaults: true };
+    return { label: m.name, current: m.id === status.modelId, action };
+  });
 }
 
-function codexSelector(): Choice {
-  return { label: "Escolher no seletor do Codex (/model)", command: "/model", current: false };
+/** The level a Codex model is changed to: the one in use when it takes it, else its own default. */
+export function codexEffortFor(model: CodexModel, effort: string | null): string {
+  if (effort !== null && model.efforts.includes(effort)) return effort;
+  return model.defaultEffort ?? "medium";
 }
 
 /** The note a menu opens with when its items are off, or null when they are on. */
