@@ -16,19 +16,56 @@ verdade (só compilado no CI), `[ ]` por fazer, `[-]` não se aplica.
 
 ## Fatia `palette` (seletor, paleta, busca)
 
-- [ ] Ir para (Ctrl+Shift+P): recentes primeiro (a 1ª linha é a última aba de
-  OUTRO workspace), cabeçalhos "terminals" e "open in", linha rica, teclas
-  Ctrl+J/K/N/P, duplo clique, Ctrl+D fecha a aba da linha, rodapé "Abrir /
-  Ações Ctrl+K".
-- [ ] Pastas do zoxide (ou, sem zoxide, as pastas das abas) que criam workspace.
-- [ ] Prévia colorida da tela (PreviewVt do keepd) no seletor e na busca.
-- [ ] Painel de ações (Ctrl+K e botão direito): ir, nova aba, mostrar no
-  Explorer, copiar o caminho, fechar; ações de pasta, de linha da busca, de
-  comando, de tema e de fonte.
-- [ ] Paleta de comandos (Ctrl+Shift+Alt+P e botão redondo): os 17 comandos do
-  Mac, em 3 grupos, com as teclas desenhadas e os destrutivos em vermelho.
-- [ ] Busca no painel (Ctrl+F, pelo keepd) e em tudo (Ctrl+Shift+F): escopo,
-  contador, prévia, ida à linha exata e foco no painel do resultado.
+Um cartão só (ui/Picker.tsx), como o PickerView do Mac, com quatro perguntas:
+Ir para (Ctrl+Shift+P), Comandos (Ctrl+Shift+Alt+P), Buscar neste painel
+(Ctrl+F) e Buscar em tudo (Ctrl+Shift+F). A barra de busca do xterm ficou em
+Ctrl+Alt+F e no menu do painel ("Procurar na tela").
+
+Conferida no Mac pelo roteiro do app (`src/e2ePalette.ts`, cinco passos contra
+um keepd de verdade) e à mão, nos temas escuro e claro, com a prévia, as ações,
+a busca e as listas de temas e de fontes; as teclas no WebView2 e o Explorer
+não foram vistos no Windows de verdade.
+
+- [x] Ir para: recentes primeiro (a 1ª linha é a última aba de OUTRO
+  workspace), cabeçalhos "terminais" e "abrir em", linha rica, busca em colunas
+  com as letras acesas, ↑↓ / Ctrl+J / Ctrl+N / Ctrl+P, duplo clique escolhe,
+  Ctrl+D fecha a aba da linha (com a pergunta e a nota das worktrees), rodapé
+  "Abrir / Ações Ctrl+K". Ctrl+K abre as ações (no Mac é ⌘K; o ⌃K de subir da
+  lista do Mac colide com ele aqui, e subir fica em ↑ e Ctrl+P).
+- [~] Pastas do zoxide (ou, sem zoxide, as pastas das abas e a pasta pessoal)
+  que criam workspace. Testado no Mac; no Windows só compilado (a janela do
+  `zoxide` escondida é `#[cfg(windows)]`).
+- [x] Prévia colorida da tela (PreviewVt do keepd) no seletor e na busca: um
+  xterm só para olhar, na grade que o keepd guarda; na busca, o painel do
+  resultado com a linha achada e o trecho em destaque.
+- [~] Painel de ações (Ctrl+K e botão direito): ir, nova aba, mostrar no
+  Explorer, copiar o caminho, fechar; ações de pasta, de linha da busca e de
+  comando. Testado no Mac; "Mostrar no Explorer" no Windows só compilado.
+- [ ] Ações de tema e de fonte (Ctrl+K numa linha das listas: "Vestir este
+  tema" / "Usar esta fonte" e "Copiar o nome"): as listas são as da fatia
+  `appearance` (`ui/CatalogPicker.tsx`), cartões autônomos em que Ctrl+K sobe a
+  seleção e que não têm painel de ações; dá-lo a elas é mexer no teclado dessa
+  fatia, e Enter e Esc já fazem o essencial.
+- [x] Paleta de comandos: os 17 do Mac em 3 grupos, com as teclas desenhadas e
+  os destrutivos em vermelho, mais Configurações, Tela cheia e Colar imagem. O
+  botão redondo da fileira de abas virou "Comandos" (a engrenagem é um comando
+  e segue em Ctrl+,). Ligados a funções das outras fatias em
+  `palette/bindings.ts`: "Alternar abas verticais" (`toggleVerticalTabs`),
+  "Remover este workspace da janela" (`putAway`), "Usar o tema do Keep"
+  (`clearTheme`) e "Redefinir o tamanho do texto" (`resetText`, que também
+  desfaz o zoom e a fonte).
+- [x] "Mudar o tema…" e "Mudar a fonte…" põem a lista da fatia `appearance`
+  (`ThemePicker`, `FontPicker`) no lugar do cartão da paleta: a seta veste ao
+  vivo, Enter usa e fecha tudo, Esc volta à paleta (um passo para trás, como
+  no Mac) e desfaz o que se viu.
+- [ ] "Nova janela" fica cinza na paleta até a fatia `windows` ligá-la com
+  `registerCommand` (commands.ts), que vale mais que qualquer padrão da janela.
+- [x] Busca no painel (Ctrl+F, pelo keepd) e em tudo (Ctrl+Shift+F): escopo,
+  contador "3 de 47", prévia, ida à aba, ao painel e à linha exata (contada do
+  fim, como o Mac), com a linha marcada por instantes nas cores de busca do
+  tema em uso (`Palette.search`, legíveis em qualquer fundo). Numa aba
+  adormecida (hibernação) espera o terminal por `viewWhenAwake` antes de ir à
+  linha.
 
 ## Fatia `appearance` (temas, fontes, janela)
 
@@ -120,7 +157,9 @@ do vitest); o mouse real, os cursores e a dica nativa do workspace não foram ex
 - [ ] URLs mailto: e file://; Ctrl+clique.
 - [ ] Endereços web: clique simples abre no navegador, inclusive o link OSC 8
   atrás do texto (markdown do Claude Code) e o endereço quebrado em linhas;
-  menu Abrir link / Copiar link (Mac: 0e8c0bc).
+  menu Abrir link / Copiar link (Mac: 0e8c0bc). Com o mouse tomado pelo
+  programa (Claude Code em tela cheia), o clique simples deixa o endereço
+  para ele, que já o abre (Mac: 62be02e).
 - [ ] OSC 52 com política; confirmar colagem multi-linha; colar arquivo copiado.
 - [ ] Soltar arquivos: realce do painel sob o ponteiro.
 - [ ] Teclado kitty (CSI u): Ctrl+Enter, desambiguação.
@@ -129,22 +168,84 @@ do vitest); o mouse real, os cursores e a dica nativa do workspace não foram ex
 
 ## Fatia `ai`
 
-- [ ] Integração de shell (função `claude` no PowerShell): troca a quente,
-  armazém por aba.
-- [ ] Restauro depois de reiniciar, com as conversas (keep restauro), sem o
-  retrato apagado cedo.
-- [ ] `keep continuar` a cada 15 s.
-- [ ] Responder "confiar nesta pasta?" sozinho.
-- [ ] Ganchos (hooks) do Claude e do Codex.
-- [ ] Rótulo "(IA·1→2)" e o nome da aba preservado na troca.
-- [ ] `keep nova` e links claude-cli://.
-- [ ] Robustez do state.json (cópias, JSON inválido avisado).
+- [~] Integração de shell (função `claude` e `codex` no PowerShell das abas): troca a quente, armazém por
+  aba. Feita pelo keepd (`crates/keepd/src/ai.ps1`, `shellhook.rs`); testada com um `pwsh` 7 de verdade e
+  programas de mentira (argumentos, pipe, código de saída, falha segura, subcomandos, função da pessoa),
+  e conferida para o Windows com `cargo check --target x86_64-pc-windows-msvc`; não rodou num Windows nem
+  no PowerShell 5.1. Cmd e Git Bash ficam de fora (rodam no login global) e o WSL é invisível ao crate
+  (docs/ia.md). O `--` digitado sem aspas é consumido pelo PowerShell antes de qualquer função (`claude --
+  texto` chega como `claude texto`).
+- [ ] A subida presa a uma pasta (`keep ia confinar --`, o `_keep_ia` da função do Mac): pronta e DESLIGADA,
+  porque a contenção está desligada até o CI do Windows prová-la (`CONFINEMENT_ENFORCED = false`). Um
+  `confinar` de mentira e o `pwsh` testam a rota ligada (nunca solta quando o keep recusa, o `claude.exe`
+  ou o `claude.cmd` e não o `claude.ps1`, `agents`/`attach` presos, o resto direto); ligar é trocar
+  `{ $false }` por `{ $true }` na linha `__KeepConfining` de `ai.ps1`, com o `CONFINEMENT_ENFORCED`.
+- [~] Restauro depois de reiniciar, com as conversas (`keep restauro`), sem o retrato apagado cedo: o app
+  deixou de recriar abas em JS; `restaurar --fase=abas` antes de mostrar o vazio (espera até 1 min por um
+  keepd lento), `manter` a cada 30 s, nomes das abas pelo `names.json`, trava do crate que agora trava no
+  Windows. Visto no app com um keepd de teste no Mac (keepd morto e app aberto sobre keepd morto); o que é
+  só do Windows (`LockFileEx`, subida das conversas no PowerShell) compila e não rodou (docs/restauro.md).
+- [~] `keep continuar` a cada 15 s, com o ocioso do sistema pelo `GetLastInputInfo`.
+- [ ] Responder "confiar nesta pasta?" sozinho (fatia `terminal`).
+- [~] Gancho da conta da aba no Claude (`UserPromptSubmit` -> `keep ia conta-da-aba --gancho` no
+  `settings.json`, acrescentado depois dos ganchos da pessoa, sem mexer em mais nada, sem repetir): o plano
+  é puro e testado (formatos, idempotência, ganchos alheios intactos); o efeito dentro do Claude Code no
+  Windows (Git Bash ou cmd rodando o comando) não foi visto.
+- [-] Gancho do Keep no Codex: o Mac também não instala nenhum (o `hooks.json` do Codex é do Jev) e a
+  conta de uma aba do Codex não muda enquanto ele roda.
+- [x] Rótulo "(IA·1→2)" até o Claude responder na conta nova (a `provada` do `keep ia abas`) e o nome da
+  aba preservado na troca de conta.
+- [~] `keep nova` no Windows: `--nome` vale (pelo `names.json`), o `canonicalize` sem o prefixo `\\?\`, e o
+  `keep` no PATH de toda aba (e em `KEEP_IA_BIN`).
+- [ ] Links `claude-cli://` numa aba do Keep: o Claude Code no Windows abre o terminal pelo `wt.exe`,
+  `pwsh.exe`, `powershell.exe` ou cmd, sem olhar `TERM_PROGRAM` nem `deepLinkTerminal`, e refaz o registro
+  do protocolo toda sessão; o desvio (um `wt.exe` do Keep + registro + `disableDeepLinkRegistration`) mexe
+  no registro e no `settings.json` e não se prova fora do Windows (docs/restauro.md). O `<instalação>\bin`
+  no PATH do usuário pelo instalador também ficou de fora, pelo mesmo motivo (a aba já o tem).
+- [x] Robustez do `state.json`: cópias rotativas (`.bak1` a `.bak5`, uma a cada 10 min), recuperação da
+  última boa, o arquivo ilegível guardado em `.ilegivel` e o aviso na janela; fsync antes do rename; nada é
+  gravado por cima de um arquivo que não deu para ler ao abrir.
+- [ ] `arquivos_abertos` no Windows (id da thread do Codex pelos arquivos abertos): o Restart Manager ou o
+  `NtQuerySystemInformation` dariam o dado, mas desde o Codex 0.159 os locks são do daemon dele, não da tela
+  (o ganho é pouco) e nada disso se prova daqui; fica como está, dito em `processos.rs`.
 
 ## Fatia `confine`
 
-- [ ] Restringir a IA do workspace a uma pasta no Windows (AppContainer ou
-  token restrito), botão de pasta, menu "Restringir a IA a uma pasta…" e
-  "Liberar a IA". Só vale para workspaces com pasta escolhida (opt-in).
+Restringir a IA de um workspace a uma pasta. Opt-in: sem pasta escolhida, nada
+muda. A escolha fica em `%USERPROFILE%\.config\keep\confinement.json` (o
+formato do Mac) e quem prende é o `keep ia confinar -- <programa>`.
+
+- [x] Botão de pasta no cabeçalho do workspace (aberta: livre; cheia: presa),
+  menu do botão ("A IA só acessa …", "Trocar a pasta…", "Liberar a IA") e itens
+  do menu do cabeçalho ("Restringir a IA a uma pasta…", "Liberar a IA (hoje:
+  …)"), com o diálogo de pasta do sistema. Vale para as sessões iniciadas
+  depois, e o tooltip diz. Recusa a raiz de uma unidade e a pasta do usuário.
+  Testado (vitest, `confinement.rs`) e visto na tela do app.
+- [~] A contenção: token restrito (`CreateRestrictedToken`) com permissões só na
+  pasta, no git dela e no mínimo de que a IA precisa, Job que mata junto, prova
+  do token antes de subir (o de fora é negado, a pasta funciona) e falha
+  fechada (`crates/keep-ia/src/confinar_win*`). Só compilada para o Windows
+  daqui; o CI roda o autoteste (`keep ia confinar --autoteste`, também
+  dentro de uma aba) e `tools/confine-test.ps1` repete o roteiro à mão.
+  `CONFINEMENT_ENFORCED` (confinement.ts) tira o botão e os itens do menu.
+- [ ] Encaixe nas funções `claude` e `codex` do PowerShell (fatia `ai`): pronto e DESLIGADO enquanto a
+  contenção está desligada. As funções não chamam o `confinar` hoje (a subida é a de sempre); a rota ligada
+  é uma linha de `crates/keepd/src/ai.ps1` (`__KeepConfining`, `{ $false }` -> `{ $true }`), que faz as
+  duas subirem por `keep ia confinar -- <programa> …` em toda aba do Keep, como o `_keep_ia` do Mac, sem cair
+  para a subida solta quando o keep recusa; sem pasta para o workspace o `confinar` roda o programa como
+  sempre. Testada ligada com um `pwsh` 7 e um `confinar` de mentira (docs/ia.md); digitar `claude` numa aba
+  do Windows com a pasta presa não foi visto. Um `claude.ps1` sozinho (sem `.exe` nem `.cmd` ao lado), o
+  Cmd e o Git Bash rodam sem prender.
+- [ ] O que o Windows não deixa fechar sem administrador: pastas de rede (o
+  servidor confere o usuário, não o token), o que o Windows deixa qualquer um
+  ler (`C:\Windows`, `Arquivos de Programas`, e, nos níveis compatível e amplo,
+  que valem se o estrito não deixa o programa partir, o que `Usuários` lê em
+  outras unidades), o registro do sistema, a área de trabalho (o programa preso
+  pode mandar teclas a outras janelas), o WSL. Programas
+  instalados só para o usuário (nvm, cargo, pyenv) ficam de fora, como o
+  `~/.nvm` no Mac; o Gerenciador de Credenciais do Git também. Um arquivo
+  movido (não copiado) de fora para dentro da pasta presa leva a permissão que
+  tinha, e a IA não o abre.
 
 ## Fatia `windows` (várias janelas)
 

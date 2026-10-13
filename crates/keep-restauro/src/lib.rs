@@ -163,47 +163,46 @@ pub fn nomear_no_app(amb: &keep_ia::worktrees::ambiente::Ambiente, nasceu: Optio
     let _ = gravar(&caminho, &v);
 }
 
-/// A mesma trava com que o app grava o estado dele (`.state.lock`).
+/// A mesma trava com que o app grava o estado dele (`.state.lock`): esperada até ser dada, e solta ao largar o arquivo.
 fn trava_do_app(app: &std::path::Path) -> Option<std::fs::File> {
     let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(app.join(".state.lock")).ok()?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::io::AsRawFd;
-        unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) };
-    }
+    // A trava do sistema de arquivos de cada sistema: `flock` no Unix, `LockFileEx` no Windows.
+    f.lock().ok()?;
     Some(f)
 }
 
-/// Uma trava entre processos (o app pode chamar duas vezes): `None` se outro a tem.
+/// Uma trava entre processos (o app pode chamar duas vezes): `None` se outro a tem. Solta ao largar o arquivo, ou
+/// quando o processo acaba.
 pub struct Trava {
-    #[cfg(unix)]
     _arquivo: std::fs::File,
 }
 
 impl Trava {
     pub fn pegar(nome: &str) -> Option<Trava> {
-        let caminho = pasta().join(nome);
-        std::fs::create_dir_all(pasta()).ok()?;
-        let arquivo = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(caminho).ok()?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::io::AsRawFd;
-            if unsafe { libc::flock(arquivo.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-                return None;
-            }
-            Some(Trava { _arquivo: arquivo })
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = arquivo;
-            Some(Trava {})
-        }
+        Trava::pegar_em(&pasta(), nome)
+    }
+
+    fn pegar_em(dir: &std::path::Path, nome: &str) -> Option<Trava> {
+        std::fs::create_dir_all(dir).ok()?;
+        let arquivo = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(dir.join(nome)).ok()?;
+        arquivo.try_lock().ok()?;
+        Some(Trava { _arquivo: arquivo })
     }
 }
 
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    #[test]
+    fn a_trava_e_de_um_so_ate_ser_largada() {
+        let dir = tempfile::tempdir().unwrap();
+        let primeira = Trava::pegar_em(dir.path(), ".x.lock").expect("a primeira pega");
+        assert!(Trava::pegar_em(dir.path(), ".x.lock").is_none(), "outra rodada com a trava na mão");
+        assert!(Trava::pegar_em(dir.path(), ".y.lock").is_some(), "cada nome tem a sua");
+        drop(primeira);
+        assert!(Trava::pegar_em(dir.path(), ".x.lock").is_some(), "largada, a trava volta");
+    }
 
     #[test]
     fn mesmo_keepd_pelo_nascimento() {

@@ -34,6 +34,7 @@ import {
   zoom,
   zoomReset,
 } from "./store";
+import { toggleOverlay } from "./palette/overlay";
 import type { TermView } from "./terminals";
 import { keysToCut } from "./cut";
 import { dropText, lightPane, paneAt, shellKind } from "./drop";
@@ -60,12 +61,18 @@ export function perform(action: Action): void {
       goToTab("last");
       break;
     case "picker":
-      overlay.value = overlay.value === "picker" ? null : "picker";
+      toggleOverlay("picker");
+      break;
+    case "palette":
+      toggleOverlay("palette");
       break;
     case "searchAll":
-      overlay.value = overlay.value === "search" ? null : "search";
+      toggleOverlay("search");
       break;
     case "findInTab":
+      toggleOverlay("find");
+      break;
+    case "findOnScreen":
       findOpen.value = true;
       break;
     case "zoomIn":
@@ -106,7 +113,7 @@ export function perform(action: Action): void {
       break;
     }
     case "settings":
-      overlay.value = overlay.value === "settings" ? null : "settings";
+      toggleOverlay("settings");
       break;
     case "focusPane":
       focusBeside(action.direction);
@@ -234,7 +241,9 @@ const EVERYWHERE = new Set<Action["kind"]>([
   "goToTab",
   "lastTab",
   "picker",
+  "palette",
   "searchAll",
+  "findInTab",
   "zoomIn",
   "zoomOut",
   "zoomReset",

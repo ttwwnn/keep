@@ -245,10 +245,17 @@ enum LinkOpener {
     /// or mail address. A program can put any address behind its text, and a
     /// click meant to put the cursor somewhere should not start an app; that
     /// takes ⌘-click, or the right button's "Abrir link".
-    static func plainClickMayOpen(_ text: String) -> Bool {
+    ///
+    /// An address is left alone when the program has the mouse: the click is
+    /// the program's then, and one that takes the mouse and draws links opens
+    /// them itself — Claude Code in full screen opens any link on a plain
+    /// click in a terminal that calls itself ghostty, as this one does, and
+    /// opening it here too opened it twice. A bare path it does not open, so
+    /// that stays this app's.
+    static func plainClickMayOpen(_ text: String, programHasMouse: Bool) -> Bool {
         guard let url = URL(string: text), let scheme = url.scheme?.lowercased(), scheme.count > 1
         else { return true }
-        return ["http", "https", "mailto", "ftp", "file"].contains(scheme)
+        return !programHasMouse && ["http", "https", "mailto", "ftp", "file"].contains(scheme)
     }
 
     /// Where a web address starts inside a word. Only these: a word read off

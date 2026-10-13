@@ -128,12 +128,14 @@ pub fn foreground(shell: u32) -> Option<u32> {
 /// A launcher stands aside for what it launched: `cmd /c claude.cmd` is
 /// `claude`, and `node …\node_modules\@openai\codex\bin\codex.js` is
 /// `codex`. Packages installed with npm run that way on Windows, and a tab
-/// called `node` says nothing about which of them it is.
+/// called `node` says nothing about which of them it is. The same goes for
+/// `keep ia confinar -- claude …`, which holds the AI of a workspace that is
+/// confined to a folder: Windows has no `exec`, so it stays as the parent.
 pub fn process_name(pid: u32) -> Option<String> {
     let exe = processes().iter().find(|p| p.pid == pid)?.exe.clone();
     let name = exe.strip_suffix(".exe").or_else(|| exe.strip_suffix(".EXE")).unwrap_or(&exe);
     let name = name.to_ascii_lowercase();
-    if matches!(name.as_str(), "cmd" | "node" | "bun" | "deno") {
+    if matches!(name.as_str(), "cmd" | "node" | "bun" | "deno" | "keep") {
         if let Some(line) = command_line(pid) {
             if let Some(better) = launched_name(&name, &line) {
                 return Some(better);
@@ -146,6 +148,17 @@ pub fn process_name(pid: u32) -> Option<String> {
 /// The program a launcher's command line names, if it names one.
 fn launched_name(launcher: &str, line: &str) -> Option<String> {
     let args = split_command_line(line);
+    if launcher == "keep" {
+        // `keep ia confinar [--] <program> …`: the program is what the tab runs.
+        let at = args.iter().position(|a| a == "confinar").filter(|&i| i > 0 && args[i - 1] == "ia")?;
+        let program = match args.get(at + 1)?.as_str() {
+            "--" => args.get(at + 2)?,
+            other => other,
+        };
+        let file = program.rsplit(['\\', '/']).next()?;
+        let stem = file.rsplit_once('.').map(|(s, _)| s).unwrap_or(file);
+        return (!stem.is_empty()).then(|| stem.to_ascii_lowercase());
+    }
     if launcher == "cmd" {
         // `cmd /c <script> …`: the script is the program.
         let at = args.iter().position(|a| a.eq_ignore_ascii_case("/c") || a.eq_ignore_ascii_case("/k"))?;
@@ -340,6 +353,17 @@ mod tests {
         );
         assert_eq!(launched_name("node", "node server.js"), Some("server".into()));
         assert_eq!(launched_name("node", "node"), None);
+        // The `keep` that holds a confined AI is the AI; any other `keep` is `keep`.
+        assert_eq!(
+            launched_name("keep", r#""C:\K\bin\keep.exe" ia confinar -- C:\u\.local\bin\claude.exe --effort max"#),
+            Some("claude".into())
+        );
+        assert_eq!(
+            launched_name("keep", r#"keep ia confinar -- "C:\npm\codex.cmd" resume x"#),
+            Some("codex".into())
+        );
+        assert_eq!(launched_name("keep", "keep ls"), None);
+        assert_eq!(launched_name("keep", "keep ia confinar"), None);
     }
 
     #[test]

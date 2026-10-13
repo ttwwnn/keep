@@ -65,6 +65,10 @@ pub struct Resumo {
     pub conversas: usize,
     pub falhas: Vec<String>,
     pub motivo: String,
+    /// As abas que esta rodada criou e o número que cada uma tinha no keepd do retrato: com isso o app leva para
+    /// as novas o que guarda por número de aba (a ordem delas, a que estava à frente).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub criadas: Vec<Criada>,
 }
 
 fn registro() -> Option<Registro> {
@@ -172,6 +176,7 @@ pub fn restaurar(so_abas: bool, seco: bool) -> Result<Resumo, String> {
         devolve_nomes(&amb, &atual, &origem, &reg);
         reg.abas_feitas = true;
         grava_registro(&reg);
+        resumo.criadas = reg.criadas.clone();
     }
     if so_abas {
         resumo.motivo = "abas recriadas; as conversas seguem".into();

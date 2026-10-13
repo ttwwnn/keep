@@ -82,6 +82,13 @@ export interface TabAI {
   vinculo: string;
   pid?: number;
   conversa?: string | null;
+  /**
+   * The account its Claude last answered on, proven by the limits the service
+   * sent back with that answer (the status line). Right after a hot switch it
+   * is still the old one: Claude takes up the new login on its first answer
+   * after reading it again, up to 30 s on. Absent when nothing proves it.
+   */
+  provada?: string | null;
 }
 
 /**
@@ -272,6 +279,13 @@ export function numberOf(key: string | null | undefined, lines: readonly UsageLi
  * it was put on, and for a tab following the order the Claude login the
  * tabs share; nothing when no account can be told. For any other program,
  * its name: "— bash". The macOS app's `AIChoices.tabLabel`.
+ *
+ * A Claude switched to another account that has not answered on it yet says
+ * both, "(IA·1→2)": the switch is made, and it is not the one answering yet —
+ * the account it last answered on is `proven`. Without that, the tab said the
+ * new account while the old one went on answering, and the switch looked made
+ * and not working (13/10/2026: "mostra como se estivesse trocado mas não está
+ * de fato").
  */
 export function tabAccountLabel(
   program: ProgramKind,
@@ -279,6 +293,7 @@ export function tabAccountLabel(
   account: string | null | undefined,
   running: string | null | undefined,
   lines: readonly UsageLine[],
+  proven?: string | null,
 ): string {
   if (program.kind !== "claude" && program.kind !== "codex") return command ? `— ${command}` : "";
   let key = running || account || null;
@@ -287,7 +302,29 @@ export function tabAccountLabel(
     key = shared ? accountKeys(shared.account)[0] : null;
   }
   const number = numberOf(key, lines);
-  return number === null ? "" : `(${iaName(number)})`;
+  if (number === null) return "";
+  const before = numberOf(proven, lines);
+  return before !== null && before !== number ? `(${iaName(before)}→${number})` : `(${iaName(number)})`;
+}
+
+/**
+ * The name a tab keeps through an AI switch (the macOS app's
+ * `NameStore.preserveTab`): what it was called — the new AI may announce
+ * another title —, unless somebody named it meanwhile (that name wins) or all
+ * there was to keep is the fallback ("aba 3"). Null: nothing to keep.
+ */
+export function nameToKeep(title: string, given: string | undefined): string | null {
+  const clean = title.trim();
+  if (!clean || /^aba \d+$/.test(clean) || given) return null;
+  return clean;
+}
+
+/**
+ * The account a tab's Claude answered on last, as the core reported it: a real
+ * key, never the order (which is a choice, not an account).
+ */
+export function provenKey(value: unknown): string | null {
+  return typeof value === "string" && value !== FOLLOW_ORDER && isValidKey(value) ? value : null;
 }
 
 // ------------------------------------------------------------------ the core's answers

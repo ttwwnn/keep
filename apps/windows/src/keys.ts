@@ -12,8 +12,10 @@ export type Action =
   | { kind: "goToTab"; index: number }
   | { kind: "lastTab" }
   | { kind: "picker" }
+  | { kind: "palette" }
   | { kind: "searchAll" }
   | { kind: "findInTab" }
+  | { kind: "findOnScreen" }
   | { kind: "zoomIn" }
   | { kind: "zoomOut" }
   | { kind: "zoomReset" }
@@ -64,10 +66,14 @@ export function shortcut(ev: KeyLike, mac = false): Action | null {
   if (ev.altKey && !ev.ctrlKey && !ev.metaKey && ARROWS[ev.code]) {
     return { kind: ev.shiftKey ? "resizePane" : "focusPane", direction: ARROWS[ev.code] };
   }
-  // Workspace to workspace: Ctrl+Alt+PageDown / PageUp (Ctrl+Alt+Tab is the system's).
-  if (mod && ev.altKey && !ev.shiftKey && !otherMod) {
+  // With Alt and the modifier: the palette (Ctrl+Shift+Alt+P, as the Mac's ⌘⇧P with Alt for the shell's Ctrl+P),
+  // the find bar on the screen (Ctrl+Alt+F; Ctrl+F is the search of the pane's history),
+  // and workspace to workspace: Ctrl+Alt+PageDown / PageUp (Ctrl+Alt+Tab is the system's).
+  if (mod && ev.altKey && !otherMod) {
+    if (ev.shiftKey) return ev.code === "KeyP" ? { kind: "palette" } : null;
     if (ev.code === "PageDown") return { kind: "nextWorkspace" };
     if (ev.code === "PageUp") return { kind: "previousWorkspace" };
+    if (ev.code === "KeyF") return { kind: "findOnScreen" };
     return null;
   }
   if (!mod || ev.altKey || otherMod) return null;

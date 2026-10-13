@@ -74,3 +74,37 @@ pub fn estado() -> PathBuf {
         .unwrap_or_else(|| casa().join(".local/state"))
         .join("keep/ia");
 }
+
+/// O que `canonicalize` devolve no Windows traz o prefixo `\\?\` (`\\?\UNC\` nas pastas de rede): não serve de pasta de
+/// uma aba, nem de texto numa linha digitada, nem para a pessoa ler. O mesmo caminho sem ele; o que não é de unidade
+/// (`\\?\Volume{…}`) fica como está, e em outros sistemas nada muda.
+pub fn sem_prefixo(caminho: PathBuf) -> PathBuf {
+    let texto = caminho.to_string_lossy();
+    if let Some(rede) = texto.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rede}"));
+    }
+    match texto.strip_prefix(r"\\?\") {
+        Some(resto) if resto.as_bytes().get(1) == Some(&b':') && resto.as_bytes()[0].is_ascii_alphabetic() => {
+            PathBuf::from(resto.to_string())
+        }
+        _ => caminho,
+    }
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+
+    #[test]
+    fn o_prefixo_do_windows_sai_so_onde_e_seguro() {
+        let p = |s: &str| sem_prefixo(PathBuf::from(s));
+        assert_eq!(p(r"\\?\C:\Users\ana\proj"), PathBuf::from(r"C:\Users\ana\proj"));
+        assert_eq!(p(r"\\?\d:\x"), PathBuf::from(r"d:\x"));
+        assert_eq!(p(r"\\?\UNC\srv\share\proj"), PathBuf::from(r"\\srv\share\proj"));
+        // Já sem prefixo, de volume ou de outro sistema: como estão.
+        assert_eq!(p(r"C:\Users\ana"), PathBuf::from(r"C:\Users\ana"));
+        assert_eq!(p(r"\\?\Volume{1234}\x"), PathBuf::from(r"\\?\Volume{1234}\x"));
+        assert_eq!(p("/Users/ana/proj"), PathBuf::from("/Users/ana/proj"));
+        assert_eq!(p(r"\\?\"), PathBuf::from(r"\\?\"));
+    }
+}

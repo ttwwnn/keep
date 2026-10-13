@@ -21,6 +21,7 @@
 
 use std::path::{Path, PathBuf};
 
+use keep_ia::caminhos;
 use keep_ia::daemon;
 use keep_ia::linha::{self, Subida};
 
@@ -110,8 +111,8 @@ pub fn ler_argumentos(args: &[String]) -> Result<Option<Pedido>, String> {
 
 fn expande(p: &str) -> PathBuf {
     match p.strip_prefix("~/") {
-        Some(resto) => keep_ia::caminhos::casa().join(resto),
-        None if p == "~" => keep_ia::caminhos::casa(),
+        Some(resto) => caminhos::casa().join(resto),
+        None if p == "~" => caminhos::casa(),
         None => PathBuf::from(p),
     }
 }
@@ -130,12 +131,15 @@ pub fn argumentos_do_claude(conteudo: &Conteudo, arquivo: Option<&Path>) -> Vec<
 /// Abre a aba e digita a linha. Devolve o workspace, a aba e a linha.
 pub fn abrir(p: &Pedido) -> Result<(String, u32, String), String> {
     let lista = daemon::listar().map_err(|e| format!("O Keep não está aberto ({e}). Abra o Keep; não use o Terminal."))?;
-    let pasta = p.pasta.canonicalize().map_err(|_| format!("pasta inexistente: {}", p.pasta.display()))?;
+    // Sem o `\\?\` que o Windows põe: a pasta vai à aba, e o arquivo, ao texto da linha.
+    let pasta = p.pasta.canonicalize().map(caminhos::sem_prefixo).map_err(|_| format!("pasta inexistente: {}", p.pasta.display()))?;
     if !pasta.is_dir() {
         return Err(format!("pasta inexistente: {}", pasta.display()));
     }
     let arquivo = match &p.conteudo {
-        Conteudo::Passagem(a) => Some(a.canonicalize().map_err(|_| format!("passagem inexistente: {}", a.display()))?),
+        Conteudo::Passagem(a) => {
+            Some(a.canonicalize().map(caminhos::sem_prefixo).map_err(|_| format!("passagem inexistente: {}", a.display()))?)
+        }
         Conteudo::Pedido(t) => Some(grava_pedido(t)?),
         Conteudo::Argumentos(_) => None,
     };
