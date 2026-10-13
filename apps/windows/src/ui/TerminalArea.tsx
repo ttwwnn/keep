@@ -69,7 +69,7 @@ function PaneHost(props: { workspace: string; root: number; pane: number; visibl
               action: () => void view?.type(imagePasteSequence(isMac.value)).catch(() => {}),
             },
             { label: "Selecionar tudo", action: () => view?.term.selectAll() },
-            { label: "Limpar a tela", action: () => view?.term.clear() },
+            { label: "Limpar a tela", hint: "Ctrl+Shift+L", action: () => void view?.type("\x0c").catch(() => {}) },
             "separator",
             { label: "Dividir à direita", hint: "Ctrl+Shift+D", action: () => (focusPane(workspace, root, pane), void split(SPLIT_RIGHT)) },
             { label: "Dividir abaixo", hint: "Ctrl+Shift+E", action: () => (focusPane(workspace, root, pane), void split(SPLIT_DOWN)) },

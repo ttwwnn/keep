@@ -715,6 +715,14 @@ export function stepTab(direction: number): void {
   select(ws, next.root.id);
 }
 
+/** The next workspace in the sidebar's order, or the one before: its last tab in front. */
+export function stepWorkspace(direction: number): void {
+  const names = orderedWorkspaces.value.map((w) => w.name);
+  if (names.length === 0) return;
+  const at = Math.max(0, names.indexOf(activeWorkspace.value ?? ""));
+  select(names[(at + direction + names.length) % names.length]);
+}
+
 export function goToTab(index: number | "last"): void {
   const tabs = activeTabs();
   const ws = activeWorkspace.value;

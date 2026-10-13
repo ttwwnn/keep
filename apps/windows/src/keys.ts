@@ -22,7 +22,14 @@ export type Action =
   | { kind: "rename" }
   | { kind: "copy" }
   | { kind: "paste" }
-  | { kind: "pasteImage" };
+  | { kind: "pasteImage" }
+  | { kind: "nextWorkspace" }
+  | { kind: "previousWorkspace" }
+  | { kind: "toggleSidebar" }
+  | { kind: "selectAll" }
+  | { kind: "clearScreen" }
+  | { kind: "fullscreen" }
+  | { kind: "settings" };
 
 export interface KeyLike {
   key: string;
@@ -44,6 +51,13 @@ export function shortcut(ev: KeyLike, mac = false): Action | null {
   const mod = mac ? ev.metaKey : ev.ctrlKey;
   const otherMod = mac ? ev.ctrlKey : ev.metaKey;
   if (ev.code === "F2" && !mod && !ev.shiftKey && !ev.altKey) return { kind: "rename" };
+  if (ev.code === "F11" && !mod && !ev.shiftKey && !ev.altKey && !otherMod) return { kind: "fullscreen" };
+  // Workspace to workspace: Ctrl+Alt+PageDown / PageUp (Ctrl+Alt+Tab is the system's).
+  if (mod && ev.altKey && !ev.shiftKey && !otherMod) {
+    if (ev.code === "PageDown") return { kind: "nextWorkspace" };
+    if (ev.code === "PageUp") return { kind: "previousWorkspace" };
+    return null;
+  }
   if (!mod || ev.altKey || otherMod) return null;
   if (ev.code === "Tab") return ev.shiftKey ? { kind: "previousTab" } : { kind: "nextTab" };
   if (ev.shiftKey) {
@@ -64,6 +78,13 @@ export function shortcut(ev: KeyLike, mac = false): Action | null {
         return { kind: "copy" };
       case "KeyV":
         return { kind: "pasteImage" };
+      // The terminal's own Ctrl+B, Ctrl+A and Ctrl+L are the shell's, so these take Shift.
+      case "KeyB":
+        return { kind: "toggleSidebar" };
+      case "KeyA":
+        return { kind: "selectAll" };
+      case "KeyL":
+        return { kind: "clearScreen" };
       // Shift with = types +: Ctrl+Shift+= is Ctrl++.
       case "Equal":
         return { kind: "zoomIn" };
@@ -82,6 +103,8 @@ export function shortcut(ev: KeyLike, mac = false): Action | null {
       return { kind: "zoomReset" };
     case "KeyF":
       return { kind: "findInTab" };
+    case "Comma":
+      return { kind: "settings" };
     case "KeyV":
       return { kind: "paste" };
   }

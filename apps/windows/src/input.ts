@@ -7,6 +7,7 @@
 // app, not a document.
 
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { SPLIT_DOWN, SPLIT_RIGHT } from "./api";
 import { SHIFT_ENTER_SEQUENCE, imagePasteSequence, isPlainCopy, isPlainCut, isShiftEnter, shortcut, type Action } from "./keys";
@@ -25,6 +26,8 @@ import {
   overlay,
   split,
   stepTab,
+  stepWorkspace,
+  toggleSidebar,
   terminals,
   zoom,
   zoomReset,
@@ -75,6 +78,31 @@ export function perform(action: Action): void {
       break;
     case "splitDown":
       void split(SPLIT_DOWN);
+      break;
+    case "nextWorkspace":
+      stepWorkspace(1);
+      break;
+    case "previousWorkspace":
+      stepWorkspace(-1);
+      break;
+    case "toggleSidebar":
+      toggleSidebar();
+      break;
+    case "selectAll":
+      activeView()?.term.selectAll();
+      break;
+    case "clearScreen":
+      // A form feed, as the Mac sends it: the screen is the daemon's, and a
+      // program drawing its own keeps its own account of what is on it.
+      void activeView()?.type("\x0c").catch(() => {});
+      break;
+    case "fullscreen": {
+      const win = getCurrentWindow();
+      void win.isFullscreen().then((on) => win.setFullscreen(!on));
+      break;
+    }
+    case "settings":
+      overlay.value = overlay.value === "settings" ? null : "settings";
       break;
     case "rename": {
       const ws = activeWorkspace.value;
@@ -172,6 +200,11 @@ const EVERYWHERE = new Set<Action["kind"]>([
   "zoomIn",
   "zoomOut",
   "zoomReset",
+  "nextWorkspace",
+  "previousWorkspace",
+  "toggleSidebar",
+  "fullscreen",
+  "settings",
 ]);
 
 export function installInput(): void {
