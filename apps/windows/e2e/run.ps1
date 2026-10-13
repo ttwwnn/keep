@@ -289,6 +289,11 @@ if (-not (Test-Path $env:KEEP_E2E_REPORT)) {
 }
 $report = Get-Content $env:KEEP_E2E_REPORT -Raw | ConvertFrom-Json
 $report.steps | Format-Table name, ok, ms, detail -AutoSize | Out-String -Width 220 | Write-Host
+# The table cuts what does not fit; a step that failed says all of it.
+$report.steps | Where-Object { -not $_.ok } | ForEach-Object {
+    Write-Host "==> FALHOU: $($_.name)"
+    Write-Host "    $($_.detail)"
+}
 if (-not $report.ok) { throw 'o roteiro do app falhou' }
 if ($update -like 'FALHOU*') { throw "a atualização com o daemon rodando falhou: $update" }
 if ($lixeira -like 'FALHOU*') { throw "a worktree não foi para a Lixeira: $lixeira" }
