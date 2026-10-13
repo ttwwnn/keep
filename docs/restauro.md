@@ -82,3 +82,35 @@ desvio que o kit-mac montava (lançador em C + script).
 
 Testes: `cargo test -p keep-restauro` (o `tests/nova.rs` abre conversas de
 verdade num daemon do próprio teste, com a IA falsa como `claude`).
+
+# A conversa que parou numa queda continua sozinha
+
+Quando o login cai, a rede some ou o limite de uso estoura no meio de um
+trabalho, o Claude Code grava uma fala de erro e a conversa PARA ali, mesmo
+depois de a causa passar. O app roda `keep continuar` a cada 15 s: a conversa
+cuja última fala é esse erro recebe "continue: …; siga exatamente de onde
+parou." quando a causa volta.
+
+- Quem diz que parou é o transcrito (última fala da conversa principal, depois
+  da abertura do processo); a sessão estacionada em segundo plano conta pela
+  sessão `bg`.
+- A porta de cada causa: login, a credencial da aba com acesso válido (aba
+  presa a uma conta fica de fora: o login dela volta pelo menu); rede, a API
+  responde; limite, a conta da aba tem folga.
+- A tela só confirma que é seguro: caixa vazia (ou já com a mensagem, faltando
+  o Enter), nada rodando, nenhuma tarefa do rodapé selecionada, o erro à vista.
+  Vista desviada (modo transcrito, painel de agentes, diálogo do limite,
+  conversa rolada) volta à conversa só com a pessoa longe do teclado há 2 min.
+- No máximo 3 vezes seguidas sem a conversa andar, 2 min entre elas; a mensagem
+  tem de chegar ao transcrito para contar.
+- Estado e registro em `continuar.json` e `continuar.log`, na pasta do restauro.
+
+```
+keep continuar             varre e destrava (o app)
+keep continuar --seco      diz o que faria
+keep continuar --status    o que vê em cada conversa e as três portas
+```
+
+Teste: `cargo build -p keep-restauro --examples && cargo test -p keep-restauro
+--test continuar` (daemon do teste, Claude parado de mentira em quatro abas).
+Era o `cc-continuar` do kit-mac até 13/10/2026.

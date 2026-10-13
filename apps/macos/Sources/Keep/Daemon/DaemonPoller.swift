@@ -142,12 +142,16 @@ final class AIChores {
     private var indexing = false
     private var renewing = false
     private var restoring = false
+    private var resuming = false
 
     nonisolated static let syncEvery: TimeInterval = 30
     nonisolated static let indexEvery: TimeInterval = 120
     nonisolated static let renewEvery: TimeInterval = 60
     /// The picture of the tabs that comes back after a restart.
     nonisolated static let restoreEvery: TimeInterval = 30
+    /// A conversation stopped by a login, network or usage-limit drop gets
+    /// its "continue" this soon after the cause clears.
+    nonisolated static let resumeEvery: TimeInterval = 15
 
     func start() {
         let sync = Timer(timeInterval: Self.syncEvery, repeats: true) { [weak self] _ in
@@ -162,8 +166,11 @@ final class AIChores {
         let restoration = Timer(timeInterval: Self.restoreEvery, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.restore(always: false) }
         }
-        for timer in [sync, index, renewal, restoration] { RunLoop.main.add(timer, forMode: .common) }
-        timers = [sync, index, renewal, restoration]
+        let resumption = Timer(timeInterval: Self.resumeEvery, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.resume() }
+        }
+        for timer in [sync, index, renewal, restoration, resumption] { RunLoop.main.add(timer, forMode: .common) }
+        timers = [sync, index, renewal, restoration, resumption]
         // A login that ran out while the app was closed is renewed at once.
         renew()
         // The conversations of a restart come back now, not in 30 s.
@@ -179,6 +186,17 @@ final class AIChores {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             TabRestore.keep()
             DispatchQueue.main.async { self?.restoring = false }
+        }
+    }
+
+    /// The conversations that stopped on a dropped login, network or usage
+    /// limit, told to continue once it is back (`keep continuar`).
+    private func resume() {
+        guard !resuming, daemonUp else { return }
+        resuming = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            TabRestore.resume()
+            DispatchQueue.main.async { self?.resuming = false }
         }
     }
 
