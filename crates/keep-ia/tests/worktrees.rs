@@ -2393,7 +2393,10 @@ fn t53_registro_sem_pasta_sai_so_ele() {
     let r = worktrees::esquecer_em(&m.amb, Path::new(&sumiu), Some(o.registros[0].nasceu_ns));
     assert!(r.ok && r.registro_removido == Some(true), "{r:?}");
     let lista = g(&m.repo, &["worktree", "list", "--porcelain"]);
-    let tem = |cam: &str| lista.lines().any(|l| l == format!("worktree {cam}"));
+    // O git escreve o caminho do jeito dele (no Windows, com `/`): compara-se como o produto compara.
+    let tem = |cam: &str| {
+        lista.lines().filter_map(|l| l.strip_prefix("worktree ")).any(|p| pastas::mesmo(&pastas::normaliza(p), cam))
+    };
     assert!(!tem(&sumiu) && tem(&sumiu_de_outra) && tem(&existe), "{lista}");
     g(&m.repo, &["show-ref", "--verify", "refs/keep-lixeira/wt-sumiu"]);
     let log = std::fs::read_to_string(m.base.join("estado").join("lixeira.log")).unwrap();
