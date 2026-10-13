@@ -243,13 +243,16 @@ pub fn fonte(conta: &Conta) -> Option<Fonte> {
     fonte_exceto(conta, None)
 }
 
-/// Se a conta tem dono que roda (com refresh vivo), em dia ou não.
+/// Se a conta tem dono que roda (com refresh vivo), em dia ou não. Com o
+/// kit, o global não conta: ele muda de dono quando o kit quer, e um login
+/// descartado por causa dele deixaria a conta sem dono na troca seguinte.
 fn tem_dono(conta: &Conta, exceto: Option<&Path>) -> bool {
+    let externo = contas::gerente_externo();
     candidatos(conta).into_iter().any(|a| {
-        if let (Armazem::Fixa { pasta }, Some(x)) = (&a, exceto) {
-            if mesma(pasta, x) {
-                return false;
-            }
+        match (&a, exceto) {
+            (Armazem::Global, _) if externo => return false,
+            (Armazem::Fixa { pasta }, Some(x)) if mesma(pasta, x) => return false,
+            _ => {}
         }
         local_de(&a).is_some_and(|l| contas::login_roda(credencial::ler(&l), &a))
     })

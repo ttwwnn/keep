@@ -493,3 +493,30 @@ fn um_processo_que_nao_e_claude_nao_segura_o_armazem_nem_a_pasta() {
     );
     assert!(contas::ler_metadados(&bia).unwrap().aba);
 }
+
+#[test]
+fn com_o_kit_o_login_global_nao_conta_como_outro_dono() {
+    let c = casa("kit-dono");
+    perfis(&[("G", "u-2", "bia@y.com"), ("F", "u-2", "bia@y.com")]);
+    // O kit pôs a Bia no global; a única pasta fixa dela é a da aba antiga.
+    c.global("G", "rG");
+    let bia = c.fixa("k-2", Some(("F", "rF")), Some(("bia", "bia@y.com", "u-2")));
+    std::fs::write(c.raiz.join(".claude/contas/.ativa"), "bia\n").unwrap();
+    // SAFETY: a casa (e a trava) está de pé.
+    unsafe { std::env::set_var("KEEP_IA_GERENTE_EXTERNO", "1") };
+    let _ = contas::listar(true);
+    let shell = Filho::novo(&[]);
+    let claude = Filho::claude(&c, &[(VAR, &bia.to_string_lossy())]);
+    let lista = contas::listar(false);
+    assert_eq!(
+        trocar_processo(claude.pid(), shell.pid(), "T", 1, "claude:bia", None, &lista).unwrap(),
+        Feito::Trocou("claude:bia".into())
+    );
+    // O login da pasta mudou para uma pasta nova (a Bia continua com dono
+    // quando o kit tirar o global dela), em vez de ser descartado.
+    let novas: Vec<String> = pastas_fixas().into_iter().filter(|n| n != "k-2").collect();
+    assert_eq!(novas.len(), 1, "{novas:?}");
+    let o = Oauth::de(&le(&caminhos::fixas().join(&novas[0]))).unwrap();
+    assert_eq!(o.refresh.as_deref(), Some("rF"));
+    assert_eq!(refresh_global().as_deref(), Some("rG"), "o global é do kit: intocado");
+}
