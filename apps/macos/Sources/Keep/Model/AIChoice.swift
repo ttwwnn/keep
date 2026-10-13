@@ -317,14 +317,15 @@ enum AIChoices {
                 kind: .note, title: "Esta aba está rodando \(name)", key: nil, mark: .none,
                 enabled: false, help: nil))
         }
-        let now = (lines.first(where: \.isAvailable) ?? lines.first).map { "Agora: \($0.account.name)" }
+        let now = lines.firstIndex(where: \.isAvailable).map { "Agora: \(name(number: $0 + 1))" }
+            ?? (lines.isEmpty ? nil : "Agora: \(name(number: 1))")
         rows.append(Row(
             kind: .follow, title: followTitle, key: AIHelper.followOrder,
             mark: current == AIHelper.followOrder ? .on : .none, enabled: enabled, help: now,
             label: "a ordem de prioridade"))
         guard !lines.isEmpty else { return rows }
         rows.append(Row(kind: .separator, title: "", key: nil, mark: .none, enabled: false, help: nil))
-        for line in lines {
+        for (index, line) in lines.enumerated() {
             let account = line.account
             var mark = Mark.none
             if let current, account.keys.contains(current) {
@@ -337,34 +338,51 @@ enum AIChoices {
                 }
             }
             rows.append(Row(
-                kind: .account, title: title(line), key: account.engine.key(account.alias),
-                mark: mark, enabled: enabled, help: nil, label: account.name))
+                kind: .account, title: title(line, number: index + 1), key: account.engine.key(account.alias),
+                mark: mark, enabled: enabled, help: nil, label: name(number: index + 1)))
         }
         return rows
     }
 
-    /// "Claude · reserva · ds.lw.tm@… — no limite": the service and the
-    /// order's name for it, the address the service knows it by, and — when
-    /// it cannot take work now — why.
-    static func title(_ line: AccountUsage) -> String {
-        var title = line.account.name
+    /// An account is called by its place in the footer's list, "Consumo de
+    /// IA", from 1: "IA-2". Never by the order's own names for the accounts
+    /// (asked for 13/10/2026: "não use mais a nomenclatura principal e
+    /// reserva, deve ser só a posição das contas na lista").
+    static func name(number: Int) -> String { "IA-\(number)" }
+
+    /// "IA-2 · ds.lw.tm@… — no limite": the account's place in the list, the
+    /// address the service knows it by, and — when it cannot take work now —
+    /// why.
+    static func title(_ line: AccountUsage, number: Int) -> String {
+        var title = name(number: number)
         if let email = line.account.email { title += " · \(email)" }
         if !line.isAvailable { title += " — \(line.account.warning ?? "no limite")" }
         return title
     }
 
+    /// The place in the list of the account a key names (`claude:x`,
+    /// `gpt:y`), from 1, or nil when the list has no such account.
+    static func number(of key: String?, in lines: [AccountUsage]) -> Int? {
+        guard let key else { return nil }
+        return lines.firstIndex { $0.account.keys.contains(key) || $0.account.order == key }.map { $0 + 1 }
+    }
 
-    /// What the sidebar writes after a tab's title: the program, or — for an
-    /// AI kept on an account of its own — which one. "claude · reserva";
-    /// "codex · outra" for a GPT account other than Codex's own login.
-    static func programLabel(command: String, account: String?) -> String {
-        guard let account, let colon = account.firstIndex(of: ":") else { return command }
-        let service = account[..<colon]
-        let alias = String(account[account.index(after: colon)...])
-        switch service {
-        case "claude" where alias != "ordem": return "claude · \(alias)"
-        case "gpt" where alias != "principal": return "codex · \(alias)"
-        default: return command
+    /// What the sidebar writes after a tab's title. For a tab running an AI,
+    /// only the number of the account it runs on — "(IA-3)", never the AI's
+    /// name (asked for 13/10/2026) —, the one it was put on when the core has
+    /// not said, and for a tab following the order the Claude login the
+    /// tabs share; nothing when no account can be told. For any other
+    /// program, its name: "— bash".
+    static func tabLabel(
+        command: String, account: String?, running: String?, lines: [AccountUsage]
+    ) -> String {
+        guard [AIProgramKind.claude, .codex].contains(AIProgramKind(command: command)) else {
+            return command.isEmpty ? "" : "— \(command)"
         }
+        var key = running ?? account
+        if key == AIHelper.followOrder {
+            key = lines.first { $0.account.engine == .claude && $0.account.isActive }?.account.keys.first
+        }
+        return number(of: key, in: lines).map { "(\(name(number: $0)))" } ?? ""
     }
 }

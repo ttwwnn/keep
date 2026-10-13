@@ -257,6 +257,16 @@ async fn ia_trash(app: AppHandle, items: Vec<ia::Going>, pids: Vec<u32>) -> Answ
         .map_err(|e| e.to_string())
 }
 
+/// The worktrees of tabs that closed without the question, to the Recycle
+/// Bin by the core's say; what did not go.
+#[tauri::command]
+async fn ia_sweep(app: AppHandle) -> Answer<Vec<String>> {
+    let dir = resources(&app);
+    tauri::async_runtime::spawn_blocking(move || ia::sweep(dir.as_deref(), &daemon::address()))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// What Claude Code's status line saved for each of these shells (the model
 /// and the effort it runs with): the JSON text, by shell pid; see `status`.
 #[tauri::command]
@@ -378,6 +388,7 @@ pub fn run() {
             ia,
             ia_signature,
             ia_trash,
+            ia_sweep,
             claude_statuses,
             path_exists,
             e2e_shot,

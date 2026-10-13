@@ -6,7 +6,8 @@
 // usage every minute (the five minutes between readings of an account are
 // the core's), the login files every two seconds, the tabs every five while
 // the window is in front, the order of priority every half minute, the
-// worktrees' index every two minutes. None of them overlaps itself.
+// worktrees' index every two minutes (and, after it, the sweep of the worktrees
+// of tabs that closed without the question). None of them overlaps itself.
 
 import { computed, signal } from "@preact/signals";
 import * as api from "./api";
@@ -521,12 +522,19 @@ async function synchronize(): Promise<void> {
 
 let indexing = false;
 
-/** Who made which worktree, written down while the conversations are alive to say. */
+/**
+ * Who made which worktree, written down while the conversations are alive to say; then the
+ * worktrees of tabs that closed without the question go where it would have sent them (the
+ * core decides, with twenty minutes of grace and anything in doubt kept).
+ */
 async function indexWorktrees(): Promise<void> {
   if (!iaAvailable.value || !daemonUp() || indexing) return;
   indexing = true;
   try {
-    await api.iaAsk(["worktrees", "indexar", "--json"]);
+    const answer = await api.iaAsk(["worktrees", "indexar", "--json"]);
+    if (answer._saida === 0) {
+      for (const line of await api.iaSweep()) console.warn("varredura de worktrees:", line);
+    }
   } catch {
     /* the next round */
   } finally {

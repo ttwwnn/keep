@@ -280,6 +280,23 @@ ou Codex) que tinha, no nascimento dela, uma chamada executora em andamento que 
 Nunca: a principal, travada, em uso por outra aba viva, dono duvidoso. O app pergunta antes, lista no
 diálogo e move (macOS: `FileManager.trashItem`, que grava o "Colocar de volta").
 
+A aba que acaba sem o diálogo — o shell sai (`exit`, Ctrl-D), o workspace acaba por outro caminho, o
+computador reinicia e ela não volta — também leva as worktrees dela: o `indexar` anota as conversas
+cujas abas fecharam (`encerradas`, por 30 dias), e logo depois dele o app pergunta `keep worktrees
+orfas` e move o que vier em `lixeira` pelos mesmos três passos (preparar, mover, concluir), sem
+diálogo. Órfã = dona decidida (não provisória) que rodou numa aba do Keep e não tem mais aba (nem ela,
+nem a conversa em que ela seguiu, `continuedInSessionId`), não roda em lugar nenhum (sessão do Claude
+viva, thread aberta num Codex, o id na linha de comando de qualquer processo — o cartão de retomada) e
+não é devida pela restauração das abas (`keep restauro`: enquanto ela não acaba neste keepd, toda
+conversa dos retratos; depois, a de cada aba recriada que segue aberta). Na dúvida, fica: conversa que
+nunca passou por uma aba (Terminal, editor, `claude -p` agendado), transcrito mexido há menos de 20 min,
+keepd sem `List3` ou de pé há menos de 20 min, worktree principal, travada, com submódulos, já na
+Lixeira, com processo dentro ou com outra conversa viva trabalhando nela. Só vai depois de órfã por 20
+min seguidos (a carência recomeça se a conversa voltar). Registro cuja pasta já sumiu sai sozinho
+(`esquecer`: só aquele registro, com a HEAD guardada; nunca `git worktree prune`; pasta em disco que
+pode estar desmontado fica). Depois de renomear a pasta dos projetos (mesmo só na caixa), o `indexar`
+refaz as chaves das decisões pelo caminho canônico, e nenhuma decisão se perde.
+
 ## Linha de comando (JSON, sempre `"versao": 1`; saída 0 = ok, 1 = recusado, 2 = uso errado)
 
 ```
@@ -297,6 +314,8 @@ keep worktrees listar [--prazo SEG] <workspace>:<root>[,<painel>…]…
 keep worktrees preparar <caminho>
 keep worktrees concluir <caminho> <destino>
 keep worktrees indexar [--json]
+keep worktrees orfas [--json] [--so-ler]
+keep worktrees esquecer <caminho> [--nasceu NS]
 ```
 
 ### Respostas
@@ -330,6 +349,11 @@ Toda resposta é um objeto JSON numa linha, com `"versao": 1` e `"ok"`. Recusa: 
   "alteradas": [{"ws", "aba", "feito"}], "pendentes": [{"ws", "aba", "motivo", "detalhe"?}]}`.
 - `renovar` → `{"estado": "feito"|"em-andamento", "renovados": [{"conta", "armazem"}], "falhas":
   [{"conta", "armazem", "motivo"}], "abas": {…}}` (ver "Renovação").
+- `worktrees orfas` → `{"lixeira": [item do listar], "registros": [item: a pasta já sumiu], "aguardando":
+  [{"caminho", "motivo"}], "mantidas": [{"caminho", "motivo"}], "avisos": [texto], "ocupado"?}`. Grava
+  desde quando cada uma é órfã (`--so-ler`: não grava nada). `ocupado`: outra rodada em curso.
+- `worktrees esquecer` → como o `concluir` (`ok`, `registro_removido`, `ref`, `motivo`), para um
+  registro cuja pasta já não existe.
 
 ### Quem chama o quê
 
@@ -341,7 +365,7 @@ Toda resposta é um objeto JSON numa linha, com `"versao": 1` e `"ok"`. Recusa: 
 | a cada 5 s com a janela à frente, e ao abrir o menu de uma aba | `keep ia abas --json` |
 | a cada 30 s | `keep ia sincronizar --json` |
 | a cada 60 s, e ao abrir (mesmo sem o daemon) | `keep ia renovar --json` |
-| a cada 2 min | `keep worktrees indexar --json` |
+| a cada 2 min | `keep worktrees indexar --json` e, logo depois, `keep worktrees orfas --json` (com `preparar`/`concluir` ou `esquecer` para o que vier) |
 | setas, "+", menu da aba, fechar aba | `ordem mover`, `entrar`, `trocar`, `worktrees listar/preparar/concluir` |
 
 O app passa `KEEP_SOCKET` (o daemon dele). Um app de teste que lê uma casa falsa passa
