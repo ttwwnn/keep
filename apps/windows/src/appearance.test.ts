@@ -23,6 +23,11 @@ describe("the font stack", () => {
     expect(terminalFontStack("'Fira Code', Consolas, monospace", "windows")).toBe(`'Fira Code', Consolas, ${symbols}, monospace`);
     expect(terminalFontStack("Hack, monospace", "windows")).toBe(`Hack, ${symbols}, monospace`);
   });
+  it("takes a quote inside a name for part of the name", () => {
+    expect(terminalFontStack("Programmer's Mono", "windows")).toBe(
+      `"Programmer's Mono", 'Cascadia Mono', 'Cascadia Code', Consolas, ${symbols}, monospace`,
+    );
+  });
   it("adds the symbols font after a list that has no generic family", () => {
     expect(terminalFontStack('"Hack", Consolas', "windows")).toBe(`"Hack", Consolas, ${symbols}, monospace`);
   });

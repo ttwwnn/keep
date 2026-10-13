@@ -30,9 +30,13 @@ export function firstFamily(stack: string): string {
   return stack.split(",")[0].trim().replace(/^["']|["']$/g, "");
 }
 
-/** Whether what was kept as a family is already a CSS list, as the old free field of the settings took one. */
+/**
+ * Whether what was kept as a family is already a CSS list, as the old free
+ * field of the settings took one: it has a comma, or opens with a quote. A
+ * quote inside a name (Programmer's Mono) is part of the name.
+ */
 function isCssList(text: string): boolean {
-  return /[,"']/.test(text);
+  return /^["']|,/.test(text);
 }
 
 /**
