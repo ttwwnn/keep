@@ -29,7 +29,7 @@ final class BatteryIndicator: NSView {
     private static let boltWidth: CGFloat = 8
     private static let boltGap: CGFloat = 3
     /// Room round the figure inside the cell.
-    private static let padding: CGFloat = 2.5
+    private static let padding: CGFloat = 2
     /// The size of the zoom control's percentage (11 at 100%), moving with the zoom.
     private static var font: NSFont { GhosttyApp.shared.terminalFont(size: 11 * GhosttyApp.shared.zoomLevel) }
 
@@ -155,7 +155,7 @@ final class BatteryIndicator: NSView {
     /// The cell: as wide as "100%" with room round it, as tall as the text.
     private var bodySize: NSSize {
         let widest = NSAttributedString(string: "100%", attributes: [.font: Self.font]).size().width
-        let height = ceil(Self.font.ascender - Self.font.descender) + 1
+        let height = ceil(Self.font.capHeight) + 4
         return NSSize(width: ceil(widest) + 2 * Self.padding, height: height)
     }
 
