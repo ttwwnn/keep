@@ -338,12 +338,29 @@ mod tests {
         font
     }
 
-    fn scratch(name: &str, bytes: &[u8]) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("keep-app-fonts-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join(name);
-        std::fs::write(&path, bytes).unwrap();
-        path
+    /// A file of these bytes in a folder of its own, taken away with it.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str, bytes: &[u8]) -> Scratch {
+            let dir = std::env::temp_dir().join(format!("keep-app-fonts-{}-{name}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join(name);
+            std::fs::write(&path, bytes).unwrap();
+            Scratch(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            if let Some(dir) = self.0.parent() {
+                let _ = std::fs::remove_dir_all(dir);
+            }
+        }
     }
 
     fn names(table: &[u8]) -> Vec<String> {
@@ -400,8 +417,8 @@ mod tests {
 
     #[test]
     fn a_file_with_a_font_gives_its_names() {
-        let path = scratch("one.ttf", &font_at(0, &name_table(&[(3, 0x409, 1, "Solo Mono")])));
-        assert_eq!(families_in(&path), vec![vec!["Solo Mono".to_string()]]);
+        let file = Scratch::new("one.ttf", &font_at(0, &name_table(&[(3, 0x409, 1, "Solo Mono")])));
+        assert_eq!(families_in(file.path()), vec![vec!["Solo Mono".to_string()]]);
     }
 
     #[test]
@@ -418,23 +435,24 @@ mod tests {
         file.extend(second_at.to_be_bytes());
         file.extend(font_at(first_at, &first));
         file.extend(font_at(second_at, &second));
-        let path = scratch("two.ttc", &file);
+        let collection = Scratch::new("two.ttc", &file);
         assert_eq!(
-            families_in(&path),
+            families_in(collection.path()),
             vec![vec!["Duo".to_string(), "Duo Regular Face".to_string()], vec!["Duo Mono".to_string()]]
         );
     }
 
     #[test]
     fn what_is_not_a_font_gives_nothing() {
-        assert!(families_in(&scratch("text.ttf", b"this is not a font at all")).is_empty());
-        assert!(families_in(&scratch("short.ttf", b"OT")).is_empty());
-        assert!(families_in(&scratch("empty.otf", b"")).is_empty());
+        assert!(families_in(Scratch::new("text.ttf", b"this is not a font at all").path()).is_empty());
+        assert!(families_in(Scratch::new("short.ttf", b"OT").path()).is_empty());
+        assert!(families_in(Scratch::new("empty.otf", b"").path()).is_empty());
         assert!(families_in(Path::new("/no/such/file.ttf")).is_empty());
         // The right version, a directory that says more tables than the file has.
-        assert!(families_in(&scratch("cut.ttf", &[0, 1, 0, 0, 0, 200, 0, 0, 0, 0, 0, 0])).is_empty());
+        assert!(families_in(Scratch::new("cut.ttf", &[0, 1, 0, 0, 0, 200, 0, 0, 0, 0, 0, 0]).path()).is_empty());
         // A font with no name to be found by.
-        assert!(families_in(&scratch("nameless.ttf", &font_at(0, &name_table(&[(3, 0x409, 4, "Full name only")])))).is_empty());
+        let nameless = font_at(0, &name_table(&[(3, 0x409, 4, "Full name only")]));
+        assert!(families_in(Scratch::new("nameless.ttf", &nameless).path()).is_empty());
     }
 
     #[test]
