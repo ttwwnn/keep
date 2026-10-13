@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 #
-# keep-confine: o programa de um workspace com pasta permitida só lê e grava
-# nela (e no mínimo de que a IA precisa); sem pasta, roda como sempre; com a
-# pasta sumida, não sobe. Sandbox de verdade (sandbox-exec), sem app. Segundos.
+# `keep ia confinar`: o programa de um workspace com pasta permitida só lê e
+# grava nela (e no mínimo de que a IA precisa); sem pasta, roda como sempre;
+# com a pasta sumida, não sobe; o que mandaria trabalho para um servidor de
+# fundo é recusado. Sandbox de verdade (sandbox-exec), sem app. Segundos.
 #
 #   tools/confine-test.sh
 #
-# O helper é ~/.local/bin/keep-confine (KEEP_CONFINE_BIN o troca).
+# O `keep` é o do target/release deste repositório (KEEP_BIN o troca).
 set -uo pipefail
-BIN=${KEEP_CONFINE_BIN:-$HOME/.local/bin/keep-confine}
+cd "$(dirname "$0")/.."
+KEEP=${KEEP_BIN:-$PWD/target/release/keep}
+[ -x "$KEEP" ] || { echo "sem $KEEP: cargo build --release -p keep"; exit 1; }
 # Under the home, which is what is denied, and outside what the AI is let keep.
 WORK=$(mktemp -d "$HOME/.keep-confine-test-XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
@@ -24,7 +27,7 @@ echo dentro > "$WORK/permitida/a.txt"
 echo fora > "$WORK/fora/b.txt"
 export KEEP_CONFINE_CONFIG=$WORK/confinement.json
 printf '{"presa": "%s"}\n' "$WORK/permitida" > "$KEEP_CONFINE_CONFIG"
-run() { KEEP_WORKSPACE="$1" "$BIN" /bin/sh -c "$2" 2>&1 | grep -v '^Keep: '; }
+run() { KEEP_WORKSPACE="$1" "$KEEP" ia confinar -- /bin/sh -c "$2" 2>&1 | grep -v '^Keep: '; }
 
 echo "um workspace com pasta"
 check "lê na pasta" "dentro" "$(run presa "cat '$WORK/permitida/a.txt'")"
@@ -40,27 +43,18 @@ check "sabe a pasta" "$WORK/permitida" "$(run presa 'echo $KEEP_CONFINED_TO')"
 echo "um workspace sem pasta"
 check "lê onde quiser" "fora" "$(run livre "cat '$WORK/fora/b.txt'")"
 
-echo "typing claude, as the shell function runs it"
-# Where the AI's own binary is: readable by it (it lives in ~/.local/bin for real).
-mkdir -p "$WORK/permitida/bin"
-cat > "$WORK/permitida/bin/claude" <<'FAKE'
-#!/bin/sh
-cat "$HOME/.zshrc" >/dev/null 2>&1 && echo leu-a-casa || echo nao-leu-a-casa
-cat "$KEEP_CONFINED_TO/a.txt" 2>&1
-FAKE
-chmod +x "$WORK/permitida/bin/claude"
+echo "what would send work out of the sandbox"
 printf '{"presa": "%s"}\n' "$WORK/permitida" > "$KEEP_CONFINE_CONFIG"
-FUNCAO=${KEEP_CLAUDE_FUNCAO:-$HOME/.config/zsh/claude-funcao.zsh}
-as_function() {  # as_function <workspace>
-    KEEP_WORKSPACE="$1" PATH="$WORK/permitida/bin:$PATH" HOME="$HOME" zsh -c "source '$FUNCAO'; claude" 2>&1 | grep -v '^Keep: '
-}
-check "the AI of a workspace with a folder is held to it" "nao-leu-a-casa
-dentro" "$(as_function presa)"
-check "the AI of another workspace is not" "leu-a-casa" "$(as_function livre | head -1)"
+check "claude agents is refused" "1" "$(KEEP_WORKSPACE=presa "$KEEP" ia confinar -- claude agents >/dev/null 2>&1; echo $?)"
+check "codex queue is refused" "1" "$(KEEP_WORKSPACE=presa "$KEEP" ia confinar -- codex queue x >/dev/null 2>&1; echo $?)"
+mkdir -p "$WORK/permitida/bin"
+printf '#!/bin/sh\necho "$@"\n' > "$WORK/permitida/bin/codex"; chmod +x "$WORK/permitida/bin/codex"
+check "codex goes up with its server in its own process" "--no-daemon resume x" \
+    "$(KEEP_WORKSPACE=presa "$KEEP" ia confinar -- "$WORK/permitida/bin/codex" resume x 2>/dev/null)"
 
 echo "a pasta sumiu"
 printf '{"presa": "%s"}\n' "$WORK/nao-existe" > "$KEEP_CONFINE_CONFIG"
-OUT=$(KEEP_WORKSPACE=presa "$BIN" /bin/echo subiu 2>&1)
+OUT=$(KEEP_WORKSPACE=presa "$KEEP" ia confinar -- /bin/echo subiu 2>&1)
 check "o programa não sobe" "no" "$(echo "$OUT" | grep -qx subiu && echo yes || echo no)"
 check "e diz por quê" "yes" "$(echo "$OUT" | grep -q 'não existe' && echo yes || echo no)"
 
