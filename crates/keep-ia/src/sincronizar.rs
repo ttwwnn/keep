@@ -90,6 +90,7 @@ pub fn rodada() -> Value {
         estado: Estado,
         limite: bool,
         ociosa: bool,
+        claude_aberto: bool,
     }
     let mut seguidoras = Vec::new();
     for i in ia.into_iter().filter(|i| i.conta == SEGUIR_ORDEM) {
@@ -109,7 +110,7 @@ pub fn rodada() -> Value {
         }
         let ociosa = a.info.last_active != 0
             && crate::contas::donos::agora_ms().saturating_sub(a.info.last_active) >= OCIOSA_MS;
-        seguidoras.push(Seguidora { ia: i, estado, limite, ociosa });
+        seguidoras.push(Seguidora { ia: i, estado, limite, ociosa, claude_aberto: prog == tela::Programa::Claude });
     }
 
     let livre = |c: &Conta| -> bool {
@@ -147,6 +148,14 @@ pub fn rodada() -> Value {
             _ => true,
         };
         if atual_livre && !(abaixo && s.ociosa) {
+            continue;
+        }
+        // Com o Claude aberto, nunca: trocar a conta dele é sair e voltar
+        // (ver `trocar`). Fica onde está até a pessoa escolher no menu.
+        if s.claude_aberto {
+            if !atual_livre {
+                pendentes.push(refe("claude-aberto", "O Claude da aba está aberto; escolha outra conta no menu dela."));
+            }
             continue;
         }
         if s.estado != Estado::Livre && !(s.estado == Estado::Dialogo && s.limite) {
