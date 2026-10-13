@@ -11,7 +11,9 @@
 # O `keep` é o de `target\release` deste repositório, o do PATH, ou o dado.
 param([string]$Keep = "")
 
-$ErrorActionPreference = "Stop"
+# Sem `$ErrorActionPreference = "Stop"`: no Windows PowerShell 5.1 a primeira linha
+# que o `keep` escreve no erro (`Keep: …`), redirecionada por `2>&1`, seria uma
+# exceção e acabaria o roteiro.
 $repo = Split-Path -Parent $PSScriptRoot
 if (-not $Keep) {
     $local = Join-Path $repo "target\release\keep.exe"
