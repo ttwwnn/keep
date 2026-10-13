@@ -173,17 +173,28 @@ confere(cv.contains(["esquecer", semPasta, "--nasceu", "1790000000111111111"]), 
 confere(cv.contains(["esquecer", recusado]), "varredura: registro sem nascimento vai sem ele", "\(cv)")
 confere(!cv.contains { $0.contains(dir + "/outra") }, "varredura: a que está na carência não é tocada", "\(cv)")
 confere(sobras.count == 1 && sobras[0].contains("travada: teste"), "varredura: a recusa vira linha dita", "\(sobras)")
+confere(cv.last == ["purgar", "--json"], "varredura: a purga roda depois, na mesma rodada", "\(cv)")
 confere(Date().timeIntervalSince(t5) >= 2, "varredura: espera o \u{201C}Colocar de volta\u{201D} ser gravado")
 try? fm.removeItem(atPath: orfaNaLixeira)
 // nada a varrer: só a pergunta, sem espera
 escreve("orfas.json", ["versao": 1, "lixeira": [], "registros": [], "aguardando": [], "mantidas": [], "avisos": []])
 limpaChamadas()
 let t6 = Date()
-confere(Worktrees.sweep().isEmpty && chamadas().count == 1 && Date().timeIntervalSince(t6) < 1.5, "varredura vazia: uma pergunta e nada mais", "\(chamadas())")
+confere(Worktrees.sweep().isEmpty && chamadas().map { ($0["argv"] as? [String]) ?? [] } == [["orfas", "--json"], ["purgar", "--json"]]
+        && Date().timeIntervalSince(t6) < 1.5, "varredura vazia: a pergunta, a purga e nada mais", "\(chamadas())")
+// a purga: o que saiu de vez e o que ficou viram linhas do registro
+escreve("purgar.json", ["versao": 1,
+    "purgadas": [["destino": NSHomeDirectory() + "/.Trash/wt-velha", "caminho": "/x/wt-velha", "id": "wt-velha"]],
+    "ignoradas": [["destino": NSHomeDirectory() + "/.Trash/da-pessoa", "motivo": "outro item no mesmo lugar"]],
+    "avisos": ["um aviso"]])
+let purga = Worktrees.sweep()
+confere(purga == ["saiu da lixeira de vez: ~/.Trash/wt-velha", "fica na lixeira: ~/.Trash/da-pessoa — outro item no mesmo lugar", "um aviso"],
+        "purga: linhas do que saiu e do que ficou", "\(purga)")
+try? fm.removeItem(atPath: dir + "/purgar.json")
 // outra rodada em curso no núcleo: nada
 escreve("orfas.json", ["versao": 1, "ocupado": true])
 limpaChamadas()
-confere(Worktrees.sweep().isEmpty && chamadas().count == 1, "varredura ocupada: nada")
+confere(Worktrees.sweep().isEmpty && chamadas().count == 1, "varredura ocupada: nada, nem a purga")
 // núcleo que falha: dito, nada movido
 let intacta = dir + "/repo-wt-intacta-\(getpid())"
 try! fm.createDirectory(atPath: intacta, withIntermediateDirectories: true)
@@ -191,7 +202,8 @@ escreve("orfas.json", ["versao": 1, "lixeira": [["caminho": intacta]]])
 escreve("orfas-falha", 1)
 limpaChamadas()
 let falhou = Worktrees.sweep()
-confere(falhou.first?.contains("falhou") == true && fm.fileExists(atPath: intacta) && chamadas().count == 1, "varredura que falha: dita e nada move", "\(falhou)")
+confere(falhou.first?.contains("falhou") == true && fm.fileExists(atPath: intacta) && chamadas().count == 2,
+        "varredura que falha: dita e nada move (a purga ainda roda)", "\(falhou) \(chamadas())")
 try? fm.removeItem(atPath: dir + "/orfas-falha")
 // núcleo de antes da varredura (saída 2): nada, sem erro
 escreve("sem-worktrees", 1)

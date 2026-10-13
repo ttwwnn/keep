@@ -176,8 +176,11 @@ enum Worktrees {
                 for item in going { text += "\n• " + describe(item) }
                 // Put Back brings the files, not the worktree: its entry in
                 // the repository is dropped so the branch is free again.
-                text += "\nOs arquivos voltam pelo “Colocar de volta” da Lixeira, já fora do git; "
-                    + "o ramo continua no repositório e os commits e alterações ficam guardados em refs/keep-lixeira."
+                // After three days the Keep empties what it sent (`purge`):
+                // the Trash is the short way back, refs/keep-lixeira the lasting one.
+                text += "\nOs arquivos voltam pelo “Colocar de volta” da Lixeira por 3 dias, já fora do git; "
+                    + "depois a pasta sai de vez. O ramo continua no repositório, e os commits e as alterações, "
+                    + "inclusive os arquivos novos, ficam guardados em refs/keep-lixeira."
                 parts.append(text)
             }
             let kept = listing.mantidas ?? []
@@ -256,7 +259,10 @@ enum Worktrees {
             let giveUp = Date().addingTimeInterval(60)
             let identity = item.nasceu_ns.map { ["--nasceu", String($0)] } ?? []
             while true {
-                switch run(helper, ["preparar", item.caminho] + identity, within: 30) {
+                // `preparar` also takes the folder's new files into
+                // refs/keep-lixeira (a `git add -A` into an index of its
+                // own), which walks the whole folder: two minutes.
+                switch run(helper, ["preparar", item.caminho] + identity, within: 120) {
                 case .failure(let why):
                     reason = why.description
                 case .success(let data):
@@ -363,6 +369,9 @@ enum Worktrees {
     /// A registration whose folder is already gone leaves the repository on
     /// its own (`esquecer`). Nothing when there is no `keep`, or one from
     /// before the sweep. What did not go, one line each.
+    ///
+    /// Then what the Keep itself sent to the Trash more than three days ago
+    /// goes for good (`purge`), within the same sweep: quitting waits for it.
     static func sweep() -> [String] {
         guard let helper else { return [] }
         let started: Bool = locked {
@@ -381,16 +390,25 @@ enum Worktrees {
             }
             waiting.forEach { $0() }
         }
+        guard var lines = sweepOrphans(helper) else { return [] }
+        if !shouldStop { lines += purge(helper) }
+        return lines
+    }
+
+    /// The orphans' part of `sweep`; nil when the core had nothing to say
+    /// this round (a core from before the sweep, another round under way):
+    /// then nothing else runs either.
+    private static func sweepOrphans(_ helper: String) -> [String]? {
         let found: Listing
         switch run(helper, ["orfas", "--json"], within: 120) {
         case .failure(let why) where why.status == 2:
             // A core from before the sweep does not know the question.
-            return []
+            return nil
         case .failure(let why):
             return ["o keep worktrees orfas falhou: \(why.description)"]
         case .success(let data):
             let answer = object(data)
-            if answer["ocupado"] as? Bool == true { return [] }
+            if answer["ocupado"] as? Bool == true { return nil }
             guard let read = try? JSONDecoder().decode(Listing.self, from: data), read.versao == 1 else {
                 return ["resposta ilegível do keep worktrees orfas"]
             }
@@ -420,6 +438,32 @@ enum Worktrees {
             }
         }
         return problems
+    }
+
+    /// What the Keep sent to the Trash more than three days ago leaves it
+    /// for good (`keep worktrees purgar`): the core deletes only what is
+    /// still the folder it sent — the exact place written in its log, the
+    /// same number on the volume and the same birth, a worktree's `.git` —
+    /// and never anything of the person's, nor any setting of the Finder.
+    /// The commits and the folder's changes stay in refs/keep-lixeira. Lines
+    /// for the log: what went for good, what stayed and why.
+    private static func purge(_ helper: String) -> [String] {
+        switch run(helper, ["purgar", "--json"], within: 600) {
+        case .failure(let why) where why.status == 2:
+            return []
+        case .failure(let why):
+            return ["o keep worktrees purgar falhou: \(why.description)"]
+        case .success(let data):
+            let answer = object(data)
+            var lines: [String] = []
+            for gone in (answer["purgadas"] as? [[String: Any]]) ?? [] {
+                lines.append("saiu da lixeira de vez: \(tilde(gone["destino"] as? String ?? "?"))")
+            }
+            for kept in (answer["ignoradas"] as? [[String: Any]]) ?? [] {
+                lines.append("fica na lixeira: \(tilde(kept["destino"] as? String ?? "?")) — \(kept["motivo"] as? String ?? "")")
+            }
+            return lines + ((answer["avisos"] as? [String]) ?? [])
+        }
     }
 
     // MARK: - running the helper
