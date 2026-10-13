@@ -46,15 +46,17 @@ verdade (só compilado no CI), `[ ]` por fazer, `[-]` não se aplica.
   PageUp/PageDown, Enter usa, Esc volta ao que estava, a janela veste o que a
   seleção toca. Ligadas nas Configurações; a fatia `palette` abre cada uma com
   `overlay.value = "themes"` ou `"fonts"` e chama `applyTheme`/`clearTheme`/
-  `applyFont` de `appearance.ts` nos comandos "Mudar o tema…", "Mudar a
-  fonte…", "Usar o tema do Keep" e "Redefinir o tamanho do texto".
+  `applyFont`/`resetText` de `appearance.ts` nos comandos "Mudar o tema…",
+  "Mudar a fonte…", "Usar o tema do Keep" e "Redefinir o tamanho do texto".
 - [~] Fontes monoespaçadas: o comando `installed_fonts` (src-tauri `fonts.rs`)
   lê o registro (HKLM e HKCU) mais as pastas de fontes, nomeia cada família
   pela tabela `name` do próprio arquivo (testado no Mac, com fontes reais), e a
-  página fica com as que o canvas mede de largura fixa (i, l, ., m, W). A parte
-  do registro só compila no CI do Windows. Fallback Nerd Font: "Symbols Nerd
-  Font Mono" (MIT) embutida em WOFF2 e acrescentada à pilha antes do monospace;
-  os ícones foram vistos na WebView do Mac, não na WebView2.
+  página fica com as que o canvas mede de largura fixa (i, l, ., m, W). O
+  código do registro compila para o alvo Windows (`cargo check --target
+  x86_64-pc-windows-msvc` de `fonts.rs` isolado) mas só roda no Windows.
+  Fallback Nerd Font: "Symbols Nerd Font Mono" (MIT) embutida em WOFF2 e
+  acrescentada à pilha antes do monospace; os ícones foram vistos na WebView
+  do Mac, não na WebView2.
 - [x] Cursor: forma (barra, bloco, sublinhado), piscar (padrão sim, como o Mac) e
   oco sem foco; histórico em linhas (padrão 10000, até 100000); tudo ao vivo.
 - [x] Título da janela = aba ativa e o workspace (`windowTitle.ts`).
