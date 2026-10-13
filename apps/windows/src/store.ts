@@ -85,7 +85,7 @@ export type NameSurface = "strip" | "sidebar";
 /**
  * The name being typed. A tab's is typed in one place only — two fields for
  * one name take the keyboard from each other —: the surface asked for, else
- * the row above the terminal, else the sidebar (see `nameSurface`).
+ * the row above the terminal, else the sidebar (see `defaultNameSurface`).
  */
 export const editing = signal<
   { kind: "tab"; workspace: string; tab: number; surface?: NameSurface } | { kind: "workspace"; workspace: string } | null
@@ -1246,7 +1246,13 @@ export async function moveTabTo(workspace: string, tab: RootTab, to: string, bef
       });
       return false;
     }
-    const list = await api.list();
+    let list: WorkspaceInfo[];
+    try {
+      list = await api.list();
+    } catch {
+      // The tab is in its new place; the window learns it on its next look, without the terminal's scrollback.
+      return true;
+    }
     const newIds = memberIds(list.find((w) => w.name === to)?.tabs ?? [], newRoot);
     // The new ids are issued in the order the old ones were listed in.
     const pairs = oldIds.length === newIds.length ? oldIds.map((id, i) => [id, newIds[i]] as const) : [];
