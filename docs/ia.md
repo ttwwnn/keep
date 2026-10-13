@@ -351,6 +351,11 @@ Toda resposta é um objeto JSON numa linha, com `"versao": 1` e `"ok"`. Recusa: 
   uma troca a quente, `provada` ainda é a conta antiga: o Claude relê o armazém a cada 30 s e só
   usa o token novo na resposta seguinte; a lateral do app diz "(IA·1→2)" até lá.
   `keepd.inicioMs` é o `started_ms` do `List3`: o app ignora a resposta de outro daemon.
+- `conta-da-aba [--gancho]` (texto, não JSON): a conta do Claude desta aba ("IA·2 (e-mail)"), lida do
+  armazém da aba (`CLAUDE_SECURESTORAGE_CONFIG_DIR`), não do `~/.claude.json` — esse é o login global e
+  não acompanha a troca a quente. Com `--gancho` é o `UserPromptSubmit` do Claude Code
+  (`~/.claude/settings.json`): devolve o aviso como `additionalContext` quando a conta da aba não é a
+  global, ou quando mudou desde o último aviso na conversa (`<estado>/avisos-de-conta/<sessão>`).
 - `trocar` → `{"feito": texto}` (a quente: "passou para a IA-2 sem sair do Claude"). Recusas:
   `ocupada` (o app pergunta "Interromper e trocar agora" e repete com `--interromper`),
   `precisa-login` (com `ws_login` e `aba_login`: a aba do login, aberta pelo Keep; a troca acontece

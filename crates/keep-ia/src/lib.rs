@@ -11,6 +11,7 @@ pub mod cli;
 pub mod codex_daemon;
 pub mod confiar;
 pub mod confinar;
+pub mod conta_da_aba;
 pub mod contas;
 pub mod contexto;
 pub mod daemon;

@@ -67,6 +67,7 @@ pub fn ia(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         Some("confinar") => return crate::confinar::cli(&args[1..]),
         Some("statusline") => return crate::statusline::cli(),
+        Some("conta-da-aba") => return crate::conta_da_aba::cli(&args[1..]),
         Some("confiar") => return crate::confiar::cli(&args[1..]),
         _ => {}
     }
