@@ -472,7 +472,8 @@ struct UsageFooter: View {
         }
     }
 
-    private var numbers: Font { Font(GhosttyApp.shared.terminalFont(size: 11 * scale)) }
+    /// A tab's name's face and size: the footer writes in the sidebar's own text.
+    private var numbers: Font { Font(GhosttyApp.shared.tabNameFont) }
 
     private func footer(now: Date) -> some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -485,7 +486,7 @@ struct UsageFooter: View {
                 .padding(.bottom, folded ? 4 : 5)
             if let notice = monitor.notice {
                 Text(notice)
-                    .font(.system(size: 10 * scale))
+                    .font(numbers)
                     .foregroundStyle(UsageInk.attention)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -527,7 +528,7 @@ struct UsageFooter: View {
                         .font(.system(size: 8 * scale, weight: .semibold))
                         .rotationEffect(.degrees(folded ? 0 : 90))
                     Text("Consumo de IA")
-                        .font(.system(size: 11 * scale, weight: .semibold))
+                        .font(numbers)
                 }
                 .contentShape(Rectangle())
             }
@@ -612,7 +613,7 @@ struct UsageFooter: View {
             // one the order means, the address says which one the service does.
             if let email = line.account.email {
                 Text(email)
-                    .font(.system(size: 10.5 * scale))
+                    .font(numbers)
                     .foregroundStyle(UsageInk.inkResting)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -628,7 +629,7 @@ struct UsageFooter: View {
 
             if let note = note(line, now: now) {
                 Text(note)
-                    .font(.system(size: 10 * scale))
+                    .font(numbers)
                     .foregroundStyle(line.reading?.limitReached == true ? UsageInk.critical : UsageInk.inkFaint)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -679,7 +680,7 @@ struct UsageFooter: View {
         let until = UsageText.until(window.resetsAt, now: now)
         return HStack(spacing: 6) {
             Text(window.label)
-                .font(.system(size: 10 * scale))
+                .font(numbers)
                 .foregroundStyle(UsageInk.inkResting)
                 .lineLimit(1)
                 // The middle: an additional limit's label ends in the window
@@ -701,12 +702,12 @@ struct UsageFooter: View {
                 .foregroundStyle(level == .normal ? UsageInk.inkResting : UsageInk.fill(level))
                 .frame(width: 34 * scale, alignment: .trailing)
             Text(until ?? "")
-                .font(.system(size: 10 * scale))
+                .font(numbers)
                 .foregroundStyle(UsageInk.inkFaint)
                 .lineLimit(1)
                 .frame(width: 40 * scale, alignment: .trailing)
         }
-        .frame(height: 13 * scale)
+        .frame(height: 16 * scale)
         .help(barHelp(window, now: now))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
@@ -738,7 +739,7 @@ struct UsageFooter: View {
                     .lineLimit(1)
                     .layoutPriority(1)
             }
-            .frame(height: 14 * scale)
+            .frame(height: 16 * scale)
             .help(([title(line)] + [line.account.email].compactMap { $0 }
                 + windows.map { "\($0.title): \(UsageText.percent($0.percent))" })
                 .joined(separator: "\n"))
@@ -788,7 +789,7 @@ struct UsageFooter: View {
             }
             if let note = jevNote(jev, now: now) {
                 Text(note)
-                    .font(.system(size: 10 * scale))
+                    .font(numbers)
                     .foregroundStyle(UsageInk.inkFaint)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -802,7 +803,7 @@ struct UsageFooter: View {
         let level = UsageText.level(spent)
         return HStack(spacing: 6) {
             Text(label)
-                .font(.system(size: 10 * scale))
+                .font(numbers)
                 .foregroundStyle(UsageInk.inkResting)
                 .lineLimit(1)
                 .frame(width: 34 * scale, alignment: .leading)
@@ -822,7 +823,7 @@ struct UsageFooter: View {
                 .lineLimit(1)
                 .frame(width: 74 * scale, alignment: .trailing)
         }
-        .frame(height: 13 * scale)
+        .frame(height: 16 * scale)
         .help(help)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Jev \(label): \(says) \(UsageText.dollars(figure))")
@@ -848,7 +849,7 @@ struct UsageFooter: View {
                 .lineLimit(1)
                 .layoutPriority(1)
         }
-        .frame(height: 14 * scale)
+        .frame(height: 16 * scale)
         .help(jevHelp(jev, now: now))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Jev OpenRouter restam \(figure)")

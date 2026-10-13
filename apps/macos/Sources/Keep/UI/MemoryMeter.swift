@@ -47,7 +47,6 @@ struct MemoryReading: Equatable {
 /// bars — only past 75% does it take amber, then red from 90.
 struct MemoryMeter: View {
     @State private var zoom = GhosttyApp.shared.zoomLevel
-    private var scale: CGFloat { CGFloat(zoom) * 1.2 }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 3)) { _ in
@@ -68,7 +67,7 @@ struct MemoryMeter: View {
                 .fill(UsageInk.wash(0.08))
                 .frame(height: 1)
             Text("Memória RAM")
-                .font(.system(size: 11 * scale, weight: .semibold))
+                .font(Font(GhosttyApp.shared.tabNameFont))
                 .foregroundStyle(UsageInk.inkFaint)
                 .padding(.horizontal, 17)
                 .padding(.top, 7)
@@ -84,13 +83,13 @@ struct MemoryMeter: View {
                 }
                 .frame(height: 4)
                 Text(figures)
-                    .font(Font(GhosttyApp.shared.terminalFont(size: 10.5 * scale)))
+                    .font(Font(GhosttyApp.shared.tabNameFont))
                     .monospacedDigit()
                     .foregroundStyle(level == .normal ? UsageInk.inkResting : UsageInk.fill(level))
                     .lineLimit(1)
                     .fixedSize()
             }
-            .frame(height: 13)
+            .frame(height: 16)
             .padding(.horizontal, 17)
             .padding(.bottom, 8)
             .help("Memória RAM do computador em uso (\(Int(reading.percent.rounded()))%)")
@@ -98,4 +97,11 @@ struct MemoryMeter: View {
             .accessibilityLabel("Memória RAM em uso: \(figures)")
         }
     }
+}
+
+extension GhosttyApp {
+    /// The face and size of a tab's name in the sidebar (12.5 points at the
+    /// terminal's zoom), which the footers under the list write in as well, so
+    /// everything in the sidebar's column reads as one text.
+    var tabNameFont: NSFont { terminalFont(size: 12.5 * zoomLevel) }
 }

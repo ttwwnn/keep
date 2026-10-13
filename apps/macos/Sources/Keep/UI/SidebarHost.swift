@@ -39,6 +39,9 @@ final class SidebarRows: ObservableObject {
 final class SidebarHost: NSViewController {
     let backdropView = TerminalTintBackdropView()
     private var listTop: NSLayoutConstraint!
+    /// The battery, in the sidebar's top row while the window is in full
+    /// screen: the menu bar that carries the system's is out of sight there.
+    private let battery = BatteryIndicator()
     private let hosting: NSHostingController<WorkspaceSidebar>
     private let model = SidebarRows()
 
@@ -82,7 +85,37 @@ final class SidebarHost: NSViewController {
             listTop,
             content.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
+        battery.isHidden = true
+        container.addSubview(battery)
         view = container
+    }
+
+    /// The row the battery stands in, in full screen: the tab row's height.
+    private static let batteryRow: CGFloat = 34
+    /// Past the traffic lights, which come down over the row when the pointer
+    /// reaches the top.
+    private static let trafficLightsEnd: CGFloat = 84
+
+    /// Where the battery goes: between the traffic lights and the zoom, where
+    /// the zoom stands when the titlebar row is shown (see `CenteringHost`:
+    /// it rides the sidebar's edge, a divider's gap and the toggle away, then
+    /// a gap more). Nil where there is no battery, or no room between the two.
+    private func fullScreenBatteryFrame() -> NSRect? {
+        guard battery.isPresent else { return nil }
+        let toggle = max(4, view.bounds.width - 12 - 26)
+        let zoomEnd = toggle - 6
+        let zoomLeft = [false, true]
+            .map { zoomEnd - ZoomControl.width(compact: $0) }
+            .first { $0 >= 4 }
+        guard let zoomLeft else { return nil }
+        let width = battery.fittingWidth
+        let end = zoomLeft - 10
+        guard end - width >= Self.trafficLightsEnd else { return nil }
+        let height: CGFloat = 20
+        return NSRect(
+            x: end - width,
+            y: view.bounds.height - Self.batteryRow + ((Self.batteryRow - height) / 2).rounded(),
+            width: width, height: height)
     }
 
     override func viewDidLayout() {
@@ -95,8 +128,14 @@ final class SidebarHost: NSViewController {
         // Full screen has no titlebar and no traffic lights in the way, until
         // the pointer pulls them down over everything anyway: the list starts
         // at the top, level with the tab row beside it.
-        let wanted = window.styleMask.contains(.fullScreen)
-            ? 4
+        let fullScreen = window.styleMask.contains(.fullScreen)
+        let batteryFrame = fullScreen ? fullScreenBatteryFrame() : nil
+        if battery.isHidden != (batteryFrame == nil) { battery.isHidden = batteryFrame == nil }
+        if let batteryFrame, battery.frame != batteryFrame { battery.frame = batteryFrame }
+        // A row of its own for the battery, as tall as the tab row beside it,
+        // while there is room for one; otherwise the list starts at the top.
+        let wanted = fullScreen
+            ? (batteryFrame == nil ? 4 : Self.batteryRow + 4)
             : (titlebar > 1 ? titlebar : 52) + 4
         if abs(listTop.constant - wanted) > 0.5 {
             listTop.constant = wanted
