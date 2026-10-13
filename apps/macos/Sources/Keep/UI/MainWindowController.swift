@@ -368,7 +368,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private func changeEffort(to level: String) {
         guard let status = statusBar.status else { return }
         guard status.program == "codex" else {
-            typeIntoActive("/effort \(level)")
+            typeKeepingDefaults("/effort \(level)")
             return
         }
         guard let model = CodexStatusReader.model(named: status.modelID, in: CodexModelsCache.shared.models())
@@ -381,13 +381,55 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private func changeModel(to id: String) {
         guard let status = statusBar.status else { return }
         guard status.program == "codex" else {
-            typeIntoActive("/model \(id)")
+            typeKeepingDefaults("/model \(id)")
             return
         }
         guard let model = CodexStatusReader.model(named: id, in: CodexModelsCache.shared.models()) else { return }
         let effort = status.effort.flatMap { model.efforts.contains($0) ? $0 : nil }
             ?? model.defaultEffort ?? "medium"
         pickInCodex(model: model, effort: effort)
+    }
+
+    private static var settingsPath: String {
+        (NSHomeDirectory() as NSString).appendingPathComponent(".claude/settings.json")
+    }
+
+    /// The keys `/model` and `/effort` write into Claude Code's settings
+    /// ("saved as your default for new sessions"); sessions opened without
+    /// --model follow them live, so a pick for one conversation would change
+    /// the others. They are put back as they were once Claude Code has
+    /// written them.
+    private static let defaultKeys = ["model", "effortLevel", "modelSettings"]
+
+    private func typeKeepingDefaults(_ command: String) {
+        let before = Self.settingsDefaults()
+        typeIntoActive(command)
+        for delay in [2.0, 5.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                if Self.settingsDefaults() != before { Self.restoreSettingsDefaults(before) }
+            }
+        }
+    }
+
+    static func settingsDefaults() -> NSDictionary {
+        guard let data = FileManager.default.contents(atPath: settingsPath),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return [:] }
+        return json.filter { defaultKeys.contains($0.key) } as NSDictionary
+    }
+
+    /// Put those keys back, the file read fresh so nothing else written
+    /// meanwhile is lost.
+    static func restoreSettingsDefaults(_ before: NSDictionary) {
+        guard let data = FileManager.default.contents(atPath: settingsPath),
+            var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return }
+        for key in defaultKeys { json[key] = before[key] }
+        guard let out = try? JSONSerialization.data(
+            withJSONObject: json, options: [.prettyPrinted, .withoutEscapingSlashes])
+        else { return }
+        try? out.write(to: URL(fileURLWithPath: settingsPath), options: .atomic)
+        Trace.log("model", "settings.json defaults put back")
     }
 
     private func pickInCodex(model: CodexModel, effort: String) {

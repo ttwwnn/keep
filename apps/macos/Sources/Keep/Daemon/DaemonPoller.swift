@@ -344,7 +344,15 @@ final class ClaudeModeWatcher {
                 if let declared = ClaudeMode.declared(onScreen: screen) { modes[id] = declared }
                 // A dialog in front hides the mode but is itself the answer
                 // to where the turn stands.
-                if let pointer = ClaudeTrustDialog.pointer(onScreen: screen) { trusting[id] = pointer }
+                // Unless the shell's own watcher (`keep-confiar-pasta`, started
+                // by `claude()`) is answering it: two arrows would overshoot.
+                if let pointer = ClaudeTrustDialog.pointer(onScreen: screen),
+                    !(shells[id].map { FileManager.default.fileExists(
+                        atPath: (NSHomeDirectory() as NSString)
+                            .appendingPathComponent(".local/state/keep/trust/\($0)")) } ?? false)
+                {
+                    trusting[id] = pointer
+                }
                 let activity = ClaudeActivity.read(onScreen: screen)
                 if let activity { activities[id] = activity }
                 if let file = shells[id].flatMap(ClaudeStatusReader.read(shellPid:)) {
