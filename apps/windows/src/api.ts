@@ -171,6 +171,11 @@ export const codexModels = (known: string | null) =>
   invoke<{ stamp: string | null; text: string | null }>("codex_models", { known });
 /** A line for the app's log. */
 export const appLog = (line: string) => invoke<void>("app_log", { line });
+/** The folder each workspace's AI is held to, by workspace name (~/.config/keep/confinement.json). */
+export const confinementAll = () => invoke<Record<string, string>>("confinement_all");
+/** Hold a workspace's AI to a folder, or to none (null); the folders as they stand after. */
+export const confinementSet = (workspace: string, folder: string | null) =>
+  invoke<Record<string, string>>("confinement_set", { workspace, folder });
 export interface Memory {
   used: number;
   total: number;

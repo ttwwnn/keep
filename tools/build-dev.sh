@@ -48,6 +48,16 @@ cargo build --release -p keep -p keepd >/dev/null 2>&1 || {
     exit 1
 }
 
+# Left alone by the window manager this Mac runs (QuitOnClose, in kit-mac):
+# it quits an app with its last window, maximizes a new window and takes one
+# out of full screen 1.5 s after it goes in, and a test measures what the app
+# does by itself. An app opts out in its Info.plist; the person's Keep does not.
+# Before `bundle_binaries`, which signs the bundle again after this edit.
+plist="$(dev_app)/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :QuitOnCloseIgnore true" "$plist" >/dev/null 2>&1 \
+    || /usr/libexec/PlistBuddy -c "Add :QuitOnCloseIgnore bool true" "$plist" >/dev/null 2>&1 \
+    || { say "could not write QuitOnCloseIgnore into $plist"; exit 1; }
+
 # The app runs the client inside its own bundle, and nothing in the Xcode
 # build puts it there. Skip this and the app under test quietly uses whichever
 # client was last copied in by hand.

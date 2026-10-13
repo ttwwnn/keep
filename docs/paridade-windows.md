@@ -157,7 +157,9 @@ do vitest); o mouse real, os cursores e a dica nativa do workspace não foram ex
 - [ ] URLs mailto: e file://; Ctrl+clique.
 - [ ] Endereços web: clique simples abre no navegador, inclusive o link OSC 8
   atrás do texto (markdown do Claude Code) e o endereço quebrado em linhas;
-  menu Abrir link / Copiar link (Mac: 0e8c0bc).
+  menu Abrir link / Copiar link (Mac: 0e8c0bc). Com o mouse tomado pelo
+  programa (Claude Code em tela cheia), o clique simples deixa o endereço
+  para ele, que já o abre (Mac: 62be02e).
 - [ ] OSC 52 com política; confirmar colagem multi-linha; colar arquivo copiado.
 - [ ] Soltar arquivos: realce do painel sob o ponteiro.
 - [ ] Teclado kitty (CSI u): Ctrl+Enter, desambiguação.
@@ -179,9 +181,38 @@ do vitest); o mouse real, os cursores e a dica nativa do workspace não foram ex
 
 ## Fatia `confine`
 
-- [ ] Restringir a IA do workspace a uma pasta no Windows (AppContainer ou
-  token restrito), botão de pasta, menu "Restringir a IA a uma pasta…" e
-  "Liberar a IA". Só vale para workspaces com pasta escolhida (opt-in).
+Restringir a IA de um workspace a uma pasta. Opt-in: sem pasta escolhida, nada
+muda. A escolha fica em `%USERPROFILE%\.config\keep\confinement.json` (o
+formato do Mac) e quem prende é o `keep ia confinar -- <programa>`.
+
+- [x] Botão de pasta no cabeçalho do workspace (aberta: livre; cheia: presa),
+  menu do botão ("A IA só acessa …", "Trocar a pasta…", "Liberar a IA") e itens
+  do menu do cabeçalho ("Restringir a IA a uma pasta…", "Liberar a IA (hoje:
+  …)"), com o diálogo de pasta do sistema. Vale para as sessões iniciadas
+  depois, e o tooltip diz. Recusa a raiz de uma unidade e a pasta do usuário.
+  Testado (vitest, `confinement.rs`) e visto na tela do app.
+- [~] A contenção: token restrito (`CreateRestrictedToken`) com permissões só na
+  pasta, no git dela e no mínimo de que a IA precisa, Job que mata junto, prova
+  do token antes de subir (o de fora é negado, a pasta funciona) e falha
+  fechada (`crates/keep-ia/src/confinar_win*`). Só compilada para o Windows
+  daqui; o CI roda o autoteste (`keep ia confinar --autoteste`, também
+  dentro de uma aba) e `tools/confine-test.ps1` repete o roteiro à mão.
+  `CONFINEMENT_ENFORCED` (confinement.ts) tira o botão e os itens do menu.
+- [~] Encaixe na função `claude` do PowerShell (fatia `ai`): trocar o
+  `& $claude @args` final por `& $keep ia confinar -- $claude @args`; sem pasta
+  para o workspace o `confinar` roda o programa como sempre. Enquanto a função
+  não passa por ele, só a troca de conta/IA e a restauração (que já chamam
+  `envolve`) prendem; digitar `claude` no shell, não.
+- [ ] O que o Windows não deixa fechar sem administrador: pastas de rede (o
+  servidor confere o usuário, não o token), o que o Windows deixa qualquer um
+  ler (`C:\Windows`, `Arquivos de Programas`, e, nos níveis compatível e amplo,
+  que valem se o estrito não deixa o programa partir, o que `Usuários` lê em
+  outras unidades), o registro do sistema, a área de trabalho (o programa preso
+  pode mandar teclas a outras janelas), o WSL. Programas
+  instalados só para o usuário (nvm, cargo, pyenv) ficam de fora, como o
+  `~/.nvm` no Mac; o Gerenciador de Credenciais do Git também. Um arquivo
+  movido (não copiado) de fora para dentro da pasta presa leva a permissão que
+  tinha, e a IA não o abre.
 
 ## Fatia `windows` (várias janelas)
 
