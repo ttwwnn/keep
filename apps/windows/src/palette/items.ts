@@ -241,6 +241,21 @@ export function goToItems(input: GoToInput): PickerItem[] {
   return [...numbered, ...folders];
 }
 
+/** The folders to offer when zoxide has none to give: where the open tabs are, then home. */
+export function openFolders(workspaces: readonly WorkspaceFacts[], home: string): string[] {
+  const seen = new Set<string>();
+  const folders: string[] = [];
+  const add = (path: string) => {
+    const key = windowsPath(path) ? path.toLowerCase() : path;
+    if (!path || seen.has(key)) return;
+    seen.add(key);
+    folders.push(path);
+  };
+  for (const workspace of workspaces) for (const facts of workspace.tabs) add(facts.cwd);
+  add(home);
+  return folders;
+}
+
 /** The row that offers to make the workspace a query names, when none has that name. */
 export function createItem(query: string, workspaces: readonly WorkspaceFacts[]): PickerItem | null {
   const name = query.trim();
@@ -296,6 +311,27 @@ export function hitItem(hit: SearchHit, root: number, place: string): PickerItem
   };
 }
 
+/**
+ * What to call the thing being previewed, in as few words as name it: the
+ * workspace column and the title, which together tell one row from another —
+ * and for a folder the path, since a folder's preview is the folder.
+ */
+export function previewName(item: PickerItem): string {
+  switch (item.kind.type) {
+    case "running": {
+      const name = item.title || item.path;
+      return item.context ? `${item.context}  ·  ${name}` : name;
+    }
+    case "destination":
+      return item.detail || item.title;
+    case "hit":
+      return item.detail;
+    case "command":
+    case "create":
+      return item.title;
+  }
+}
+
 // ------------------------------------------------------------------ filtering
 
 /**
@@ -323,6 +359,27 @@ export function filterItems(items: readonly PickerItem[], query: string): { kept
   });
   scored.sort((a, b) => a.score - b.score || a.position - b.position);
   return { kept: scored.map((s) => s.item), lit: new Map(scored.map((s) => [s.item.id, s.lit])) };
+}
+
+/** A run of text, lit or not: what a row draws a matched string as. */
+export interface Segment {
+  text: string;
+  on: boolean;
+}
+
+/** `text` cut at `ranges` (sorted, apart, inside it): the stretches between them dark, the ranges lit. */
+export function segments(text: string, ranges: readonly [number, number][] | undefined): Segment[] {
+  const out: Segment[] = [];
+  let at = 0;
+  for (const [from, to] of ranges ?? []) {
+    const start = Math.max(at, Math.min(from, text.length));
+    const end = Math.max(start, Math.min(to, text.length));
+    if (start > at) out.push({ text: text.slice(at, start), on: false });
+    if (end > start) out.push({ text: text.slice(start, end), on: true });
+    at = end;
+  }
+  if (at < text.length) out.push({ text: text.slice(at), on: false });
+  return out;
 }
 
 // ------------------------------------------------------------------ rows

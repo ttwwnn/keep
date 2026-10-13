@@ -7,6 +7,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { SPLIT_DOWN, SPLIT_RIGHT } from "../api";
 import type { RootTab } from "../layout";
 import { tabKey } from "../state";
+import { toggleOverlay } from "../palette/overlay";
 import {
   activeTab,
   activeWorkspace,
@@ -16,7 +17,6 @@ import {
   isMac,
   isWindows,
   maximized,
-  overlay,
   renameTab,
   select,
   split,
@@ -25,6 +25,7 @@ import {
 } from "../store";
 import { AccountChevron } from "./AccountMenu";
 import { InlineEditor, openMenu } from "./common";
+import { Glyph } from "./Glyph";
 import * as icon from "./icons";
 import { tabLook, useBreath } from "./tabLook";
 
@@ -156,20 +157,20 @@ export function TitleBar() {
         <button
           class="round-button"
           data-overlay-toggle
-          title="Ir para… (Ctrl+Shift+P)"
+          title={`Ir para… (${isMac.value ? "⌘⇧P" : "Ctrl+Shift+P"})`}
           aria-label="Ir para"
-          onClick={() => (overlay.value = overlay.value === "picker" ? null : "picker")}
+          onClick={() => toggleOverlay("picker")}
         >
           <icon.Search />
         </button>
         <button
           class="round-button"
           data-overlay-toggle
-          title="Configurações"
-          aria-label="Configurações"
-          onClick={() => (overlay.value = overlay.value === "settings" ? null : "settings")}
+          title={`Comandos… (${isMac.value ? "⌘⇧⌥P" : "Ctrl+Shift+Alt+P"})`}
+          aria-label="Comandos"
+          onClick={() => toggleOverlay("palette")}
         >
-          <icon.Gear />
+          <Glyph name="command" size={15} />
         </button>
       </div>
       {isWindows.value && <WindowControls />}

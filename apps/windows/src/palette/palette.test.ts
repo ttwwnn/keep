@@ -5,8 +5,9 @@ import type { SearchHit } from "../api";
 import { tabKey } from "../state";
 import { touch } from "../recent";
 import { capsFor } from "./caps";
+import { MAX_HISTORY, historyFor, plainAsScreen, rowsToSkip, topFor } from "./preview";
 import { actionsFor, chordAction, filterActions } from "./actions";
-import { locateLine, matchSpan, type Lines } from "./hits";
+import { columnOf, locateLine, matchSpan, type Cells, type Lines } from "./hits";
 import {
   commandItems,
   createItem,
@@ -16,10 +17,13 @@ import {
   grouped,
   hitItem,
   nextSelectable,
+  openFolders,
   plainRows,
+  previewName,
   recency,
   relativePlace,
   sectioned,
+  segments,
   type GoToInput,
   type PickerItem,
   type TabFacts,
@@ -190,6 +194,18 @@ describe("Ir para", () => {
     expect(folders.map((f) => f.title)).toEqual(["api", "dados"]);
     expect(folders[0]).toMatchObject({ detail: "~\\www\\api", path: "C:\\Users\\ana\\www\\api", workspace: "" });
     expect(items.findIndex((i) => i.kind.type === "destination")).toBeGreaterThan(items.findIndex((i) => i.kind.type === "running"));
+  });
+});
+
+describe("the folders without zoxide", () => {
+  it("are where the tabs are, once each, and home", () => {
+    const ws = [
+      space("a", [tab("a", 1, 0, { cwd: "C:\w\a" }), tab("a", 2, 1, { cwd: "c:\W\A" }), tab("a", 3, 2, { cwd: "" })]),
+      space("b", [tab("b", 4, 0, { cwd: "C:\w\b" }), tab("b", 5, 1, { cwd: "C:\Users\ana" })]),
+    ];
+    expect(openFolders(ws, "C:\Users\ana")).toEqual(["C:\w\a", "C:\w\b", "C:\Users\ana"]);
+    expect(openFolders([], "")).toEqual([]);
+    expect(openFolders([], "/home/ana")).toEqual(["/home/ana"]);
   });
 });
 
@@ -506,5 +522,97 @@ describe("keys as caps", () => {
   it("Windows writes them out, a Mac draws them", () => {
     expect(capsFor(["Ctrl", "Shift", "K"], false)).toEqual(["Ctrl", "Shift", "K"]);
     expect(capsFor(["Ctrl", "Shift", "Alt", "K", "↩"], true)).toEqual(["⌘", "⇧", "⌥", "K", "↩"]);
+  });
+});
+
+describe("columns", () => {
+  /** A row of cells from its text: a wide letter is a cell of width 2 and an empty one of width 0 after it. */
+  const row = (text: string): Cells => {
+    const cells: { getChars(): string; getWidth(): number }[] = [];
+    for (const char of text) {
+      const wide = (char.codePointAt(0) ?? 0) > 0x3000;
+      cells.push({ getChars: () => char, getWidth: () => (wide ? 2 : 1) });
+      if (wide) cells.push({ getChars: () => "", getWidth: () => 0 });
+    }
+    return { length: cells.length, getCell: (x) => cells[x] };
+  };
+
+  it("plain text: the offset is the column", () => {
+    expect(columnOf(row("abcdef"), 0)).toBe(0);
+    expect(columnOf(row("abcdef"), 3)).toBe(3);
+    expect(columnOf(row("abcdef"), 6)).toBe(6);
+    expect(columnOf(row("abcdef"), 99)).toBe(6);
+  });
+
+  it("a wide letter takes two columns and the half after it nothing", () => {
+    // あ is at column 0 and 1; b is the second letter and sits at column 2.
+    expect(columnOf(row("あbc"), 1)).toBe(2);
+    expect(columnOf(row("あbc"), 3)).toBe(4);
+  });
+});
+
+describe("what a preview is called", () => {
+  it("the workspace and the tab, or the tab's folder when it has no title", () => {
+    const [titled] = goToItems(input({ workspaces: [space("proj", [tab("proj", 1, 0, { title: "api", cwd: "C:\\w" })], "C:\\w")] }));
+    expect(previewName(titled)).toBe("proj  ·  api");
+    const [untitled] = goToItems(input({ workspaces: [space("proj", [tab("proj", 1, 0, { title: "", cwd: "C:\\w\\proj" })], "C:\\w\\proj")] }));
+    expect(previewName(untitled)).toBe("proj  ·  C:\\w\\proj");
+  });
+  it("a folder by its path, a hit by where it is, a command by its name", () => {
+    const [folder] = goToItems(input({ directories: ["C:\\Users\\ana\\www\\api"] }));
+    expect(previewName(folder)).toBe("~\\www\\api");
+    expect(previewName(hitItem({ workspace: "p", tab: 1, line: 3, total: 9, text: "x", matchStart: 0, matchLen: 1, before: [], after: [] }, 1, "p › vim"))).toBe("p › vim:4");
+    expect(previewName(commandItems()[0])).toBe("Alternar a barra lateral");
+  });
+});
+
+describe("fitting a screen in its frame", () => {
+  it("what the plain preview says, as a terminal reads it", () => {
+    expect(plainAsScreen("a\nb\r\nc")).toBe("a\r\nb\r\nc");
+  });
+  it("a screen that fits stays where it is", () => {
+    // 24 rows of 14 px in a frame of 400 px: 28 rows are shown.
+    expect(rowsToSkip(10, 14, 400)).toBe(0);
+    expect(rowsToSkip(27, 14, 400)).toBe(0);
+    expect(rowsToSkip(-1, 14, 400)).toBe(0);
+  });
+  it("one that does not loses its top rows, to show its last", () => {
+    expect(rowsToSkip(40, 14, 400)).toBe(13);
+    expect(rowsToSkip(28, 14, 400)).toBe(1);
+    expect(rowsToSkip(5, 0, 400)).toBe(0);
+  });
+  it("a line is put in the middle of the view, and not past either end", () => {
+    expect(topFor(100, 20, 500)).toBe(90);
+    expect(topFor(3, 20, 500)).toBe(0);
+    expect(topFor(495, 20, 500)).toBe(485);
+    expect(topFor(499, 20, 120)).toBe(120);
+    expect(topFor(5, 20, 0)).toBe(0);
+  });
+  it("a hit keeps the history it is in, a plain screen none", () => {
+    const base = { workspace: "p", pane: 1, cols: 80, rows: 24 };
+    expect(historyFor(base)).toBe(0);
+    expect(historyFor({ ...base, hit: { text: "x", line: 3, total: 100 } })).toBe(124);
+    expect(historyFor({ ...base, hit: { text: "x", line: 3, total: 90_000 } })).toBe(MAX_HISTORY);
+  });
+});
+
+describe("a matched string, cut for drawing", () => {
+  it("lit where it matched, dark between", () => {
+    expect(segments("Brokerfy", [[0, 1], [6, 8]])).toEqual([
+      { text: "B", on: true },
+      { text: "roker", on: false },
+      { text: "fy", on: true },
+    ]);
+  });
+  it("nothing matched, one dark run; nothing at all, none", () => {
+    expect(segments("abc", undefined)).toEqual([{ text: "abc", on: false }]);
+    expect(segments("abc", [])).toEqual([{ text: "abc", on: false }]);
+    expect(segments("", [[0, 2]])).toEqual([]);
+  });
+  it("a range past the end is held to the text", () => {
+    expect(segments("abc", [[2, 9]])).toEqual([
+      { text: "ab", on: false },
+      { text: "c", on: true },
+    ]);
   });
 });

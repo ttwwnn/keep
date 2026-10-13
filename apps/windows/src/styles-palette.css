@@ -1,0 +1,529 @@
+/* The picker (ui/Picker.tsx): Ir para, the palette and the searches, in one
+   card as the macOS app's PickerView is — the list on the left, a picture of
+   what a row is on the right, the field above both, a chip of glass in the
+   corner. The card itself (rim, shadow, blur) is `.card` in styles.css; what
+   is laid out here is what is inside it. Numbers are the Mac's. */
+
+:root {
+  /* The glass the corner is made of, shared by the chip and the panel that
+     opens out of it. Black in the dark: the card underneath is already dark,
+     so lifting the glass off it with white makes a pale chip in a dark corner,
+     while taking it down keeps the blur and lets the edge do the lifting. */
+  --pk-material: rgba(0, 0, 0, 0.3);
+  --pk-wash: rgba(255, 255, 255, 0.08);
+  --pk-cap: rgba(255, 255, 255, 0.09);
+  --pk-rule: rgba(255, 255, 255, 0.07);
+  --pk-frame: rgba(255, 255, 255, 0.08);
+  --pk-frame-ground: 40%;
+}
+
+:root[data-theme="light"] {
+  --pk-material: rgba(255, 255, 255, 0.55);
+  --pk-wash: rgba(0, 0, 0, 0.05);
+  --pk-cap: rgba(0, 0, 0, 0.06);
+  --pk-rule: rgba(0, 0, 0, 0.07);
+  --pk-frame: rgba(0, 0, 0, 0.1);
+  --pk-frame-ground: 55%;
+}
+
+/* A share of the window up to a point: two thirds of an ultra-wide display is
+   thirteen hundred points of card holding a list of forty-character rows. */
+.picker {
+  top: 90px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: block;
+  width: min(860px, 66vw);
+  height: clamp(300px, 62vh, 560px);
+}
+
+/* A list that another part of the app supplies fills the card. */
+.picker.catalog {
+  display: flex;
+}
+
+/* ------------------------------------------------------------ the field */
+
+.pk-head {
+  position: absolute;
+  z-index: 3;
+  top: 20px;
+  left: 20px;
+  right: 20px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pk-field {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+/* "3 de 47", the way a browser counts. */
+.pk-counter {
+  flex: none;
+  font: 12px var(--ui-font);
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------ the list */
+
+/* The list fills the left share of the card, top to bottom, and a row scrolled
+   up thins out and is gone before it reaches the field, rather than sliding
+   behind a lid; at the bottom, so the list ends by running out. */
+.pk-list {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 42%;
+  container-type: inline-size;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 19px, #000 68px, #000 calc(100% - 28px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 19px, #000 68px, #000 calc(100% - 28px), transparent 100%);
+}
+
+.pk-rows {
+  position: absolute;
+  inset: 0;
+  padding: 68px 0 28px;
+  scroll-padding: 68px 0 28px;
+}
+
+/* Rows are 30, a lozenge inset by two; text starts 18 from the edge. */
+.pk-row {
+  height: 26px;
+  min-height: 26px;
+  gap: 8px;
+  cursor: default;
+}
+
+.pk-row.disabled {
+  opacity: 0.4;
+}
+
+.pk-row.disabled:hover {
+  background: none;
+}
+
+/* A heading: the app's own voice, quiet enough to be taken as a label on the
+   way past, with the gap above the word rather than around it. */
+.pk-heading {
+  height: 34px;
+  display: flex;
+  align-items: flex-end;
+  padding: 0 18px 4px;
+  font: 500 11px var(--ui-font);
+  color: var(--ink-faint);
+}
+
+/* A terminal: where it is, whether it works, what it says, what it runs, how
+   old it is. The context is a column of a width of its own, so that three
+   tabs of one project read as three of one project before a word of them is
+   read — and the columns after it line up. */
+.pk-context {
+  flex: none;
+  width: min(132px, 36cqw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 12.5px var(--mono);
+  color: var(--ink-resting);
+}
+
+.pk-badge {
+  flex: none;
+  width: 16px;
+  display: grid;
+  place-items: center;
+  color: var(--ink-faint);
+}
+
+.pk-badge.busy {
+  color: var(--ink);
+}
+
+.pk-badge.dim {
+  color: var(--ink-faint);
+}
+
+.pk-title {
+  flex: 0 5 auto;
+}
+
+/* What gives first when the row runs out of room is the sentence, not the
+   word that says what the tab is. */
+.pk-command {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 12.5px var(--mono);
+  color: var(--ink-faint);
+}
+
+.pk-trailing {
+  max-width: none;
+  padding-left: 10px;
+  white-space: pre;
+  font-family: var(--mono);
+  text-align: right;
+}
+
+/* The letters that matched come forward; the ones around them step back. The
+   row is only lit when the query put it there. */
+.pk-lit {
+  color: var(--ink-resting);
+}
+
+.pk-row .pk-lit mark {
+  color: var(--ink);
+}
+
+/* A folder: one path. The road faint and the name in ink, and a long one is
+   known by its end, so the head is what gives. */
+.pk-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font: 12.5px var(--mono);
+}
+
+.pk-path-text {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.pk-path .road {
+  color: var(--ink-faint);
+}
+
+.pk-path .name {
+  color: var(--ink);
+}
+
+.pk-path .on {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+/* A command: the glyph, the words, and the chord that does the same without
+   coming through here. The system's face: a directory, a title, a line it
+   printed are things the terminal knows about; a command is the app talking
+   about itself. */
+.pk-icon {
+  flex: none;
+  width: 18px;
+  display: grid;
+  place-items: center;
+  color: var(--ink-resting);
+}
+
+.pk-icon .glyph,
+.pk-badge .glyph {
+  display: block;
+}
+
+.pk-command-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 13px var(--ui-font);
+  color: var(--ink);
+}
+
+.pk-row.danger .pk-icon,
+.pk-row.danger .pk-command-title {
+  color: var(--danger);
+}
+
+.pk-row.danger .pk-lit,
+.pk-row.danger .pk-lit mark {
+  color: var(--danger);
+}
+
+/* A line of history, drawn as the terminal drew it: no columns, since a hit
+   is one string and splitting it would be inventing structure the text does
+   not have. */
+.pk-hit-line {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+  font: 12px var(--mono);
+  color: var(--ink);
+}
+
+.pk-hit-line mark {
+  background: rgba(255, 214, 10, 0.35);
+  color: var(--ink);
+  font-weight: inherit;
+  border-radius: 2px;
+}
+
+.pk-hit-where {
+  flex: 0 1 auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font: 12px var(--ui-font);
+  color: var(--ink-faint);
+}
+
+.pk-hit-where > span {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+/* ------------------------------------------------------------ the picture */
+
+.pk-preview-title {
+  position: absolute;
+  top: 60px;
+  left: calc(42% + 10px);
+  right: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Pre, to keep the two spaces round the dot. */
+  white-space: pre;
+  font: 500 11px var(--ui-font);
+  color: var(--ink-faint);
+}
+
+/* The picture, framed. A screen of somebody else's terminal laid straight onto
+   the card reads as this card's own text — the two are the same face on the
+   same ground. Inside a frame it reads as a picture of a screen, which is what
+   it is. The frame is the terminal's own ground, a little see-through, and a
+   hairline, because a theme whose ground matches the card's would otherwise
+   leave the picture without an edge. */
+.pk-preview {
+  position: absolute;
+  top: 81px;
+  left: calc(42% + 8px);
+  right: 14px;
+  bottom: 52px;
+  overflow: hidden;
+  border: 1px solid var(--pk-frame);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ground) var(--pk-frame-ground), transparent);
+}
+
+.pk-preview-title.off,
+.pk-preview.off {
+  visibility: hidden;
+}
+
+/* Lines of a terminal are placed, and one that wraps has moved: a long one
+   runs past the edge, as it does on the screen this is a picture of. */
+.pk-screen {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  opacity: 0.85;
+  pointer-events: none;
+  user-select: none;
+}
+
+.pk-screen .xterm {
+  padding: 0;
+}
+
+.pk-screen .xterm-viewport {
+  overflow: hidden !important;
+  background-color: transparent !important;
+}
+
+.pk-screen .scrollbar {
+  display: none;
+}
+
+/* ------------------------------------------------------------ the corner */
+
+/* Key caps: one key, drawn as a key. Nothing may stretch one — square for one
+   glyph, wider only when the key needs it. */
+.caps {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cap {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--pk-cap);
+  color: var(--ink-resting);
+  font: 500 11px var(--ui-font);
+}
+
+.pk-footer,
+.pk-actions {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 4;
+  background: var(--pk-material);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+}
+
+/* The chip: laid on the card, not in it. Glass refracts what is behind it, and
+   inside the card's own glass there is nothing behind it. */
+.pk-footer {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: 16px;
+}
+
+.pk-footer::after,
+.pk-actions::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.12) 45%, rgba(255, 255, 255, 0.17));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  pointer-events: none;
+}
+
+.pk-chip {
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 7px 0 9px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--ink-resting);
+  font: 12px var(--ui-font);
+}
+
+.pk-chip:hover {
+  background: var(--pk-wash);
+}
+
+/* Between the two, because they are two things: one happens now, the other
+   opens a list of things that might. */
+.pk-divider {
+  width: 1px;
+  height: 16px;
+  margin: 0 5px;
+  background: rgba(var(--ink-rgb), 0.15);
+}
+
+/* ------------------------------------------------------------ the actions panel */
+
+/* It rises from the corner the chip is in, over it, at the same margin, so the
+   two read as one object opening. */
+.pk-actions {
+  z-index: 5;
+  /* 300, as the Mac's; wider when a row asks for it — a title in Portuguese and
+     keys written out do not fit where a title in English and glyphs did. */
+  width: max-content;
+  min-width: 300px;
+  max-width: min(380px, calc(100% - 24px));
+  padding-top: 14px;
+  border-radius: 18px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+/* The row these actions are about, said once at the top: without it a panel
+   opened by Ctrl+K is a list of verbs with no object. */
+.pk-actions-heading {
+  /* What it says does not size the panel: the rows do. */
+  contain: inline-size;
+  margin: 0 18px 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 500 11px var(--ui-font);
+  color: var(--ink-faint);
+}
+
+.pk-action {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 8px;
+  padding: 0 8px 0 10px;
+  border-radius: 11px;
+  font: 13px var(--ui-font);
+  color: var(--ink);
+  cursor: default;
+}
+
+.pk-action.selected {
+  background: var(--card-select);
+}
+
+.pk-action .pk-action-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pk-action.danger,
+.pk-action.danger .pk-icon {
+  color: var(--danger);
+}
+
+/* A rule between groups: the line is one point; the band is the air around it. */
+.pk-rule-band {
+  position: relative;
+  height: 11px;
+}
+
+.pk-rule-band::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 5px;
+  height: 1px;
+  background: var(--pk-rule);
+}
+
+/* Structure, not a seam: the field below is a different kind of thing from the
+   list above it, and the panel is small enough that the line reads as the join. */
+.pk-rule {
+  height: 1px;
+  margin: 8px 12px 0;
+  background: var(--pk-rule);
+}
+
+.pk-actions-field {
+  display: block;
+  width: calc(100% - 36px);
+  height: 18px;
+  margin: 13px 18px;
+  font: 13px var(--ui-font);
+}
+
+.pk-actions-field::placeholder {
+  color: var(--ink-faint);
+}

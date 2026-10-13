@@ -8,6 +8,8 @@ export interface Found {
   line: number;
   /** How many lines that history holds. */
   total: number;
+  /** Where the match sits in the text, in UTF-16 units (see `matchSpan`). */
+  span?: [number, number] | null;
 }
 
 /**
@@ -61,4 +63,28 @@ export function locateLine(lines: Lines, hit: Found): { index: number; exact: bo
     if (is(guess + away)) return { index: guess + away, exact: true };
   }
   return { index: guess, exact: false };
+}
+
+/** A row of a terminal's cells, as much of it as the column arithmetic needs. */
+export interface Cells {
+  length: number;
+  getCell(x: number): { getChars(): string; getWidth(): number } | undefined;
+}
+
+/**
+ * The column a UTF-16 offset of a row's text falls in. The text and the
+ * columns agree until a wide letter comes: it takes two columns and one
+ * character, and the half-cell after it says nothing.
+ */
+export function columnOf(row: Cells, index: number): number {
+  let seen = 0;
+  for (let x = 0; x < row.length; x++) {
+    const cell = row.getCell(x);
+    if (!cell) break;
+    if (cell.getWidth() === 0) continue;
+    if (seen >= index) return x;
+    // An empty cell is a space in the row's text.
+    seen += cell.getChars().length || 1;
+  }
+  return row.length;
 }
