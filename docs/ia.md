@@ -184,29 +184,32 @@ e o Claude fica de fora da renovação do armazém.
     vale), e a pasta dele vai para o fim do PATH da aba, para `keep nova`, `keep ls` e os outros;
   - falha segura: se o keep recusa ou não responde, uma linha avisa ("Keep: não deu para preparar o login
     desta aba (…); o Claude sobe como antes.") e o Claude sobe como subiria;
-  - o que não abre conversa passa direto, sem perguntar nada e sem passar pelo `confinar`: `-v`,
-    `--version`, `-h`, `--help`, `auth`, `auto-mode`, `config`, `daemon`, `doctor`, `gateway`, `help`,
-    `import`, `install`, `kill`, `logs`, `mcp`, `plugin`, `plugins`, `project`, `respawn`, `rm`,
-    `setup-token`, `stop`, `ultrareview`, `update`, `upgrade` (a lista da função do Mac). `agents`,
-    `attach`, `rc` e `remote-control` também não ganham armazém, mas passam pelo `confinar` (abaixo); um
-    Claude aberto de dentro de outro herda o armazém da aba e não pergunta nada, mas também passa pelo
-    `confinar`;
-  - o programa sobe por `keep ia confinar -- <programa> <argumentos>` (o `_keep_ia` da função do Mac),
-    em toda aba do Keep e para o `claude` e o `codex`: com uma pasta escolhida para o workspace (botão
-    de pasta do cabeçalho; `crates/keep-ia/src/confinar.rs`, fatia `confine` de `docs/paridade-windows.md`)
-    a IA sobe presa a ela, e sem pasta o `confinar` roda o programa como sempre. A função não cai para a subida sem prender quando o keep
-    recusa (a pasta sumiu, `claude agents` num workspace preso): vale o que o keep disse, com o código de
-    saída dele. O programa entregue ao keep é um arquivo que ele sabe iniciar (o `claude.exe` ou o
-    `claude.cmd` do npm), e nunca o `claude.ps1` que o PowerShell preferiria; um `claude.ps1` sozinho,
-    sem `.exe` nem `.cmd` ao lado, roda direto, sem prender. Sem `KEEP_IA_BIN` (fora do Keep, ou um
-    caminho que não existe), a subida é direta;
+  - o que não abre conversa passa direto, sem perguntar nada: `-v`, `--version`, `-h`, `--help`,
+    `agents`, `attach`, `rc`, `remote-control`, `auth`, `auto-mode`, `config`, `daemon`, `doctor`,
+    `gateway`, `help`, `import`, `install`, `kill`, `logs`, `mcp`, `plugin`, `plugins`, `project`,
+    `respawn`, `rm`, `setup-token`, `stop`, `ultrareview`, `update`, `upgrade` (a lista da função do
+    Mac); um Claude aberto de dentro de outro herda o armazém da aba e também passa direto;
   - argumentos (os vazios também), entrada em pipe e código de saída chegam ao programa e voltam como
     chegariam sem a função, com a ressalva do próprio PowerShell: o `--` digitado sem aspas é consumido
     por ele antes da função (`claude -- texto` chega como `claude texto`; entre aspas, `claude '--' texto`,
-    chega inteiro); o programa que roda direto é o que o PowerShell acharia sem a função (o primeiro
-    `claude` do PATH, programa ou script: o `claude.exe` da instalação nativa ou o `claude.cmd` do npm);
-  - `codex` passa pela mesma porta, sem nada a preparar e sem lista de subcomandos soltos: toda
-    chamada sobe pelo `confinar`, que dá ao Codex preso o `--no-daemon`;
+    chega inteiro); o programa é o que o PowerShell acharia sem ela (o primeiro `claude` do PATH,
+    programa ou script: o `claude.exe` da instalação nativa ou o `claude.cmd` do npm);
+  - `codex` passa pela mesma porta, sem nada a preparar;
+  - o encaixe do `keep ia confinar` (o `_keep_ia` da função do Mac) está pronto e DESLIGADO: a contenção
+    da IA a uma pasta fica desligada no Windows até o CI provar o token restrito
+    (`CONFINEMENT_ENFORCED = false` em `confinement.ts`; `confinar_win::ENCAIXE_POWERSHELL`), e enquanto
+    isso a função não chama o `confinar`. Para ligar é uma linha de `ai.ps1`: `function global:__KeepConfining
+    { $false }` passa a `{ $true }` (junto com o `CONFINEMENT_ENFORCED`). Ligado, `claude` e `codex` numa
+    aba do Keep sobem por `keep ia confinar -- <programa> <argumentos>`: com uma pasta escolhida para o
+    workspace a IA sobe presa a ela, e sem pasta o `confinar` roda o programa como sempre. `claude agents`,
+    `attach`, `rc` e `remote-control` (sem armazém) e um Claude aberto de dentro de outro também passam por
+    ele, e o que não abre conversa (a lista acima, menos esses quatro) segue direto. A função não cai para
+    a subida solta quando o keep recusa (a pasta sumiu, `claude agents` num workspace preso): vale o que o
+    keep disse, com o código de saída dele. O programa entregue ao keep é um arquivo que ele sabe iniciar
+    (o `claude.exe` ou o `claude.cmd` do npm), e nunca o `claude.ps1` que o PowerShell preferiria; um
+    `claude.ps1` sozinho, sem `.exe` nem `.cmd` ao lado, roda direto, sem prender. Sem `KEEP_IA_BIN` (fora
+    do Keep, ou um caminho que não é um arquivo), a subida é direta. Testado com um `pwsh` 7 de verdade e
+    um `confinar` de mentira;
   - função ou alias de mesmo nome que a pessoa já tenha no perfil nunca é trocado;
   - a resposta do keep é lida em UTF-8, qualquer que seja a página de código do console: uma pasta de
     usuário com acento (`C:\Users\José`) não vira outra.
@@ -214,8 +217,8 @@ e o Claude fica de fora da renovação do armazém.
   que o crate não enxerga por dentro (o `keep ia` vê só o `wsl.exe`); o PowerShell é o shell das abas do
   Windows.
 - O que a função do Mac tem e a do Windows não: o `--effort max` e o `--allow-dangerously-skip-permissions`
-  (preferências do autor, do kit), o `claude-flags-retomada` e a resposta de "confiar nesta pasta?"
-  (`keep ia confiar`, fatia `terminal`).
+  (preferências do autor, do kit), o `claude-flags-retomada`, a resposta de "confiar nesta pasta?"
+  (`keep ia confiar`, fatia `terminal`) e, por ora, a subida presa a uma pasta (pronta, desligada: acima).
 
 ### O gancho da conta da aba
 

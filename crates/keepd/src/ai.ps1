@@ -1,6 +1,7 @@
 function global:__KeepProgram([string]$name) {
   Get-Command -Name $name -CommandType Application,ExternalScript -All -ErrorAction SilentlyContinue | Select-Object -First 1
 }
+function global:__KeepConfining { $false }
 function global:__KeepKind([string]$name, $rest) {
   if ($name -ne 'claude') { return 'conversation' }
   $first = ''
@@ -36,7 +37,7 @@ function global:__KeepClaudeStore {
 }
 function global:__KeepHold([string]$name) {
   $keep = $env:KEEP_IA_BIN
-  if (-not $env:KEEP_WORKSPACE -or -not $keep -or -not (Test-Path -LiteralPath $keep -PathType Leaf)) { return $null }
+  if (-not (__KeepConfining) -or -not $env:KEEP_WORKSPACE -or -not $keep -or -not (Test-Path -LiteralPath $keep -PathType Leaf)) { return $null }
   $app = Get-Command -Name $name -CommandType Application -All -ErrorAction SilentlyContinue | Select-Object -First 1
   if ($app) { return $app.Source }
   return $null

@@ -21,32 +21,35 @@
 //!  - when the core refuses or does not answer it says so in one line and
 //!    runs Claude as it would have: a failure here never keeps Claude from
 //!    starting;
-//!  - both programs are run by `keep ia confinar -- <program> …`, as in the
-//!    Mac's functions: the AI of a workspace with a folder chosen for it is
-//!    held to that folder (docs/ia.md), and with none the core runs the
-//!    program as it would have. The function never falls back to running it
-//!    unheld when the core refuses to hold it: what the core said is the
-//!    answer. The program given to the core is a file it can start — the
-//!    `claude.exe` or the npm `claude.cmd`, not a `claude.ps1` PowerShell
-//!    would have preferred;
 //!  - what opens no conversation (`claude mcp …`, `claude update`,
 //!    `--version`…) is passed through untouched, and so is a Claude opened
-//!    from inside another (the variable is inherited, so it gets no store;
-//!    it is held all the same); `claude agents|attach|rc|remote-control` get
-//!    no store but do go through the core, which refuses the ones that send
-//!    work to a server outside the folder;
+//!    from inside another (the variable is inherited, so it gets no store);
+//!    `claude agents|attach|rc|remote-control` get no store either;
+//!  - ready to hold the AI to a folder, and off: with `__KeepConfining` made
+//!    to answer `$true` — one line of `ai.ps1`, `$false` as shipped, until
+//!    the confinement is proven on Windows (`CONFINEMENT_ENFORCED` in the
+//!    app) — both programs are run by `keep ia confinar -- <program> …`, as
+//!    in the Mac's functions: the AI of a workspace with a folder chosen for
+//!    it is held to that folder (docs/ia.md), and with none the core runs the
+//!    program as it would have. The function then never falls back to
+//!    running it unheld when the core refuses to hold it: what the core said
+//!    is the answer. The program given to the core is a file it can start —
+//!    the `claude.exe` or the npm `claude.cmd`, not a `claude.ps1`
+//!    PowerShell would have preferred. `claude agents|attach|rc|remote-control`
+//!    and a Claude opened from inside another go through it too (the core
+//!    refuses the ones that send work to a server outside the folder);
 //!  - piped input, arguments (the empty ones too) and the exit code reach the
 //!    real program as they would have.
 //!
-//! Run directly — outside a tab of the Keep, for what opens no conversation,
-//! with no `keep` to ask, or when the only `claude` found is a script of
-//! PowerShell (which no one holds to a folder) — the real program is the one
-//! PowerShell would have run without the function: the first `claude` in the
-//! path that is a program or a script, `claude.exe` of the native install or
-//! the npm `claude.cmd`. Defined only when the person's profile has no
-//! function or alias of that name. Cmd and Git Bash have no such hook (a tab
-//! on them runs Claude on the global login, and unheld), and WSL is a Linux
-//! the daemon cannot see into.
+//! Run directly — as shipped, always; once the hold is on, outside a tab of
+//! the Keep, for what opens no conversation, with no `keep` to ask, or when
+//! the only `claude` found is a script of PowerShell (which no one holds to a
+//! folder) — the real program is the one PowerShell would have run without
+//! the function: the first `claude` in the path that is a program or a
+//! script, `claude.exe` of the native install or the npm `claude.cmd`.
+//! Defined only when the person's profile has no function or alias of that
+//! name. Cmd and Git Bash have no such hook (a tab on them runs Claude on the
+//! global login, and unheld), and WSL is a Linux the daemon cannot see into.
 //!
 //! PowerShell 5.1 and 7 both run it. The core's answer is read as UTF-8
 //! whatever the console's code page is: a folder under a name with an accent
@@ -187,6 +190,17 @@ mod in_powershell {
         std::env::split_paths(&std::env::var_os("PATH")?).map(|d| d.join("pwsh")).find(|p| p.is_file())
     }
 
+    /// The line of `ai.ps1` that decides whether `claude` and `codex` go through `keep ia confinar`, as shipped
+    /// (off, while the confinement is off in the app: `CONFINEMENT_ENFORCED`), and as it is edited to turn it on.
+    const HOLD_OFF: &str = "function global:__KeepConfining { $false }";
+    const HOLD_ON: &str = "function global:__KeepConfining { $true }";
+
+    /// The script with the hold turned on by that one edit.
+    fn holding() -> String {
+        assert_eq!(AI.matches(HOLD_OFF).count(), 1, "the switch is one line of the script");
+        AI.replace(HOLD_OFF, HOLD_ON)
+    }
+
     fn write_script(path: &Path, body: &str) {
         use std::os::unix::fs::PermissionsExt;
         std::fs::write(path, format!("#!/bin/sh\n{body}")).unwrap();
@@ -201,11 +215,15 @@ mod in_powershell {
 
     impl World {
         fn new(name: &str, pwsh: PathBuf) -> World {
+            World::with_script(name, pwsh, AI)
+        }
+
+        fn with_script(name: &str, pwsh: PathBuf, script: &str) -> World {
             let dir = std::env::temp_dir().join(format!("keepd-pwsh-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(dir.join("bin")).unwrap();
             std::fs::create_dir_all(dir.join("home")).unwrap();
-            std::fs::write(dir.join("ai.ps1"), AI).unwrap();
+            std::fs::write(dir.join("ai.ps1"), script).unwrap();
             // What the real programs say about the way they were run.
             let tell = "echo \"[$(basename $0)] n=$#\"\nfor a in \"$@\"; do echo \"  arg=[$a]\"; done\n\
                         echo \"  store=[$CLAUDE_SECURESTORAGE_CONFIG_DIR]\"\n\
@@ -276,13 +294,8 @@ mod in_powershell {
         assert!(out.contains("[claude] n=3") && out.contains("  arg=[--foo]") && out.contains("  arg=[bar baz]") && out.contains("  arg=[]"), "{out}");
         assert!(out.contains("  store=[/tmp/José/abas/1-2]"), "a folder under an accent is read as UTF-8: {out}");
         assert!(out.contains("after=[]"), "{out}");
-        let lines: Vec<&str> = asked.lines().collect();
-        assert_eq!(lines.len(), 2, "{asked}");
-        assert!(lines[0].starts_with("keep ia preparar --ws=w1 --shell=") && lines[0].ends_with("--json"), "{asked}");
+        assert!(asked.starts_with("keep ia preparar --ws=w1 --shell=") && asked.trim_end().ends_with("--json"), "{asked}");
         assert!(!asked.contains("--escolha"), "{asked}");
-        // The program is held by the core, as a file it can start, with the arguments after it.
-        let held = format!("keep ia confinar -- {}/claude --foo bar baz", w.dir.join("bin").display());
-        assert!(lines[1].starts_with(&held), "{asked}");
 
         // The tab's choice goes along.
         let mut chosen = tab.to_vec();
@@ -302,7 +315,7 @@ mod in_powershell {
         let mut set = tab.to_vec();
         set.push(("CLAUDE_SECURESTORAGE_CONFIG_DIR", "/tmp/ja"));
         let (out, asked) = w.run(&set, "", "claude hi");
-        assert!(out.contains("  store=[/tmp/ja]") && !asked.contains("ia preparar") && asked.contains("ia confinar -- "), "{out} {asked}");
+        assert!(out.contains("  store=[/tmp/ja]") && asked.is_empty(), "{out} {asked}");
 
         // The core says no, or says nothing sensible: one line says so, and Claude runs as it would have.
         for (core, why) in [("refuse", "Nao ha conta."), ("garbage", "sem resposta do keep")] {
@@ -324,25 +337,60 @@ mod in_powershell {
         let (out, _) = w.run(&piped, "", "'entrada de teste' | claude -p; Write-Host \"code=$LASTEXITCODE\"");
         assert!(out.contains("  stdin=[entrada de teste]") && out.contains("code=7"), "{out}");
 
-        // Codex goes through the same door, with nothing to prepare, and is held.
+        // Codex goes through the same door, with nothing to prepare.
         let (out, asked) = w.run(&tab, "", "codex resume abc");
-        assert!(out.contains("[codex] n=2") && out.contains("  arg=[resume]") && out.contains("  store=[]"), "{out} {asked}");
-        assert!(!asked.contains("ia preparar") && asked.contains("ia confinar -- ") && asked.contains("/codex resume abc"), "{out} {asked}");
+        assert!(out.contains("[codex] n=2") && out.contains("  arg=[resume]") && out.contains("  store=[]") && asked.is_empty(), "{out} {asked}");
+
+        // As shipped, neither goes through `keep ia confinar`, whatever that would say: the confinement is off
+        // until it is proven on Windows. A core that would refuse to hold changes nothing.
+        let mut refusing = tab.to_vec();
+        refusing.push(("KEEP_TEST_HOLD", "refuse"));
+        for line in ["claude hi", "codex hi", "claude agents"] {
+            let (out, asked) = w.run(&refusing, "", line);
+            assert!(out.contains("] n=") && !out.contains("Keep: a pasta") && !asked.contains("confinar"), "{line}: {out} {asked}");
+        }
 
         // No such program: PowerShell's own complaint, not a crash.
         let (out, _) = w.run(&tab, "", "$env:PATH = '/usr/bin:/bin'; claude hi");
         assert!(out.contains("The term 'claude' is not recognized"), "{out}");
     }
 
+    /// The hold, switched on by the one-line edit: what the function does the day the confinement is proven.
     #[test]
     fn what_the_core_is_to_hold_is_never_run_unheld() {
         let Some(pwsh) = pwsh() else {
             eprintln!("sem pwsh (KEEP_TEST_PWSH ou no PATH): pulado");
             return;
         };
-        let w = World::new("hold", pwsh);
+        let w = World::with_script("hold", pwsh, &holding());
         let keep = w.dir.join("keep");
         let tab = [("KEEP_WORKSPACE", "w1"), ("KEEP_IA_BIN", keep.to_str().unwrap()), ("KEEP_TEST_CORE", "ok")];
+
+        // In a tab: the core is asked to prepare the login store and then to hold the program — a file it can
+        // start, with the arguments after it (the empty one and the one with a space too) — and the store is the
+        // one the first answer gave.
+        let (out, asked) = w.run(&tab, "", "claude --foo 'bar baz' ''");
+        let lines: Vec<&str> = asked.lines().collect();
+        assert_eq!(lines.len(), 2, "{asked}");
+        assert!(lines[0].starts_with("keep ia preparar --ws=w1 --shell="), "{asked}");
+        let held = format!("keep ia confinar -- {}/claude --foo bar baz", w.dir.join("bin").display());
+        assert!(lines[1].starts_with(&held), "{asked}");
+        assert!(out.contains("[claude] n=3") && out.contains("  arg=[bar baz]") && out.contains("  store=[/tmp/José/abas/1-2]"), "{out}");
+
+        // A Claude opened from inside another has its store already: no preparing, but held all the same. Outside a
+        // tab of the Keep, or with no `keep` to ask, nothing is held; what opens no conversation never is.
+        let mut set = tab.to_vec();
+        set.push(("CLAUDE_SECURESTORAGE_CONFIG_DIR", "/tmp/ja"));
+        let (out, asked) = w.run(&set, "", "claude hi");
+        assert!(out.contains("  store=[/tmp/ja]") && !asked.contains("ia preparar") && asked.contains("ia confinar -- "), "{out} {asked}");
+        let (out, asked) = w.run(&[("KEEP_IA_BIN", keep.to_str().unwrap()), ("KEEP_TEST_CORE", "ok")], "", "claude hi; codex hi");
+        assert!(out.contains("[claude] n=1") && out.contains("[codex] n=1") && asked.is_empty(), "{out} {asked}");
+        let (out, asked) = w.run(&[("KEEP_WORKSPACE", "w1"), ("KEEP_IA_BIN", "/nao/existe/keep")], "", "claude hi; codex hi");
+        assert!(out.contains("[claude] n=1") && out.contains("[codex] n=1") && asked.is_empty(), "{out} {asked}");
+        for line in ["claude mcp list", "claude --version", "claude update"] {
+            let (_, asked) = w.run(&tab, "", line);
+            assert!(asked.is_empty(), "{line}: {asked}");
+        }
 
         // The core will not hold it (the folder is gone): nothing runs, the core's word reaches the person, and the
         // shell's exit code is the core's.
