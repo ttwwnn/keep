@@ -6,8 +6,9 @@
 // A command is its spec (what it is called, where it is listed, how it is
 // drawn, which chord does the same without the palette) and a binding (what
 // runs). The specs are here. The window binds what it can do itself in
-// palette/bindings.ts. What belongs to another part of the app is bound by
-// that part, with `registerCommand`, and shows dim in the list until it is:
+// palette/bindings.ts, as defaults. What belongs to another part of the app is
+// bound by that part, with `registerCommand` — which wins over a default, early
+// or late — and shows dim in the list until it is:
 //
 //   toggleVerticalTabs   the tabs' side-bar-only layout
 //   newWindow            a second window
@@ -115,6 +116,15 @@ const bindings = new Map<CommandId, CommandBinding>();
 /** Bind a command; binding one again replaces what was bound, which is how another part of the app takes over a default. */
 export function registerCommand(id: CommandId, binding: CommandBinding): void {
   bindings.set(id, binding);
+}
+
+/**
+ * Bind a command only if nothing is bound yet: what the window does of itself
+ * (palette/bindings.ts), which never takes a command back from the part of the
+ * app that owns it — however early in the start that part bound it.
+ */
+export function registerDefault(id: CommandId, binding: CommandBinding): void {
+  if (!bindings.has(id)) bindings.set(id, binding);
 }
 
 /** Whether a command has something to run now. Dim in the palette, and never chosen, when not. */

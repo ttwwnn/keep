@@ -316,7 +316,11 @@ export function Picker(props: { mode: PickerMode }) {
 
   useEffect(() => field.current?.focus(), []);
   useEffect(() => {
-    rowsBox.current?.children[at]?.scrollIntoView({ block: "nearest" });
+    const box = rowsBox.current;
+    if (!box) return;
+    // The first row brings its heading with it, which the fade at the top would otherwise take.
+    if (at === firstSelectable(rows)) box.scrollTop = 0;
+    else box.children[at]?.scrollIntoView({ block: "nearest" });
   }, [selected?.id]);
 
   const openCatalog = (id: CatalogId) => setCatalog(id);
@@ -335,6 +339,13 @@ export function Picker(props: { mode: PickerMode }) {
 
   /** The list's keys. Whatever it does not use is left to bubble, to the card and the window: the chords that switch cards work from here. */
   const onFieldKey = (e: KeyboardEvent) => {
+    // A composition being committed with Enter or cancelled with Esc is the input method's, not the list's.
+    if (e.isComposing) return;
+    // The field keeps the keyboard: Tab would walk it off to the chips, and what is typed then goes nowhere.
+    if (e.key === "Tab" && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault();
+      return;
+    }
     const control = e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey;
     // ⌃J and ⌃K move down and up the list, and ⌃N and ⌃P too. On Windows Ctrl+K is the actions' (⌘K on the Mac), so up is ↑ and Ctrl+P there.
     if (e.key === "ArrowDown" || (control && (e.code === "KeyJ" || e.code === "KeyN"))) step(1);

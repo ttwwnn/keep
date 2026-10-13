@@ -183,6 +183,17 @@ describe("Ir para", () => {
     expect(goToItems(input({ workspaces: [space("a", [tab("a", 1, 0)])] }))[0].detail).toBe("");
   });
 
+  it("does not say a program's name twice", () => {
+    const ws = [
+      space("a", [
+        tab("a", 1, 0, { title: "pwsh", program: "pwsh" }),
+        tab("a", 2, 1, { title: "PowerShell.EXE", program: "powershell" }),
+        tab("a", 3, 2, { title: "Revisar", program: "claude" }),
+      ]),
+    ];
+    expect(goToItems(input({ workspaces: ws })).map((i) => i.command)).toEqual(["", "", "claude"]);
+  });
+
   it("folders come after the tabs, minus the ones whose workspace exists", () => {
     const items = goToItems(
       input({
@@ -365,6 +376,21 @@ describe("the palette's commands", () => {
     registerCommand("killWorkspace", { run: () => ran.push("kill"), enabled: () => false });
     expect(runCommand("killWorkspace")).toBe(false);
     expect(ran).toEqual(["second"]);
+  });
+
+  it("a default never takes a command back, whichever came first", async () => {
+    vi.resetModules();
+    const { registerCommand, registerDefault, runCommand } = await import("../commands");
+    const ran: string[] = [];
+    // The owner bound it before the window's defaults were made.
+    registerCommand("chooseTheme", { run: () => ran.push("owner") });
+    registerDefault("chooseTheme", { run: () => ran.push("default") });
+    // And one it binds after.
+    registerDefault("chooseFont", { run: () => ran.push("default font") });
+    registerCommand("chooseFont", { run: () => ran.push("owner font") });
+    runCommand("chooseTheme");
+    runCommand("chooseFont");
+    expect(ran).toEqual(["owner", "owner font"]);
   });
 
   it("the destructive ones are said so, and the themes and fonts open lists", async () => {

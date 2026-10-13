@@ -35,6 +35,8 @@
   display: block;
   width: min(860px, 66vw);
   height: clamp(300px, 62vh, 560px);
+  /* Never past the bottom of a window as short as the window may be. */
+  max-height: calc(100vh - 102px);
 }
 
 /* A list that another part of the app supplies fills the card. */
@@ -176,10 +178,6 @@
    row is only lit when the query put it there. */
 .pk-lit {
   color: var(--ink-resting);
-}
-
-.pk-row .pk-lit mark {
-  color: var(--ink);
 }
 
 /* A folder: one path. The road faint and the name in ink, and a long one is

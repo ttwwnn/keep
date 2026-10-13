@@ -36,7 +36,9 @@ fn candidates(var: &dyn Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
     found.extend(under("USERPROFILE", &[".cargo", "bin"]));
     found.extend(under("ProgramData", &["chocolatey", "bin"]));
     // Homebrew's and the system's, for the Mac the app is developed on.
-    found.extend(["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"].iter().map(|d| Path::new(d).join(&name)));
+    for dir in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
+        found.push(Path::new(dir).join(&name));
+    }
     found.extend(under("HOME", &[".local", "bin"]));
     found
 }
@@ -102,16 +104,18 @@ mod tests {
 
     #[test]
     fn the_lines_become_folders() {
-        let out = "C:\\Users\\ana\\www\\clinica\r\n\r\n  C:\\Users\\ana\\www\\api  \nC:\\Users\\ana\\www\\clinica\n/home/ana/x\n";
-        assert_eq!(parse(out, 10), ["C:\\Users\\ana\\www\\clinica", "C:\\Users\\ana\\www\\api", "/home/ana/x"]);
-        assert_eq!(parse(out, 2).len(), 2);
+        let clinica = "C:\\Users\\ana\\www\\clinica";
+        let api = "C:\\Users\\ana\\www\\api";
+        let out = format!("{clinica}\r\n\r\n  {api}  \n{clinica}\n/home/ana/x\n");
+        assert_eq!(parse(&out, 10), [clinica, api, "/home/ana/x"]);
+        assert_eq!(parse(&out, 2).len(), 2);
         assert!(parse("", 10).is_empty());
     }
 
     #[test]
     fn the_path_comes_before_the_usual_places() {
         let env = |name: &str| match name {
-            "PATH" => Some(OsString::from(if cfg!(windows) { "C:\\bin;D:\\tools" } else { "/opt/a:/opt/b" })),
+            "PATH" => Some(OsString::from(if cfg!(windows) { "C:\\bin;D:\\tools" } else { "/a:/b" })),
             "LOCALAPPDATA" => Some(OsString::from("C:\\Users\\ana\\AppData\\Local")),
             "USERPROFILE" => Some(OsString::from("C:\\Users\\ana")),
             _ => None,
@@ -119,7 +123,8 @@ mod tests {
         let found = candidates(&env);
         let name = format!("zoxide{}", std::env::consts::EXE_SUFFIX);
         assert!(found[0].ends_with(&name));
-        let links = Path::new("C:\\Users\\ana\\AppData\\Local").join("Microsoft").join("WinGet").join("Links").join(&name);
+        let local = Path::new("C:\\Users\\ana\\AppData\\Local");
+        let links = local.join("Microsoft").join("WinGet").join("Links").join(&name);
         assert!(found.contains(&links));
         assert!(found.iter().position(|p| *p == links) > Some(1));
         // An environment with none of it leaves the system's own places only.
@@ -139,7 +144,8 @@ mod tests {
     #[test]
     fn it_asks_for_the_list_and_gives_up_on_a_hung_one() {
         let good = script("good", "[ \"$1 $2\" = \"query --list\" ] && printf '/a/b\\n/c/d\\n'");
-        assert_eq!(run(&good, Duration::from_secs(5)).map(|o| parse(&o, 10)), Some(vec!["/a/b".into(), "/c/d".into()]));
+        let listed = run(&good, Duration::from_secs(5)).map(|out| parse(&out, 10));
+        assert_eq!(listed, Some(vec!["/a/b".to_string(), "/c/d".to_string()]));
         let slow = script("slow", "sleep 5");
         let started = Instant::now();
         assert_eq!(run(&slow, Duration::from_millis(150)), None);

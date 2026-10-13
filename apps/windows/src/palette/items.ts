@@ -132,6 +132,12 @@ export function relativePlace(cwd: string, place: string, name: string): string 
   return named(path.slice(root.length + 1));
 }
 
+/** A program's name said again by the title that is already it — `pwsh — pwsh` — as the sidebar leaves it out. */
+function repeats(title: string, program: string): boolean {
+  const bare = (name: string) => name.trim().toLowerCase().replace(/\.exe$/, "");
+  return program !== "" && bare(title) === bare(program);
+}
+
 /** How long ago, in as few characters as carry it: a column that has to align, beside identifiers rather than inside a sentence. */
 export function recency(lastActive: number, now: number): string {
   if (!lastActive) return "";
@@ -192,7 +198,7 @@ export function goToItems(input: GoToInput): PickerItem[] {
       context,
       title: facts.title,
       detail: facts.panes > 1 ? `${facts.panes} painéis` : "",
-      command: facts.program,
+      command: repeats(facts.title, facts.program) ? "" : facts.program,
       path: facts.cwd,
       busy: facts.busy,
       lastActive: facts.lastActive,

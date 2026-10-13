@@ -35,6 +35,7 @@ import {
   workspaces,
   zoom,
 } from "./store";
+import { paletteSteps } from "./e2ePalette";
 import { viewKey } from "./terminals";
 import { menu } from "./ui/common";
 
@@ -168,6 +169,8 @@ export async function runE2E(): Promise<void> {
     }, 5000);
     return `${panes} painéis na aba em frente (${activeTab.value?.panes.map((p) => p.id).join(", ")})`;
   });
+
+  await paletteSteps(step, { waitFor, workspace: WORKSPACE });
 
   await step("ler o estado do Claude Code de uma tela", async () => {
     const rule = "─".repeat(40);

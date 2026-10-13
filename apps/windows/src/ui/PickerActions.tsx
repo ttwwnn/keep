@@ -52,6 +52,11 @@ export function ActionsPanel(props: { item: PickerItem; onRun(action: ActionId):
   const step = (by: number) => setIndex(Math.min(Math.max(selected + by, 0), shown.length - 1));
 
   const onKey = (e: KeyboardEvent) => {
+    if (e.isComposing) return;
+    if (e.key === "Tab" && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault();
+      return;
+    }
     const plain = e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey;
     if (e.key === "ArrowDown" || (plain && (e.code === "KeyJ" || e.code === "KeyN"))) step(1);
     else if (e.key === "ArrowUp" || (plain && e.code === "KeyP")) step(-1);

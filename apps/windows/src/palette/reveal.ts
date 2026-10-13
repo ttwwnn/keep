@@ -2,7 +2,6 @@
 // for a moment so the eye finds it.
 
 import type { Terminal } from "@xterm/xterm";
-import { palette, terminals } from "../store";
 import { columnOf, locateLine, type Found } from "./hits";
 
 /** How long the mark stays. */
@@ -48,7 +47,7 @@ const flashing = new WeakMap<Terminal, () => void>();
  * what follows it rather than pinned to the last row. The line is marked when
  * it is certainly the one: a guess scrolls near it and claims nothing.
  */
-export function showLine(term: Terminal, hit: Found, dark = palette.value.dark): void {
+export function showLine(term: Terminal, hit: Found, dark: boolean): void {
   const buffer = term.buffer.active;
   // A program on the alternate screen has no history to scroll through.
   if (buffer.type === "alternate") return;
@@ -58,7 +57,13 @@ export function showLine(term: Terminal, hit: Found, dark = palette.value.dark):
   flashing.get(term)?.();
   flashing.delete(term);
   if (!located.exact) return;
-  const clear = markLine(term, located.index, hit.span, dark);
+  // The mark is the extra and the scroll is the point: decorations are an experimental part of xterm.js.
+  let clear: () => void;
+  try {
+    clear = markLine(term, located.index, hit.span, dark);
+  } catch {
+    return;
+  }
   const timer = setTimeout(() => {
     clear();
     flashing.delete(term);
@@ -67,19 +72,4 @@ export function showLine(term: Terminal, hit: Found, dark = palette.value.dark):
     clearTimeout(timer);
     clear();
   });
-}
-
-/**
- * Go to a hit's line in its pane. Asked twice: a pane opened by the search
- * may still be receiving its screen, whose arrival lands the view back at the
- * bottom, and asking again once it has settled costs nothing when the first
- * time already worked.
- */
-export function revealHit(workspace: string, pane: number, hit: Found): void {
-  const apply = () => {
-    const view = terminals.existing(workspace, pane);
-    if (view) showLine(view.term, hit);
-  };
-  apply();
-  setTimeout(apply, 700);
 }

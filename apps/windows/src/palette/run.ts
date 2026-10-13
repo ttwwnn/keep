@@ -9,14 +9,30 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { baseName } from "../layout";
 import { catalogOf, commandSpec, isEnabled, runCommand, type CatalogId } from "../commands";
-import { closeTab, createWorkspace, focusPane, newTab, say, select, tabLabel, tabsByWorkspace } from "../store";
+import { closeTab, createWorkspace, focusPane, newTab, palette, say, select, tabLabel, tabsByWorkspace, terminals } from "../store";
 import type { ActionId } from "./actions";
+import type { Found } from "./hits";
 import type { PickerItem } from "./items";
 import { closeOverlay } from "./overlay";
-import { revealHit } from "./reveal";
+import { showLine } from "./reveal";
 
 /** Why a thing the person asked for did not happen, said where the sidebar says things. */
 const failed = (what: string) => (error: unknown) => say(`${what}: ${String(error)}`);
+
+/**
+ * Go to a hit's line in its pane. Asked twice: a pane opened by the search
+ * may still be receiving its screen, whose arrival lands the view back at the
+ * bottom, and asking again once it has settled costs nothing when the first
+ * time already worked.
+ */
+function revealHit(workspace: string, pane: number, hit: Found): void {
+  const apply = () => {
+    const view = terminals.existing(workspace, pane);
+    if (view) showLine(view.term, hit, palette.value.dark);
+  };
+  apply();
+  setTimeout(apply, 700);
+}
 
 /**
  * Choose a row: go there, open the folder, make the workspace, run the
