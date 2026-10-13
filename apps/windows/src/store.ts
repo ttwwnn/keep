@@ -1058,6 +1058,13 @@ export async function start(options: StartOptions): Promise<void> {
   const raw = await api.loadState().catch(() => null);
   gui.value = normalizeState(raw);
   stateLoaded = true;
+  // A state that could not be read is told, once, with what was done about it.
+  void api
+    .stateWarning()
+    .then((message) => {
+      if (message) void ask({ title: "O estado do Keep", message, buttons: [{ label: "OK", value: "ok", primary: true }] });
+    })
+    .catch(() => {});
 
   applyPalette(palette.value);
   onSystemAppearanceChange(() => (systemTheme.value += 1));

@@ -99,6 +99,8 @@ export const search = (query: string, limit = 50, workspace?: string, tab?: numb
   invoke<SearchHit[]>("search", { query, limit, workspace: workspace ?? null, tab: tab ?? null });
 
 export const loadState = () => invoke<unknown | null>("load_state");
+/** What reading the state found wrong when the app opened (an unreadable file, and what was done about it), once. */
+export const stateWarning = () => invoke<string | null>("state_warning");
 export const saveState = (state: unknown) => invoke<void>("save_state", { state });
 export const shells = () => invoke<{ chosen: string; available: Shell[] }>("shells");
 export const chooseShell = (command: string) => invoke<void>("choose_shell", { command });

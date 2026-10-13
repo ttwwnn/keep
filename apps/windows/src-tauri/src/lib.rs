@@ -209,7 +209,17 @@ fn load_state(app: AppHandle) -> Answer<Option<serde_json::Value>> {
 
 #[tauri::command]
 fn save_state(app: AppHandle, state: serde_json::Value) -> Answer<()> {
-    settings::save(&state_path(&app)?, &state).map_err(text)
+    settings::save(&state_path(&app)?, &state).map_err(|e| {
+        settings::log(&format!("estado não gravado: {e:#}"));
+        text(e)
+    })
+}
+
+/// What reading the state found wrong when the app opened, once: an
+/// unreadable file, and what was done about it.
+#[tauri::command]
+fn state_warning() -> Option<String> {
+    settings::take_warning()
 }
 
 #[derive(Serialize)]
@@ -474,6 +484,7 @@ pub fn run() {
             detach,
             load_state,
             save_state,
+            state_warning,
             shells,
             choose_shell,
             ia_info,
