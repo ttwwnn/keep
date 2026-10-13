@@ -58,8 +58,11 @@ verdade (só compilado no CI), `[ ]` por fazer, `[-]` não se aplica.
 - [x] Cursor: forma (barra, bloco, sublinhado), piscar (padrão sim, como o Mac) e
   oco sem foco; histórico em linhas (padrão 10000, até 100000); tudo ao vivo.
 - [x] Título da janela = aba ativa e o workspace (`windowTitle.ts`).
-- [x] Modo 2031 (`CSI ? 2031 h` avisa claro/escuro com `CSI ? 997 ; 1|2 n` na
+- [~] Modo 2031 (`CSI ? 2031 h` avisa claro/escuro com `CSI ? 997 ; 1|2 n` na
   hora e a cada troca do fundo) e `CSI ? 996 n`; OSC 10/11/12 seguem o tema.
+  Visto com um shell de verdade e o keepd no Mac; que o ConPTY deixe passar
+  `?2031h` até a página e o relatório de volta até o programa, só o CI do
+  Windows mostra.
 - [x] Cores da busca da aba (FindBar) derivadas do tema, legíveis no claro e no
   escuro (`Palette.search`, a fatia `palette` pode usar nas outras buscas).
 - [ ] Opacidade e desfoque de fundo (Mica/Acrylic): os efeitos exigem janela
