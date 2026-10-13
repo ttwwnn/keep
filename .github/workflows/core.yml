@@ -66,8 +66,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      # KEEP_CONFINE_PROVA: o teste que sobe programas presos de verdade (a
-      # contenção da IA no Windows) só roda com ela; só o Windows o tem.
+      # O teste que sobe programas presos de verdade (a contenção da IA no
+      # Windows) roda sempre; KEEP_CONFINE_PROVA=0 o pula. Só o Windows o tem.
       - name: Testes
         timeout-minutes: 25
         env:

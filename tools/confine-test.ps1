@@ -221,10 +221,18 @@ const s = net.createServer((c) => c.end("pong")).listen(0, "127.0.0.1", () => {
     }
 
     # O Gerenciador de Credenciais (onde o Claude Code pode guardar o login),
-    # só para ver: o resultado vai para o registro, não conta.
-    $cred = Roda "presa" @("cmd.exe", "/d", "/c", "cmdkey /generic:keep-confine-teste /user:u /pass:p >nul && cmdkey /list:keep-confine-teste")
-    Write-Host ("  --    o Gerenciador de Credenciais preso: " + ($cred -replace '\s+', ' '))
-    cmdkey /delete:keep-confine-teste 2>&1 | Out-Null
+    # só para ver: o resultado vai para o registro, não conta. Um que o usuário
+    # grava, o preso vê? Um que o preso grava, o usuário vê?
+    $alvo = "keep-confine-teste-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
+    cmdkey /generic:$alvo /user:u /pass:p 2>&1 | Out-Null
+    $livre = ((cmd /d /c "cmdkey /list:$alvo 2>&1") -join " ") -replace '\s+', ' '
+    $preso = Roda "presa" @("cmd.exe", "/d", "/c", "cmdkey /list:$alvo 2>&1")
+    Write-Host ("  --    o Gerenciador de Credenciais, uma credencial do usuário: livre vê [" + $livre + "]; preso vê [" + ($preso -replace '\s+', ' ') + "]")
+    $gravou = Roda "presa" @("cmd.exe", "/d", "/c", "cmdkey /generic:$alvo-preso /user:u /pass:p 2>&1")
+    $depois = ((cmd /d /c "cmdkey /list:$alvo-preso 2>&1") -join " ") -replace '\s+', ' '
+    Write-Host ("  --    o Gerenciador de Credenciais, uma credencial que o preso grava [" + ($gravou -replace '\s+', ' ') + "]: o usuário vê [" + $depois + "]")
+    cmdkey /delete:$alvo 2>&1 | Out-Null
+    cmdkey /delete:"$alvo-preso" 2>&1 | Out-Null
 
     if ($bash) {
         # O Git Bash (MSYS2) não sobe preso, e isto é um limite conhecido: ele cria

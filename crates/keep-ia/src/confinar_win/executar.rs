@@ -810,15 +810,13 @@ fn como_comum(args: &[String]) -> i32 {
 
 #[cfg(test)]
 mod testes {
-    /// O roteiro de verdade, no Windows do CI: sobe programas presos e confere
-    /// o que dá e o que não dá para eles fazerem.
+    /// O roteiro de verdade, no Windows do CI e em quem desenvolve: sobe
+    /// programas presos e confere o que dá e o que não dá para eles fazerem.
+    /// Dá permissões na pasta de prova e nas pastas do caminho até ela (no
+    /// perfil de quem roda); `KEEP_CONFINE_PROVA=0` o pula, onde isso não se quer.
     #[test]
     fn o_programa_preso_so_toca_na_pasta_dele() {
-        // Desligado até a contenção passar no Windows do CI (o primeiro
-        // roteiro falhou em CreateRestrictedToken, erro 87): só roda com
-        // KEEP_CONFINE_PROVA=1, e o botão da barra lateral fica escondido
-        // (CONFINEMENT_ENFORCED = false em apps/windows/src/confinement.ts).
-        if std::env::var_os("KEEP_CONFINE_PROVA").is_none() {
+        if std::env::var("KEEP_CONFINE_PROVA").is_ok_and(|v| v == "0") {
             return;
         }
         assert_eq!(super::autoteste(), 0, "veja a lista acima: cada FALHOU é uma garantia que não vale");

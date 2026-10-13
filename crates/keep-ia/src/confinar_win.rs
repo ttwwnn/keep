@@ -26,8 +26,7 @@
 //! sem uma isenção que só o administrador concede, o `localhost` some (o
 //! servidor de desenvolvimento que a IA sobe, MCP local, o retorno do login),
 //! o que o sandbox do macOS não faz. Ele também troca o espaço de nomes de
-//! objetos e o registro, de que o Git Bash (MSYS2), que o Claude Code usa
-//! para o Bash, depende. E o console da aba (ConPTY) é herdado por um filho
+//! objetos e o registro. E o console da aba (ConPTY) é herdado por um filho
 //! do mesmo usuário, na mesma sessão, com a mesma integridade, sem mudar mais
 //! nada: é o menor desvio do processo comum.
 //!
@@ -37,11 +36,17 @@
 //!    Claude Code e do Codex, o estado, a área privada do Keep) recebem uma
 //!    permissão para um SID só do Keep. A pasta escolhida tem o SID dela
 //!    (derivado do caminho): trocar de pasta não leva a permissão antiga
-//!    junto. O resto da lista usa um SID base, do usuário.
-//! 2. O token restrito leva esses SIDs, perde os privilégios e os grupos
-//!    administrativos, e ganha uma DACL padrão com o usuário, o sistema e o
-//!    SID da pasta (senão um objeto criado por um processo preso não abre para
-//!    o irmão dele; sem o SID base, o de um workspace não abre para o de outro).
+//!    junto. O resto da lista usa um SID base, do usuário. As pastas no
+//!    caminho até elas (a casa do usuário, as de cima da pasta escolhida)
+//!    recebem do SID base só os atributos, sem listar nem herdar: o `realpath`
+//!    do Node e o `stat` do Git andam por todos os componentes do caminho.
+//! 2. O token restrito leva esses SIDs, perde os privilégios (apagados, não só
+//!    desligados: o token de um administrador tem muitos e um processo religa o
+//!    que está desligado) e os grupos administrativos, passa a ter o usuário
+//!    como dono do que cria (o Git recusa um repositório de outro dono) e ganha
+//!    uma DACL padrão com o usuário, o sistema e o SID da pasta (senão um
+//!    objeto criado por um processo preso não abre para o irmão dele; sem o SID
+//!    base, o de um workspace não abre para o de outro).
 //! 3. O processo nasce suspenso, entra num Job que o mata junto com este
 //!    processo, ganha acesso ao próprio token (quase todo programa pergunta
 //!    ao token quem ele é) e só então anda. O console da aba passa por
@@ -53,14 +58,26 @@
 //! fora tem de ser negado e a pasta tem de funcionar; um sandbox que não
 //! contém não é deixado passar calado.
 //!
+//! O que roda preso (conferido no CI do Windows, com o token elevado do CI e
+//! com o de quem não está elevado): `cmd`, `pwsh` e `powershell`, `git`, `node`
+//! (inclusive o `localhost`), o Claude Code e o console da aba (ConPTY).
+//!
+//! O que NÃO roda preso: o Git Bash (MSYS2). O runtime cria de início um canal
+//! de sinais com nome e uma DACL só do usuário e do sistema, e a segunda
+//! checagem do token não leva nenhum dos dois (o usuário entre os SIDs de
+//! restrição devolveria o perfil inteiro). O Claude Code usa o Git Bash para
+//! a ferramenta Bash; preso, o Keep a nega e liga a ferramenta PowerShell
+//! (`confinar::claude_sem_o_bash`). Os ganchos e a linha de status, que o
+//! Claude roda pelo Git Bash quando ele existe, não foram conferidos presos.
+//!
 //! O que NÃO contém: o que o Windows deixa qualquer um ler (`C:\Windows`,
-//! `Program Files`, o que `Usuários` lê em outras unidades nos níveis que o
-//! levam, `C:\Users\Public`), as pastas de rede (o servidor confere o
-//! usuário, não o token), o registro do sistema, a área de trabalho (o
-//! processo preso divide a do usuário e pode mandar mensagens e teclas às
-//! outras janelas) e o que um serviço faz em nome do usuário (abrir um
-//! programa pelo shell, o WSL), como no macOS o `open`. O perfil do usuário e
-//! o que está nele ficam de fora.
+//! `Program Files`, o que `Usuários` lê em outras unidades, `C:\Users\Public`)
+//! e o que `Usuários` ou `Todos` gravam (`C:\ProgramData`, `C:\Windows\Temp`),
+//! as pastas de rede (o servidor confere o usuário, não o token), o registro
+//! do sistema, a área de trabalho (o processo preso divide a do usuário e
+//! pode mandar mensagens e teclas às outras janelas) e o que um serviço faz em
+//! nome do usuário (abrir um programa pelo shell, o WSL), como no macOS o
+//! `open`. O perfil do usuário e o que está nele ficam de fora.
 //!
 //! Esta parte não chama o Windows: caminhos, SIDs, a lista de permissões, a
 //! linha de comando e o ambiente, para os testes rodarem em qualquer sistema.
