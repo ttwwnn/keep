@@ -23,6 +23,16 @@ export interface DragHandlers {
 
 let justDragged = false;
 
+let trace: ((line: string) => void) | undefined;
+
+/** Where what a drag did is said — a scripted run's, to tell why one did not do what was asked of it. */
+export function traceDrags(sink: ((line: string) => void) | undefined): void {
+  trace = sink;
+}
+
+const named = (e: Element | null) =>
+  e ? `${e.tagName.toLowerCase()}${e.className && typeof e.className === "string" ? `.${e.className.trim().replace(/\s+/g, ".")}` : ""}` : "nada";
+
 /** The click that ends a drag is not a click on what was dragged: asked of by whatever selects on click. */
 export function endedADrag(): boolean {
   return justDragged;
@@ -42,6 +52,7 @@ export function trackDrag(down: PointerEvent, handlers: DragHandlers): void {
   let active = false;
   let over = false;
 
+  trace?.(`pressionado em ${Math.round(origin.x)},${Math.round(origin.y)} sobre ${named(down.target instanceof Element ? down.target : null)}`);
   const at = (e: PointerEvent): Point => ({ x: e.clientX, y: e.clientY });
   const stop = () => {
     over = true;
@@ -56,9 +67,10 @@ export function trackDrag(down: PointerEvent, handlers: DragHandlers): void {
       // Already let go of with the pointer.
     }
   };
-  const finish = (dropped: boolean) => {
+  const finish = (dropped: boolean, why: string) => {
     if (over) return;
     stop();
+    trace?.(`fim por ${why} em ${Math.round(last.x)},${Math.round(last.y)}; arrastando: ${active}; solto: ${dropped}`);
     if (!active) return;
     justDragged = true;
     setTimeout(() => (justDragged = false), 0);
@@ -71,10 +83,12 @@ export function trackDrag(down: PointerEvent, handlers: DragHandlers): void {
       if (Math.hypot(last.x - origin.x, last.y - origin.y) < threshold) return;
       active = true;
       if (handlers.start?.(last, e) === false) {
+        trace?.("recusado ao começar: o que se media não bate com o que se via");
         active = false;
         stop();
         return;
       }
+      trace?.(`começou em ${Math.round(last.x)},${Math.round(last.y)}`);
       try {
         holder?.setPointerCapture(down.pointerId);
       } catch {
@@ -86,16 +100,16 @@ export function trackDrag(down: PointerEvent, handlers: DragHandlers): void {
   function up(e: PointerEvent) {
     if (e.pointerId !== down.pointerId) return;
     last = at(e);
-    finish(true);
+    finish(true, "pointerup");
   }
-  function cancel() {
-    finish(false);
+  function cancel(e: Event) {
+    finish(false, e.type);
   }
   function key(e: KeyboardEvent) {
     if (e.key !== "Escape" || !active) return;
     e.preventDefault();
     e.stopPropagation();
-    finish(false);
+    finish(false, "Esc");
   }
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", up);
@@ -129,21 +143,35 @@ export function hangGhost(source: HTMLElement, at: Point): Ghost {
 }
 
 /**
- * Scroll a list when the pointer is near its top or bottom edge, faster the
- * closer it is: a drag toward a workspace out of sight must be able to reach it.
- * Returns how to stop.
+ * How far a list scrolls in a frame for a pointer `distance` from one of its
+ * edges (negative: past it): none beyond `reach`, the most at the edge and
+ * beyond it, between the two in proportion.
  */
-export function autoScroll(list: HTMLElement, pointer: () => Point | null): () => void {
-  const reach = 36;
+export function scrollStep(distance: number, reach = 36, most = 14): number {
+  if (distance >= reach) return 0;
+  return Math.ceil((Math.min(reach - distance, reach) / reach) * most);
+}
+
+/**
+ * Scroll a list while the pointer is near its top or bottom edge, faster the
+ * closer it is: a drag toward a workspace out of sight must be able to reach
+ * it. What is under a pointer that does not move changes as the list scrolls,
+ * so `scrolled` is told each time it did, with where the pointer is, for the
+ * drag to look again at what it is over. Returns how to stop.
+ */
+export function autoScroll(list: HTMLElement, pointer: () => Point | null, scrolled: (at: Point) => void): () => void {
   let frame = 0;
   const step = () => {
     const at = pointer();
     if (at) {
-      const rect = list.getBoundingClientRect();
-      const fromTop = at.y - rect.top;
-      const fromBottom = rect.bottom - at.y;
-      if (fromTop < reach) list.scrollTop -= Math.ceil(((reach - fromTop) / reach) * 14);
-      else if (fromBottom < reach) list.scrollTop += Math.ceil(((reach - fromBottom) / reach) * 14);
+      const box = list.getBoundingClientRect();
+      const up = scrollStep(at.y - box.top);
+      const down = scrollStep(box.bottom - at.y);
+      const before = list.scrollTop;
+      // The nearer edge, if the list is too short to have a middle.
+      if (up > 0 && up >= down) list.scrollTop -= up;
+      else if (down > 0) list.scrollTop += down;
+      if (list.scrollTop !== before) scrolled(at);
     }
     frame = requestAnimationFrame(step);
   };

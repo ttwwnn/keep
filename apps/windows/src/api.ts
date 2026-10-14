@@ -97,10 +97,22 @@ export const rearrange = (
   moves: { tab: number; splitOf: number; splitDir: number }[],
 ) => invoke<void>("rearrange", { workspace, moves });
 export const preview = (workspace: string, tab: number) => invoke<string>("preview", { workspace, tab });
+/** A screen with its colours (the sequences the daemon repaints with) and the grid it is held on. */
+export interface Screen {
+  cols: number;
+  rows: number;
+  text: string;
+}
+/** The same screen as `preview`, with its colours; a daemon that predates it refuses, and `preview` is the fallback. */
+export const previewVt = (workspace: string, tab: number) => invoke<Screen>("preview_vt", { workspace, tab });
+/** The folders the person goes to, from zoxide, best first; none where it is not installed. */
+export const directories = () => invoke<string[]>("directories");
 export const search = (query: string, limit = 50, workspace?: string, tab?: number) =>
   invoke<SearchHit[]>("search", { query, limit, workspace: workspace ?? null, tab: tab ?? null });
 
 export const loadState = () => invoke<unknown | null>("load_state");
+/** What reading the state found wrong when the app opened (an unreadable file, and what was done about it), once. */
+export const stateWarning = () => invoke<string | null>("state_warning");
 export const saveState = (state: unknown) => invoke<void>("save_state", { state });
 export const shells = () => invoke<{ chosen: string; available: Shell[] }>("shells");
 export const chooseShell = (command: string) => invoke<void>("choose_shell", { command });
@@ -151,6 +163,8 @@ export interface ClaudeSettings {
   folder: boolean;
   /** The `keep-statusline.ps1` installed with the app; null when it is not there. */
   script: string | null;
+  /** The core's command line (`keep.exe`), which the account hook runs; null when it is not there. */
+  keep: string | null;
 }
 export const claudeSettings = () => invoke<ClaudeSettings>("claude_settings");
 /** Write Claude Code's settings file if it still holds `expected` (null: no file); false when it changed meanwhile. */
@@ -159,6 +173,11 @@ export const writeClaudeSettings = (expected: string | null, text: string) =>
 /** Codex's model cache when it is not the version `known`: its stamp (null: no cache) and, when it changed, its text. */
 export const codexModels = (known: string | null) =>
   invoke<{ stamp: string | null; text: string | null }>("codex_models", { known });
+/** The names file the core shares with the window, when it is not the version `known`: its stamp (null: no file) and, when it changed, its text. */
+export const namesRead = (known: string | null) =>
+  invoke<{ stamp: string | null; text: string | null }>("names_read", { known });
+/** Write the names file; the stamp of what was written. */
+export const namesWrite = (text: string) => invoke<string | null>("names_write", { text });
 /** A line for the app's log. */
 export const appLog = (line: string) => invoke<void>("app_log", { line });
 /** The folder each workspace's AI is held to, by workspace name (~/.config/keep/confinement.json). */
@@ -175,6 +194,22 @@ export interface Memory {
 export const memoryNow = () => invoke<Memory | null>("memory_now");
 export const memoryMonitor = () => invoke<void>("memory_monitor");
 export const pathExists = (path: string) => invoke<boolean>("path_exists", { path });
+
+/** The first spelling of a path the terminal printed that exists: which one, and whether it is a folder. */
+export interface PathHit {
+  index: number;
+  path: string;
+  dir: boolean;
+}
+
+/** For each group of spellings of one printed path, the first that exists. */
+export const findPaths = (groups: string[][]) => invoke<(PathHit | null)[]>("find_paths", { groups });
+/** Open a file with what the system opens it with, a folder in the file manager. */
+export const openPath = (path: string) => invoke<void>("open_path", { path });
+/** Show a file in the file manager, selected. */
+export const revealPath = (path: string) => invoke<void>("reveal_path", { path });
+/** Open an address in the browser, or the mail program; only pages, mail and FTP are. */
+export const openUrl = (url: string) => invoke<void>("open_url", { url });
 export const e2eShot = (name: string) => invoke<void>("e2e_shot", { name });
 export const e2eFake = (state: unknown) => invoke<void>("e2e_fake", { state });
 

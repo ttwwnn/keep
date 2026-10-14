@@ -352,6 +352,9 @@ fn ligou_ao_console(filho: &sistema::Filho) -> bool {
 
 /// Sem pasta para o workspace: o programa roda como sempre.
 fn rodar_livre(programa: &str, resto: &[String]) -> i32 {
+    // O Ctrl+C da aba vai a todos os que dividem o console: quem o trata é o
+    // programa, e este processo, que só espera, não morre antes dele.
+    sistema::nao_morrer_com_ctrl_c();
     match std::process::Command::new(programa).args(resto).status() {
         Ok(s) => s.code().unwrap_or(1),
         Err(e) => {

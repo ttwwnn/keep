@@ -5,14 +5,17 @@
 // place to sit (`mount`), and the same terminal moves when the layout around
 // it changes — a split made, a pane closed — instead of being rebuilt.
 
+import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
-import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import * as api from "./api";
+import { installKitty, type Kitty } from "./kitty";
+import { installLinks, type LinkEnv, type Links } from "./links";
+import { installOsc52 } from "./osc52";
+import { isSafePaste, pasteQuestion, preparePaste, type Question } from "./paste";
 import { SchemeReporter } from "./schemeReport";
 import { serializeBuffer } from "./serialize";
 import type { CursorShape } from "./state";
@@ -37,9 +40,23 @@ export interface TerminalHooks {
   /** A key reached the terminal: false keeps it from the program. */
   key(view: TermView, event: KeyboardEvent): boolean;
   focused(view: TermView): void;
+  /** Where the pane's program works, for the paths it prints; empty when unknown. */
+  cwd(view: TermView): string;
+  /** The person's home folder. */
+  home(): string;
+  /** A quiet line for the person. */
+  say(message: string): void;
+  /** A question the person answers before something goes on: true on the yes. */
+  confirm(question: Question): Promise<boolean>;
+  /** The program set the tab's title (OSC 0 or 2). */
+  titleChanged(view: TermView, title: string): void;
 }
 
 export const viewKey = (workspace: string, tab: number) => `${workspace}\u0000${tab}`;
+
+/** When the window last stopped being the one with the keyboard: a copy made in another app after that is not a program's. */
+let windowBlurredAt = 0;
+if (typeof window !== "undefined") window.addEventListener("blur", () => (windowBlurredAt = Date.now()));
 
 /** How long after a pane is made, or shown, its grid is taken as settling: mounting walks through two or three sizes as the layout resolves. */
 const SETTLING_MS = 700;
@@ -49,16 +66,20 @@ const BADGE_MS = 900;
 /** What a repaint is written after: home and clear, as the terminal client does. */
 const CLEAR_FOR_REPAINT = "\x1b[H\x1b[2J";
 
-function openLink(uri: string) {
-  void openUrl(uri).catch(() => {});
-}
-
 export class TermView {
   key: string;
   readonly element: HTMLDivElement;
   readonly term: Terminal;
   readonly search: SearchAddon;
   private readonly scheme: SchemeReporter;
+  /** The addresses and paths in its text that can be clicked. */
+  readonly links: Links;
+  /** The keyboard protocol the program in it has turned on. */
+  private readonly kitty: Kitty;
+  /** The last text a program put on the clipboard (OSC 52), and when. */
+  programCopied: { text: string; at: number } | null = null;
+  /** When the pointer last went down in this terminal. */
+  private pressedAt = 0;
   private readonly fit: FitAddon;
   private webgl: WebglAddon | null = null;
   private attachment: api.Attachment | null = null;
@@ -93,6 +114,13 @@ export class TermView {
     this.key = viewKey(workspace, tab);
     this.element = document.createElement("div");
     this.element.className = "term-root";
+    const linkEnv: LinkEnv = {
+      flavor: platform.name === "windows" ? "windows" : "posix",
+      mac: platform.name === "macos",
+      cwd: () => hooks.cwd(this),
+      home: () => hooks.home(),
+      say: (message) => hooks.say(message),
+    };
     this.term = new Terminal({
       fontFamily: look.fontFamily,
       fontSize: look.fontSize,
@@ -109,17 +137,42 @@ export class TermView {
         platform.name === "windows" ? { backend: "conpty", buildNumber: platform.windowsBuild || undefined } : undefined,
       macOptionIsMeta: platform.name === "macos",
       rescaleOverlappingGlyphs: true,
-      linkHandler: { activate: (_event, uri) => openLink(uri) },
+      // A link the program drew (OSC 8) opens as an address in the text does.
+      linkHandler: { activate: (event, uri) => this.links.activateDrawn(event, uri) },
     });
+    this.links = installLinks(this.term, this.element, linkEnv);
+    // A program may write the clipboard, and read it once the person says so.
+    installOsc52(this.term, {
+      write: (text) => writeText(text).catch(() => navigator.clipboard.writeText(text)),
+      read: () => readText(),
+      confirm: (question) => hooks.confirm(question),
+      answer: (data) => this.term.input(data, false),
+      wrote: (text) => (this.programCopied = { text, at: Date.now() }),
+    });
+    // A program may ask for more of the keyboard than a terminal gives, and is told it can have it.
+    this.kitty = installKitty(this.term, (data) => this.term.input(data, false));
     this.fit = new FitAddon();
     this.search = new SearchAddon({ highlightLimit: 2000 });
     this.term.loadAddon(this.fit);
     this.term.loadAddon(this.search);
-    this.term.loadAddon(new WebLinksAddon((_event, uri) => openLink(uri)));
     const unicode = new Unicode11Addon();
     this.term.loadAddon(unicode);
     this.term.unicode.activeVersion = "11";
 
+    this.element.addEventListener("mousedown", () => (this.pressedAt = Date.now()), true);
+    // The browser's own paste (Ctrl+V, Shift+Insert) goes the way any paste does.
+    this.element.addEventListener(
+      "paste",
+      (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.paste(event.clipboardData?.getData("text/plain") ?? "");
+      },
+      true,
+    );
+
+    // The title is the program's, said as it changes: the daemon has it before this does.
+    this.term.onTitleChange((title) => this.hooks.titleChanged(this, title));
     this.scheme = new SchemeReporter(this.term, look.dark);
 
     this.term.attachCustomKeyEventHandler((event) => this.hooks.key(this, event));
@@ -366,9 +419,43 @@ export class TermView {
     return lines.join("\n");
   }
 
-  /** Text as if pasted: bracketed when the program asked for it. */
+  /**
+   * Text as if pasted: bracketed when the program asked for it, stripped of
+   * the control characters a tty acts on, and asked about first when it would
+   * run itself (a line break where the program did not ask for bracketed
+   * paste — see paste.ts).
+   */
   paste(text: string): void {
-    this.term.paste(text);
+    if (text === "") return;
+    if (isSafePaste(text, this.term.modes.bracketedPasteMode)) {
+      this.term.paste(preparePaste(text));
+      return;
+    }
+    void this.hooks.confirm(pasteQuestion(text)).then((yes) => {
+      if (yes) this.term.paste(preparePaste(text));
+      // A beat later: the key that answered is still being delivered, and
+      // WebKit hands its keypress to whatever has the focus by then — the
+      // terminal, which would send an Escape to the program.
+      setTimeout(() => this.focus(), 50);
+    });
+  }
+
+  /**
+   * The text a program that selects with the mouse itself — Claude Code in full
+   * screen — copied when the button was let go: the pointer went down here
+   * after the window last had the keyboard, and the copy came after that. Not
+   * an old clipboard, which cutting out of the prompt would delete from text
+   * nobody selected.
+   */
+  selectionTheProgramCopied(): string | undefined {
+    const copied = this.programCopied;
+    if (!copied || copied.text === "") return undefined;
+    return copied.at >= this.pressedAt && this.pressedAt > windowBlurredAt ? copied.text : undefined;
+  }
+
+  /** The Kitty keyboard flags the program has on; 0 while it has asked for none. */
+  kittyFlags(): number {
+    return this.kitty.flags();
   }
 
   /** Bytes as if typed. */
@@ -388,6 +475,8 @@ export class TermView {
     this.disposed = true;
     clearTimeout(this.badgeTimer);
     this.observer.disconnect();
+    this.links.dispose();
+    this.kitty.dispose();
     this.release();
     this.disableWebgl();
     this.term.dispose();

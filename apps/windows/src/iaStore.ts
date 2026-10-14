@@ -23,6 +23,7 @@ import {
   moved,
   orderKeyOf,
   programKind,
+  provenKey,
   readJev,
   readStoredLines,
   readSwitch,
@@ -35,6 +36,8 @@ import {
   type TabAI,
   type UsageLine,
 } from "./ia";
+import { startChores } from "./iaChores";
+import { setUpAccountHook } from "./iaHooks";
 import type { RootTab } from "./layout";
 import {
   activeTab,
@@ -42,14 +45,17 @@ import {
   ask,
   daemonError,
   gui,
+  holdTabName,
   iaInfo,
   info,
   loaded,
   log,
   notice,
+  preserveTabName,
   refresh,
   say,
   select,
+  statusLineSetup,
   workspaces,
 } from "./store";
 import { viewKey } from "./terminals";
@@ -351,7 +357,7 @@ export async function readTabs(): Promise<void> {
     for (const entry of answer.ia as TabAI[]) {
       if (typeof entry?.workspace !== "string" || typeof entry.aba !== "number") continue;
       if (typeof entry.conta !== "string" || !isValidKey(entry.conta)) continue;
-      next.set(viewKey(entry.workspace, entry.aba), entry);
+      next.set(viewKey(entry.workspace, entry.aba), { ...entry, provada: provenKey(entry.provada) });
     }
     const before = tabAIs.value;
     const same = next.size === before.size && [...next].every(([k, v]) => JSON.stringify(before.get(k)) === JSON.stringify(v));
@@ -374,6 +380,8 @@ export interface TabAccount {
   program: ProgramKind;
   /** Where the choice came from: what was just asked, the core, or the default for the program. */
   source: "note" | "core" | "default" | null;
+  /** The account its Claude last answered on, when the core could prove it: kept through a note, since a switch just made is exactly when it tells something. */
+  proven: string | null;
 }
 
 /** The AI and account a pane runs on, as far as the window knows. */
@@ -384,12 +392,13 @@ export function tabAccount(workspace: string, pane: TabInfo): TabAccount {
   // by `node`, or a tab that follows the order and runs on Codex now, is what
   // the core says it is. Without its word, the daemon's name for the process.
   const program: ProgramKind = entry ? { kind: entry.agente } : programKind(pane.command, pane.title);
-  if (!runsAI(program)) return { key: null, running: null, program, source: null };
+  if (!runsAI(program)) return { key: null, running: null, program, source: null, proven: null };
+  const proven = entry?.provada ?? null;
   const note = notes.value.get(id);
-  if (note) return { key: note.key, running: null, program, source: "note" };
-  if (entry) return { key: entry.conta, running: entry.atual, program, source: "core" };
+  if (note) return { key: note.key, running: null, program, source: "note", proven };
+  if (entry) return { key: entry.conta, running: entry.atual, program, source: "core", proven };
   const key = program.kind === "claude" ? FOLLOW_ORDER : program.kind === "codex" ? "gpt:principal" : null;
-  return { key, running: null, program, source: key ? "default" : null };
+  return { key, running: null, program, source: key ? "default" : null, proven: null };
 }
 
 /**
@@ -436,6 +445,9 @@ export async function chooseAccount(
   const id = viewKey(workspace, tab);
   if (switching.has(id)) return;
   switching.add(id);
+  // The program that comes up may announce another title: the tab goes on
+  // being called what it was, and keeps the name afterwards.
+  holdTabName(workspace, tab, tabName);
   const working = `Passando a aba “${tabName}” para ${label}…`;
   say(working, 45);
   let answer: CoreAnswer | null = null;
@@ -452,6 +464,10 @@ export async function chooseAccount(
     if (notice.value === working) notice.value = null;
   }
   const outcome = readSwitch(answer, error, interrupting);
+  // A switch made, or waiting on a login: the name stays with the tab. A
+  // refusal changes nothing, and the tab goes back to what its program says.
+  if (outcome.kind === "done" || outcome.kind === "login") preserveTabName(workspace, tab, tabName);
+  holdTabName(workspace, tab, null);
   switch (outcome.kind) {
     case "done":
       notes.value = new Map(notes.value).set(id, { key, at: Date.now() });
@@ -580,6 +596,8 @@ export async function startIA(): Promise<void> {
       /* opens empty */
     }
   }
+  // After the status line, which writes the same file: one at a time.
+  void statusLineSetup.then(() => setUpAccountHook());
   // The accounts first, then a round over them.
   await look(true, false);
   void measure(false);
@@ -593,6 +611,8 @@ export async function startIA(): Promise<void> {
   setInterval(() => void indexWorktrees(), 120_000);
   void renewLogins();
   setInterval(() => void renewLogins(), 60_000);
+  // The tabs back after a restart, the conversations a drop stopped, the names.
+  startChores();
   setInterval(() => (usageClock.value = Date.now()), 30_000);
 }
 

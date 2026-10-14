@@ -122,7 +122,8 @@ Nenhuma conta cai, nem a parada: o que a Clínica faz com as contas dela (`renov
 
 Pedido de 12/10/2026: "pra trocar entre contas do claude não é pra colocar exit, é só trocar". Trocar
 a conta do Claude de uma aba é regravar o armazém de login dele; o mesmo processo, na mesma conversa,
-passa a falar pela conta nova. Nada é digitado na aba.
+passa a falar pela conta nova. A conexão persistente do Chrome acompanha por uma reconexão local,
+assim que o cache de login venceu e a aba ficou livre.
 
 - Cada Claude que o Keep abre roda no armazém da aba (`CLAUDE_SECURESTORAGE_CONFIG_DIR=
   ~/.claude/contas/abas/<shell>-<nascimento>`), que tem o `claudeAiOauth` da conta da aba com
@@ -131,11 +132,21 @@ passa a falar pela conta nova. Nada é digitado na aba.
   da pasta, relido quando muda) e, sem refresh, nunca tenta renovar nem grava o login. Provado em
   12/10/2026 com o Claude Code 2.1.296: a conta mudou em até 30 s, sem /exit, e um acesso inválido no
   armazém, regravado com um válido, deixou a mesma sessão voltar.
+- A ponte do Chrome já conectada conserva a autenticação anterior até reconectar. Toda mudança
+  de dono, manual ou pela ordem, marca `chrome_pendente_desde` no armazém da aba. A rodada de
+  `renovar` aguarda pelo menos 32 s e envia `/mcp reconnect claude-in-chrome` quando a mesma aba
+  está livre, sem diálogo nem rascunho, com vínculo exato ao processo. É um comando local:
+  não inicia uma resposta do modelo, não sai do Claude e não muda a conversa ou o login global.
+  Renovar o token da mesma conta não marca reconexão. Se o Claude já reiniciou depois da troca,
+  a pendência é descartada; uma nova troca não é apagada pela conclusão da anterior.
+  `keep ia reconectar-chrome --json` processa as mesmas pendências para diagnóstico.
 - `keep ia preparar --ws=<W> --shell=<pid> [--escolha=<chave>]` cria (ou atualiza) o armazém da aba
   do shell e devolve a pasta. O shell é o dado ou o ancestral dele cujo pai é o keepd (um script na
   aba acha a aba). Sem escolha, fica a que a aba já tinha, senão seguir a ordem. Quem chama: a função
-  `claude()` do shell do autor (numa aba do Keep, sem a variável já posta) e a troca que sobe o
-  Claude numa aba (`trocar`, linha com `CLAUDE_SECURESTORAGE_CONFIG_DIR=<pasta>`).
+  `claude` do shell (numa aba do Keep, sem a variável já posta: a `claude()` do zsh do autor no Mac, e
+  no Windows a que o keepd põe no PowerShell de cada aba; ver "A função `claude` do shell" abaixo), a
+  troca que sobe o Claude numa aba (`trocar`, linha com `CLAUDE_SECURESTORAGE_CONFIG_DIR=<pasta>`) e a
+  restauração depois de reiniciar (`keep restauro`).
 - Estado: `~/.claude/contas/abas/estado.json` (`{"versao":1,"abas":{<chave>:{"pasta","conta","dono",
   "escolha","ws","aba","shell","nascimento","legada","em","falha"}}}`), sob a trava
   `estado.trava`. A conta e a escolha de uma aba de armazém próprio vêm daqui (o ambiente do
@@ -163,6 +174,78 @@ passa a falar pela conta nova. Nada é digitado na aba.
   próximo Claude aberto na aba já vem no armazém dela.
 - Quem desligar o app por mais de umas 8 h deixa as abas sem acesso válido: a primeira rodada da
   renovação ao abrir renova os donos e espalha, e cada aba volta no pedido seguinte.
+
+### Quem sobe o Claude no armazém da aba: a função `claude` do shell
+
+O armazém só vale para o Claude que sobe com `CLAUDE_SECURESTORAGE_CONFIG_DIR` apontando para ele, e
+quem faz isso, quando se digita `claude` numa aba, é uma função do shell da aba que chama `keep ia
+preparar` antes. Sem ela o Claude roda no login global, a troca a quente é recusada (`claude-global`)
+e o Claude fica de fora da renovação do armazém.
+
+- macOS: a função `claude()` do zsh do autor (kit-mac); o Keep não instala shell nenhum.
+- Windows: o keepd põe as funções no PowerShell de cada aba (5.1 ou 7) antes do primeiro prompt
+  (`crates/keepd/src/ai.ps1`, montado por `shellhook.rs`, junto do gancho do prompt):
+  - `claude`, numa aba do Keep sem armazém posto (`KEEP_WORKSPACE` sim, `CLAUDE_SECURESTORAGE_CONFIG_DIR`
+    não), pergunta `keep ia preparar --ws=<W> --shell=<pid do PowerShell> [--escolha=<KEEP_IA_ESCOLHA>]
+    --json` e, com a pasta na resposta, roda o Claude de verdade com a variável posta só naquela
+    subida (tirada ao sair, também no Ctrl+C);
+  - o `keep` é o `KEEP_IA_BIN`, que o keepd põe em toda aba (a pasta do próprio keepd; um valor já posto
+    vale), e a pasta dele vai para o fim do PATH da aba, para `keep nova`, `keep ls` e os outros;
+  - falha segura: se o keep recusa ou não responde, uma linha avisa ("Keep: não deu para preparar o login
+    desta aba (…); o Claude sobe como antes.") e o Claude sobe como subiria;
+  - o que não abre conversa passa direto, sem perguntar nada: `-v`, `--version`, `-h`, `--help`,
+    `agents`, `attach`, `rc`, `remote-control`, `auth`, `auto-mode`, `config`, `daemon`, `doctor`,
+    `gateway`, `help`, `import`, `install`, `kill`, `logs`, `mcp`, `plugin`, `plugins`, `project`,
+    `respawn`, `rm`, `setup-token`, `stop`, `ultrareview`, `update`, `upgrade` (a lista da função do
+    Mac); um Claude aberto de dentro de outro herda o armazém da aba e também passa direto;
+  - argumentos (os vazios também), entrada em pipe e código de saída chegam ao programa e voltam como
+    chegariam sem a função, com a ressalva do próprio PowerShell: o `--` digitado sem aspas é consumido
+    por ele antes da função (`claude -- texto` chega como `claude texto`; entre aspas, `claude '--' texto`,
+    chega inteiro); o programa é o que o PowerShell acharia sem ela (o primeiro `claude` do PATH,
+    programa ou script: o `claude.exe` da instalação nativa ou o `claude.cmd` do npm);
+  - `codex` passa pela mesma porta, sem nada a preparar;
+  - o encaixe do `keep ia confinar` (o `_keep_ia` da função do Mac) está LIGADO: a contenção da IA a
+    uma pasta passou no CI do Windows (`CONFINEMENT_ENFORCED = true` em `confinement.ts`;
+    `confinar_win::ENCAIXE_POWERSHELL`) e a função chama o `confinar` (a linha `function global:__KeepConfining
+    { $true }` de `ai.ps1`; desligar é trocá-la por `{ $false }`, junto com o `CONFINEMENT_ENFORCED`).
+    `claude` e `codex` numa aba do Keep sobem por `keep ia confinar -- <programa> <argumentos>`: com uma
+    pasta escolhida para o workspace a IA sobe presa a ela, e sem pasta o `confinar` roda o programa como
+    sempre. `claude agents`, `attach`, `rc` e `remote-control` (sem armazém) e um Claude aberto de dentro de
+    outro também passam por ele, e o que não abre conversa (a lista acima, menos esses quatro) segue direto.
+    A função não cai para a subida solta quando o keep recusa (a pasta sumiu, `claude agents` num workspace
+    preso): vale o que o keep disse, com o código de saída dele. O programa entregue ao keep é um arquivo que
+    ele sabe iniciar (o `claude.exe` ou o `claude.cmd` do npm), e nunca o `claude.ps1` que o PowerShell
+    preferiria; um `claude.ps1` sozinho, sem `.exe` nem `.cmd` ao lado, roda direto, sem prender. Sem
+    `KEEP_IA_BIN` (fora do Keep, ou um caminho que não é um arquivo), a subida é direta. Testado com um `pwsh`
+    7 de verdade e um `confinar` de mentira; o `confinar` de verdade, no CI do Windows (fatia `confine`);
+  - função ou alias de mesmo nome que a pessoa já tenha no perfil nunca é trocado;
+  - a resposta do keep é lida em UTF-8, qualquer que seja a página de código do console: uma pasta de
+    usuário com acento (`C:\Users\José`) não vira outra.
+- Cmd e Git Bash não têm esse gancho (um `claude` digitado ali roda no login global), e o WSL é um Linux
+  que o crate não enxerga por dentro (o `keep ia` vê só o `wsl.exe`); o PowerShell é o shell das abas do
+  Windows.
+- O que a função do Mac tem e a do Windows não: o `--effort max` e o `--allow-dangerously-skip-permissions`
+  (preferências do autor, do kit), o `claude-flags-retomada`, a resposta de "confiar nesta pasta?"
+  (`keep ia confiar`, fatia `terminal`).
+
+### O gancho da conta da aba
+
+`keep ia conta-da-aba --gancho` (acima, em "Respostas") é um `UserPromptSubmit` do Claude Code. No Mac o
+autor o pôs à mão no `~/.claude/settings.json`. No Windows o app o acrescenta ao abrir (`claudeHooks.ts`,
+`iaHooks.ts`), depois da statusLine, que escreve o mesmo arquivo:
+
+- `"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "\"C:/…/keep.exe\" ia
+  conta-da-aba --gancho", "timeout": 10}]}]}`, com o caminho entre aspas e em barras normais, como a
+  statusLine: o Claude Code roda o comando pelo Git Bash, ou pelo cmd na falta dele;
+- os ganchos que a pessoa já tem ficam como estão, byte a byte: o grupo novo entra depois do último, no
+  recuo e nas quebras de linha do arquivo, e o resultado é conferido (o arquivo relido tem de ser o
+  mesmo mais o gancho; senão nada é gravado). O mesmo comando é "já é o do Keep"; um gancho com
+  `ia conta-da-aba --gancho` de outro lugar é da pessoa e não é tocado; arquivo que não é JSON, ou
+  `hooks` de outro formato, também não;
+- só onde a pasta do Claude Code existe (ele ainda não rodou aqui: nada é criado), e gravado só por cima
+  do texto que foi lido (compare-and-swap, como a statusLine);
+- o Codex não ganha gancho do Keep: o Mac também não instala nenhum no `hooks.json` dele (o que há ali é
+  do Jev), e a conta de uma aba do Codex não muda enquanto ele roda (não há troca a quente).
 
 ## Consumo
 
@@ -258,8 +341,9 @@ continua disponível para consulta; a IA não precisa gastar uma chamada para ab
 como `/effort`, análises internas e atualizações intermediárias do Codex ficam fora do resumo.
 A orientação é continuar somente trabalho autorizado pendente; uma tarefa concluída recebe uma
 confirmação curta, sem repetir testes, consultas ao Git ou pesquisas por causa da troca.
-No macOS, o nome exibido da aba fica preservado durante a troca e salvo quando ela é aceita, inclusive
-quando depende de login. Um nome escolhido pela pessoa durante a troca tem prioridade.
+No macOS e no Windows, o nome exibido da aba fica preservado durante a troca e salvo quando ela é aceita,
+inclusive quando depende de login. Um nome escolhido pela pessoa durante a troca tem prioridade (no
+Windows, "aba 3", o nome de quando não há título, não é nome a guardar).
 
 ### Entrar em outra conta
 
@@ -358,7 +442,7 @@ Toda resposta é um objeto JSON numa linha, com `"versao": 1` e `"ok"`. Recusa: 
   "provada" (só no Claude, e só quando se prova: a conta em que ele respondeu por último, pelos
   recomeços dos `rate_limits` da statusLine casados com os medidos no `uso`)}]}`. Logo depois de
   uma troca a quente, `provada` ainda é a conta antiga: o Claude relê o armazém a cada 30 s e só
-  usa o token novo na resposta seguinte; a lateral do app diz "(IA·1→2)" até lá.
+  usa o token novo na resposta seguinte; a lateral do app (no Mac e no Windows) diz "(IA·1→2)" até lá.
   `keepd.inicioMs` é o `started_ms` do `List3`: o app ignora a resposta de outro daemon.
 - `conta-da-aba [--gancho]` (texto, não JSON): a conta do Claude desta aba ("IA·2 (e-mail)"), lida do
   armazém da aba (`CLAUDE_SECURESTORAGE_CONFIG_DIR`), não do `~/.claude.json` — esse é o login global e
@@ -398,9 +482,15 @@ Toda resposta é um objeto JSON numa linha, com `"versao": 1` e `"ok"`. Recusa: 
 | a cada 60 s, e ao abrir (mesmo sem o daemon) | `keep ia renovar --json` |
 | a cada 2 min | `keep worktrees indexar --json` e, logo depois, `keep worktrees orfas --json` (com `preparar`/`concluir` ou `esquecer` para o que vier) e `keep worktrees purgar --json` |
 | setas, "+", menu da aba, fechar aba | `ordem mover`, `entrar`, `trocar`, `worktrees listar/preparar/concluir` |
+| ao abrir, e quando o keepd volta de uma ausência, se ele não tem abas | `keep restauro restaurar --fase=abas` (a janela espera; docs/restauro.md) |
+| logo ao abrir, e a cada 30 s | `keep restauro manter` |
+| a cada 15 s | `keep continuar` |
 
 O app passa `KEEP_SOCKET` (o daemon dele). Um app de teste que lê uma casa falsa passa
-`KEEP_IA_HOME` e `KEEP_IA_ESTADO` apontando para ela: o núcleo nunca toca na casa real nesse caso.
+`KEEP_IA_HOME` e `KEEP_IA_ESTADO` apontando para ela: o núcleo nunca toca na casa real nesse caso. O app
+passa também `KEEP_STATE_DIR` e `KEEP_RESTAURO_ESTADO` (a pasta dele, `%APPDATA%\Keep` no Windows, e a
+`restauro` dentro dela), para os retratos das abas e os nomes dados a elas ficarem onde o app os lê; um app
+de testes, com daemon próprio, nunca lê os da pessoa.
 
 Variáveis para teste: `KEEP_IA_HOME` (casa falsa), `KEEP_IA_ESTADO` (estado), `KEEP_IA_SECURITY`
 (o `security` do macOS), `KEEP_IA_TESTE_ARMAZEM=arquivo` (no macOS, os logins em arquivo, como no

@@ -37,6 +37,8 @@ import {
   zoom,
 } from "./store";
 import { appearanceSteps } from "./e2eAppearance";
+import { paletteSteps } from "./e2ePalette";
+import { terminalSteps } from "./e2eTerminal";
 import { viewKey } from "./terminals";
 import { menu } from "./ui/common";
 
@@ -171,6 +173,8 @@ export async function runE2E(): Promise<void> {
     return `${panes} painéis na aba em frente (${activeTab.value?.panes.map((p) => p.id).join(", ")})`;
   });
 
+  await paletteSteps(step, { waitFor, workspace: WORKSPACE });
+
   await step("ler o estado do Claude Code de uma tela", async () => {
     const rule = "─".repeat(40);
     const screen = ["⏺ Pronto.", "", "✻ Baked for 3s", "", rule, "❯ ", rule, "  ⏵⏵ bypass permissions on"].join("\n");
@@ -178,6 +182,8 @@ export async function runE2E(): Promise<void> {
     if (read !== "done") throw new Error(`leu ${String(read)}`);
     return "done";
   });
+
+  await terminalSteps(step, { waitFor, workspace: WORKSPACE, windows });
 
   await appearanceSteps(step, WORKSPACE);
 

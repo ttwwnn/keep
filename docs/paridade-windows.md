@@ -16,19 +16,56 @@ verdade (só compilado no CI), `[ ]` por fazer, `[-]` não se aplica.
 
 ## Fatia `palette` (seletor, paleta, busca)
 
-- [ ] Ir para (Ctrl+Shift+P): recentes primeiro (a 1ª linha é a última aba de
-  OUTRO workspace), cabeçalhos "terminals" e "open in", linha rica, teclas
-  Ctrl+J/K/N/P, duplo clique, Ctrl+D fecha a aba da linha, rodapé "Abrir /
-  Ações Ctrl+K".
-- [ ] Pastas do zoxide (ou, sem zoxide, as pastas das abas) que criam workspace.
-- [ ] Prévia colorida da tela (PreviewVt do keepd) no seletor e na busca.
-- [ ] Painel de ações (Ctrl+K e botão direito): ir, nova aba, mostrar no
-  Explorer, copiar o caminho, fechar; ações de pasta, de linha da busca, de
-  comando, de tema e de fonte.
-- [ ] Paleta de comandos (Ctrl+Shift+Alt+P e botão redondo): os 17 comandos do
-  Mac, em 3 grupos, com as teclas desenhadas e os destrutivos em vermelho.
-- [ ] Busca no painel (Ctrl+F, pelo keepd) e em tudo (Ctrl+Shift+F): escopo,
-  contador, prévia, ida à linha exata e foco no painel do resultado.
+Um cartão só (ui/Picker.tsx), como o PickerView do Mac, com quatro perguntas:
+Ir para (Ctrl+Shift+P), Comandos (Ctrl+Shift+Alt+P), Buscar neste painel
+(Ctrl+F) e Buscar em tudo (Ctrl+Shift+F). A barra de busca do xterm ficou em
+Ctrl+Alt+F e no menu do painel ("Procurar na tela").
+
+Conferida no Mac pelo roteiro do app (`src/e2ePalette.ts`, cinco passos contra
+um keepd de verdade) e à mão, nos temas escuro e claro, com a prévia, as ações,
+a busca e as listas de temas e de fontes; as teclas no WebView2 e o Explorer
+não foram vistos no Windows de verdade.
+
+- [x] Ir para: recentes primeiro (a 1ª linha é a última aba de OUTRO
+  workspace), cabeçalhos "terminais" e "abrir em", linha rica, busca em colunas
+  com as letras acesas, ↑↓ / Ctrl+J / Ctrl+N / Ctrl+P, duplo clique escolhe,
+  Ctrl+D fecha a aba da linha (com a pergunta e a nota das worktrees), rodapé
+  "Abrir / Ações Ctrl+K". Ctrl+K abre as ações (no Mac é ⌘K; o ⌃K de subir da
+  lista do Mac colide com ele aqui, e subir fica em ↑ e Ctrl+P).
+- [~] Pastas do zoxide (ou, sem zoxide, as pastas das abas e a pasta pessoal)
+  que criam workspace. Testado no Mac; no Windows só compilado (a janela do
+  `zoxide` escondida é `#[cfg(windows)]`).
+- [x] Prévia colorida da tela (PreviewVt do keepd) no seletor e na busca: um
+  xterm só para olhar, na grade que o keepd guarda; na busca, o painel do
+  resultado com a linha achada e o trecho em destaque.
+- [~] Painel de ações (Ctrl+K e botão direito): ir, nova aba, mostrar no
+  Explorer, copiar o caminho, fechar; ações de pasta, de linha da busca e de
+  comando. Testado no Mac; "Mostrar no Explorer" no Windows só compilado.
+- [ ] Ações de tema e de fonte (Ctrl+K numa linha das listas: "Vestir este
+  tema" / "Usar esta fonte" e "Copiar o nome"): as listas são as da fatia
+  `appearance` (`ui/CatalogPicker.tsx`), cartões autônomos em que Ctrl+K sobe a
+  seleção e que não têm painel de ações; dá-lo a elas é mexer no teclado dessa
+  fatia, e Enter e Esc já fazem o essencial.
+- [x] Paleta de comandos: os 17 do Mac em 3 grupos, com as teclas desenhadas e
+  os destrutivos em vermelho, mais Configurações, Tela cheia e Colar imagem. O
+  botão redondo da fileira de abas virou "Comandos" (a engrenagem é um comando
+  e segue em Ctrl+,). Ligados a funções das outras fatias em
+  `palette/bindings.ts`: "Alternar abas verticais" (`toggleVerticalTabs`),
+  "Remover este workspace da janela" (`putAway`), "Usar o tema do Keep"
+  (`clearTheme`) e "Redefinir o tamanho do texto" (`resetText`, que também
+  desfaz o zoom e a fonte).
+- [x] "Mudar o tema…" e "Mudar a fonte…" põem a lista da fatia `appearance`
+  (`ThemePicker`, `FontPicker`) no lugar do cartão da paleta: a seta veste ao
+  vivo, Enter usa e fecha tudo, Esc volta à paleta (um passo para trás, como
+  no Mac) e desfaz o que se viu.
+- [ ] "Nova janela" fica cinza na paleta até a fatia `windows` ligá-la com
+  `registerCommand` (commands.ts), que vale mais que qualquer padrão da janela.
+- [x] Busca no painel (Ctrl+F, pelo keepd) e em tudo (Ctrl+Shift+F): escopo,
+  contador "3 de 47", prévia, ida à aba, ao painel e à linha exata (contada do
+  fim, como o Mac), com a linha marcada por instantes nas cores de busca do
+  tema em uso (`Palette.search`, legíveis em qualquer fundo). Numa aba
+  adormecida (hibernação) espera o terminal por `viewWhenAwake` antes de ir à
+  linha.
 
 ## Fatia `appearance` (temas, fontes, janela)
 
@@ -78,8 +115,11 @@ verdade (só compilado no CI), `[ ]` por fazer, `[-]` não se aplica.
 
 ## Fatia `tabs`
 
-Conferida no Mac (roteiro do app, `src/e2eTabs.ts`, com eventos de ponteiro da própria página, e testes
-do vitest); o mouse real, os cursores e a dica nativa do workspace não foram exercitados no Windows.
+Conferida no Mac e no Windows do CI (roteiro do app, `src/e2eTabs.ts`, com eventos de ponteiro da própria
+página, e testes do vitest); o mouse real, os cursores e a dica nativa do workspace não foram exercitados no
+Windows. A janela do CI deixa 286 px para a lista da barra lateral: o roteiro mostra a linha (`reveal`) antes de
+puxá-la, como uma pessoa faz, e o log do app traz o que a página via em cada arrasto (elemento sob o ponteiro,
+caixa da linha, rolagem da lista, estado do movimento, fim do arrasto por `pointerup`, `blur` ou Esc).
 
 - [x] Reordenar abas por arrasto, na fileira (a aba segue o ponteiro e as outras abrem a lacuna) e na barra
   lateral (cópia na mão, linha apagada no lugar de pouso, lacuna que acompanha), com a ordem no estado
@@ -88,6 +128,11 @@ do vitest); o mouse real, os cursores e a dica nativa do workspace não foram ex
   religado, não refeito, e o nome, o lugar, o painel com o teclado e o estado do Claude vão junto. Soltar
   no cabeçalho põe no fim; soltar sobre uma aba põe antes dela.
 - [x] Arrastar o cabeçalho do workspace reordena a lista, com a mesma lacuna.
+- [x] Lista mais longa que a janela: com o ponteiro a menos de 36 px da borda de cima ou de baixo a lista rola
+  sozinha, mais depressa quanto mais perto (no máximo 14 px por quadro, também além da borda), o pouso é
+  refeito a cada rolagem mesmo com o ponteiro parado, e soltar faz o que estava mostrado (`drag.ts`
+  `scrollStep`/`autoScroll`, `ui/tabDrag.ts`). Antes, a velocidade crescia sem limite além da borda e a soltura
+  refazia a conta com a lista já rolada: a aba voltava sem mudar de lugar.
 - [x] Alça do painel (44x14, três pontos, só com mais de um painel): cartão com o texto do painel, pouso nos
   quatro lados e na troca (`api.rearrange`), soltar numa aba da fileira junta o painel a ela, soltar fora o
   destaca em aba nova, 0,45 s sobre uma aba a abre (a mola). Trocar dois painéis mantém o layout e troca
@@ -115,32 +160,108 @@ do vitest); o mouse real, os cursores e a dica nativa do workspace não foram ex
 
 ## Fatia `terminal`
 
-- [ ] Caminhos de arquivo clicáveis (relativos ao cwd, ~, :linha:col, quebrados
-  em duas linhas), clique abre; menu Abrir / Mostrar no Explorer / Copiar.
-- [ ] URLs mailto: e file://; Ctrl+clique.
-- [ ] Endereços web: clique simples abre no navegador, inclusive o link OSC 8
-  atrás do texto (markdown do Claude Code) e o endereço quebrado em linhas;
-  menu Abrir link / Copiar link (Mac: 0e8c0bc). Com o mouse tomado pelo
-  programa (Claude Code em tela cheia), o clique simples deixa o endereço
-  para ele, que já o abre (Mac: 62be02e).
-- [ ] OSC 52 com política; confirmar colagem multi-linha; colar arquivo copiado.
-- [ ] Soltar arquivos: realce do painel sob o ponteiro.
-- [ ] Teclado kitty (CSI u): Ctrl+Enter, desambiguação.
-- [ ] Cut multi-linha no prompt do Claude.
-- [ ] Título OSC imediato (onTitleChange); grafemas Unicode (modo 2027).
+- [x] Caminhos de arquivo clicáveis (`paths.ts`, `links.ts`, `links.rs`): `C:\x\y.txt`, UNC, `\\wsl$`, `.\rel`,
+  `..\rel`, `/mnt/c/...`, `~/x`, relativos ao cwd do painel, `:linha` e `:linha:coluna` (e `(linha,coluna)`),
+  quebrados em linhas pelo ajuste, com espaço escapado ou entre aspas. Só vira link o que o sistema confirma
+  (`find_paths`: 2 s no máximo, sem nomes de dispositivo). 26 testes; visto no app com eventos de mouse reais.
+- [x] Endereços web (`urls.ts`): https, http, ftp, mailto, `www.` e `file:` (que vira caminho), pontuação do fim
+  da frase fora, link quebrado em até três linhas pela linha que vai até a borda, e o OSC 8 atrás do texto.
+  17 testes; visto no app.
+- [x] Clique simples (500 ms depois do duplo clique, sem arrasto, painel já com o foco) ou Ctrl+clique abrem;
+  sublinhado sempre sob o ponteiro; botão direito: sobre o caminho Abrir / Mostrar no Explorer / Copiar o
+  caminho, sobre o endereço Abrir link / Copiar link, e nada disso onde não há nada sob o ponteiro.
+- [~] O que o Windows faz com o clique: `open_path`, `reveal_path` e `open_url` (o plugin opener: ShellExecute e
+  `SHOpenFolderAndSelectItems`) compilam para o Windows (`cargo check --target x86_64-pc-windows-msvc`) e não
+  rodaram nele; executáveis e scripts são mostrados no Explorer em vez de executados (o Mac faz o mesmo), e
+  `open_url` recusa o que não é http, https, mailto ou ftp (o Mac entrega `vscode://` e `tel:` ao sistema no
+  ⌘-clique; aqui não: texto de programa não inicia programa). Diferença do Mac: com o mouse tomado pelo programa (Claude Code em
+  tela cheia) o Mac deixa o endereço para ele (62be02e), que o abre porque o terminal se diz ghostty; aqui o
+  terminal se diz `TERM_PROGRAM=keep`, então o clique simples continua abrindo. Não visto com o Claude Code no
+  Windows.
+- [x] OSC 52 (`osc52.ts`): escrita permitida só no `c` (`s` e `p` descartados); leitura pergunta primeiro
+  ("Permitir a leitura da área de transferência?", com prévia) e responde `ESC ] 52 ; c ; base64 ESC \`. 12
+  testes; visto no app.
+- [x] Colar (`paste.ts`): sem o bracketed paste, qualquer quebra de linha pergunta ("Colar isto?", prévia de 400
+  caracteres; o Mac só conta `\n`, aqui `\r` também); com ele, só um `ESC [ 201 ~` dentro do texto pergunta;
+  os controles viram espaço. Testes e visto no app.
+- [ ] Colar arquivo copiado no Explorer (digitar o caminho): exigiria ler o `CF_HDROP` da área de transferência
+  do Windows, código `unsafe` do Win32 que só compila aqui e não se prova; o Mac também só lê texto.
+- [~] Soltar arquivos (`drop.ts`): o painel sob o ponteiro se realça e os caminhos são digitados como o shell
+  do painel os lê (PowerShell: entre aspas, ou aspas simples se há `$`, crase ou `'`; WSL: o caminho Linux,
+  `/mnt/c/...`, escapado como o Mac; outros: aspas duplas se há espaço). Lógica testada; o arrasto do sistema
+  não se exercita daqui (o realce e o drop reais ficam para o Windows).
+- [~] Teclado Kitty (`kitty.ts`, `kittyKeys.ts`): o programa liga o protocolo (`CSI > flags u`, pilha de oito por
+  tela, `CSI < n u`, `CSI = flags ; modo u`, `CSI ? u` respondida) e as teclas saem como ele pediu: Shift+Enter,
+  Ctrl+Enter, Esc, Ctrl+Shift+letra, setas e F-teclas com modificadores, eventos, alternativas, todas as
+  teclas e texto associado; é o codificador do Ghostty (os seus testes, menos os de CapsLock e NumLock, que o
+  Mac nunca informa) e as duas escolhas do Mac, Shift+Tab sempre `ESC [ Z` e Alt+Backspace sempre `ESC DEL`.
+  O texto digitado, o AltGr, a composição e as teclas mortas ficam com o xterm.js; sem o protocolo nada muda e
+  Shift+Enter segue mandando `ESC CR`. Visto no app (Mac) com uma sonda que liga as flags 5 (as do Claude
+  Code) e 31: todas as teclas acima, o `CSI = n ; 1 u` do repaint devolvendo as flags a um app reaberto. No
+  Windows resta o que só um ConPTY mostra: lendo o OpenConsole (`main`), a saída do programa vai ao terminal
+  como foi escrita e uma sequência de teclas que ele não conhece chega ao programa como texto; não rodou. O
+  passo "teclado Kitty" do roteiro do CI (`e2e/sonda-teclado.mjs`) confere nos dois sentidos, com um Node de
+  verdade no ConPTY; se ele falhar, o ConPTY não deixa passar `CSI > u` ou `CSI ? u`.
+- [~] Cortar (Ctrl+X) na caixa de prompt do Claude com várias linhas e na seleção que o próprio programa copiou
+  (`cut.ts`): o CutSelection do Mac, testado com as oito gravações reais da caixa (`tools/cut-test`); a tecla
+  no app não foi exercitada.
+- [x] Título OSC imediato: `onTitleChange` pede a lista ao keepd em 120 ms (`refreshSoon`), em vez de esperar o
+  giro do segundo; visto no app em 0,3 s, e o roteiro do CI mede.
+- [ ] Grafemas Unicode (modo 2027): o `@xterm/addon-unicode-graphemes` 0.4.0 existe para o xterm 6.0.0, mas
+  como "experimental", o xterm 6.0.0 não trata o modo 2027 e o grid do keepd só agrupa grafemas quando o
+  programa o liga; ligado fixo, desalinharia as linhas. Pede uma dependência nova (o `node_modules` é de
+  todas as árvores) e `CSI ? 2027 h/l` e a consulta DECRQM tratados na página, e não se prova daqui.
+- [~] Responder sozinho "Confiar nesta pasta?" do Claude Code (`trust.ts`): a seta até o "Yes, I trust this
+  folder" e, quando o próximo olhar a encontra lá, Enter; nunca Enter no "No, exit". O layout antigo e o
+  numerado; o marcador `~/.local/state/keep/trust/<pid do shell>` do vigia do shell evita a seta dupla. Visto
+  no app (Mac) com um `claude` de mentira que desenha a pergunta; o Windows (o marcador com `\`) e o Claude
+  Code de verdade não.
+- [x] Verificação no roteiro do CI (`e2eTerminal.ts`): o protocolo pelo PTY (acima), o título que o programa
+  põe chegar à aba e os caminhos que o sistema confirma (pasta, arquivo, ausente, nomes de dispositivo). Os
+  três passaram no Mac com o roteiro inteiro; no Windows quem diz é o CI.
 
 ## Fatia `ai`
 
-- [ ] Integração de shell (função `claude` no PowerShell): troca a quente,
-  armazém por aba.
-- [ ] Restauro depois de reiniciar, com as conversas (keep restauro), sem o
-  retrato apagado cedo.
-- [ ] `keep continuar` a cada 15 s.
-- [ ] Responder "confiar nesta pasta?" sozinho.
-- [ ] Ganchos (hooks) do Claude e do Codex.
-- [ ] Rótulo "(IA·1→2)" e o nome da aba preservado na troca.
-- [ ] `keep nova` e links claude-cli://.
-- [ ] Robustez do state.json (cópias, JSON inválido avisado).
+- [~] Integração de shell (função `claude` e `codex` no PowerShell das abas): troca a quente, armazém por
+  aba. Feita pelo keepd (`crates/keepd/src/ai.ps1`, `shellhook.rs`); testada com um `pwsh` 7 de verdade e
+  programas de mentira (argumentos, pipe, código de saída, falha segura, subcomandos, função da pessoa),
+  e conferida para o Windows com `cargo check --target x86_64-pc-windows-msvc`; não rodou num Windows nem
+  no PowerShell 5.1. Cmd e Git Bash ficam de fora (rodam no login global) e o WSL é invisível ao crate
+  (docs/ia.md). O `--` digitado sem aspas é consumido pelo PowerShell antes de qualquer função (`claude --
+  texto` chega como `claude texto`).
+- [~] A subida presa a uma pasta (`keep ia confinar --`, o `_keep_ia` da função do Mac): LIGADA, porque a
+  contenção passou no CI do Windows (`CONFINEMENT_ENFORCED = true`; fatia `confine`). Um `confinar` de mentira e
+  o `pwsh` testam a rota (nunca solta quando o keep recusa, o `claude.exe` ou o `claude.cmd` e não o
+  `claude.ps1`, `agents`/`attach` presos, o resto direto); desligar é trocar `{ $true }` por `{ $false }` na
+  linha `__KeepConfining` de `ai.ps1`, com o `CONFINEMENT_ENFORCED`.
+- [~] Restauro depois de reiniciar, com as conversas (`keep restauro`), sem o retrato apagado cedo: o app
+  deixou de recriar abas em JS; `restaurar --fase=abas` antes de mostrar o vazio (espera até 1 min por um
+  keepd lento), `manter` a cada 30 s, nomes das abas pelo `names.json`, trava do crate que agora trava no
+  Windows. Visto no app com um keepd de teste no Mac (keepd morto e app aberto sobre keepd morto); o que é
+  só do Windows (`LockFileEx`, subida das conversas no PowerShell) compila e não rodou (docs/restauro.md).
+- [~] `keep continuar` a cada 15 s, com o ocioso do sistema pelo `GetLastInputInfo`.
+- [ ] Responder "confiar nesta pasta?" sozinho (fatia `terminal`).
+- [~] Gancho da conta da aba no Claude (`UserPromptSubmit` -> `keep ia conta-da-aba --gancho` no
+  `settings.json`, acrescentado depois dos ganchos da pessoa, sem mexer em mais nada, sem repetir): o plano
+  é puro e testado (formatos, idempotência, ganchos alheios intactos); o efeito dentro do Claude Code no
+  Windows (Git Bash ou cmd rodando o comando) não foi visto.
+- [-] Gancho do Keep no Codex: o Mac também não instala nenhum (o `hooks.json` do Codex é do Jev) e a
+  conta de uma aba do Codex não muda enquanto ele roda.
+- [x] Rótulo "(IA·1→2)" até o Claude responder na conta nova (a `provada` do `keep ia abas`) e o nome da
+  aba preservado na troca de conta.
+- [~] `keep nova` no Windows: `--nome` vale (pelo `names.json`), o `canonicalize` sem o prefixo `\\?\`, e o
+  `keep` no PATH de toda aba (e em `KEEP_IA_BIN`).
+- [ ] Links `claude-cli://` numa aba do Keep: o Claude Code no Windows abre o terminal pelo `wt.exe`,
+  `pwsh.exe`, `powershell.exe` ou cmd, sem olhar `TERM_PROGRAM` nem `deepLinkTerminal`, e refaz o registro
+  do protocolo toda sessão; o desvio (um `wt.exe` do Keep + registro + `disableDeepLinkRegistration`) mexe
+  no registro e no `settings.json` e não se prova fora do Windows (docs/restauro.md). O `<instalação>\bin`
+  no PATH do usuário pelo instalador também ficou de fora, pelo mesmo motivo (a aba já o tem).
+- [x] Robustez do `state.json`: cópias rotativas (`.bak1` a `.bak5`, uma a cada 10 min), recuperação da
+  última boa, o arquivo ilegível guardado em `.ilegivel` e o aviso na janela; fsync antes do rename; nada é
+  gravado por cima de um arquivo que não deu para ler ao abrir.
+- [ ] `arquivos_abertos` no Windows (id da thread do Codex pelos arquivos abertos): o Restart Manager ou o
+  `NtQuerySystemInformation` dariam o dado, mas desde o Codex 0.159 os locks são do daemon dele, não da tela
+  (o ganho é pouco) e nada disso se prova daqui; fica como está, dito em `processos.rs`.
 
 ## Fatia `confine`
 
@@ -189,11 +310,13 @@ formato do Mac) e quem prende é o `keep ia confinar -- <programa>`.
   o arquivo `.credentials.json` da `.claude`, que a IA alcança; com a opção
   ligada, preso ele não vê o login do usuário e pede outro. O Codex só tem o
   encaixe (`--no-daemon`): sem Codex no CI.
-- [~] Encaixe na função `claude` do PowerShell (fatia `ai`): trocar o
-  `& $claude @args` final por `& $keep ia confinar -- $claude @args`; sem pasta
-  para o workspace o `confinar` roda o programa como sempre. Enquanto a função
-  não passa por ele, só a troca de conta/IA e a restauração (que já chamam
-  `envolve`) prendem; digitar `claude` no shell, não.
+- [~] Encaixe nas funções `claude` e `codex` do PowerShell (fatia `ai`): LIGADO
+  (`__KeepConfining` em `crates/keepd/src/ai.ps1`, com o `CONFINEMENT_ENFORCED`). As duas sobem por
+  `keep ia confinar -- <programa> …` em toda aba do Keep, como o `_keep_ia` do Mac, sem cair para a subida
+  solta quando o keep recusa; sem pasta para o workspace o `confinar` roda o programa como sempre. Testada
+  com um `pwsh` 7 e um `confinar` de mentira (docs/ia.md) e, no CI, com o `keep ia confinar` de verdade;
+  digitar `claude` numa aba do Windows com a pasta presa não foi visto. Um `claude.ps1` sozinho (sem `.exe`
+  nem `.cmd` ao lado), o Cmd e o Git Bash rodam sem prender.
 - [ ] O que o Windows não deixa fechar sem administrador: pastas de rede (o
   servidor confere o usuário, não o token), o que o Windows deixa qualquer um
   ler (`C:\Windows`, `Arquivos de Programas`, o que `Usuários` lê em outras

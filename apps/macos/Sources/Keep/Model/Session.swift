@@ -754,7 +754,8 @@ final class Session {
             publish()
             renderer(window)?.focusActiveTerminal()
 
-        case .setSidebar(let state):
+        case .setSidebar(let geometry):
+            let state = sidebarStore.state(for: window).withGeometry(of: geometry)
             sidebarStore.save(state, for: window)
             publish()
 

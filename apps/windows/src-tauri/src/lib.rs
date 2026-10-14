@@ -9,10 +9,13 @@ mod confinement;
 mod daemon;
 mod fonts;
 mod ia;
+mod links;
 mod memory;
+mod names;
 mod sessions;
 mod settings;
 mod status;
+mod zoxide;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -157,6 +160,22 @@ async fn preview(workspace: String, tab: u32) -> Answer<String> {
         .map_err(text)
 }
 
+/// A tab's screen with its colours (the sequences the daemon repaints with),
+/// and the grid it is held on.
+#[tauri::command]
+async fn preview_vt(workspace: String, tab: u32) -> Answer<daemon::Screen> {
+    tauri::async_runtime::spawn_blocking(move || daemon::preview_vt(&workspace, tab))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(text)
+}
+
+/// The folders the person goes to, from zoxide; none where it is not installed.
+#[tauri::command]
+async fn directories() -> Answer<Vec<String>> {
+    tauri::async_runtime::spawn_blocking(zoxide::directories).await.map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn search(query: String, limit: u32, workspace: Option<String>, tab: Option<u32>) -> Answer<Vec<daemon::Hit>> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -214,7 +233,17 @@ fn load_state(app: AppHandle) -> Answer<Option<serde_json::Value>> {
 
 #[tauri::command]
 fn save_state(app: AppHandle, state: serde_json::Value) -> Answer<()> {
-    settings::save(&state_path(&app)?, &state).map_err(text)
+    settings::save(&state_path(&app)?, &state).map_err(|e| {
+        settings::log(&format!("estado não gravado: {e:#}"));
+        text(e)
+    })
+}
+
+/// What reading the state found wrong when the app opened, once: an
+/// unreadable file, and what was done about it.
+#[tauri::command]
+fn state_warning() -> Option<String> {
+    settings::take_warning()
 }
 
 #[derive(Serialize)]
@@ -320,6 +349,8 @@ struct ClaudeSettings {
     folder: bool,
     /// The `keep-statusline.ps1` installed with the app, when it is there.
     script: Option<String>,
+    /// The core's command line (`keep.exe`), which the account hook runs.
+    keep: Option<String>,
 }
 
 #[tauri::command]
@@ -330,11 +361,12 @@ async fn claude_settings(app: AppHandle) -> Answer<ClaudeSettings> {
             .ok_or_else(|| "sem pasta do usuário".to_string())?;
         let path = dir.join("settings.json");
         let text = claude_settings::read(&path).map_err(crate::text)?;
+        let keep = ia::cli(resources.as_deref()).map(|p| claude_settings::plain(&p));
         let script = resources
             .map(|r| r.join("keep-statusline.ps1"))
             .filter(|p| p.is_file())
             .map(|p| claude_settings::plain(&p));
-        Ok(ClaudeSettings { path: claude_settings::plain(&path), text, folder: dir.is_dir(), script })
+        Ok(ClaudeSettings { path: claude_settings::plain(&path), text, folder: dir.is_dir(), script, keep })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -375,6 +407,38 @@ async fn codex_models(known: Option<String>) -> Answer<CodexModels> {
     .map_err(|e| e.to_string())
 }
 
+/// The names file the core shares with the window, when it is not the version
+/// `known`; see `names`.
+#[derive(Serialize)]
+struct Names {
+    /// Which version is there; `None` when there is no file.
+    stamp: Option<String>,
+    /// Its text, when the version changed.
+    text: Option<String>,
+}
+
+#[tauri::command]
+async fn names_read(known: Option<String>) -> Answer<Names> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(path) = names::file() else { return Names { stamp: None, text: None } };
+        let (stamp, text) = names::read(&path, known.as_deref());
+        Names { stamp, text }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Write the names file; the stamp of what was written.
+#[tauri::command]
+async fn names_write(text: String) -> Answer<Option<String>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = names::file().ok_or_else(|| "sem pasta do Keep".to_string())?;
+        names::write(&path, &text).map_err(crate::text)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// A line for the app's log (`settings::log_file`): what the page did that
 /// nobody sees, such as a status line left alone or a picker backed out of.
 #[tauri::command]
@@ -386,6 +450,31 @@ async fn app_log(line: String) {
 #[tauri::command]
 fn path_exists(path: String) -> bool {
     std::path::Path::new(&path).exists()
+}
+
+/// For each group of spellings of one path the terminal printed, the first
+/// that exists; see `links`.
+#[tauri::command]
+async fn find_paths(groups: Vec<Vec<String>>) -> Answer<Vec<Option<links::Hit>>> {
+    tauri::async_runtime::spawn_blocking(move || links::find(groups)).await.map_err(|e| e.to_string())
+}
+
+/// Open a file or folder the terminal printed, with what the system opens it with.
+#[tauri::command]
+async fn open_path(path: String) -> Answer<()> {
+    tauri::async_runtime::spawn_blocking(move || links::open(&path)).await.map_err(|e| e.to_string())?
+}
+
+/// Show a file the terminal printed in the file manager, selected.
+#[tauri::command]
+async fn reveal_path(path: String) -> Answer<()> {
+    tauri::async_runtime::spawn_blocking(move || links::reveal(&path)).await.map_err(|e| e.to_string())?
+}
+
+/// Open an address the terminal printed: a page, a mail or a phone link.
+#[tauri::command]
+async fn open_url(url: String) -> Answer<()> {
+    tauri::async_runtime::spawn_blocking(move || links::open_url(&url)).await.map_err(|e| e.to_string())?
 }
 
 /// For the scripted check: have the test photograph the screen now, as
@@ -476,6 +565,8 @@ pub fn run() {
             move_tab,
             rearrange,
             preview,
+            preview_vt,
+            directories,
             search,
             attach,
             input,
@@ -484,6 +575,7 @@ pub fn run() {
             detach,
             load_state,
             save_state,
+            state_warning,
             shells,
             choose_shell,
             installed_fonts,
@@ -498,10 +590,16 @@ pub fn run() {
             claude_settings,
             write_claude_settings,
             codex_models,
+            names_read,
+            names_write,
             app_log,
             confinement::confinement_all,
             confinement::confinement_set,
             path_exists,
+            find_paths,
+            open_path,
+            reveal_path,
+            open_url,
             e2e_shot,
             e2e_fake,
             e2e_report,

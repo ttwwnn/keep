@@ -802,7 +802,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private func applySidebar(_ state: SidebarState, animated: Bool) {
         guard let sidebarItem, let splitView else { return }
         let current = currentSidebarGeometry()
-        guard current != state else { return }
+        guard current?.hasGeometry(of: state) != true else { return }
         isApplyingSnapshot = true
         defer { isApplyingSnapshot = false }
 
@@ -953,7 +953,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             guard let self else { return }
             self.dividerReportScheduled = false
             guard let state = self.currentSidebarGeometry(),
-                  state != self.applied?.sidebar
+                  !state.hasGeometry(of: self.applied?.sidebar)
             else { return }
             self.send(.setSidebar(state))
         }

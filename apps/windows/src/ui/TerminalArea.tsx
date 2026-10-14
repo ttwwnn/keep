@@ -32,9 +32,10 @@ import {
 } from "../store";
 import { SPLIT_DOWN, SPLIT_RIGHT } from "../api";
 import { imagePasteSequence } from "../keys";
+import { toggleOverlay } from "../palette/overlay";
 import { viewKey } from "../terminals";
 import { AiStatusBar } from "./AiStatusBar";
-import { openMenu } from "./common";
+import { openMenuAt, type MenuItem } from "./common";
 import { centreDivider, startDividerDrag } from "./divider";
 import * as icon from "./icons";
 import { PaneCarryOverlay, PaneGrip } from "./PaneCarry";
@@ -79,7 +80,7 @@ function PaneHost(props: {
         onContextMenu={(e) => {
           const view = terminals.existing(workspace, pane);
           const selection = view?.term.hasSelection() ?? false;
-          openMenu(e, [
+          const items: (MenuItem | "separator")[] = [
             { label: "Copiar", hint: "Ctrl+C", disabled: !selection, action: () => void copySelection() },
             {
               label: "Colar",
@@ -94,6 +95,9 @@ function PaneHost(props: {
             { label: "Selecionar tudo", action: () => view?.term.selectAll() },
             { label: "Limpar a tela", hint: "Ctrl+Shift+L", action: () => void view?.type("\x0c").catch(() => {}) },
             "separator",
+            { label: "Buscar neste painel…", hint: "Ctrl+F", action: () => toggleOverlay("find") },
+            { label: "Procurar na tela", hint: "Ctrl+Alt+F", action: () => (findOpen.value = true) },
+            "separator",
             { label: "Dividir à direita", hint: "Ctrl+Shift+D", action: () => (focusPane(workspace, root, pane), void split(SPLIT_RIGHT)) },
             { label: "Dividir abaixo", hint: "Ctrl+Shift+E", action: () => (focusPane(workspace, root, pane), void split(SPLIT_DOWN)) },
             ...(multi
@@ -106,7 +110,13 @@ function PaneHost(props: {
                   { label: "Fechar este painel…", danger: true, action: () => void closePane(workspace, pane) },
                 ] as const)
               : []),
-          ]);
+          ];
+          // A file or folder under the pointer has its own items, in front, once the file system says it is there.
+          e.preventDefault();
+          e.stopPropagation();
+          const { clientX, clientY } = e;
+          const ofPath = view ? Promise.race([view.links.menu(e), new Promise<[]>((resolve) => setTimeout(() => resolve([]), 400))]) : Promise.resolve([]);
+          void ofPath.then((path) => openMenuAt(clientX, clientY, path.length > 0 ? [...path, "separator", ...items] : items));
         }}
       />
       {status && <AiStatusBar workspace={workspace} root={root} pane={pane} status={status} />}

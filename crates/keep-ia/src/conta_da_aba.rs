@@ -27,6 +27,7 @@ pub struct DaAba {
     pub dono: String,
     pub nome: String,
     pub email: Option<String>,
+    pub chrome_pendente: bool,
 }
 
 /// A conta do armazém `pasta`, se ela é o armazém de uma aba.
@@ -42,6 +43,7 @@ pub fn da_pasta(pasta: &Path) -> Option<DaAba> {
         dono: r.dono.clone(),
         nome: trocar::rotulo_em(&lista, &chave),
         email: conta.and_then(|c| c.email.clone()),
+        chrome_pendente: r.chrome_pendente_desde.is_some(),
     })
 }
 
@@ -62,7 +64,7 @@ pub fn aviso(c: &DaAba, global: bool) -> String {
         Some(e) => format!("{} ({e})", c.nome),
         None => c.nome.clone(),
     };
-    if global {
+    let mut texto = if global {
         format!("Conta do Claude nesta aba do Keep: {quem}, a mesma do login global da máquina.")
     } else {
         format!(
@@ -70,7 +72,13 @@ pub fn aviso(c: &DaAba, global: bool) -> String {
              KEEP_IA_ESCOLHA mostram o login global da máquina ou a escolha de quando o Claude abriu, não a conta \
              desta aba: para dizer em que conta esta aba está, vale esta linha (ou `keep ia conta-da-aba`)."
         )
+    };
+    if c.chrome_pendente {
+        texto.push_str(" A ponte do Chrome ainda aguarda reconexão pelo Keep quando a aba ficar livre. \
+                        Ela pode conservar a conexão da conta anterior; o ~/.claude.json não comprova \
+                        a conta dessa conexão nem a necessidade de outro login.");
     }
+    texto
 }
 
 /// Se o gancho fala: a conta da aba não é a global, ou mudou desde o último
@@ -155,7 +163,7 @@ mod testes {
 
     #[test]
     fn a_frase_diz_o_numero_o_email_e_onde_nao_olhar() {
-        let c = DaAba { dono: "u-2".into(), nome: "IA·2".into(), email: Some("b@x".into()) };
+        let c = DaAba { dono: "u-2".into(), nome: "IA·2".into(), email: Some("b@x".into()), chrome_pendente: false };
         let fora = aviso(&c, false);
         assert!(fora.starts_with("Conta do Claude nesta aba do Keep: IA·2 (b@x)."), "{fora}");
         assert!(fora.contains("~/.claude.json") && fora.contains("/status"), "{fora}");
