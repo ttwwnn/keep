@@ -363,6 +363,11 @@ dá-lo).
   janela aberta e deixaria um processo sem nada à vista (`on_run_event`); sair deixa o keepd.
 - [ ] No Mac, o `work_area` do tao não desconta a barra de menus, e o painel de desenvolvimento a cobre; no
   Windows é o `rcWork`, que desconta a barra de tarefas.
+- Para quem for ver no Windows: o `app.log` (`%LOCALAPPDATA%\Keep\app.log`) diz, com `janela rápida:`, se o atalho
+  foi registrado, quanto a página levou a ficar pronta e se a janela recebeu o foco ao entrar; com a variável
+  `KEEP_QUICK_TRACE=1` ele também registra cada passo do deslize e cada ganho e perda de foco. O VS Code usa
+  Ctrl+` para o terminal dele, e o atalho global o toma enquanto o Keep estiver aberto: quem usa os dois escolhe
+  outro nas Configurações.
 
 ## Fatia `windows` (várias janelas)
 
