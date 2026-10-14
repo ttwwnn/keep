@@ -8,7 +8,7 @@
 
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { SPLIT_DOWN, SPLIT_RIGHT } from "./api";
 import { SHIFT_ENTER_SEQUENCE, imagePasteSequence, isPlainCopy, isPlainCut, isShiftEnter, shortcut, type Action } from "./keys";
 import { activeTabHasPanes, focusBeside, resizeBeside } from "./paneActions";
@@ -139,9 +139,7 @@ export function perform(action: Action): void {
       break;
     case "paste": {
       const view = activeView();
-      void readText()
-        .then((text) => text && view?.paste(text))
-        .catch(() => {});
+      void view?.pasteFromSystem().catch(() => {});
       view?.focus();
       break;
     }
@@ -271,7 +269,9 @@ export function installInput(): void {
     if (action) {
       if (inField && !EVERYWHERE.has(action.kind)) return;
       // In a terminal, Ctrl+V is the browser's own paste, which xterm.js
-      // takes as a paste — bracketed, if the program asked for that.
+      // takes as a paste — bracketed, if the program asked for that. The
+      // terminal's own listener for it (TermView) is where files copied in
+      // the Explorer become their paths: only there is the event at hand.
       if (action.kind === "paste" && inTerminal) return;
       event.preventDefault();
       event.stopPropagation();

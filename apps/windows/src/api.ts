@@ -262,6 +262,8 @@ export interface PathHit {
 
 /** For each group of spellings of one printed path, the first that exists. */
 export const findPaths = (groups: string[][]) => invoke<(PathHit | null)[]>("find_paths", { groups });
+/** The paths of the files on the clipboard (the Explorer's copy); empty when it holds anything else, and off Windows. */
+export const clipboardFiles = () => invoke<string[]>("clipboard_files");
 /** Open a file with what the system opens it with, a folder in the file manager. */
 export const openPath = (path: string) => invoke<void>("open_path", { path });
 /** Show a file in the file manager, selected. */
