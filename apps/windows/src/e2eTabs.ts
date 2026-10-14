@@ -10,6 +10,7 @@
 
 import * as api from "./api";
 import { SPLIT_RIGHT } from "./api";
+import { traceDrags } from "./drag";
 import { awake } from "./hibernation";
 import { LEAST_COLS } from "./paneActions";
 import { settle } from "./sleepWatch";
@@ -27,6 +28,7 @@ import {
   focusPane,
   gui,
   log,
+  moveWorkspace,
   newTab,
   putAway,
   refresh,
@@ -43,6 +45,7 @@ import {
   workspaces,
 } from "./store";
 import { menu } from "./ui/common";
+import { sidebarMove, stripMove } from "./ui/tabDrag";
 
 type StepRunner = (name: string, run: () => Promise<string>) => Promise<void>;
 interface Point {
@@ -78,6 +81,51 @@ async function photo(name: string, windows: boolean): Promise<void> {
     await sleep(1500);
   }
 }
+
+// ------------------------------------------------------------------ what the page sees
+
+/** An element as a few words: its tag and classes, and what names it. */
+function describe(element: Element | null): string {
+  if (!element) return "nada";
+  const classes = typeof element.className === "string" ? element.className.trim().replace(/\s+/g, ".") : "";
+  const data = (element as HTMLElement).dataset;
+  const named = data?.tab ?? data?.row ?? data?.workspace ?? data?.pane;
+  return `${element.tagName.toLowerCase()}${classes ? `.${classes}` : ""}${named ? `[${named.replace("\u0000", "/")}]` : ""}`;
+}
+
+/** What the sidebar's list is doing: where it is on the window, and how far it is scrolled. */
+function listInfo(): string {
+  const list = document.querySelector<HTMLElement>(".sidebar-list");
+  if (!list) return "sem lista";
+  const box = list.getBoundingClientRect();
+  return `lista de ${Math.round(box.top)} a ${Math.round(box.bottom)}, rolada ${Math.round(list.scrollTop)} de ${list.scrollHeight - list.clientHeight}`;
+}
+
+const place = (at: Point) => `${Math.round(at.x)},${Math.round(at.y)}`;
+
+/**
+ * Scroll the sidebar's list until these are in it, as a person does before
+ * pulling at what is on the screen: a row below the fold can be pressed by a
+ * script, and a list held by a pointer out of its box scrolls as it would for
+ * anyone. Said to the log, and done before what is to be pulled is measured.
+ */
+async function reveal(...elements: Element[]): Promise<void> {
+  const list = document.querySelector<HTMLElement>(".sidebar-list");
+  if (!list || elements.length === 0) return;
+  const boxes = elements.map((e) => e.getBoundingClientRect());
+  const top = Math.min(...boxes.map((b) => b.top));
+  const bottom = Math.max(...boxes.map((b) => b.bottom));
+  const room = list.getBoundingClientRect();
+  // Their middle on the list's: all of them fit whenever they can.
+  const shift = (top + bottom) / 2 - (room.top + room.bottom) / 2;
+  const before = listInfo();
+  list.scrollTop += shift;
+  await sleep(150);
+  diag(`mostra ${elements.map(describe).join(" e ")}: ${before} → ${listInfo()}`);
+}
+
+/** A line in the app's log, which the run's output carries: what a step saw, for whoever reads why it failed. */
+const diag = (line: string) => log(`e2e ${line}`);
 
 // ------------------------------------------------------------------ the pointer
 
@@ -116,20 +164,35 @@ function line(a: Point, b: Point, steps = 8): Point[] {
 /**
  * Press on `from`, pull through `via` and let go at the last point. `held` runs
  * with the pointer at the last point and the button still down, to look at what
- * is drawn then.
+ * is drawn then. What the page sees along the way goes to the log.
  */
-async function drag(from: Element, via: Point[], held?: () => Promise<void> | void): Promise<void> {
+async function drag(from: Element, via: Point[], label: string, held?: () => Promise<void> | void): Promise<void> {
   pointerId += 1;
   const start = middle(from);
+  const box = from.getBoundingClientRect();
+  diag(
+    `${label}: pressiona ${describe(from)} em ${place(start)} (de ${Math.round(box.top)} a ${Math.round(box.bottom)} na vertical; janela ${window.innerWidth}x${window.innerHeight}); ` +
+      `sob o ponteiro: ${describe(document.elementFromPoint(start.x, start.y))}; ${listInfo()}`,
+  );
   fire(from, "pointerdown", start, 1);
   for (const at of via) {
     fire(window, "pointermove", at, 1);
     await sleep(35);
   }
   await sleep(120);
-  if (held) await held();
-  fire(window, "pointerup", via[via.length - 1] ?? start, 0);
-  await sleep(200);
+  const end = via[via.length - 1] ?? start;
+  diag(
+    `${label}: segurado em ${place(end)}; sob o ponteiro: ${describe(document.elementFromPoint(end.x, end.y))}; ${listInfo()}; ` +
+      `movimento: ${JSON.stringify(sidebarMove.value ?? stripMove.value)}`,
+  );
+  try {
+    if (held) await held();
+  } finally {
+    // Let go even when what was looked at while holding failed: a press left down would hold the next step's.
+    fire(window, "pointerup", end, 0);
+    await sleep(200);
+    diag(`${label}: solto; ${listInfo()}`);
+  }
 }
 
 const one = <T extends Element>(selector: string): T => {
@@ -161,6 +224,16 @@ const now = (): string =>
     `editando: ${JSON.stringify(editing.value)}`,
   ].join("; ");
 
+/** Where the tabs stand: by workspace, what is in front, what is awake and how the sidebar's list is. */
+const scene = (): string =>
+  [
+    `abas: ${[...tabsByWorkspace.value].map(([workspace, list]) => `${workspace}=${list.map((t) => t.root.id)}`).join(" ")}`,
+    `workspaces: ${shownWorkspaces.value.map((w) => w.name)}`,
+    `em frente: ${activeWorkspace.value}/${activeTab.value?.root.id}`,
+    `acordadas: ${awake.value.size}`,
+    listInfo(),
+  ].join("; ");
+
 const A = "e2e-abas";
 const B = "e2e-destino";
 const H = "e2e-sono";
@@ -172,8 +245,20 @@ function marked(workspace: string, tab: number, text: string): void {
   view.term.write(`\r\n${text}\r\n${"\r\n".repeat(view.term.rows + 4)}`);
 }
 
-export async function tabsSteps(step: StepRunner, windows: boolean, home: string): Promise<void> {
+export async function tabsSteps(runStep: StepRunner, windows: boolean, home: string): Promise<void> {
   let tabs: number[] = [];
+  traceDrags((line) => diag(`arrasto: ${line}`));
+  // A step that fails says where everything stood, to the report and to the log.
+  const step: StepRunner = (name, run) =>
+    runStep(name, async () => {
+      try {
+        return await run();
+      } catch (error) {
+        const said = `${String(error).replace(/^Error: /, "")} [${scene()}]`;
+        diag(`FALHOU ${name}: ${said}`);
+        throw new Error(said);
+      }
+    });
 
   await step("abas: arrastar uma aba pela fileira muda a ordem", async () => {
     await createWorkspace(A, null);
@@ -186,7 +271,7 @@ export async function tabsSteps(step: StepRunner, windows: boolean, home: string
     const strip = all<HTMLElement>(".strip .tab");
     const from = middle(strip[0]);
     const to = middle(strip[2]);
-    await drag(strip[0], line(from, { x: to.x + 6, y: from.y }, 10), async () => {
+    await drag(strip[0], line(from, { x: to.x + 6, y: from.y }, 10), "fileira: a primeira aba para o fim", async () => {
       check(document.querySelector(".strip.reordering .tab.carried"), "a aba levada não está marcada");
       await photo("abas-arrasto", windows);
     });
@@ -203,9 +288,13 @@ export async function tabsSteps(step: StepRunner, windows: boolean, home: string
     const [b, c, a] = idsOf(A);
     // The last row to the first place.
     let rows = all<HTMLElement>(`.sidebar .workspace[data-workspace="${A}"] .tab-row`);
+    await reveal(rows[0], rows[2]);
+    rows = all<HTMLElement>(`.sidebar .workspace[data-workspace="${A}"] .tab-row`);
     const last = middle(rows[2]);
     const first = middle(rows[0]);
-    await drag(rows[2], line(last, { x: first.x, y: first.y - 4 }, 8), () => photo("abas-barra-arrasto", windows));
+    await drag(rows[2], line(last, { x: first.x, y: first.y - 4 }, 8), "barra lateral: a última aba para o começo", () =>
+      photo("abas-barra-arrasto", windows),
+    );
     await waitFor(() => idsOf(A).join() === [a, b, c].join(), 3000, "a ordem pela barra lateral").catch(() => {
       throw new Error(`a ordem é ${idsOf(A)}, não ${[a, b, c]}`);
     });
@@ -220,11 +309,16 @@ export async function tabsSteps(step: StepRunner, windows: boolean, home: string
     await photo("abas-barra", windows);
 
     rows = all<HTMLElement>(`.sidebar .workspace[data-workspace="${A}"] .tab-row`);
-    const header = one<HTMLElement>(`.sidebar .workspace[data-workspace="${B}"] .workspace-row`);
-    const source = rows.find((r) => r.dataset.row === tabKey(A, b));
+    let header = one<HTMLElement>(`.sidebar .workspace[data-workspace="${B}"] .workspace-row`);
+    let source = rows.find((r) => r.dataset.row === tabKey(A, b));
+    check(source, "sem a linha da aba");
+    // The row and the header it is to go to, both in the list.
+    await reveal(source, header);
+    header = one<HTMLElement>(`.sidebar .workspace[data-workspace="${B}"] .workspace-row`);
+    source = all<HTMLElement>(`.sidebar .workspace[data-workspace="${A}"] .tab-row`).find((r) => r.dataset.row === tabKey(A, b));
     check(source, "sem a linha da aba");
     const there = idsOf(B);
-    await drag(source, line(middle(source), middle(header), 10), async () => {
+    await drag(source, line(middle(source), middle(header), 10), "barra lateral: a aba sobre o cabeçalho de outro workspace", async () => {
       check(document.querySelector(".workspace-row.offered"), "o cabeçalho de destino não acendeu");
       await photo("abas-para-outro-workspace", windows);
     });
@@ -236,6 +330,34 @@ export async function tabsSteps(step: StepRunner, windows: boolean, home: string
     check(same.allText().includes("marcador-aba-movida"), "o terminal perdeu o que tinha");
     check(!terminals.existing(A, b), "o terminal ficou com o nome antigo");
     return `aba ${b} de ${A} agora é ${moved} em ${B}, com o mesmo terminal`;
+  });
+
+  await step("workspaces: arrastar o cabeçalho pela barra lateral reordena a lista", async () => {
+    const names = () => all<HTMLElement>(".sidebar .workspace").map((e) => e.dataset.workspace);
+    const headerOf = (name: string) => one<HTMLElement>(`.sidebar .workspace[data-workspace="${CSS.escape(name)}"] .workspace-row`);
+    const before = names();
+    const at = before.indexOf(A);
+    check(at >= 0 && before.indexOf(B) > at, `${A} devia vir antes de ${B}: ${before}`);
+    // Short groups, two tabs each: both headers are in view together, the way a person drags one over the other.
+    await reveal(headerOf(A), headerOf(B));
+    const above = middle(headerOf(A));
+    await drag(headerOf(B), line(middle(headerOf(B)), { x: above.x, y: above.y - 8 }, 10), "barra lateral: o cabeçalho para cima de outro", () =>
+      photo("workspaces-arrasto", windows),
+    );
+    await waitFor(() => names().indexOf(B) === at, 3000, "a nova ordem dos workspaces").catch(() => {
+      throw new Error(`a ordem é ${names()}, e ${B} devia ter tomado o lugar ${at} de ${A}`);
+    });
+    check(names().indexOf(A) === at + 1, `${A} devia ter descido para o lugar ${at + 1}: ${names()}`);
+    check(gui.value.order.indexOf(B) < gui.value.order.indexOf(A), "o estado não guarda a ordem");
+    // And back.
+    await reveal(headerOf(A), headerOf(B));
+    const below = middle(headerOf(B));
+    await drag(headerOf(A), line(middle(headerOf(A)), { x: below.x, y: below.y + 8 }, 10), "barra lateral: o cabeçalho de volta");
+    await waitFor(() => names().indexOf(A) === at, 3000, "a ordem de volta").catch(() => {
+      throw new Error(`a ordem é ${names()}, e ${A} devia ter voltado ao lugar ${at}`);
+    });
+    check(names().indexOf(B) === at + 1, `${B} devia ter voltado ao lugar ${at + 1}: ${names()}`);
+    return `${B} tomou o lugar ${at} e ${A} voltou a ele`;
   });
 
   await step("painéis: a alça troca dois painéis de lugar, e o nome da aba segue", async () => {
@@ -251,7 +373,7 @@ export async function tabsSteps(step: StepRunner, windows: boolean, home: string
     const grips = await waitFor(() => (all(".tab-view.shown .pane-grip").length === 2 ? all<HTMLElement>(".tab-view.shown .pane-grip") : null), 5000, "as duas alças");
     const target = one<HTMLElement>(`.tab-view.shown .pane[data-pane="${left}"]`);
     const hand = middle(grips[1]);
-    await drag(grips[1], line(hand, middle(target), 10), async () => {
+    await drag(grips[1], line(hand, middle(target), 10), "painel: a alça sobre o outro painel", async () => {
       check(document.querySelector(".pane-landing"), "o pouso não aparece");
       check(document.querySelector(".pane-card"), "o cartão não aparece");
       await photo("paineis-troca", windows);
@@ -274,7 +396,7 @@ export async function tabsSteps(step: StepRunner, windows: boolean, home: string
     const before = view.term.cols;
     const divider = one<HTMLElement>(".tab-view.shown .split-divider");
     const at = middle(divider);
-    await drag(divider, line(at, { x: at.x + 160, y: at.y }, 8), async () => {
+    await drag(divider, line(at, { x: at.x + 160, y: at.y }, 8), "divisor: para a direita", async () => {
       check(document.querySelector(".size-badge.shown"), "o selo do tamanho não apareceu");
       await photo("paineis-divisor", windows);
     });
@@ -283,7 +405,7 @@ export async function tabsSteps(step: StepRunner, windows: boolean, home: string
     check(Object.keys(shares.value).length > 0, "a razão do divisor não ficou guardada");
     // Past the edge it stops where a few columns are left.
     const far = middle(one<HTMLElement>(".tab-view.shown .split-divider"));
-    await drag(one<HTMLElement>(".tab-view.shown .split-divider"), line(far, { x: far.x + 4000, y: far.y }, 6));
+    await drag(one<HTMLElement>(".tab-view.shown .split-divider"), line(far, { x: far.x + 4000, y: far.y }, 6), "divisor: além da borda");
     await sleep(300);
     const other = terminals.existing(A, tab.panes[1].id);
     check(other, "sem terminal no segundo painel");
@@ -331,7 +453,7 @@ export async function tabsSteps(step: StepRunner, windows: boolean, home: string
     const sidebar = one<HTMLElement>(".sidebar").getBoundingClientRect();
     // The sidebar's bare ground, under everything in it.
     const bare = { x: sidebar.left + sidebar.width / 2, y: sidebar.bottom - 260 };
-    await drag(grips[1], line(middle(grips[1]), bare, 8));
+    await drag(grips[1], line(middle(grips[1]), bare, 8), "painel: a alça solta fora");
     await waitFor(() => idsOf(A).length === count + 1, 10000, "a aba nova do painel").catch(() => {
       throw new Error(`o workspace tem ${idsOf(A).length} abas, não ${count + 1}`);
     });
@@ -350,7 +472,7 @@ export async function tabsSteps(step: StepRunner, windows: boolean, home: string
     const strip = () => all<HTMLElement>(".strip .tab").find((e) => e.dataset.tab === tabKey(A, y));
     const tab = strip();
     check(tab, "sem a aba de destino na fileira");
-    await drag(grips[1], line(middle(grips[1]), middle(tab), 10), async () => {
+    await drag(grips[1], line(middle(grips[1]), middle(tab), 10), "painel: a alça sobre uma aba da fileira", async () => {
       // Held over the tab for a moment, it opens.
       await waitFor(() => activeTab.value?.root.id === y, 2000, "a aba abrir sob o painel");
       await photo("paineis-mola", windows);
@@ -380,22 +502,6 @@ export async function tabsSteps(step: StepRunner, windows: boolean, home: string
     check(activeTab.value?.root.id === heir, "a aba em frente não seguiu o herdeiro");
     renameTab(A, heir, "");
     return `o painel ${heir} é a aba ${x} agora, no lugar ${place}, com o nome`;
-  });
-
-  await step("workspaces: arrastar o cabeçalho pela barra lateral reordena a lista", async () => {
-    const names = () => all<HTMLElement>(".sidebar .workspace").map((e) => e.dataset.workspace);
-    check(names().indexOf(A) < names().indexOf(B), `${A} devia vir antes de ${B}: ${names()}`);
-    const header = one<HTMLElement>(`.sidebar .workspace[data-workspace="${B}"] .workspace-row`);
-    const above = middle(one<HTMLElement>(`.sidebar .workspace[data-workspace="${A}"] .workspace-row`));
-    await drag(header, line(middle(header), { x: above.x, y: above.y - 8 }, 10), () => photo("workspaces-arrasto", windows));
-    await waitFor(() => names().indexOf(B) < names().indexOf(A), 3000, "a nova ordem dos workspaces");
-    check(gui.value.order.indexOf(B) < gui.value.order.indexOf(A), "o estado não guarda a ordem");
-    // And back.
-    const again = one<HTMLElement>(`.sidebar .workspace[data-workspace="${A}"] .workspace-row`);
-    const below = middle(one<HTMLElement>(`.sidebar .workspace[data-workspace="${B}"] .workspace-row`));
-    await drag(again, line(middle(again), { x: below.x, y: below.y + 8 }, 10));
-    await waitFor(() => names().indexOf(A) < names().indexOf(B), 3000, "a ordem de volta");
-    return `${B} subiu e ${A} voltou a subir`;
   });
 
   await step("renomear: Enter sem mudar não fixa o título, e há um só campo", async () => {
@@ -519,6 +625,60 @@ export async function tabsSteps(step: StepRunner, windows: boolean, home: string
     return `${chosen.length} abas dormiram; a mais antiga voltou com a rolagem; ${awake.value.size} acordadas`;
   });
 
+  await step("barra lateral: perto da borda a lista rola sozinha, e o pouso segue o que passa sob o ponteiro parado", async () => {
+    const list = one<HTMLElement>(".sidebar-list");
+    const room = () => list.scrollHeight - list.clientHeight;
+    // Enough below the fold for the list to have somewhere to go.
+    for (let i = 0; i < 20 && room() < 160; i++) {
+      await newTab(A);
+      await sleep(120);
+    }
+    check(room() >= 160, `a lista só tem ${room()} px para rolar`);
+    list.scrollTop = 0;
+    await sleep(150);
+    const names = () => all<HTMLElement>(".sidebar .workspace").map((e) => e.dataset.workspace!);
+    const order = names();
+    check(order.length >= 3, `só ${order.length} workspaces na lista`);
+    const moved = order[0];
+    const header = one<HTMLElement>(`.sidebar .workspace[data-workspace="${CSS.escape(moved)}"] .workspace-row`);
+    const box = list.getBoundingClientRect();
+    // Eight pixels inside the bottom edge: where the list scrolls on its own toward what is below.
+    const edge = { x: box.left + box.width / 2, y: box.bottom - 8 };
+    let shown = -1;
+    let scrolled = 0;
+    await drag(header, line(middle(header), edge, 12), "barra lateral: o cabeçalho de cima parado na borda de baixo", async () => {
+      // The pointer does not move from here on: the list goes to its end by itself and stops.
+      let last = -1;
+      let still = 0;
+      await waitFor(
+        () => {
+          still = list.scrollTop === last ? still + 1 : 0;
+          last = list.scrollTop;
+          return still >= 4;
+        },
+        10000,
+        () => `a lista não parou de rolar (${listInfo()})`,
+      );
+      scrolled = Math.round(list.scrollTop);
+      check(list.scrollTop >= room() - 2, `a lista parou antes do fim (${listInfo()})`);
+      const move = sidebarMove.value;
+      check(move?.kind === "workspace", `o arrasto não está de pé: ${JSON.stringify(move)}`);
+      shown = move.to;
+      // What is under a pointer that has not moved is the last group now, and the landing place says so.
+      check(shown === order.length - 1, `o pouso é ${shown}, devia ser ${order.length - 1} com a lista no fim (${listInfo()})`);
+    });
+    // It is let go where the landing place was shown.
+    await waitFor(() => names().at(-1) === moved, 3000, "o workspace levado ao fim").catch(() => {
+      throw new Error(`a ordem é ${names()}, e ${moved} devia ter ido para o fim`);
+    });
+    check(gui.value.order.indexOf(moved) > gui.value.order.indexOf(order[1]), "o estado não guarda a ordem");
+    // Put back where it was.
+    moveWorkspace(moved, order[1]);
+    await waitFor(() => names()[0] === moved, 3000, "o workspace de volta ao começo");
+    return `a lista rolou ${scrolled} px sozinha e ${moved} foi para o lugar ${shown}, o último`;
+  });
+
+  traceDrags(undefined);
   // What the steps made goes away, and the tab the rest of the script knows is in front again, with its terminal.
   for (const name of [A, B, H]) await api.killWorkspace(name).catch(() => {});
   await refresh();

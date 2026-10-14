@@ -115,8 +115,11 @@ não foram vistos no Windows de verdade.
 
 ## Fatia `tabs`
 
-Conferida no Mac (roteiro do app, `src/e2eTabs.ts`, com eventos de ponteiro da própria página, e testes
-do vitest); o mouse real, os cursores e a dica nativa do workspace não foram exercitados no Windows.
+Conferida no Mac e no Windows do CI (roteiro do app, `src/e2eTabs.ts`, com eventos de ponteiro da própria
+página, e testes do vitest); o mouse real, os cursores e a dica nativa do workspace não foram exercitados no
+Windows. A janela do CI deixa 286 px para a lista da barra lateral: o roteiro mostra a linha (`reveal`) antes de
+puxá-la, como uma pessoa faz, e o log do app traz o que a página via em cada arrasto (elemento sob o ponteiro,
+caixa da linha, rolagem da lista, estado do movimento, fim do arrasto por `pointerup`, `blur` ou Esc).
 
 - [x] Reordenar abas por arrasto, na fileira (a aba segue o ponteiro e as outras abrem a lacuna) e na barra
   lateral (cópia na mão, linha apagada no lugar de pouso, lacuna que acompanha), com a ordem no estado
@@ -125,6 +128,11 @@ do vitest); o mouse real, os cursores e a dica nativa do workspace não foram ex
   religado, não refeito, e o nome, o lugar, o painel com o teclado e o estado do Claude vão junto. Soltar
   no cabeçalho põe no fim; soltar sobre uma aba põe antes dela.
 - [x] Arrastar o cabeçalho do workspace reordena a lista, com a mesma lacuna.
+- [x] Lista mais longa que a janela: com o ponteiro a menos de 36 px da borda de cima ou de baixo a lista rola
+  sozinha, mais depressa quanto mais perto (no máximo 14 px por quadro, também além da borda), o pouso é
+  refeito a cada rolagem mesmo com o ponteiro parado, e soltar faz o que estava mostrado (`drag.ts`
+  `scrollStep`/`autoScroll`, `ui/tabDrag.ts`). Antes, a velocidade crescia sem limite além da borda e a soltura
+  refazia a conta com a lista já rolada: a aba voltava sem mudar de lugar.
 - [x] Alça do painel (44x14, três pontos, só com mais de um painel): cartão com o texto do painel, pouso nos
   quatro lados e na troca (`api.rearrange`), soltar numa aba da fileira junta o painel a ela, soltar fora o
   destaca em aba nova, 0,45 s sobre uma aba a abre (a mola). Trocar dois painéis mantém o layout e troca
@@ -152,19 +160,65 @@ do vitest); o mouse real, os cursores e a dica nativa do workspace não foram ex
 
 ## Fatia `terminal`
 
-- [ ] Caminhos de arquivo clicáveis (relativos ao cwd, ~, :linha:col, quebrados
-  em duas linhas), clique abre; menu Abrir / Mostrar no Explorer / Copiar.
-- [ ] URLs mailto: e file://; Ctrl+clique.
-- [ ] Endereços web: clique simples abre no navegador, inclusive o link OSC 8
-  atrás do texto (markdown do Claude Code) e o endereço quebrado em linhas;
-  menu Abrir link / Copiar link (Mac: 0e8c0bc). Com o mouse tomado pelo
-  programa (Claude Code em tela cheia), o clique simples deixa o endereço
-  para ele, que já o abre (Mac: 62be02e).
-- [ ] OSC 52 com política; confirmar colagem multi-linha; colar arquivo copiado.
-- [ ] Soltar arquivos: realce do painel sob o ponteiro.
-- [ ] Teclado kitty (CSI u): Ctrl+Enter, desambiguação.
-- [ ] Cut multi-linha no prompt do Claude.
-- [ ] Título OSC imediato (onTitleChange); grafemas Unicode (modo 2027).
+- [x] Caminhos de arquivo clicáveis (`paths.ts`, `links.ts`, `links.rs`): `C:\x\y.txt`, UNC, `\\wsl$`, `.\rel`,
+  `..\rel`, `/mnt/c/...`, `~/x`, relativos ao cwd do painel, `:linha` e `:linha:coluna` (e `(linha,coluna)`),
+  quebrados em linhas pelo ajuste, com espaço escapado ou entre aspas. Só vira link o que o sistema confirma
+  (`find_paths`: 2 s no máximo, sem nomes de dispositivo). 26 testes; visto no app com eventos de mouse reais.
+- [x] Endereços web (`urls.ts`): https, http, ftp, mailto, `www.` e `file:` (que vira caminho), pontuação do fim
+  da frase fora, link quebrado em até três linhas pela linha que vai até a borda, e o OSC 8 atrás do texto.
+  17 testes; visto no app.
+- [x] Clique simples (500 ms depois do duplo clique, sem arrasto, painel já com o foco) ou Ctrl+clique abrem;
+  sublinhado sempre sob o ponteiro; botão direito: sobre o caminho Abrir / Mostrar no Explorer / Copiar o
+  caminho, sobre o endereço Abrir link / Copiar link, e nada disso onde não há nada sob o ponteiro.
+- [~] O que o Windows faz com o clique: `open_path`, `reveal_path` e `open_url` (o plugin opener: ShellExecute e
+  `SHOpenFolderAndSelectItems`) compilam para o Windows (`cargo check --target x86_64-pc-windows-msvc`) e não
+  rodaram nele; executáveis e scripts são mostrados no Explorer em vez de executados (o Mac faz o mesmo), e
+  `open_url` recusa o que não é http, https, mailto ou ftp (o Mac entrega `vscode://` e `tel:` ao sistema no
+  ⌘-clique; aqui não: texto de programa não inicia programa). Diferença do Mac: com o mouse tomado pelo programa (Claude Code em
+  tela cheia) o Mac deixa o endereço para ele (62be02e), que o abre porque o terminal se diz ghostty; aqui o
+  terminal se diz `TERM_PROGRAM=keep`, então o clique simples continua abrindo. Não visto com o Claude Code no
+  Windows.
+- [x] OSC 52 (`osc52.ts`): escrita permitida só no `c` (`s` e `p` descartados); leitura pergunta primeiro
+  ("Permitir a leitura da área de transferência?", com prévia) e responde `ESC ] 52 ; c ; base64 ESC \`. 12
+  testes; visto no app.
+- [x] Colar (`paste.ts`): sem o bracketed paste, qualquer quebra de linha pergunta ("Colar isto?", prévia de 400
+  caracteres; o Mac só conta `\n`, aqui `\r` também); com ele, só um `ESC [ 201 ~` dentro do texto pergunta;
+  os controles viram espaço. Testes e visto no app.
+- [ ] Colar arquivo copiado no Explorer (digitar o caminho): exigiria ler o `CF_HDROP` da área de transferência
+  do Windows, código `unsafe` do Win32 que só compila aqui e não se prova; o Mac também só lê texto.
+- [~] Soltar arquivos (`drop.ts`): o painel sob o ponteiro se realça e os caminhos são digitados como o shell
+  do painel os lê (PowerShell: entre aspas, ou aspas simples se há `$`, crase ou `'`; WSL: o caminho Linux,
+  `/mnt/c/...`, escapado como o Mac; outros: aspas duplas se há espaço). Lógica testada; o arrasto do sistema
+  não se exercita daqui (o realce e o drop reais ficam para o Windows).
+- [~] Teclado Kitty (`kitty.ts`, `kittyKeys.ts`): o programa liga o protocolo (`CSI > flags u`, pilha de oito por
+  tela, `CSI < n u`, `CSI = flags ; modo u`, `CSI ? u` respondida) e as teclas saem como ele pediu: Shift+Enter,
+  Ctrl+Enter, Esc, Ctrl+Shift+letra, setas e F-teclas com modificadores, eventos, alternativas, todas as
+  teclas e texto associado; é o codificador do Ghostty (os seus testes, menos os de CapsLock e NumLock, que o
+  Mac nunca informa) e as duas escolhas do Mac, Shift+Tab sempre `ESC [ Z` e Alt+Backspace sempre `ESC DEL`.
+  O texto digitado, o AltGr, a composição e as teclas mortas ficam com o xterm.js; sem o protocolo nada muda e
+  Shift+Enter segue mandando `ESC CR`. Visto no app (Mac) com uma sonda que liga as flags 5 (as do Claude
+  Code) e 31: todas as teclas acima, o `CSI = n ; 1 u` do repaint devolvendo as flags a um app reaberto. No
+  Windows resta o que só um ConPTY mostra: lendo o OpenConsole (`main`), a saída do programa vai ao terminal
+  como foi escrita e uma sequência de teclas que ele não conhece chega ao programa como texto; não rodou. O
+  passo "teclado Kitty" do roteiro do CI (`e2e/sonda-teclado.mjs`) confere nos dois sentidos, com um Node de
+  verdade no ConPTY; se ele falhar, o ConPTY não deixa passar `CSI > u` ou `CSI ? u`.
+- [~] Cortar (Ctrl+X) na caixa de prompt do Claude com várias linhas e na seleção que o próprio programa copiou
+  (`cut.ts`): o CutSelection do Mac, testado com as oito gravações reais da caixa (`tools/cut-test`); a tecla
+  no app não foi exercitada.
+- [x] Título OSC imediato: `onTitleChange` pede a lista ao keepd em 120 ms (`refreshSoon`), em vez de esperar o
+  giro do segundo; visto no app em 0,3 s, e o roteiro do CI mede.
+- [ ] Grafemas Unicode (modo 2027): o `@xterm/addon-unicode-graphemes` 0.4.0 existe para o xterm 6.0.0, mas
+  como "experimental", o xterm 6.0.0 não trata o modo 2027 e o grid do keepd só agrupa grafemas quando o
+  programa o liga; ligado fixo, desalinharia as linhas. Pede uma dependência nova (o `node_modules` é de
+  todas as árvores) e `CSI ? 2027 h/l` e a consulta DECRQM tratados na página, e não se prova daqui.
+- [~] Responder sozinho "Confiar nesta pasta?" do Claude Code (`trust.ts`): a seta até o "Yes, I trust this
+  folder" e, quando o próximo olhar a encontra lá, Enter; nunca Enter no "No, exit". O layout antigo e o
+  numerado; o marcador `~/.local/state/keep/trust/<pid do shell>` do vigia do shell evita a seta dupla. Visto
+  no app (Mac) com um `claude` de mentira que desenha a pergunta; o Windows (o marcador com `\`) e o Claude
+  Code de verdade não.
+- [x] Verificação no roteiro do CI (`e2eTerminal.ts`): o protocolo pelo PTY (acima), o título que o programa
+  põe chegar à aba e os caminhos que o sistema confirma (pasta, arquivo, ausente, nomes de dispositivo). Os
+  três passaram no Mac com o roteiro inteiro; no Windows quem diz é o CI.
 
 ## Fatia `ai`
 

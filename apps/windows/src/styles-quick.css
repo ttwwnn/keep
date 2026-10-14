@@ -24,6 +24,11 @@ html.quick #app {
   height: 100%;
 }
 
+/* A question (the paste of many lines) in a window this short: the card near the top, and its text scrolls. */
+html.quick .modal-backdrop {
+  padding-top: 6px;
+}
+
 /* ------------------------------------------------------------ the settings */
 
 .quick-caps .cap {

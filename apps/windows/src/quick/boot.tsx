@@ -18,15 +18,16 @@ import * as api from "../api";
 import { loadSymbolsFont } from "../fonts";
 import { QUICK_WORKSPACE } from "../quickWorkspace";
 import { normalizeState } from "../state";
-import { fontFamily, fontSize, gui, info, palette } from "../store";
+import { ask, dialog, fontFamily, fontSize, gui, info, notice, palette, say } from "../store";
 import { TerminalManager, viewKey, type TermView, type TerminalLook } from "../terminals";
 import { applyPalette, onSystemAppearanceChange } from "../theme";
 import { loadThemes } from "../themes";
 import { ContextMenu } from "../ui/common";
+import { Overlays } from "../ui/Overlays";
 import { quickLook, quickReady } from "./api";
 import { installQuickInput, openQuickMenu, quickKey } from "./keys";
 import { wearTheState } from "./look";
-import { guessGrid, nextShell, quickTabOf, type Shell } from "./tab";
+import { guessGrid, nextShell, quickTabIn, type Shell } from "./tab";
 
 /** The shell the panel shows, a tab of the daemon's quick workspace; null until the daemon has said. */
 const shell = signal<Shell | null>(null);
@@ -49,6 +50,10 @@ function look(): TerminalLook {
     dark: palette.value.dark,
   };
 }
+
+/** What runs in the panel's tab, and where, as the daemon last said (`pwsh`, `wsl`): how a dropped file's path is to be written, and what a relative one is relative to. */
+let shellCommand = "";
+let shellCwd = "";
 
 const current = (): TermView | undefined =>
   shell.value === null ? undefined : terminals.existing(QUICK_WORKSPACE, shell.value.id);
@@ -89,7 +94,10 @@ function settle(): Promise<void> {
 
 async function settleOnce(): Promise<void> {
   try {
-    const id = quickTabOf(await api.listAll()) ?? (await makeTab());
+    const found = quickTabIn(await api.listAll());
+    shellCommand = found?.command ?? "";
+    shellCwd = found?.cwd ?? "";
+    const id = found?.id ?? (await makeTab());
     const wasDown = trouble.value !== null;
     trouble.value = null;
     // A terminal whose shell ended is let go, even where the daemon gave its number to the shell that took its place.
@@ -124,12 +132,19 @@ function QuickApp() {
   return (
     <div class="quick-shell">
       <div ref={host} class="quick-host" onContextMenu={(event) => openQuickMenu(event, current())} />
-      {trouble.value && (
+      {trouble.value ? (
         <div class="banner" role="status">
           Sem conexão com o keepd — tentando de novo. <span class="banner-detail">{trouble.value}</span>
         </div>
+      ) : (
+        notice.value && (
+          <div class="banner" role="status">
+            {notice.value}
+          </div>
+        )
       )}
       <ContextMenu />
+      <Overlays />
     </div>
   );
 }
@@ -157,13 +172,32 @@ export async function bootQuick(): Promise<void> {
         },
         key: quickKey,
         focused: () => {},
+        cwd: () => shellCwd,
+        home: () => info.value?.home ?? "",
+        // A quiet line for the person: over the terminal, where the sidebar's foot would be.
+        say: (message) => say(message),
+        titleChanged: () => {},
+        // The question about a paste goes up in the panel as it does in a window; a second one is a no.
+        confirm: async (q) => {
+          if (dialog.value) return false;
+          const answered = await ask({
+            title: q.title,
+            message: q.message,
+            preview: q.preview,
+            buttons: [
+              { label: q.no, value: "no" },
+              { label: q.yes, value: "yes", primary: true },
+            ],
+          });
+          return answered?.button === "yes";
+        },
       },
       { name: startup.platform, windowsBuild: startup.windowsBuild },
     );
     effect(() => applyPalette(palette.value));
     effect(() => terminals.setLook(look()));
     effect(() => document.documentElement.style.setProperty("--zoom", String(gui.value.zoom)));
-    installQuickInput(current);
+    installQuickInput(current, () => shellCommand);
 
     render(<QuickApp />, root);
     // The window says when it comes and when it goes (quick.rs): in, it wears the state as it is now and takes the keyboard.

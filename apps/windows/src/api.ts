@@ -198,6 +198,22 @@ export interface Memory {
 export const memoryNow = () => invoke<Memory | null>("memory_now");
 export const memoryMonitor = () => invoke<void>("memory_monitor");
 export const pathExists = (path: string) => invoke<boolean>("path_exists", { path });
+
+/** The first spelling of a path the terminal printed that exists: which one, and whether it is a folder. */
+export interface PathHit {
+  index: number;
+  path: string;
+  dir: boolean;
+}
+
+/** For each group of spellings of one printed path, the first that exists. */
+export const findPaths = (groups: string[][]) => invoke<(PathHit | null)[]>("find_paths", { groups });
+/** Open a file with what the system opens it with, a folder in the file manager. */
+export const openPath = (path: string) => invoke<void>("open_path", { path });
+/** Show a file in the file manager, selected. */
+export const revealPath = (path: string) => invoke<void>("reveal_path", { path });
+/** Open an address in the browser, or the mail program; only pages, mail and FTP are. */
+export const openUrl = (url: string) => invoke<void>("open_url", { url });
 export const e2eShot = (name: string) => invoke<void>("e2e_shot", { name });
 export const e2eFake = (state: unknown) => invoke<void>("e2e_fake", { state });
 

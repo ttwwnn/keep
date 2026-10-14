@@ -1,7 +1,7 @@
 // Which tab of the daemon's `quick` workspace the panel shows, and how big to
 // make one when there is none.
 
-import type { WorkspaceInfo } from "../api";
+import type { TabInfo, WorkspaceInfo } from "../api";
 import { isQuickWorkspace } from "../quickWorkspace";
 
 /**
@@ -10,10 +10,13 @@ import { isQuickWorkspace } from "../quickWorkspace";
  * terminal; whatever else the workspace holds (a pane made inside it with
  * `keep split`) is behind it. Null when there is none, and one is to be made.
  */
-export function quickTabOf(list: readonly WorkspaceInfo[]): number | null {
+export function quickTabIn(list: readonly WorkspaceInfo[]): TabInfo | null {
   const workspace = list.find((w) => isQuickWorkspace(w.name));
-  return workspace?.tabs.find((tab) => !tab.finished)?.id ?? null;
+  return workspace?.tabs.find((tab) => !tab.finished) ?? null;
 }
+
+/** The same, by its number. */
+export const quickTabOf = (list: readonly WorkspaceInfo[]): number | null => quickTabIn(list)?.id ?? null;
 
 /**
  * The grid a terminal of this box would have, to make a tab before there is a
