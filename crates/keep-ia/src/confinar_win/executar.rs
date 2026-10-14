@@ -429,7 +429,7 @@ pub fn cli(args: &[String]) -> i32 {
     // PowerShell: nega-se a Bash (por um arquivo de configuração) e liga-se a outra.
     let (linha, ambiente_extra): (Vec<String>, Vec<(&'static str, &'static str)>) = if ia_de(programa) == Ia::Claude {
         let local = std::env::var("LOCALAPPDATA").ok().filter(|v| !v.is_empty()).map(|v| sem_prefixo(&v));
-        let arquivo = junta(&area_privada(&local.unwrap_or_else(|| junta(&perfil_real(), "AppData\\Local"))), "claude-sem-bash.json");
+        let arquivo = junta(&area_privada(&local.unwrap_or_else(|| junta(&perfil_real(), "AppData\\Local"))), confinar::ARQUIVO_SEM_BASH);
         let gravou = Path::new(&arquivo)
             .parent()
             .map(std::fs::create_dir_all)

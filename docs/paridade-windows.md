@@ -181,9 +181,14 @@ formato do Mac) e quem prende é o `keep ia confinar -- <programa>`.
 - [~] O Claude Code logado, de verdade, preso: o CI não tem login. Conferido até
   a lista de ferramentas e o pedido de login; não conferido o PowerShell dele
   rodando comandos, os ganchos e a linha de status (que ele roda pelo Git Bash
-  quando existe), o login guardado no Gerenciador de Credenciais e a gravação
-  de `.claude.json` (o arquivo temporário e a trava ficam na casa, que a IA
-  não pode gravar). O Codex só tem o encaixe (`--no-daemon`): sem Codex no CI.
+  quando existe) e a gravação de `.claude.json` (o arquivo temporário e a
+  trava ficam na casa, que a IA não pode gravar). O Gerenciador de Credenciais
+  não funciona preso (conferido no CI: não vê as credenciais do usuário e não
+  grava, "Credentials cannot be saved from this logon session"): o Claude Code
+  só guarda o login nele quando uma opção do servidor está ligada, e cai para
+  o arquivo `.credentials.json` da `.claude`, que a IA alcança; com a opção
+  ligada, preso ele não vê o login do usuário e pede outro. O Codex só tem o
+  encaixe (`--no-daemon`): sem Codex no CI.
 - [~] Encaixe na função `claude` do PowerShell (fatia `ai`): trocar o
   `& $claude @args` final por `& $keep ia confinar -- $claude @args`; sem pasta
   para o workspace o `confinar` roda o programa como sempre. Enquanto a função

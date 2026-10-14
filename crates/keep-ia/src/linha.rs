@@ -262,6 +262,17 @@ pub fn parametros(agente: &str, argv: &[String]) -> Vec<String> {
             Some((n, _)) if n.starts_with("--") => (n, true),
             _ => (a.as_str(), false),
         };
+        // A regra que o Keep põe num Claude preso (sem a ferramenta Bash) não é
+        // da pessoa: não segue para um Claude que sobe sem estar preso.
+        if nome == "--settings" {
+            let valor = if junto { a.split_once('=').map(|(_, v)| v) } else { argv.get(i).map(String::as_str) };
+            if valor.is_some_and(|v| v.rsplit(['/', '\\']).next() == Some(crate::confinar::ARQUIVO_SEM_BASH)) {
+                if !junto {
+                    i += 1;
+                }
+                continue;
+            }
+        }
         if let Some(&(_, leva)) = fora.iter().find(|(n, _)| *n == nome) {
             // As de valor opcional (`--resume [id]`) levam o seguinte junto
             // quando ele não é outra opção.
@@ -301,6 +312,19 @@ mod testes {
             tirar: v(&["CODEX_HOME", "CLAUDE_SECURESTORAGE_CONFIG_DIR"]),
             pasta: None,
         }
+    }
+
+    #[test]
+    fn a_regra_que_o_keep_poe_num_claude_preso_nao_segue_para_o_proximo() {
+        let nosso = r"C:\Users\a\AppData\Local\Keep\confine\claude-sem-bash.json";
+        assert_eq!(parametros("claude", &v(&["claude", "--settings", nosso, "--effort", "max"])), v(&["--effort", "max"]));
+        assert_eq!(parametros("claude", &v(&["claude", &format!("--settings={nosso}"), "--model", "opus"])), v(&["--model", "opus"]));
+        assert_eq!(parametros("claude", &v(&["claude", "--settings", "/k/confine/claude-sem-bash.json"])), Vec::<String>::new());
+        // A da pessoa continua.
+        assert_eq!(
+            parametros("claude", &v(&["claude", "--settings", "meu.json", "--effort", "max"])),
+            v(&["--settings", "meu.json", "--effort", "max"])
+        );
     }
 
     #[test]

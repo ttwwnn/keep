@@ -153,6 +153,11 @@ fn subcomando(args: &[String]) -> Option<&str> {
 /// permissão que a nega por inteiro).
 pub const CONFIGURACAO_SEM_BASH: &str = r#"{"permissions":{"deny":["Bash"]}}"#;
 
+/// O nome do arquivo com essa regra: quem lê a linha de um Claude que anda
+/// (para subi-lo de novo na aba) a reconhece por ele e a deixa de fora, senão a
+/// regra iria junto para um Claude que não está preso.
+pub const ARQUIVO_SEM_BASH: &str = "claude-sem-bash.json";
+
 /// A ferramenta de shell do Claude Code no Windows presa a uma pasta. O Git
 /// Bash (MSYS2) não sobe sob o token restrito: ele cria de início um canal de
 /// sinais com nome e uma DACL só do usuário, e a segunda checagem do token
