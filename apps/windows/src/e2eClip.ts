@@ -45,38 +45,47 @@ export async function clipSteps(step: StepRunner, { waitFor, workspace, windows 
         throw new Error(`esperei ${ms} ms por ${what}; a tela:\n${tail(view.allText())}`);
       }
     };
+    // The screen with the breaks where the pane wrapped a long line taken out (the pane is narrow).
+    const flat = () => view.allText().replace(/\n/g, "");
     await until("o prompt", atPrompt, 30000);
+    try {
+      // A file with a blank in its name, so that the escape shows; the marker is built so that the echo of the command does not contain it.
+      // Windows PowerShell, in a single-threaded apartment as the clipboard wants, puts the file on it (PowerShell 7's Set-Clipboard has no -Path).
+      const copy =
+        "Add-Type -AssemblyName System.Windows.Forms; $l = New-Object System.Collections.Specialized.StringCollection; " +
+        "[void]$l.Add($env:KEEP_E2E_CLIPFILE); [System.Windows.Forms.Clipboard]::SetFileDropList($l)";
+      view.term.input(
+        `$env:KEEP_E2E_CLIPFILE = Join-Path $env:TEMP 'keep e2e clip.txt'; Set-Content -Path $env:KEEP_E2E_CLIPFILE -Value x; powershell.exe -NoProfile -STA -Command '${copy}'; Write-Host ('keep-e2e-' + 'clip-pronto')\r`,
+        true,
+      );
+      await until("a cópia do arquivo", () => view.allText().includes("keep-e2e-clip-pronto") && atPrompt());
 
-    // A file with a blank in its name, so that the escape shows; the marker is built so that the echo of the command does not contain it.
-    // Windows PowerShell, in a single-threaded apartment as the clipboard wants, puts the file on it (PowerShell 7's Set-Clipboard has no -Path).
-    const copy =
-      "Add-Type -AssemblyName System.Windows.Forms; $l = New-Object System.Collections.Specialized.StringCollection; " +
-      "[void]$l.Add($env:KEEP_E2E_CLIPFILE); [System.Windows.Forms.Clipboard]::SetFileDropList($l)";
-    view.term.input(
-      `$env:KEEP_E2E_CLIPFILE = Join-Path $env:TEMP 'keep e2e clip.txt'; Set-Content -Path $env:KEEP_E2E_CLIPFILE -Value x; powershell.exe -NoProfile -STA -Command '${copy}'; Write-Host ('keep-e2e-' + 'clip-pronto')\r`,
-      true,
-    );
-    await until("a cópia do arquivo", () => view.allText().includes("keep-e2e-clip-pronto") && atPrompt());
+      const paths = await api.clipboardFiles();
+      if (paths.length !== 1 || !paths[0].endsWith("keep e2e clip.txt")) {
+        throw new Error(`o comando devolveu ${JSON.stringify(paths)}; a tela:\n${tail(view.allText())}`);
+      }
+      // Pasted as the app pastes when asked for it: PowerShell reads a blank in a name inside double quotes.
+      await view.pasteFromSystem();
+      await until('o caminho entre aspas no prompt', () => flat().includes('keep e2e clip.txt"'));
+      view.term.input("\x03", true);
+      await until("o prompt depois de descartar a linha", atPrompt);
 
-    const paths = await api.clipboardFiles();
-    if (paths.length !== 1 || !paths[0].endsWith("keep e2e clip.txt")) {
-      throw new Error(`o comando devolveu ${JSON.stringify(paths)}; a tela:\n${tail(view.allText())}`);
+      // Text on the clipboard is pasted as text.
+      view.term.input("Set-Clipboard -Value ('texto-' + 'e2e-clip'); Write-Host ('keep-e2e-' + 'texto-pronto')\r", true);
+      await until("a cópia do texto", () => view.allText().includes("keep-e2e-texto-pronto") && atPrompt());
+      if ((await api.clipboardFiles()).length !== 0) throw new Error("o texto copiado ainda mostra arquivos");
+      await view.pasteFromSystem();
+      await until("o texto no prompt", () => flat().includes("texto-e2e-clip"));
+      view.term.input("\x03", true);
+      await until("o prompt no fim", atPrompt);
+      return `${paths[0]} digitado entre aspas; o texto, como texto`;
+    } finally {
+      // A step that failed leaves what it typed on the line, and the steps after it need a clean prompt.
+      if (!atPrompt()) {
+        view.term.input("\x03", true);
+        await waitFor(() => atPrompt(), 10000).catch(() => {});
+      }
     }
-    // Pasted as the app pastes when asked for it: PowerShell reads a blank in a name inside double quotes.
-    await view.pasteFromSystem();
-    await until('o caminho entre aspas no prompt', () => view.allText().includes('keep e2e clip.txt" '));
-    view.term.input("\x03", true);
-    await until("o prompt depois de descartar a linha", atPrompt);
-
-    // Text on the clipboard is pasted as text.
-    view.term.input("Set-Clipboard -Value ('texto-' + 'e2e-clip'); Write-Host ('keep-e2e-' + 'texto-pronto')\r", true);
-    await until("a cópia do texto", () => view.allText().includes("keep-e2e-texto-pronto") && atPrompt());
-    if ((await api.clipboardFiles()).length !== 0) throw new Error("o texto copiado ainda mostra arquivos");
-    await view.pasteFromSystem();
-    await until("o texto no prompt", () => view.allText().includes("texto-e2e-clip"));
-    view.term.input("\x03", true);
-    await until("o prompt no fim", atPrompt);
-    return `${paths[0]} digitado entre aspas; o texto, como texto`;
   });
 
   await step("grafemas: o modo 2027 que o programa liga chega à página pelo PTY", async () => {
