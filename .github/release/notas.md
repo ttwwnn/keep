@@ -64,4 +64,26 @@ Fechar a janela não fecha nada: os terminais continuam no daemon e voltam como 
 - ⌘X recorta pelas linhas da caixa do Claude Code, ⌘V entra "bracketed" quando o programa pede, e o
   Windows entende "max" e "ultra" do Codex 0.162.
 
+**Paridade do Windows com o Mac (0.3.0):** o Windows passa a ter o que o Mac tem, com a mesma aparência.
+- **aparência:** textos, ícones, barra lateral, fileira de abas, zoom, bateria e quadro de RAM como no Mac;
+  cursor em barra; 805 temas do Ghostty com prévia ao vivo e lista de fontes monoespaçadas; título da
+  janela igual ao da aba; o terminal avisa o programa de claro ou escuro (modo 2031);
+- **seletor e paleta:** Ir para com prévia colorida, painel de ações (Ctrl+K), paleta de comandos
+  (Ctrl+Shift+Alt+P) e busca no painel e em tudo, com salto à linha exata;
+- **abas e painéis:** reordenar abas por arrasto, mover para outro workspace, abas verticais, alça e
+  divisor de painel, foco por Alt+setas, hibernação das abas fora de vista e workspaces guardados;
+- **terminal:** caminhos de arquivo clicáveis com menu (Abrir, Mostrar no Explorer, Copiar), links web
+  com clique, OSC 52, confirmação ao colar várias linhas, teclado Kitty, grafemas Unicode (modo 2027),
+  colar arquivo copiado no Explorer e resposta automática a "confiar nesta pasta?";
+- **IA:** funções `claude` e `codex` no PowerShell, reinício com as conversas de volta, `keep continuar`,
+  ganchos da conta da aba e cópias de segurança do estado;
+- **confinamento:** a IA de um workspace pode ser presa a uma pasta (token restrito do Windows); a
+  ferramenta Bash do Claude Code usa o PowerShell enquanto presa;
+- **janelas:** várias janelas com lista de workspaces própria, arrancar a aba da fileira, e a janela
+  rápida global (Ctrl+`, configurável);
+- **opcionais, desligados por padrão:** fundo translúcido com Mica ou Acrílico (pede reinício do app) e
+  links `claude-cli://` abrindo uma aba no Keep (Configurações, "Links do Claude Code").
+
+No Mac: cursor em barra, ícones e textos 25% maiores, "(IA·n)" e o quadro de RAM no tamanho certo.
+
 Detalhes em `docs/ia.md`.
