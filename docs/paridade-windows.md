@@ -305,9 +305,10 @@ formato do Mac) e quem prende é o `keep ia confinar -- <programa>`.
 
 O terminal que desce do topo da tela com um atalho global (o ⌃` do Mac). A janela é a metade passageira: o
 shell é uma aba do workspace `quick` do keepd, que sobrevive à janela, ao app e ao login, e que nenhuma outra
-parte da janela lista. Código: `src-tauri/src/quick.rs` (atalho, janela, deslize), `src/quick/` (a página do
-painel, o teclado dele, o que a janela principal mostra), `src/quickWorkspace.ts` (o filtro) e
-`capabilities/quick.json`.
+parte da janela lista. Código: `src-tauri/src/quick.rs` (atalho, janela, deslize), com `quick/geometry.rs` (as
+medidas e as curvas) e `quick/shortcut.rs` (o atalho e a tecla do layout) à parte para serem testados sem janela;
+`src/quick/` (a página do painel, o teclado dele, o que a janela principal mostra), `src/quickWorkspace.ts` (o
+filtro) e `capabilities/quick.json`.
 
 Conferida no Mac pelo roteiro do app (`src/e2eQuick.ts`, sete passos contra um keepd de verdade: atalho,
 geometria, workspace oculto, shell vivo, volta ao mesmo shell, troca do atalho) e à mão, com um atalho de teste
