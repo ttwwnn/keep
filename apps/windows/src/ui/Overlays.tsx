@@ -11,6 +11,7 @@ import * as api from "../api";
 import { activeView, answer, dialog, info, overlay, type DialogField } from "../store";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { FontPicker } from "./FontPicker";
+import { LinksSettings } from "./LinksSettings";
 import { Picker } from "./Picker";
 import { QuickSettings } from "./QuickSettings";
 import { ThemePicker } from "./ThemePicker";
@@ -52,6 +53,7 @@ function Settings() {
       <div class="settings-body">
         <AppearanceSettings />
         <QuickSettings />
+        <LinksSettings />
         <fieldset>
           <legend>Shell das abas novas</legend>
           {shells === null ? (
