@@ -59,8 +59,8 @@ import {
   type WorktreeAnswer,
   type WorktreeTarget,
 } from "./worktrees";
-import { adopt, carriedByAll, carriedOf, orphansOf, readPeers, remove } from "./windowModel";
-import { isLeader, peers, windowLabel } from "./windowPeers";
+import { adopt, carriedByAll, carriedOf, orphansOf, readPeers, remove, settledOrphans } from "./windowModel";
+import { isLeader, peers, severalWindows, windowLabel } from "./windowPeers";
 import { joinState } from "./windowState";
 import { zoomStep, zoomedSize } from "./zoom";
 
@@ -186,14 +186,41 @@ export const orderedWorkspaces = computed(() => {
   return [...list].sort((a, b) => (rank.get(a.name) ?? Infinity) - (rank.get(b.name) ?? Infinity));
 });
 
+/** When each workspace was first seen unlisted, and the clock that looks at them again when one is due (windowModel.ts). */
+const orphanSeen = new Map<string, number>();
+const orphanClock = signal(0);
+let orphanTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * Of the workspaces nobody lists, the ones to take: all of them in a window
+ * alone; with other windows, those unlisted for a moment — one just made in
+ * another window is on its way to it, not an orphan.
+ */
+function takeable(raw: string[], running: readonly string[]): string[] {
+  void orphanClock.value;
+  if (!severalWindows.value) {
+    orphanSeen.clear();
+    return raw;
+  }
+  const { settled, wait } = settledOrphans(raw, orphanSeen, Date.now(), running);
+  if (wait !== null && orphanTimer === undefined) {
+    orphanTimer = setTimeout(() => {
+      orphanTimer = undefined;
+      orphanClock.value++;
+      refreshSoon();
+    }, wait + 20);
+  }
+  return settled;
+}
+
 /** The running workspaces no window lists and nobody put away: made by the command line, or while the app was not running. */
-const orphans = computed(() =>
-  orphansOf(
-    workspaces.value.map((w) => w.name),
-    carriedByAll(peers.value, windowLabel.value, carriedOf(gui.value.order, gui.value.hidden)),
-    gui.value.hidden,
-  ),
-);
+const orphans = computed(() => {
+  const running = workspaces.value.map((w) => w.name);
+  return takeable(
+    orphansOf(running, carriedByAll(peers.value, windowLabel.value, carriedOf(gui.value.order, gui.value.hidden)), gui.value.hidden),
+    running,
+  );
+});
 
 /**
  * The workspaces the sidebar lists: those of this window's order that are not
@@ -456,7 +483,8 @@ function reconcile(list: WorkspaceInfo[], previous: WorkspaceInfo[]): void {
   // The oldest window takes the workspaces nobody lists, at the end (windowModel.ts).
   if (isLeader.value) {
     const listedByAll = carriedByAll(peers.value, windowLabel.value, carriedOf(order, state.hidden));
-    order.push(...orphansOf(list.map((w) => w.name), listedByAll, state.hidden));
+    const running = list.map((w) => w.name);
+    order.push(...takeable(orphansOf(running, listedByAll, state.hidden), running));
   }
   const named = { ...state.tabNames };
   for (const [workspace, found] of heirs) {
