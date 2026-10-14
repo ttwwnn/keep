@@ -594,7 +594,8 @@ mod testes {
     #[test]
     fn a_pasta_do_link_tem_de_existir_e_ser_pasta() {
         let d = tempfile::tempdir().unwrap();
-        let pasta = d.path().canonicalize().unwrap();
+        // No Windows o `canonicalize` põe o `\\?\`, que a pasta resolvida não tem.
+        let pasta = keep_ia::caminhos::sem_prefixo(d.path().canonicalize().unwrap());
         let arquivo = pasta.join("a.txt");
         std::fs::write(&arquivo, "x").unwrap();
         let com = |p: &Path| Link { pasta: Some(p.to_string_lossy().into_owned()), ..Link::default() };

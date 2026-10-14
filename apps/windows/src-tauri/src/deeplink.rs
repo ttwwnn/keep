@@ -43,9 +43,24 @@ pub fn open(app: &AppHandle, resources: Option<PathBuf>, link: String) {
     });
 }
 
+/// The core installed with the app. Not `KEEP_IA_BIN` (`ia::cli`): that points the AI layer at a stand-in in tests, and
+/// a link is not the AI layer's to answer.
+fn core(resources: Option<&std::path::Path>) -> Option<PathBuf> {
+    let name = format!("keep{}", std::env::consts::EXE_SUFFIX);
+    let mut candidates = Vec::new();
+    if let Some(dir) = resources {
+        candidates.push(dir.join("bin").join(&name));
+    }
+    if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(PathBuf::from)) {
+        candidates.push(dir.join("bin").join(&name));
+        candidates.push(dir.join(&name));
+    }
+    candidates.into_iter().find(|p| p.is_file())
+}
+
 /// `keep links abrir`, waiting for the app's own daemon to come up. The text of the core's complaint when it refuses.
 fn ask_core(resources: Option<&std::path::Path>, link: &str) -> Result<(), String> {
-    let exe = crate::ia::cli(resources).ok_or_else(|| "o keep.exe não está junto do app".to_string())?;
+    let exe = core(resources).ok_or_else(|| "o keep.exe não está junto do app".to_string())?;
     let mut cmd = Command::new(exe);
     cmd.args(["links", "abrir", "--esperar", &WAIT_SECONDS.to_string(), link])
         .env("KEEP_SOCKET", crate::daemon::address())

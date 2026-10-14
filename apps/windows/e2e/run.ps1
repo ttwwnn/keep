@@ -259,6 +259,93 @@ Get-Process | Where-Object { $_.ProcessName -in @('Keep', 'keepd', 'OpenConsole'
     Select-Object ProcessName, Id, Path | Format-Table -AutoSize | Out-String |
     Tee-Object -FilePath (Join-Path $Out 'processos.txt') | Write-Host
 
+# The claude-cli:// links (docs/restauro.md, "No Windows"), on the installed core and the running app: turned on the way
+# Settings does it; a link launched the way the registry launches it opens a tab in the folder the link names, and a link
+# that is not one, or that breaks out of its quotes, opens nothing; turned off, the registry and Claude Code's settings
+# are as they were. Turned on again, to see it survive the update below and to be undone by the uninstaller.
+$linksProblemas = @()
+$linksLinhas = @()
+$chaveLinks = 'HKCU:\Software\Classes\claude-cli'
+$settingsDoClaude = Join-Path $env:CLAUDE_CONFIG_DIR 'settings.json'
+function Link-Core([string[]]$argumentos) {
+    $saida = (& $cli @argumentos 2>&1 | Out-String)
+    $global:LinksSaida = $saida
+    try { $saida | ConvertFrom-Json } catch { $null }
+}
+function Link-Comando { try { (Get-Item "$chaveLinks\shell\open\command" -ErrorAction Stop).GetValue('') } catch { $null } }
+function Link-Abas { (& $cli nova --listar 2>&1 | Out-String) }
+if (Test-Path $cli) {
+    $settingsAntesDosLinks = Get-Content $settingsDoClaude -Raw
+    $comandoAntesDosLinks = Link-Comando
+    $linksLinhas += "antes: registro = $comandoAntesDosLinks"
+    $estado = Link-Core @('links', 'conferir', '--json')
+    if ($null -eq $estado -or $estado.ligado) { $linksProblemas += "antes de ligar, conferir diz: $LinksSaida" }
+
+    $ligado = Link-Core @('links', 'instalar', '--app', $app, '--json')
+    $comando = Link-Comando
+    $linksLinhas += "ligado: $LinksSaida".Trim()
+    $linksLinhas += "registro = $comando"
+    if ($null -eq $ligado -or -not $ligado.ligado -or -not $ligado.completo) { $linksProblemas += "instalar não deixou tudo no lugar: $LinksSaida" }
+    $achou = [regex]::Match([string]$comando, '^"(.+)" --open-uri "%1"$')
+    if (-not $achou.Success -or ((Resolve-Path -LiteralPath $achou.Groups[1].Value).Path -ne (Resolve-Path -LiteralPath $app).Path)) {
+        $linksProblemas += "o registro não abre o Keep: $comando"
+    }
+    if ((Get-Content $settingsDoClaude -Raw) -notmatch '"disableDeepLinkRegistration":\s*"disable"') {
+        $linksProblemas += 'o settings.json do Claude Code não ficou com disableDeepLinkRegistration'
+    }
+
+    # A link as the registry launches it: the program, --open-uri, and the link in quotes. The running app takes it.
+    $pastaLink = Join-Path $env:TEMP "keep-links-e2e-$PID"
+    New-Item -ItemType Directory -Force $pastaLink | Out-Null
+    $folha = Split-Path -Leaf $pastaLink
+    $texto = 'oi "mundo" & echo invadido | calc ; $(x)'
+    $url = 'claude-cli://open?q=' + [uri]::EscapeDataString($texto) + '&cwd=' + [uri]::EscapeDataString($pastaLink) + '&repo=ttwwnn%2Fkeep'
+    Start-Process -FilePath $app -ArgumentList ('--open-uri "' + $url + '"')
+    $ate = (Get-Date).AddSeconds(90)
+    $abas = ''
+    while ((Get-Date) -lt $ate -and $abas -notlike "*$folha*") { Start-Sleep -Milliseconds 500; $abas = Link-Abas }
+    $linksLinhas += "abas depois do link: $abas"
+    if ($abas -notlike "*$folha*") { $linksProblemas += "o link lançado como o registro faz não abriu a aba em $folha" }
+
+    # Links that must open nothing: another scheme, a folder that climbs out, a link that breaks out of its quotes.
+    $antes = Link-Abas
+    foreach ($ruim in @('http://open?q=x', 'claude-cli://install-plugin?plugin=x', 'claude-cli://open?cwd=C%3A%5Ca%5C..%5Cb', 'claude-cli://open?cwd=%5C%5Cservidor%5Cshare')) {
+        & $cli links abrir $ruim 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { $linksProblemas += "o keep aceitou o link $ruim" }
+    }
+    Start-Process -FilePath $app -ArgumentList ('--open-uri "claude-cli://open?q=x&cwd=' + [uri]::EscapeDataString($pastaLink) + '" --extra')
+    Start-Sleep -Seconds 8
+    if ((Link-Abas) -ne $antes) { $linksProblemas += 'um lançamento com argumento a mais abriu uma aba' }
+
+    # By the system, as a browser does: informative, not a failure (the line above is what the registry runs).
+    $pastaSistema = Join-Path $env:TEMP "keep-links-e2e-sistema-$PID"
+    New-Item -ItemType Directory -Force $pastaSistema | Out-Null
+    try { Start-Process ('claude-cli://open?q=oi&cwd=' + [uri]::EscapeDataString($pastaSistema)) } catch { $linksLinhas += "pelo sistema: $_" }
+    $folhaSistema = Split-Path -Leaf $pastaSistema
+    $ate = (Get-Date).AddSeconds(45)
+    $abas = ''
+    while ((Get-Date) -lt $ate -and $abas -notlike "*$folhaSistema*") { Start-Sleep -Milliseconds 500; $abas = Link-Abas }
+    $linksLinhas += "pelo sistema (ShellExecute): $(if ($abas -like "*$folhaSistema*") { 'abriu a aba' } else { 'não abriu a aba' })"
+
+    # Off: everything as it was.
+    $desligado = Link-Core @('links', 'remover', '--json')
+    $linksLinhas += "desligado: $LinksSaida".Trim()
+    if ($null -eq $desligado -or $desligado.ligado) { $linksProblemas += "remover deixou ligado: $LinksSaida" }
+    if ((Link-Comando) -ne $comandoAntesDosLinks) { $linksProblemas += "o registro não voltou: $(Link-Comando)" }
+    if ($null -eq $comandoAntesDosLinks -and (Test-Path $chaveLinks)) { $linksProblemas += 'a chave claude-cli não existia e continua lá' }
+    if ((Get-Content $settingsDoClaude -Raw) -ne $settingsAntesDosLinks) { $linksProblemas += 'o settings.json do Claude Code não voltou ao que era' }
+
+    $ligado = Link-Core @('links', 'instalar', '--app', $app, '--json')
+    if ($null -eq $ligado -or -not $ligado.ligado) { $linksProblemas += "religar falhou: $LinksSaida" }
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $pastaLink, $pastaSistema
+} else {
+    $linksProblemas += 'sem o keep.exe instalado'
+}
+$linksResumo = if ($linksProblemas.Count -eq 0) { 'ok' } else { 'FALHOU: ' + ($linksProblemas -join '; ') }
+Set-Content -Path (Join-Path $Out 'links.txt') -Value (@("links: $linksResumo") + $linksLinhas)
+Write-Host "==> links: $linksResumo"
+$linksLinhas | ForEach-Object { Write-Host "    $_" }
+
 # An update with the daemon running: the app closes, the installer runs over
 # it, and the daemon — with the tabs in it — must still be there afterwards,
 # running from the copy the installer moved aside.
@@ -282,6 +369,26 @@ if ($daemon) {
 }
 Set-Content -Path (Join-Path $Out 'atualizacao.txt') -Value $update
 
+# The links survive the update, and the uninstaller puts the registry and Claude Code's settings back.
+$linksDepois = @()
+if (Test-Path $cli) {
+    $estado = Link-Core @('links', 'conferir', '--json')
+    if ($null -eq $estado -or -not $estado.ligado) { $linksDepois += "depois da atualização os links não estão ligados: $LinksSaida" }
+}
+$desinstalador = Join-Path $dir 'uninstall.exe'
+if (Test-Path $desinstalador) {
+    Write-Host '==> desinstalando'
+    Get-Process keepd -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Process -FilePath $desinstalador -ArgumentList @('/S', "_?=$dir") -Wait
+    if ((Link-Comando) -ne $comandoAntesDosLinks) { $linksDepois += "depois de desinstalar o registro não voltou: $(Link-Comando)" }
+    if ((Get-Content $settingsDoClaude -Raw) -ne $settingsAntesDosLinks) { $linksDepois += 'depois de desinstalar o settings.json do Claude Code não voltou' }
+} else {
+    $linksDepois += 'sem uninstall.exe para o desinstalador'
+}
+$linksDepoisResumo = if ($linksDepois.Count -eq 0) { 'ok' } else { 'FALHOU: ' + ($linksDepois -join '; ') }
+Add-Content -Path (Join-Path $Out 'links.txt') -Value "depois da atualização e da desinstalação: $linksDepoisResumo"
+Write-Host "==> links, atualização e desinstalação: $linksDepoisResumo"
+
 # Leaving: this run's daemon, by the pipe name it was given — every keepd
 # here is this run's.
 Get-Process keepd -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
@@ -302,4 +409,6 @@ if (-not $report.ok) { throw 'o roteiro do app falhou' }
 if ($update -like 'FALHOU*') { throw "a atualização com o daemon rodando falhou: $update" }
 if ($lixeira -like 'FALHOU*') { throw "a worktree não foi para a Lixeira: $lixeira" }
 if ($barraResumo -like 'FALHOU*') { throw "a barra, vista de fora: $barraResumo" }
+if ($linksResumo -like 'FALHOU*') { throw "os links claude-cli://: $linksResumo" }
+if ($linksDepoisResumo -like 'FALHOU*') { throw "os links claude-cli:// na atualização e na desinstalação: $linksDepoisResumo" }
 Write-Host '==> ok'

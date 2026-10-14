@@ -251,11 +251,20 @@ caixa da linha, rolagem da lista, estado do movimento, fim do arrasto por `point
   aba preservado na troca de conta.
 - [~] `keep nova` no Windows: `--nome` vale (pelo `names.json`), o `canonicalize` sem o prefixo `\\?\`, e o
   `keep` no PATH de toda aba (e em `KEEP_IA_BIN`).
-- [ ] Links `claude-cli://` numa aba do Keep: o Claude Code no Windows abre o terminal pelo `wt.exe`,
-  `pwsh.exe`, `powershell.exe` ou cmd, sem olhar `TERM_PROGRAM` nem `deepLinkTerminal`, e refaz o registro
-  do protocolo toda sessão; o desvio (um `wt.exe` do Keep + registro + `disableDeepLinkRegistration`) mexe
-  no registro e no `settings.json` e não se prova fora do Windows (docs/restauro.md). O `<instalação>\bin`
-  no PATH do usuário pelo instalador também ficou de fora, pelo mesmo motivo (a aba já o tem).
+- [~] Links `claude-cli://` numa aba do Keep, opt-in (Configurações, "Links do Claude Code", ou `keep links
+  instalar | remover | conferir`): o Keep se registra em HKCU no lugar do Claude Code e põe
+  `disableDeepLinkRegistration` no `settings.json` dele (o Claude Code refaz o registro em toda sessão, não olha
+  `TERM_PROGRAM`, e o `wt.exe` do PATH não é desviável sem mexer no PATH de um processo dele), o que havia antes é
+  guardado e devolvido por `remover` e pelo desinstalador, o instalador não registra nada. O lançamento
+  `Keep.exe --open-uri` repassa o link ao núcleo (`keep links abrir`), que o confere (esquema, ação, só `q`, `cwd` e
+  `repo`, limites, `cwd` de unidade existente, sem rede, sem `..`) e abre a aba como o `keep nova`, com o texto só
+  em `--prefill-b64`; a política de confirmação é a do Mac (nenhuma: o texto só é pré-preenchido). Provado aqui:
+  o leitor do link com links maliciosos, o editor do `settings.json`, o registro sobre um registro na memória e o
+  link de verdade num daemon de teste (Unix). Só o CI do Windows prova: o registro real (`windows-sys`), o
+  lançamento pelo registro e pelo navegador, o desinstalador (passos novos no `e2e/run.ps1`; o
+  `ShellExecute` pelo sistema é informativo). `install-plugin` e `repo` sem `cwd` (que o Claude Code resolve por
+  um índice de clones que o Keep não tem) ficam de fora; o `<instalação>\bin` no PATH do usuário também (a aba já o
+  tem). Detalhes e o que o Claude Code faz: docs/restauro.md.
 - [x] Robustez do `state.json`: cópias rotativas (`.bak1` a `.bak5`, uma a cada 10 min), recuperação da
   última boa, o arquivo ilegível guardado em `.ilegivel` e o aviso na janela; fsync antes do rename; nada é
   gravado por cima de um arquivo que não deu para ler ao abrir.

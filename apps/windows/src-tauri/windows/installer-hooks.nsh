@@ -30,6 +30,12 @@
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
+  ; The claude-cli:// links, if the person turned them on in Settings: the registry and Claude Code's settings go back
+  ; to what they were, so that no link points at a program that is gone. (The installer itself registers nothing.)
+  Push $0
+  nsExec::Exec '"$INSTDIR\bin\keep.exe" links remover'
+  Pop $0
+  Pop $0
   ; Removing Keep ends what it was keeping.
   Push $0
   nsExec::Exec 'taskkill /F /IM keepd.exe'

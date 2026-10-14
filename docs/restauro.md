@@ -134,24 +134,73 @@ verdade num daemon do próprio teste, com a IA falsa como `claude`).
 - o `keep` está no fim do PATH de toda aba que o keepd abre (e em `KEEP_IA_BIN`): uma sessão do Claude
   numa aba chama `keep nova` sem caminho. Fora de uma aba o `keep` não está no PATH: o instalador não
   mexe nele (editar o PATH do usuário num instalador NSIS é o tipo de coisa que não se prova daqui);
-- os links `claude-cli://` **não** abrem em aba do Keep no Windows. O que o Claude Code 2.1.296 faz
-  lá (lido no executável): registra o protocolo em `HKCU\Software\Classes\claude-cli`
-  (`shell\open\command` = `"<claude.exe>" --handle-uri "%1"`) e confere isso em toda sessão, refazendo
-  se for outro comando, a não ser que o `settings.json` tenha `disableDeepLinkRegistration:
-  "disable"`; o `claude --handle-uri <url>` acha a pasta (`cwd`, ou o clone local de `repo`) e abre um
-  terminal — o `wt.exe` do PATH (`wt.exe -d <pasta> -- <claude.exe> --deep-link-origin
-  [--deep-link-repo=…] [--deep-link-cwd-b64=…] [--prefill-b64=…]`, com `;` escapado), senão `pwsh.exe`,
-  senão `powershell.exe` (`-NoExit -Command & '<claude.exe>' …`), senão `cmd.exe /d /v:off /s /k`.
-  Ele não olha `TERM_PROGRAM` nem `deepLinkTerminal` no Windows, de modo que não há como fazê-lo
-  escolher o Keep pelo ambiente, como se faz no Mac com o `Ghostty.app`;
-- o desvio possível é o do Mac em outras peças: um `wt.exe` do Keep (cópia do `keep.exe` com esse nome,
-  que lê `-d <pasta> -- <claude> <args>` e chama `keep nova --argumentos`, e com o Keep fechado passa a
-  chamada ao `wt.exe` de verdade) na frente do PATH de um `claude --handle-uri` que um lançador do Keep
-  roda, o protocolo registrado para esse lançador e o `disableDeepLinkRegistration` no `settings.json`
-  para o Claude Code não refazer o registro. Não foi feito: mexe no registro, no PATH de um processo do
-  Claude e numa chave de configuração dele, o desinstalador teria de desfazer tudo, e nada disso se
-  prova fora do Windows; um erro troca links que abrem (numa janela do Windows Terminal) por links que
-  não abrem.
+- os links `claude-cli://` abrem em aba do Keep no Windows **se a pessoa ligar** (Configurações, "Links do Claude
+  Code", ou `keep links instalar`). Desligados, o Claude Code segue como sempre (abaixo).
+
+## Os links `claude-cli://` no Windows
+
+O que o Claude Code 2.1.296 faz lá (lido no executável, que traz o JavaScript em texto):
+
+- registra o protocolo em `HKCU\Software\Classes\claude-cli` (`reg add`: `(Padrão)` = `URL:claude-cli`, `URL Protocol`
+  vazio, `shell\open\command` = `"<claude.exe>" --handle-uri "%1"`) e, **em toda sessão**, lê o comando com `reg query`
+  e o refaz se não contiver o caminho do `claude.exe` dele — a não ser que o `settings.json` tenha
+  `"disableDeepLinkRegistration": "disable"`;
+- o `claude --handle-uri <link>` só aceita exatamente esses dois argumentos ("extra arguments indicate argument
+  injection via the URL"). Ele lê o link (`claude-cli://open?q=<texto>&cwd=<pasta>&repo=<dono/nome>`; também
+  `install-plugin?plugin=…&marketplace=…`), acha a pasta (`cwd`, ou o clone local de `repo`) e abre o terminal que
+  achar: o `wt.exe` do PATH (`wt.exe -d <pasta> -- <claude.exe> <args>`, com `;` escapado), senão `pwsh.exe`, senão
+  `powershell.exe` (`-NoExit -Command & '<claude.exe>' …`), senão `cmd.exe /d /v:off /s /k`. Não olha `TERM_PROGRAM`
+  nem `deepLinkTerminal` no Windows, de modo que não há como fazê-lo escolher o Keep pelo ambiente, como se faz no Mac
+  com o `Ghostty.app`;
+- o que ele passa ao `claude` no terminal: `--deep-link-origin`, `--deep-link-repo=<repo>`,
+  `--deep-link-last-fetch=<ms>`, `--deep-link-cwd-b64=<base64 de URL da pasta>` e `--prefill-b64=<base64 de URL do
+  texto>`. O texto só é **pré-preenchido** na caixa de entrada, nunca enviado, e vai em base64 justamente para nenhum
+  shell o interpretar;
+- as regras dele para o link (`u1o` e `cFr` no executável): `cwd` absoluta, sem UNC, sem `..`, sem controle nem
+  caractere invisível, até 4096 caracteres; `q` até 5000 caracteres, sem controle além de quebra de linha e tabulação;
+  `repo` no formato `dono/nome`.
+
+O desvio escolhido é o menos invasivo que existe: o Keep se registra **no lugar do Claude Code** e abre a aba ele
+mesmo.
+
+- **Ligar** (`keep links instalar [--app Keep.exe]`; o item das Configurações chama o mesmo comando) faz duas coisas,
+  as duas em HKCU (nunca HKLM, sem administrador) e as duas desfeitas por `keep links remover`:
+  1. `HKCU\Software\Classes\claude-cli` passa a abrir `"<Keep.exe>" --open-uri "%1"`;
+  2. o `settings.json` do Claude Code (`CLAUDE_CONFIG_DIR` ou `~/.claude`) ganha `"disableDeepLinkRegistration":
+     "disable"`, editado no texto, sem mexer em mais nada (`membro_json.rs`), para o Claude Code não refazer o
+     registro na próxima sessão.
+  O que havia antes de cada um vai para `links-windows.json` (na pasta de estado do Keep, `%APPDATA%\Keep\ia`) **antes**
+  de qualquer gravação. **Desligar** devolve exatamente isso, mas só o que ainda é do Keep: se o Claude Code ou outro
+  programa reescreveu o comando, ou a pessoa mudou a chave do `settings.json`, aquilo já não é do Keep e fica como
+  está. Quem já tinha `disable` no `settings.json` o mantém ao desligar. O instalador **não registra nada**; o
+  desinstalador roda `keep links remover`, para nenhum link apontar para um programa que não existe mais. Uma
+  atualização do app (o instalador por cima) não desfaz o registro, porque o caminho do `Keep.exe` não muda.
+  `keep links conferir [--json]` diz o que está e o que falta (o Claude Code pode desfazer o primeiro item se o
+  segundo faltar; o item das Configurações avisa e o ligar de novo refaz).
+- **Abrir** (`Keep.exe --open-uri "<link>"`): o app (o que o link iniciou, ou o que já estava aberto, pelo
+  single-instance) só repassa o link inteiro, como um único argumento e sem shell, a `keep links abrir --esperar 90
+  <link>`, que o confere (`deeplink.rs`: esquema, ação, parâmetros, os limites acima, mais estritos no `cwd`: só
+  unidade `C:\`, sem rede nem caracteres que o Windows não aceita num nome, e a pasta tem de existir, ser pasta e não
+  passar por um caminho de rede) e abre a aba com o mesmo código do `keep nova`: workspace da aba usada por último,
+  na pasta do link, digitando `claude --deep-link-origin [--deep-link-repo=…] [--deep-link-cwd-b64=…]
+  [--prefill-b64=…]` (a função `claude` do PowerShell da aba vale). Um lançamento com qualquer outro formato
+  (argumento a mais, outro esquema) é ignorado no app e recusado no núcleo. O app avisa numa caixa se não deu.
+  Com o Keep ainda subindo (o link foi o que o abriu), o núcleo espera o daemon por até 90 s.
+- **Política (igual à do Mac)**: sem pergunta de confirmação, porque o efeito de um link é uma aba com um texto
+  pré-preenchido que a pessoa lê e manda ou apaga (e que o Claude Code marca com `--deep-link-origin`); a pasta vai
+  direto ao keepd, nunca a um shell; link sem `cwd`, ou com uma pasta que não existe, abre na pasta pessoal (como o
+  `Ghostty.app`), sem avisar o Claude de pasta nenhuma. Um `repo` sem `cwd` não é procurado em disco (o Claude Code
+  guarda os clones que conhece; o Keep não tem esse índice): vai ao `claude` em `--deep-link-repo` e a aba abre na
+  pasta pessoal. A ação `install-plugin` é recusada (instalar plugin não é papel do Keep).
+- Log: `%APPDATA%\Keep\ia\links.log` (sem o texto do pedido).
+- Efeito a saber: enquanto o item estiver ligado o Claude Code não refaz o registro do protocolo, e os links do
+  claude.ai deixam de abrir o Windows Terminal; quem prefere o Windows Terminal desliga o item.
+
+Testes: `cargo test -p keep-restauro` (o `deeplink.rs`, com links maliciosos; o `protocolo.rs`, sobre um registro na
+memória; o `membro_json.rs`; e `tests/deeplink.rs`, o link de verdade num daemon do próprio teste, com o texto cheio
+de metacaracteres de shell chegando só em base64). O registro de verdade (`windows-sys`) compila para o alvo
+`x86_64-pc-windows-msvc` e é exercido pelo roteiro `apps/windows/e2e/run.ps1` no CI do Windows (ligar, lançar o link
+como o registro lança, recusar os maliciosos, desligar, ligar, atualizar por cima e desinstalar).
 
 # A conversa que parou numa queda continua sozinha
 
