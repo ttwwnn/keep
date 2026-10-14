@@ -14,6 +14,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "Keep",
         "width": 1280,
         "height": 800,

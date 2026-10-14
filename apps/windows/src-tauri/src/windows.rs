@@ -51,7 +51,7 @@ const EVENT_SYNC: &str = "keep://sync";
 /// Told to every window when a page changed what the daemon holds (a tab made, closed, moved): ask it again.
 const EVENT_REFRESH: &str = "keep://refresh";
 
-const MAIN: &str = "main";
+pub const MAIN: &str = "main";
 
 /// The fields of the state every window shares (src/windowState.ts: `SHARED_FIELDS`).
 const SHARED: [&str; 12] = [
@@ -697,9 +697,11 @@ fn build(app: &AppHandle, label: &str, request: &Open) -> Answer<Option<Frame>> 
     config.label = label.to_string();
     let window = tauri::WebviewWindowBuilder::from_config(app, &config)
         .map_err(|e| e.to_string())?
+        .transparent(crate::glass::made_like_main(app, label))
         .visible(false)
         .build()
         .map_err(|e| e.to_string())?;
+    crate::glass::wear(app, &window);
     let mut wanted = None;
     if let Some(frame) = request.frame {
         let _ = window.set_size(PhysicalSize::new(frame.width, frame.height));
