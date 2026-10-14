@@ -15,6 +15,7 @@ export function FontPicker() {
   }, []);
   return (
     <CatalogPicker
+      kind="font"
       label="Fonte do terminal"
       placeholder="uma fonte para o terminal…"
       names={names}

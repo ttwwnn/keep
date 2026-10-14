@@ -41,11 +41,10 @@ não foram vistos no Windows de verdade.
 - [~] Painel de ações (Ctrl+K e botão direito): ir, nova aba, mostrar no
   Explorer, copiar o caminho, fechar; ações de pasta, de linha da busca e de
   comando. Testado no Mac; "Mostrar no Explorer" no Windows só compilado.
-- [ ] Ações de tema e de fonte (Ctrl+K numa linha das listas: "Vestir este
-  tema" / "Usar esta fonte" e "Copiar o nome"): as listas são as da fatia
-  `appearance` (`ui/CatalogPicker.tsx`), cartões autônomos em que Ctrl+K sobe a
-  seleção e que não têm painel de ações; dá-lo a elas é mexer no teclado dessa
-  fatia, e Enter e Esc já fazem o essencial.
+- [x] Ações de tema e de fonte, como no Mac (`PickerActions.swift`, `.theme` e `.fontFamily`): Ctrl+K (⌘K no
+  Mac) ou o botão direito numa linha das listas abre o painel com "Vestir este tema" / "Usar esta fonte no
+  terminal" (Enter) e "Copiar o nome" (Ctrl+Shift+C, que também funciona sem o painel); Esc fecha só o painel.
+  Subir na lista fica em ↑ e Ctrl+P, como no seletor. Teste do vitest e passo do roteiro no CI do Windows.
 - [x] Paleta de comandos: os 17 do Mac em 3 grupos, com as teclas desenhadas e
   os destrutivos em vermelho, mais Configurações, Tela cheia e Colar imagem. O
   botão redondo da fileira de abas virou "Comandos" (a engrenagem é um comando
@@ -184,8 +183,8 @@ caixa da linha, rolagem da lista, estado do movimento, fim do arrasto por `point
 - [x] Colar (`paste.ts`): sem o bracketed paste, qualquer quebra de linha pergunta ("Colar isto?", prévia de 400
   caracteres; o Mac só conta `\n`, aqui `\r` também); com ele, só um `ESC [ 201 ~` dentro do texto pergunta;
   os controles viram espaço. Testes e visto no app.
-- [ ] Colar arquivo copiado no Explorer (digitar o caminho): exigiria ler o `CF_HDROP` da área de transferência
-  do Windows, código `unsafe` do Win32 que só compila aqui e não se prova; o Mac também só lê texto.
+- [-] Colar arquivo copiado no Explorer (digitar o caminho): o Mac também não faz (cola só o texto da área de
+  transferência, que para um arquivo copiado no Finder é o nome). Aqui exigiria ler o `CF_HDROP` do Windows.
 - [~] Soltar arquivos (`drop.ts`): o painel sob o ponteiro se realça e os caminhos são digitados como o shell
   do painel os lê (PowerShell: entre aspas, ou aspas simples se há `$`, crase ou `'`; WSL: o caminho Linux,
   `/mnt/c/...`, escapado como o Mac; outros: aspas duplas se há espaço). Lógica testada; o arrasto do sistema
@@ -240,7 +239,7 @@ caixa da linha, rolagem da lista, estado do movimento, fim do arrasto por `point
   Windows. Visto no app com um keepd de teste no Mac (keepd morto e app aberto sobre keepd morto); o que é
   só do Windows (`LockFileEx`, subida das conversas no PowerShell) compila e não rodou (docs/restauro.md).
 - [~] `keep continuar` a cada 15 s, com o ocioso do sistema pelo `GetLastInputInfo`.
-- [ ] Responder "confiar nesta pasta?" sozinho (fatia `terminal`).
+- [~] Responder "confiar nesta pasta?" sozinho: feito na fatia `terminal` (`trust.ts`; ver lá).
 - [~] Gancho da conta da aba no Claude (`UserPromptSubmit` -> `keep ia conta-da-aba --gancho` no
   `settings.json`, acrescentado depois dos ganchos da pessoa, sem mexer em mais nada, sem repetir): o plano
   é puro e testado (formatos, idempotência, ganchos alheios intactos); o efeito dentro do Claude Code no
@@ -473,15 +472,15 @@ e à mão (abrir, ir para, fechar, sair e reabrir com duas janelas). O que só o
 - [x] Capabilities: `windows: ["main", "w*"]` (o Tauri aceita padrão); as janelas se criam em código a partir da
   configuração da primeira (sem moldura no Windows, a barra de título do Mac), com o filtro do plugin de estado de
   janela só para `main`.
-- [ ] Conhecido e não resolvido: um workspace feito numa janela que não é a mais antiga (Ctrl+Shift+N, "abrir em") pode
-  ser tomado também pela mais antiga se ela perguntar ao daemon antes de a janela que o fez dizer ao app que o lista
-  (um pulso de 200 ms): ele aparece nas duas. Um workspace feito antes de listá-lo (`createWorkspace` pondo o nome na
-  lista e avisando o app antes de pedir a aba ao keepd) foi tentado e tirado: mexia na ordem dos passos de uma janela
-  só e o roteiro falhou em passos antigos que não consegui explicar a tempo. Com uma janela só o risco não existe.
-- [ ] Não testado: o Windows real (nada disto rodou lá; o CI do ramo ainda não viu estas mudanças), o ponteiro de verdade
+- [x] Um workspace feito numa janela que não é a mais antiga não aparece também na mais antiga: com várias janelas,
+  ela só toma o que ninguém lista depois de 1 s sem ninguém o listar (`ORPHAN_GRACE_MS`, `settledOrphans` em
+  windowModel.ts); antes, se perguntasse ao daemon no pulso de 200 ms em que a outra ainda não tinha dito que o
+  lista, tomava-o também. Com uma janela só, toma na hora, como antes. Passo do roteiro no CI do Windows (a mais
+  antiga pergunta ao daemon a cada 40 ms enquanto a outra cria o workspace); sem a carência, o passo falha.
+- [ ] Não testado: o roteiro das janelas passa no CI do Windows, mas o ponteiro de verdade
   fora da janela no WebView2, vários monitores, a janela mais antiga fechando e passando a vez (só raciocinado e coberto
   pelos testes do Rust), a janela rápida com várias janelas abertas. No Mac de desenvolvimento um gerenciador de janelas
   maximiza toda janela nova, e o roteiro das janelas só olha onde o app as pôs. Passos de outras fatias (janela rápida:
   atalho global) falharam de vez em quando neste Mac com outras sessões usando a tela e o atalho.
-- [ ] Tela cheia por janela no estado: o Mac também só guarda o quadro; a janela volta no quadro, não em tela cheia.
+- [-] Tela cheia por janela no estado: o Mac também só guarda o quadro; a janela volta no quadro, não em tela cheia.
 - [~] Janela rápida global (Ctrl+`), com o workspace `quick` oculto: feita na fatia `quick`, acima.

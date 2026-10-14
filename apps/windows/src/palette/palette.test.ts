@@ -6,7 +6,7 @@ import { tabKey } from "../state";
 import { touch } from "../recent";
 import { capsFor } from "./caps";
 import { MAX_HISTORY, historyFor, plainAsScreen, rowsToSkip, topFor } from "./preview";
-import { actionsFor, chordAction, filterActions } from "./actions";
+import { actionsFor, catalogActions, chordAction, filterActions } from "./actions";
 import { columnOf, locateLine, matchSpan, type Cells, type Lines } from "./hits";
 import { plainLetters } from "./letters";
 import {
@@ -473,6 +473,17 @@ describe("what can be done to a row", () => {
     expect(chordAction(hitItem(hit, 4, "x"), "copy")).toBe("copyText");
     expect(chordAction(hitItem(hit, 4, "x"), "reveal")).toBeNull();
     expect(chordAction(commandItems()[0], "copy")).toBeNull();
+  });
+});
+
+describe("what can be done to a theme or a face", () => {
+  it("wears it with Enter and copies its name with Ctrl+Shift+C, as the Mac's panel", () => {
+    expect(catalogActions("theme").map((e) => [e.action, e.title, e.keys.join("+")])).toEqual([
+      ["open", "Vestir este tema", "↩"],
+      ["copyText", "Copiar o nome", "Ctrl+Shift+C"],
+    ]);
+    expect(catalogActions("font").map((e) => e.title)).toEqual(["Usar esta fonte no terminal", "Copiar o nome"]);
+    expect(catalogActions("font")[1].startsGroup).toBe(true);
   });
 });
 

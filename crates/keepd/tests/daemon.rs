@@ -174,7 +174,10 @@ fn disconnected_client_stops_being_counted() {
     let mut client = Stream::connect(&path).unwrap();
     ClientMsg::Attach { workspace: "quiet".into(), tab: TAB_ANY, cols: 80, rows: 24 }.write(&mut client).unwrap();
     client.set_read_timeout(Some(Duration::from_secs(5))).ok();
-    ServerMsg::read(&mut client).unwrap();
+    // Counted once the daemon has taken the viewer on, which is when the
+    // repaint goes out, after `Attached`: counting on `Attached` alone raced
+    // on a busy runner (as in `list_reports_live_workspaces`).
+    assert!(read_repaint(&mut client).is_some(), "no repaint after attach");
 
     assert_eq!(clients_of(&path, "quiet"), 1, "attached client not counted");
 
