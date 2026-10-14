@@ -3,9 +3,12 @@
 // pane as the shell there reads them; text has to go on being pasted as it was.
 // The shell puts them on the clipboard itself (Set-Clipboard -Path writes the
 // same CF_HDROP the Explorer's Ctrl+C does), so only the Windows run has them.
+// And the other thing only a real PTY shows: that mode 2027, switched on by a
+// program, gets through ConPTY to the page, which then clusters (graphemes.ts).
 
 import * as api from "./api";
 import { tabsByWorkspace, terminals } from "./store";
+import { CLUSTERED, PLAIN } from "./graphemes";
 import type { TermView } from "./terminals";
 
 type StepRunner = (name: string, run: () => Promise<string>) => Promise<void>;
@@ -70,5 +73,33 @@ export async function clipSteps(step: StepRunner, { waitFor, workspace, windows 
     view.term.input("\x03", true);
     await until("o prompt no fim", atPrompt);
     return `${paths[0]} digitado entre aspas; o texto, como texto`;
+  });
+
+  await step("grafemas: o modo 2027 que o programa liga chega à página pelo PTY", async () => {
+    const root = tabsByWorkspace.value.get(workspace)?.[0]?.root;
+    const view: TermView | undefined = root ? terminals.existing(workspace, root.id) : undefined;
+    if (!view) throw new Error("sem terminal");
+    const atPrompt = () => (windows ? /PS [^\n]*>\s*$/.test(view.allText().trimEnd()) : /[$%❯#]$/.test(view.allText().trimEnd()));
+    await waitFor(() => atPrompt(), 30000);
+    const say = (on: boolean) =>
+      windows ? `[Console]::Write("$([char]27)[?2027${on ? "h" : "l"}")` : `printf '\\033[?2027${on ? "h" : "l"}'`;
+    try {
+      view.term.input(`${say(true)}\r`, true);
+      try {
+        await waitFor(() => view.term.unicode.activeVersion === CLUSTERED, 5000, 50);
+      } catch {
+        throw new Error(`a página ficou na regra “${view.term.unicode.activeVersion}” depois de CSI ? 2027 h; a tela:\n${tail(view.allText())}`);
+      }
+      view.term.input(`${say(false)}\r`, true);
+      try {
+        await waitFor(() => view.term.unicode.activeVersion === PLAIN, 5000, 50);
+      } catch {
+        throw new Error(`a página ficou na regra “${view.term.unicode.activeVersion}” depois de CSI ? 2027 l; a tela:\n${tail(view.allText())}`);
+      }
+      return "ligado: a regra com grafemas; desligado: a regra do Unicode 11";
+    } finally {
+      // A step that failed leaves the mode on the page's side whatever the program said.
+      view.term.write("\x1b[?2027l");
+    }
   });
 }

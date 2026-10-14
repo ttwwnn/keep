@@ -14,6 +14,7 @@ import { SearchAddon } from "@xterm/addon-search";
 import * as api from "./api";
 import { pasteContent } from "./clipboardFiles";
 import { shellKind } from "./drop";
+import { installGraphemes } from "./graphemes";
 import { installKitty, type Kitty } from "./kitty";
 import { installLinks, type LinkEnv, type Links } from "./links";
 import { installOsc52 } from "./osc52";
@@ -167,7 +168,8 @@ export class TermView {
     this.term.loadAddon(this.search);
     const unicode = new Unicode11Addon();
     this.term.loadAddon(unicode);
-    this.term.unicode.activeVersion = "11";
+    // Unicode 11 is the width rule, except that clusters of code points share a cell while the program has mode 2027 on (graphemes.ts).
+    installGraphemes(this.term, (data) => this.term.input(data, false));
 
     this.element.addEventListener("mousedown", () => (this.pressedAt = Date.now()), true);
     // The browser's own paste (Ctrl+V, Shift+Insert) goes the way any paste does.
