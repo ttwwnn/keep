@@ -142,12 +142,17 @@ elif "$PRINT" in ("web", "osc8", "webwrapped"):
                 out.append("  \x1b]8;id=d%d;$ADDRESS\x07" % row + text + "\x1b]8;;\x07")
             else:
                 # Broken by the program at two columns short of the edge, the
-                # rest indented on the next row, then the sentence goes on.
-                first = cols - 4
-                if row % 2 == 0:
-                    out.append("  " + "$LONG_ADDRESS"[:first])
-                else:
-                    out.append("  " + "$LONG_ADDRESS"[first:] + " e também")
+                # rest indented on the next rows. A row written past the edge
+                # would be wrapped again by the terminal and shift every row
+                # under it (84 columns: "0 e também" on a row of its own,
+                # 14/10/2026).
+                width = cols - 4
+                pieces = [("  " + "$LONG_ADDRESS"[i:i + width]) for i in range(0, len("$LONG_ADDRESS"), width)]
+                # Every row a piece of the address, so any click on the
+                # rows lands on it: the sentence only where it fits.
+                if len(pieces[-1]) + len(" e também") <= cols - 2:
+                    pieces[-1] += " e também"
+                out.append(pieces[row % len(pieces)])
             out.append("\r\n")
         sys.stdout.write("".join(out))
         sys.stdout.flush()
@@ -175,7 +180,7 @@ DAEMON_PID=$!
 sleep 1
 ./target/release/keep new link >/dev/null 2>&1 || { say "could not make a workspace"; exit 1; }
 cat >"$KEEP_STATE_DIR/windows.json" <<'JSON'
-{"0":{"x":360,"y":160,"width":1100,"height":700,"workspaces":["link"],"tab":{"workspace":"link","root":1}}}
+{"0":{"x":40,"y":160,"width":1100,"height":700,"workspaces":["link"],"tab":{"workspace":"link","root":1}}}
 JSON
 
 stop_app

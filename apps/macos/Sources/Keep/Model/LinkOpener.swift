@@ -331,10 +331,13 @@ enum LinkOpener {
         return nil
     }
 
-    /// Whether a row reaches the right edge, give or take the margin a
-    /// program keeps there (Claude Code keeps two columns).
+    /// Whether a row reaches the right edge, but for the margin a program
+    /// keeps there (Claude Code keeps two columns). Not one column more: an
+    /// address that merely ends a column short of that, with the sentence
+    /// going on below, took the next row's first word as its own
+    /// (`…#L120` + `e`, 84 columns, 14/10/2026).
     private static func isFull(_ row: [Character], _ columns: Int) -> Bool {
-        columns > 0 && row.count >= columns - 3
+        columns > 0 && row.count >= columns - 2
     }
 
     /// Where `text` stands on the screen, the hits nearest `row` first.

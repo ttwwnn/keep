@@ -114,6 +114,10 @@ check(
     "a full row before it, the address alone",
     around("https://example.com/a", [String(repeating: "x", count: 58), "https://example.com/a"]),
     "https://example.com/a")
+check(
+    "an address that ends a column short of full keeps the next row's word out",
+    around("https://example.com/a", ["  veja " + String(repeating: "x", count: columns - 32) + " https://example.com/a", "  e também"]),
+    "https://example.com/a")
 check("a word with no address near", around("Fim.", broken, 6), nil)
 check("without the width nothing is joined", LinkOpener.webAddress(around: second, in: broken, near: 3, columns: 0)?.absoluteString, nil)
 
