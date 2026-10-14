@@ -1578,6 +1578,7 @@ export async function start(options: StartOptions): Promise<api.WindowBoot> {
         if (tab) focusPane(view.workspace, tab.root.id, view.tab);
       },
       cwd: (view) => workspaces.value.find((w) => w.name === view.workspace)?.tabs.find((t) => t.id === view.tab)?.cwd ?? "",
+      command: (view) => workspaces.value.find((w) => w.name === view.workspace)?.tabs.find((t) => t.id === view.tab)?.command ?? "",
       home: () => info.value?.home ?? "",
       say: (message) => say(message),
       titleChanged: () => refreshSoon(),

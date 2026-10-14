@@ -208,8 +208,25 @@ caixa da linha, rolagem da lista, estado do movimento, fim do arrasto por `point
 - [x] Colar (`paste.ts`): sem o bracketed paste, qualquer quebra de linha pergunta ("Colar isto?", prévia de 400
   caracteres; o Mac só conta `\n`, aqui `\r` também); com ele, só um `ESC [ 201 ~` dentro do texto pergunta;
   os controles viram espaço. Testes e visto no app.
-- [-] Colar arquivo copiado no Explorer (digitar o caminho): o Mac também não faz (cola só o texto da área de
-  transferência, que para um arquivo copiado no Finder é o nome). Aqui exigiria ler o `CF_HDROP` do Windows.
+- [~] Colar arquivo copiado no Explorer (`clipboard.rs`, `clipboardFiles.ts`; o Mac cola só o texto, que para um
+  arquivo copiado no Finder é o nome: aqui é um acréscimo, pedido pelo dono): o comando `clipboard_files` lê o
+  `CF_HDROP` (abre a área de transferência com até dez tentativas de 15 ms, trava o bloco global, lê o cabeçalho
+  `DROPFILES` e a lista de caminhos em UTF-16, fecha sempre) e devolve os caminhos; vazio fora do Windows. O Ctrl+V
+  dentro do terminal continua sendo o evento `paste` do navegador (o teclado o deixa passar); o ouvinte do
+  `TermView` lê o texto na hora, pergunta ao app pelos arquivos e, se há, digita os caminhos como o "soltar
+  arquivos" faz (`dropText`, escape do shell da aba, um espaço no fim) e NÃO cola o texto; senão cola o texto como
+  antes (bracketed paste, confirmação de várias linhas). O mesmo vale para o "Colar" do menu, para o Ctrl+V fora
+  do terminal e para o painel da janela rápida (`TermView.pasteFromSystem`). Testes: parser do `DROPFILES` em
+  buffers sintéticos (8 testes Rust: vários caminhos, fora do plano básico, deslocamento do cabeçalho, lista sem
+  o NUL final, bloco ilegível, forma ANSI recusada) e a decisão e o escape (vitest). O código `#[cfg(windows)]`
+  compila para `x86_64-pc-windows-msvc`; no CI do Windows (rodada de 14/10) rodou de verdade: com um arquivo na
+  área de transferência, `clipboard_files` o devolveu e o colar digitou `"C:\Users\runneradmin\AppData\Local\Temp\keep e2e
+  clip.txt" ` no PowerShell. A conferência do passo (`e2eClip.ts`) falhou
+  naquela rodada por uma quebra de linha da tela estreita, corrigida depois sem nova rodada (o limite era duas):
+  o colar de texto depois do arquivo, e o passo dos grafemas (que ficou sem prompt por causa dessa falha), não
+  foram vistos no Windows. Não coberto: o evento de colar
+  do WebView2 com arquivos no Ctrl+V real (o passo chama `pasteFromSystem`, não o evento); arquivos copiados na
+  forma ANSI (Windows 9x) caem no texto.
 - [~] Soltar arquivos (`drop.ts`): o painel sob o ponteiro se realça e os caminhos são digitados como o shell
   do painel os lê (PowerShell: entre aspas, ou aspas simples se há `$`, crase ou `'`; WSL: o caminho Linux,
   `/mnt/c/...`, escapado como o Mac; outros: aspas duplas se há espaço). Lógica testada; o arrasto do sistema
@@ -231,10 +248,23 @@ caixa da linha, rolagem da lista, estado do movimento, fim do arrasto por `point
   no app não foi exercitada.
 - [x] Título OSC imediato: `onTitleChange` pede a lista ao keepd em 120 ms (`refreshSoon`), em vez de esperar o
   giro do segundo; visto no app em 0,3 s, e o roteiro do CI mede.
-- [ ] Grafemas Unicode (modo 2027): o `@xterm/addon-unicode-graphemes` 0.4.0 existe para o xterm 6.0.0, mas
-  como "experimental", o xterm 6.0.0 não trata o modo 2027 e o grid do keepd só agrupa grafemas quando o
-  programa o liga; ligado fixo, desalinharia as linhas. Pede uma dependência nova (o `node_modules` é de
-  todas as árvores) e `CSI ? 2027 h/l` e a consulta DECRQM tratados na página, e não se prova daqui.
+- [~] Grafemas Unicode (modo 2027) (`graphemes.ts`, dependência `@xterm/addon-unicode-graphemes` 0.4.0 fixa): o
+  addon é carregado, mas a regra "15-graphemes" só fica ativa enquanto o programa mantém `CSI ? 2027 h` (o
+  addon, ao carregar, a ativa para sempre; o código a devolve ao "11"). `CSI ? 2027 l` e o reset completo (`ESC c`)
+  voltam ao "11"; a repintura do keepd diz o modo antes das linhas, então a grade reanexada concorda. O
+  `CSI ? 2027 $ p` (DECRQM) é respondido com `CSI ? 2027 ; 1 $ y` (ligado) ou `; 2 $ y` (desligado). Testado
+  contra o terminal real do xterm.js (13 testes: ligar, desligar, junto de outros modos, reset, DECRQM, largura
+  de família com ZWJ, tom de pele, bandeira e acento) e contra a grade do keepd (teste novo em
+  `crates/keep-vt/src/handover.rs`, com a libghostty-vt: as mesmas sequências nas duas pontas). Com o modo ligado
+  os dois concordam em família ZWJ (2 colunas), tom de pele, bandeira, acento e coração com seletor; com o
+  modo desligado concordam em tudo isso menos a bandeira (a grade dá 4 colunas, o xterm 2: o Unicode 11 trata o
+  indicador regional como estreito). Diferença que fica, e que já existia: as tabelas do xterm são mais velhas
+  que as da grade: emoji do Unicode 12 e 13 (U+1F90C) são largos na grade e estreitos no xterm com o modo
+  desligado, e os do Unicode 14 em diante (U+1F979) são estreitos no xterm nos dois modos (largos na grade),
+  o que desalinha o cursor depois deles. A história de uma aba posta para dormir (`serialize.ts`) é reescrita
+  com a regra "11": clusters de um programa com 2027 voltam com a largura sem agrupar. O passo "grafemas" do
+  roteiro do CI confere que o modo ligado por um programa atravessa o ConPTY até a página; não foi visto
+  passar (veja o colar acima), então não se sabe se o ConPTY deixa `CSI ? 2027 h` chegar.
 - [~] Responder sozinho "Confiar nesta pasta?" do Claude Code (`trust.ts`): a seta até o "Yes, I trust this
   folder" e, quando o próximo olhar a encontra lá, Enter; nunca Enter no "No, exit". O layout antigo e o
   numerado; o marcador `~/.local/state/keep/trust/<pid do shell>` do vigia do shell evita a seta dupla. Visto

@@ -38,6 +38,7 @@ import {
   zoom,
 } from "./store";
 import { appearanceSteps } from "./e2eAppearance";
+import { clipSteps } from "./e2eClip";
 import { paletteSteps } from "./e2ePalette";
 import { glassSteps } from "./e2eGlass";
 import { quickSteps } from "./e2eQuick";
@@ -187,6 +188,8 @@ export async function runE2E(): Promise<void> {
   });
 
   await terminalSteps(step, { waitFor, workspace: WORKSPACE, windows });
+
+  await clipSteps(step, { waitFor, workspace: WORKSPACE, windows });
 
   await appearanceSteps(step, WORKSPACE);
 

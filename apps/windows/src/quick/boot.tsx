@@ -178,6 +178,7 @@ export async function bootQuick(): Promise<void> {
         key: quickKey,
         focused: () => {},
         cwd: () => shellCwd,
+        command: () => shellCommand,
         home: () => info.value?.home ?? "",
         // A quiet line for the person: over the terminal, where the sidebar's foot would be.
         say: (message) => say(message),

@@ -5,7 +5,7 @@
 // does not type its control character into the shell.
 
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { dropText, shellKind } from "../drop";
 import { terminalKey } from "../input";
 import { imagePasteSequence, shortcut, type Action } from "../keys";
@@ -72,7 +72,7 @@ export function openQuickMenu(event: MouseEvent, view: TermView | undefined): vo
     {
       label: "Colar",
       hint: "Ctrl+V",
-      action: then(() => void readText().then((text) => text && view.paste(text)).catch(() => {})),
+      action: then(() => void view.pasteFromSystem().catch(() => {})),
     },
     "separator",
     { label: "Selecionar tudo", hint: "Ctrl+Shift+A", action: then(() => view.term.selectAll()) },

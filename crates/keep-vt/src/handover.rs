@@ -1504,6 +1504,38 @@ mod tests {
         }
     }
 
+    /// The columns the cursor ends in after text whose width depends on
+    /// clustering, with mode 2027 on and off. The Windows app's terminal
+    /// (xterm.js with its grapheme addon; apps/windows/src/graphemes.test.ts
+    /// holds its side of these numbers) agrees with the first four while
+    /// the mode is on. It differs where its Unicode tables are older than
+    /// the grid's: with the mode off, a pair of regional indicators (4 here,
+    /// 2 there) and emoji from Unicode 12 on (2 here, 1 there); and in both
+    /// modes the emoji from Unicode 14 on.
+    #[test]
+    fn clustered_text_takes_the_columns_the_windows_app_expects() {
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+        let cases = [
+            // (text, columns with the mode on, columns with it off)
+            (family, 2, 6),
+            ("\u{1F44D}\u{1F3FD}", 2, 4),
+            ("\u{1F1E7}\u{1F1F7}", 2, 4),
+            ("e\u{301}", 1, 1),
+            ("\u{2764}\u{FE0F}", 2, 1),
+            // Unicode 13 and 14.
+            ("\u{1F90C}", 2, 2),
+            ("\u{1F979}", 2, 2),
+        ];
+        for (text, on, off) in cases {
+            for (clustering, expected) in [(true, on), (false, off)] {
+                let mut t = mirror(40, 3);
+                t.write(if clustering { b"\x1b[?2027h" } else { b"\x1b[?2027l" });
+                t.write(text.as_bytes());
+                assert_eq!(t.cursor().0, expected, "{text:?} with clustering {clustering}");
+            }
+        }
+    }
+
     /// A mode the replaying terminal starts with differently is said either
     /// way: blinking switched off by a program stays off.
     #[test]
