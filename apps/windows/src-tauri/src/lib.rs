@@ -5,6 +5,7 @@
 //! sidebar, tab strip, terminals — is in `../src`.
 
 mod claude_settings;
+mod clipboard;
 mod confinement;
 mod daemon;
 mod fonts;
@@ -621,6 +622,7 @@ pub fn run() {
             quick::quick_look,
             path_exists,
             find_paths,
+            clipboard::clipboard_files,
             open_path,
             reveal_path,
             open_url,
