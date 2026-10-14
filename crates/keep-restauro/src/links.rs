@@ -208,11 +208,19 @@ pub fn conferir() -> Vec<(bool, String)> {
 }
 
 pub fn cli(args: &[String]) -> i32 {
-    // O desvio é um app do macOS (Ghostty.app, codesign, lsregister): fora dele nada é montado, para não deixar uma
-    // pasta de app e uma cópia do `keep` onde ninguém vai usá-los. No Windows o Claude Code escolhe o terminal por
-    // conta própria (docs/restauro.md).
+    // `abrir` é igual em todo lugar: é o que o Keep do Windows chama quando o navegador abre um link, e serve para
+    // experimentar um link à mão (deeplink.rs).
+    if args.first().map(String::as_str) == Some("abrir") {
+        return crate::deeplink::cli_abrir(&args[1..]);
+    }
+    // No Windows o Keep se registra como o programa do esquema (protocolo.rs). O desvio daqui é um app do macOS
+    // (Ghostty.app, codesign, lsregister): fora dele nada é montado, para não deixar uma pasta de app e uma cópia do
+    // `keep` onde ninguém vai usá-los.
+    if cfg!(windows) {
+        return crate::protocolo::cli(args);
+    }
     if !cfg!(target_os = "macos") {
-        eprintln!("keep links: só existe no macOS (docs/restauro.md, \"No Windows\")");
+        eprintln!("keep links: só existe no macOS e no Windows (docs/restauro.md)");
         return 2;
     }
     match args.first().map(String::as_str) {
@@ -234,7 +242,7 @@ pub fn cli(args: &[String]) -> i32 {
             itens.iter().filter(|(ok, _)| !ok).count() as i32
         }
         _ => {
-            eprintln!("uso: keep links instalar | conferir");
+            eprintln!("uso: keep links instalar | conferir | abrir [--esperar S] LINK");
             2
         }
     }
