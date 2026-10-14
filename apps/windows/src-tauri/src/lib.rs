@@ -629,6 +629,7 @@ pub fn run() {
             quick::quick_ready,
             quick::quick_look,
             glass::glass_apply,
+            glass::glass_status,
             glass::restart_app,
             path_exists,
             find_paths,

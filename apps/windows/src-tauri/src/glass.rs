@@ -182,6 +182,28 @@ pub fn glass_apply(app: AppHandle, blur: String, dark: bool) {
     apply(&app, Blur::parse(&blur), dark);
 }
 
+/// What the scripted check asks (src/e2eGlass.ts): which windows were made transparent, and the material on now.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Status {
+    pub transparent: Vec<String>,
+    /// "none", "mica" or "acrylic"; none until the page first says.
+    pub applied: Option<&'static str>,
+}
+
+#[tauri::command]
+pub fn glass_status(app: AppHandle) -> Status {
+    let glass = app.state::<Glass>();
+    let mut transparent = glass.labels();
+    transparent.sort();
+    let applied = glass.applied.lock().ok().and_then(|a| *a).map(|(blur, _)| match blur {
+        Blur::None => "none",
+        Blur::Mica => "mica",
+        Blur::Acrylic => "acrylic",
+    });
+    Status { transparent, applied }
+}
+
 /// The environment variable that tells a new run which one it replaces.
 const AFTER: &str = "KEEP_AFTER_PID";
 

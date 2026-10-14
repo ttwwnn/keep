@@ -39,6 +39,7 @@ import {
 } from "./store";
 import { appearanceSteps } from "./e2eAppearance";
 import { paletteSteps } from "./e2ePalette";
+import { glassSteps } from "./e2eGlass";
 import { quickSteps } from "./e2eQuick";
 import { terminalSteps } from "./e2eTerminal";
 import { viewKey } from "./terminals";
@@ -224,6 +225,8 @@ export async function runE2E(): Promise<void> {
 
   // Last: the panel takes the keyboard when it comes in, and nothing after it should have to ask for it back.
   await quickSteps(step, { waitForAsync });
+  // After the panel, which is the window it asks about; it only reads, and asks nothing of the keyboard.
+  await glassSteps(step, WORKSPACE);
 
   const tab = firstTab();
   const report = {

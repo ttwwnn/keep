@@ -4,6 +4,7 @@
 // side serialises them. Nothing here keeps state; see model.ts for that.
 
 import { Channel, invoke } from "@tauri-apps/api/core";
+import type { GlassBlur } from "./glass";
 import { withoutQuick, withoutQuickHits } from "./quickWorkspace";
 
 export interface TabInfo {
@@ -79,6 +80,8 @@ export const SPLIT_DOWN = 2;
 export const startup = () => invoke<Startup>("startup");
 /** Put a material behind the windows that were made transparent ("none", "mica" or "acrylic"); `dark` is the ground's. */
 export const glassApply = (blur: string, dark: boolean) => invoke<void>("glass_apply", { blur, dark });
+/** For the scripted check: which windows were made transparent, and the material on now. */
+export const glassStatus = () => invoke<{ transparent: string[]; applied: GlassBlur | null }>("glass_status");
 /** Open the app again (the daemon and the tabs stay): a window is made transparent only when it is made. */
 export const restartApp = () => invoke<void>("restart_app");
 export const ensureDaemon = () => invoke<void>("ensure_daemon");
