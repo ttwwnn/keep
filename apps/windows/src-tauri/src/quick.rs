@@ -679,6 +679,7 @@ fn hide_now(app: &AppHandle) {
         }
         _ => {
             let _ = window.hide();
+            let _ = window.emit_to(LABEL, "quick-hidden", ());
         }
     }
 }
