@@ -194,9 +194,12 @@ caixa da linha, rolagem da lista, estado do movimento, fim do arrasto por `point
   do terminal e para o painel da janela rápida (`TermView.pasteFromSystem`). Testes: parser do `DROPFILES` em
   buffers sintéticos (8 testes Rust: vários caminhos, fora do plano básico, deslocamento do cabeçalho, lista sem
   o NUL final, bloco ilegível, forma ANSI recusada) e a decisão e o escape (vitest). O código `#[cfg(windows)]`
-  compila para `x86_64-pc-windows-msvc` e não rodou: quem prova o clipboard real é o passo "colar" do roteiro do
-  CI (`e2eClip.ts`: `SetFileDropList` num arquivo com espaço no nome, o comando devolve o caminho, o colar o
-  digita entre aspas; depois `Set-Clipboard -Value` e o texto é colado como texto). Não coberto: o evento de colar
+  compila para `x86_64-pc-windows-msvc`; no CI do Windows (rodada de 14/10) rodou de verdade: com um arquivo na
+  área de transferência, `clipboard_files` o devolveu e o colar digitou `"C:\Users\runneradmin\AppData\Local\Temp\keep e2e
+  clip.txt" ` no PowerShell. A conferência do passo (`e2eClip.ts`) falhou
+  naquela rodada por uma quebra de linha da tela estreita, corrigida depois sem nova rodada (o limite era duas):
+  o colar de texto depois do arquivo, e o passo dos grafemas (que ficou sem prompt por causa dessa falha), não
+  foram vistos no Windows. Não coberto: o evento de colar
   do WebView2 com arquivos no Ctrl+V real (o passo chama `pasteFromSystem`, não o evento); arquivos copiados na
   forma ANSI (Windows 9x) caem no texto.
 - [~] Soltar arquivos (`drop.ts`): o painel sob o ponteiro se realça e os caminhos são digitados como o shell
@@ -235,7 +238,8 @@ caixa da linha, rolagem da lista, estado do movimento, fim do arrasto por `point
   desligado, e os do Unicode 14 em diante (U+1F979) são estreitos no xterm nos dois modos (largos na grade),
   o que desalinha o cursor depois deles. A história de uma aba posta para dormir (`serialize.ts`) é reescrita
   com a regra "11": clusters de um programa com 2027 voltam com a largura sem agrupar. O passo "grafemas" do
-  roteiro do CI confere que o modo ligado por um programa atravessa o ConPTY até a página.
+  roteiro do CI confere que o modo ligado por um programa atravessa o ConPTY até a página; não foi visto
+  passar (veja o colar acima), então não se sabe se o ConPTY deixa `CSI ? 2027 h` chegar.
 - [~] Responder sozinho "Confiar nesta pasta?" do Claude Code (`trust.ts`): a seta até o "Yes, I trust this
   folder" e, quando o próximo olhar a encontra lá, Enter; nunca Enter no "No, exit". O layout antigo e o
   numerado; o marcador `~/.local/state/keep/trust/<pid do shell>` do vigia do shell evita a seta dupla. Visto
