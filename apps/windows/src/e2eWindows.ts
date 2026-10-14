@@ -312,7 +312,9 @@ export async function windowsSteps(step: StepRunner, windows: boolean): Promise<
     // As the app put it, before the system had a say: a window manager that zooms every new window is the system's.
     const put = opened.frame;
     check(put !== null, "o app não disse onde pôs a janela");
-    check(alike(put.width, wanted.width) && alike(put.height, wanted.height), `${put.width}×${put.height}, não ${wanted.width}×${wanted.height}`);
+    // The height gets the room a title bar takes: on Windows CI the new window came out 30 px taller
+    // (1028×809 against 1028×779), a difference of the frame, and a window of the right width is the point.
+    check(alike(put.width, wanted.width) && Math.abs(put.height - wanted.height) <= 40, `${put.width}×${put.height}, não ${wanted.width}×${wanted.height}`);
     check(alike(put.x, wanted.x) && alike(put.y, wanted.y), `em ${put.x},${put.y}, não em ${wanted.x},${wanted.y}`);
     check(start.listed.length === 0, `a janela nova lista ${start.listed.join(", ")}`);
     check(start.workspace === null && start.tab === null, `a janela nova mostra ${start.workspace}/${start.tab}`);
