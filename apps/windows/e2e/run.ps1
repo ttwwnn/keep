@@ -274,6 +274,15 @@ function Link-Core([string[]]$argumentos) {
 }
 function Link-Comando { try { (Get-Item "$chaveLinks\shell\open\command" -ErrorAction Stop).GetValue('') } catch { $null } }
 function Link-Abas { (& $cli nova --listar 2>&1 | Out-String) }
+# The workspace that holds the tab of a folder, in what `keep nova --listar` printed (workspaces flush left, tabs indented).
+function Link-Onde([string]$listagem, [string]$folha) {
+    $ws = ''
+    foreach ($linha in ($listagem -split "`r?`n")) {
+        if (-not $linha) { continue }
+        if ($linha -notmatch '^\s') { $ws = $linha.Trim() } elseif ($linha -like "*$folha*") { return $ws }
+    }
+    return ''
+}
 if (Test-Path $cli) {
     $settingsAntesDosLinks = Get-Content $settingsDoClaude -Raw
     $comandoAntesDosLinks = Link-Comando
@@ -306,6 +315,10 @@ if (Test-Path $cli) {
     while ((Get-Date) -lt $ate -and $abas -notlike "*$folha*") { Start-Sleep -Milliseconds 500; $abas = Link-Abas }
     $linksLinhas += "abas depois do link: $abas"
     if ($abas -notlike "*$folha*") { $linksProblemas += "o link lançado como o registro faz não abriu a aba em $folha" }
+    # The drop-down terminal's workspace (quick) was the last one used, and the sidebar does not show it.
+    $onde = Link-Onde $abas $folha
+    $linksLinhas += "workspace da aba do link: $onde"
+    if ($onde -eq '' -or $onde -eq 'quick') { $linksProblemas += "a aba do link abriu num workspace que não se vê: '$onde'" }
 
     # Links that must open nothing: another scheme, a folder that climbs out, a link that breaks out of its quotes.
     $antes = Link-Abas

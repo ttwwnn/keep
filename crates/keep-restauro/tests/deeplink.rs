@@ -90,6 +90,11 @@ fn o_link_abre_uma_aba_com_o_texto_so_em_base64() {
     // Sem pasta: abre na pasta pessoal e não avisa o Claude de pasta nenhuma.
     let (_, tab2) = deeplink::abrir("claude-cli://open?q=oi", 0).unwrap();
     assert!(tela_tem("W", tab2, r#"args=["--deep-link-origin", "--prefill-b64=b2k"]"#));
+    // A janela rápida (o workspace `quick`, que a barra lateral não mostra) foi a última aba usada: o link abre no
+    // workspace que a pessoa vê.
+    keep_restauro::daemon::nova_aba("quick", Some(&proj.to_string_lossy()), 120, 30, 0, 0).unwrap();
+    let (ws_depois_da_rapida, _) = deeplink::abrir("claude-cli://open?q=oi", 0).unwrap();
+    assert_eq!(ws_depois_da_rapida, "W");
     // Uma pasta que não existe: o mesmo.
     let inexistente = proj.join("nao-existe");
     let (_, tab3) = deeplink::abrir(&format!("claude-cli://open?q=oi&cwd={}", codifica(&inexistente.to_string_lossy())), 0).unwrap();

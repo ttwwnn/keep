@@ -11,7 +11,7 @@
 //!
 //!   keep nova --workspace W --pasta P --passagem ARQUIVO    lê o arquivo inteiro e segue
 //!   keep nova --workspace W --pasta P --pedido "texto"      o texto vai para um arquivo, lido do mesmo jeito
-//!   keep nova [--workspace W] --pasta P --argumentos -- ARG…  `claude ARG…` (sem workspace: o da aba usada por último)
+//!   keep nova [--workspace W] --pasta P --argumentos -- ARG…  `claude ARG…` (sem workspace: o da aba usada por último, fora o `quick`)
 //!       [--nome "rótulo"]  nome da aba no app      [--sem-enter]  digita e não aperta Enter
 //!   keep nova --listar                                       workspaces e abas
 //!
@@ -146,7 +146,13 @@ pub fn abrir(p: &Pedido) -> Result<(String, u32, String), String> {
     let vivas: Vec<&daemon::Aba> = lista.abas.iter().filter(|a| !a.info.finished).collect();
     let ws = match &p.workspace {
         Some(w) => w.clone(),
-        None => vivas.iter().max_by_key(|a| a.info.last_active).map(|a| a.ws.clone()).ok_or("o Keep não tem aba aberta; diga --workspace")?,
+        // O workspace `quick` (a janela rápida) não conta: a barra lateral não o mostra, e a aba abriria onde ninguém vê.
+        None => vivas
+            .iter()
+            .filter(|a| a.ws != crate::retrato::RAPIDO)
+            .max_by_key(|a| a.info.last_active)
+            .map(|a| a.ws.clone())
+            .ok_or("o Keep não tem aba aberta; diga --workspace")?,
     };
     if !vivas.iter().any(|a| a.ws == ws) {
         let mut existem: Vec<&str> = vivas.iter().map(|a| a.ws.as_str()).collect();
