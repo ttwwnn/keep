@@ -110,6 +110,14 @@ const SHAPES: Record<GlyphName, VNode> = {
   fullscreen: (
     <path d="M2 5V2.5a.5.5 0 0 1 .5-.5H5M12 5V2.5a.5.5 0 0 0-.5-.5H9M2 9v2.5a.5.5 0 0 0 .5.5H5M12 9v2.5a.5.5 0 0 1-.5.5H9" {...line} />
   ),
+  // The drop-down terminal: a panel hanging from the top edge of the screen, with a prompt in it.
+  quickWindow: (
+    <>
+      <path d="M1.5 2.2h11" {...line} />
+      <path d="M2.8 2.2v5.5a1.6 1.6 0 0 0 1.6 1.6h5.2a1.6 1.6 0 0 0 1.6-1.6V2.2" {...line} />
+      <path d="M4.9 4.4l1.7 1.3-1.7 1.3M7.6 7.1h1.7" {...line} />
+    </>
+  ),
   image: (
     <>
       <rect x="1.5" y="2.5" width="11" height="9" rx="1.5" {...line} />

@@ -1,7 +1,7 @@
 // What the palette can run: a closed list, as the macOS app's `Command` is —
 // the set of things worth typing three letters to reach, not a scrape of a
 // menu that nests and repeats itself. Seventeen are the Mac's, in its three
-// groups; the three after them only Windows has.
+// groups; the four after them only Windows has.
 //
 // A command is its spec (what it is called, where it is listed, how it is
 // drawn, which chord does the same without the palette) and a binding (what
@@ -12,6 +12,7 @@
 //
 //   toggleVerticalTabs   the tabs' side-bar-only layout
 //   newWindow            a second window
+//   quickWindow          the drop-down terminal (quick/main.ts); the Mac's is a menu item, and this has no menu
 //   removeWorkspace      take a workspace off this window's list
 //
 // The two commands that open a list — the themes and the fonts — do not run
@@ -20,6 +21,7 @@
 // ui/FontPicker.tsx).
 
 import type { GlyphName } from "./palette/glyphs";
+import { quickChord } from "./quick/chord";
 
 export type CommandId =
   | "toggleSidebar"
@@ -30,6 +32,7 @@ export type CommandId =
   | "newWindow"
   | "settings"
   | "fullscreen"
+  | "quickWindow"
   | "newTab"
   | "newWorkspace"
   | "closeTab"
@@ -56,6 +59,8 @@ export interface CommandSpec {
   icon: GlyphName;
   /** The chord that does the same without the palette, as the keys it is drawn with; empty for none. */
   keys: readonly string[];
+  /** The chord when it is the person's to choose: asked each time the list is drawn, and in place of `keys`. */
+  chord?: () => readonly string[];
   /** Said in red, because these do not undo. */
   destructive?: boolean;
   /** Choosing it opens this list rather than doing something. */
@@ -73,6 +78,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "newWindow", title: "Nova janela", group: "janela", icon: "newWindow", keys: [] },
   { id: "settings", title: "Configurações", group: "janela", icon: "settings", keys: ["Ctrl", ","] },
   { id: "fullscreen", title: "Tela cheia", group: "janela", icon: "fullscreen", keys: ["F11"] },
+  { id: "quickWindow", title: "Janela rápida", group: "janela", icon: "quickWindow", keys: [], chord: quickChord },
 
   { id: "newTab", title: "Nova aba", group: "workspace", icon: "newTab", keys: ["Ctrl", "Shift", "T"] },
   { id: "newWorkspace", title: "Novo workspace…", group: "workspace", icon: "folderPlus", keys: ["Ctrl", "Shift", "N"] },

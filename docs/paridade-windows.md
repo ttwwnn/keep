@@ -301,9 +301,81 @@ formato do Mac) e quem prende é o `keep ia confinar -- <programa>`.
   movido (não copiado) de fora para dentro da pasta presa leva a permissão que
   tinha, e a IA não o abre.
 
+## Fatia `quick` (janela rápida)
+
+O terminal que desce do topo da tela com um atalho global (o ⌃` do Mac). A janela é a metade passageira: o
+shell é uma aba do workspace `quick` do keepd, que sobrevive à janela, ao app e ao login, e que nenhuma outra
+parte da janela lista. Código: `src-tauri/src/quick.rs` (atalho, janela, deslize), com `quick/geometry.rs` (as
+medidas e as curvas) e `quick/shortcut.rs` (o atalho e a tecla do layout) à parte para serem testados sem janela;
+`src/quick/` (a página do painel, o teclado dele, o que a janela principal mostra), `src/quickWorkspace.ts` (o
+filtro) e `capabilities/quick.json`.
+
+Conferida no Mac pelo roteiro do app (`src/e2eQuick.ts`, sete passos contra um keepd de verdade: atalho,
+geometria, workspace oculto, shell vivo, volta ao mesmo shell, troca do atalho) e à mão, com um atalho de teste
+apertado por tecla de verdade pelo HID: a entrada, a saída, o clique fora, o shell que acaba, o tema e o zoom
+lidos do estado, a paleta, as Configurações, o atalho recusado e a sugestão. O que é só do Windows foi
+compilado (`cargo check --target x86_64-pc-windows-msvc`) e não rodou num Windows; o CI confere o que a janela
+real pode dizer de si (o atalho entregue e a geometria; o foco não: uma máquina sem ninguém na frente pode não
+dá-lo).
+
+- [x] O workspace `quick` é invisível para o resto: sai de `api.list` e `api.search` (`quickWorkspace.ts`), e
+  portanto da barra lateral, do Ir para, da paleta, da busca em tudo, da ordem e do restauro (um keepd só com ele
+  conta como vazio para o `restoreIfEmpty`, pelo código: não exercitado); o retrato do core já o ignorava (`RAPIDO`). Visto no Mac: a barra lateral
+  sem ele, `keep ls` com ele, `state.json` sem uma palavra sobre ele.
+- [~] Atalho global Ctrl+` (`tauri-plugin-global-shortcut`, `RegisterHotKey`). No Windows o atalho é registrado
+  pela tecla que o layout em uso dá àquele lugar do teclado (`MapVirtualKeyW` por scancode, depois a tabela do
+  `global-hotkey`, que é a do layout US), para que a tecla à esquerda do 1 seja a mesma em US, ABNT2, alemão e
+  AZERTY, e uma letra seja a do lugar, não a que digita (como o `kVK_ANSI_Grave` do Mac). A conta é pura e
+  testada com layouts de mentira; a chamada ao sistema e o que ela devolve num ABNT2 de verdade não foram vistos
+  (a suposição é que o thread tem o layout em uso).
+- [x] Configurável em Configurações, Janela rápida: Alterar (aperta o novo), Usar o padrão, Abrir agora. Fica em
+  `quick.json` ao lado do `state.json` (só o que a pessoa escolheu). Recusa Esc e um atalho sem Ctrl, Alt ou Win
+  (a não ser tecla de função); o novo é tomado antes de soltar o antigo, então um recusado deixa tudo como estava.
+- [x] Atalho recusado pelo sistema (outro programa o tem): aviso ao abrir o app, o motivo nas Configurações e um
+  atalho livre para pôr no lugar (Ctrl+Shift+`, Ctrl+Alt+`, Ctrl+Shift+K, Ctrl+Alt+Espaço: o que se pode tomar
+  agora, provado tomando e devolvendo), com um botão que o usa. Visto no Mac com um atalho que ele não registra.
+- [x] Segunda janela `quick`, feita na primeira vez e reaproveitada: sem moldura, sempre no topo, fora da barra de
+  tarefas, na largura do monitor onde está o ponteiro e 42% da altura útil, pendurada no topo da área útil (as
+  medidas de `QuickTerminal.swift`, testadas em Rust com monitores de coordenada negativa e ponteiro entre
+  monitores). Desliza de cima em 0,18 s (ease-out) e sai em 0,15 s (ease-in), as curvas do Core Animation, e um
+  deslize novo vira de onde a janela está. Some ao perder o foco que teve; fechá-la (Alt+F4) só a esconde, para
+  reaproveitá-la (isso não foi exercitado: no Mac de desenvolvimento nada fecha uma janela sem moldura). Esc é do
+  programa, como no Mac. A primeira vez espera a página desenhar (até 3 s) para não entrar em branco.
+- [~] No Windows: a sombra do sistema como borda (`shadow`), sem o arredondamento nem o filete do DWM
+  (`DWMWA_WINDOW_CORNER_PREFERENCE`, `DWMWA_BORDER_COLOR`), e a janela vai para a área de trabalho virtual em uso
+  (`IVirtualDesktopManager`, o `canJoinAllSpaces` do Mac). A janela sem moldura com sombra é, no Windows, maior que
+  o painel (a borda invisível do quadro: 8 px nos lados e embaixo, 1 em cima no Windows 11, a escala do monitor), então
+  o que se posiciona é a parte desenhada (`Margins`, medida na própria janela pela diferença entre a posição interna
+  e a externa) e o roteiro compara essa parte com o lugar pedido. Só compilado. O foco é pedido de novo até quatro vezes
+  se o sistema demora a dá-lo (o Windows só dá o teclado a quem recebeu a última entrada).
+- [ ] Os cantos de baixo arredondados em 10 pt e o fundo translúcido do painel do Mac: a janela é opaca, porque
+  `transparent` pede API privada no Mac e, no Windows, uma janela transparente deixa a faixa transparente pegar o
+  mouse e perde a sombra do sistema. O contorno é o do DWM do Windows.
+- [x] A página `?quick=1` (a mesma página, `main.tsx`) mostra só o primeiro terminal vivo do workspace, sem barra
+  lateral nem fileira de abas, nas margens do painel do Mac (8 nos lados, 6 em cima, 8 embaixo). Se o shell
+  acaba, abre outra aba, inclusive quando o keepd devolve o número da que morreu. Tema, fonte, zoom e cursor são os
+  da janela principal, lidos do `state.json` a cada entrada por `quick_look`, que só lê (não faz as recuperações,
+  os avisos nem o travamento do `load_state`) e que nada grava: o estado é da janela principal. Teclado (a tecla
+  que não é da janela é de `terminalKey`: Kitty, Ctrl+C numa seleção, Ctrl+X, Shift+Enter), menu de contexto,
+  arquivos soltos e a pergunta da colagem de várias linhas são os de uma aba. Vistos no painel: as teclas da
+  janela engolidas sem deixar caractere no shell, Ctrl+Shift+L, o menu de contexto (Limpar a tela, e o teclado
+  volta ao terminal). Não exercitados nele: copiar e colar (a área de transferência é da pessoa), soltar
+  arquivos e a pergunta da colagem de várias linhas; são o código das abas, ligado à página do painel.
+- [x] "Janela rápida" na paleta, com o atalho em uso desenhado, ligada por `registerCommand` (`quick/main.ts`).
+- [x] Ciclo de vida: a janela é do mesmo processo (o single-instance não vê um segundo app); fechar a janela
+  principal sai do app, como no Mac, e leva a rápida junto; sem isso a rápida escondida contaria ao Tauri como
+  janela aberta e deixaria um processo sem nada à vista (`on_run_event`); sair deixa o keepd.
+- [ ] No Mac, o `work_area` do tao não desconta a barra de menus, e o painel de desenvolvimento a cobre; no
+  Windows é o `rcWork`, que desconta a barra de tarefas.
+- Para quem for ver no Windows: o `app.log` (`%LOCALAPPDATA%\Keep\app.log`) diz, com `janela rápida:`, se o atalho
+  foi registrado, quanto a página levou a ficar pronta e se a janela recebeu o foco ao entrar; com a variável
+  `KEEP_QUICK_TRACE=1` ele também registra cada passo do deslize e cada ganho e perda de foco. O VS Code usa
+  Ctrl+` para o terminal dele, e o atalho global o toma enquanto o Keep estiver aberto: quem usa os dois escolhe
+  outro nas Configurações.
+
 ## Fatia `windows` (várias janelas)
 
 - [ ] Nova janela; lista de workspaces, aba e painel por janela; mover
   workspace entre janelas; arrancar a aba da faixa.
-- [ ] Janela rápida global (Ctrl+`), com o workspace `quick` oculto.
+- [~] Janela rápida global (Ctrl+`), com o workspace `quick` oculto: feita na fatia `quick`, acima.
 - [ ] Estado das janelas (quadro, tela cheia).
