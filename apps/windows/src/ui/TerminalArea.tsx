@@ -34,6 +34,7 @@ import { SPLIT_DOWN, SPLIT_RIGHT } from "../api";
 import { imagePasteSequence } from "../keys";
 import { toggleOverlay } from "../palette/overlay";
 import { viewKey } from "../terminals";
+import { severalWindows } from "../windowPeers";
 import { AiStatusBar } from "./AiStatusBar";
 import { openMenuAt, type MenuItem } from "./common";
 import { centreDivider, startDividerDrag } from "./divider";
@@ -270,8 +271,9 @@ export function TerminalArea() {
       )}
       {loaded.value && all.length > 0 && shownWorkspaces.value.length === 0 && (
         <div class="empty">
-          <p>Todos os workspaces estão fora da barra lateral.</p>
-          <p class="hint">Ctrl+Shift+P para voltar a um</p>
+          {/* A window opened now lists none: every workspace there is a Go To away. */}
+          <p>{severalWindows.value ? "Esta janela não tem nenhum workspace." : "Todos os workspaces estão fora da barra lateral."}</p>
+          <p class="hint">Ctrl+Shift+P para {severalWindows.value ? "trazer um para cá" : "voltar a um"}</p>
         </div>
       )}
       {findOpen.value && <FindBar />}

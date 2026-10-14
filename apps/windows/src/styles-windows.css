@@ -1,0 +1,34 @@
+/* Several windows: the mark of a tab another window has in front, and a tab
+   pulled out of the row to make a window of its own. */
+
+/* ------------------------------------------------------------ the mark of a tab in another window */
+
+.window-mark {
+  display: inline-block;
+  flex: none;
+  vertical-align: -0.14em;
+  margin-left: 0.5em;
+  width: 1em;
+  height: 1em;
+  opacity: 0.85;
+}
+
+.tab-label > .window-mark {
+  margin-left: 0;
+}
+
+/* ------------------------------------------------------------ a tab pulled out of the row */
+
+/* Where it was it stays, empty: the others have closed the gap, and a copy of the tab hangs from the pointer. */
+.strip.reordering .tab.torn {
+  opacity: 0;
+  box-shadow: none;
+  transition: none;
+}
+
+.tab.drag-ghost {
+  border-radius: 999px;
+  background-color: var(--tab-fill);
+  box-shadow: inset 0 0 0 1px var(--tab-edge), 0 6px 18px rgba(0, 0, 0, 0.35);
+  opacity: 0.8;
+}

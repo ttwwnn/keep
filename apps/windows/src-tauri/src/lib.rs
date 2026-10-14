@@ -16,6 +16,7 @@ mod quick;
 mod sessions;
 mod settings;
 mod status;
+mod windows;
 mod zoxide;
 
 use std::path::PathBuf;
@@ -72,15 +73,21 @@ fn startup() -> Startup {
     }
 }
 
+/// Several windows may ask at once; the daemon is started by one of them, and the others find it up.
+static STARTING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Make sure the daemon runs. Started here when it does not — the first
 /// launch after a reboot — and from then on it belongs to nobody.
 #[tauri::command]
 async fn ensure_daemon(app: AppHandle) -> Answer<()> {
     let dir = resources(&app);
-    tauri::async_runtime::spawn_blocking(move || daemon::ensure(dir.as_deref()))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(text)
+    tauri::async_runtime::spawn_blocking(move || {
+        let _one = STARTING.lock().unwrap_or_else(|e| e.into_inner());
+        daemon::ensure(dir.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(text)
 }
 
 /// Which daemon is answering; see `daemon::identity`.
@@ -96,6 +103,7 @@ async fn list() -> Answer<Vec<daemon::Workspace>> {
 
 #[tauri::command]
 async fn new_tab(
+    app: AppHandle,
     workspace: String,
     cwd: Option<String>,
     cols: u16,
@@ -103,36 +111,44 @@ async fn new_tab(
     split_of: Option<u32>,
     split_dir: Option<u8>,
 ) -> Answer<u32> {
-    tauri::async_runtime::spawn_blocking(move || {
+    let made = tauri::async_runtime::spawn_blocking(move || {
         daemon::new_tab(&workspace, cwd, cols, rows, split_of.unwrap_or(0), split_dir.unwrap_or(0))
     })
     .await
     .map_err(|e| e.to_string())?
-    .map_err(text)
+    .map_err(text);
+    windows::daemon_changed(&app);
+    made
 }
 
 #[tauri::command]
-async fn close_tab(workspace: String, tab: u32) -> Answer<()> {
-    tauri::async_runtime::spawn_blocking(move || daemon::close_tab(&workspace, tab))
+async fn close_tab(app: AppHandle, workspace: String, tab: u32) -> Answer<()> {
+    let closed = tauri::async_runtime::spawn_blocking(move || daemon::close_tab(&workspace, tab))
         .await
         .map_err(|e| e.to_string())?
-        .map_err(text)
+        .map_err(text);
+    windows::daemon_changed(&app);
+    closed
 }
 
 #[tauri::command]
-async fn kill_workspace(workspace: String) -> Answer<()> {
-    tauri::async_runtime::spawn_blocking(move || daemon::kill(&workspace))
+async fn kill_workspace(app: AppHandle, workspace: String) -> Answer<()> {
+    let killed = tauri::async_runtime::spawn_blocking(move || daemon::kill(&workspace))
         .await
         .map_err(|e| e.to_string())?
-        .map_err(text)
+        .map_err(text);
+    windows::daemon_changed(&app);
+    killed
 }
 
 #[tauri::command]
-async fn move_tab(workspace: String, tab: u32, to: String) -> Answer<u32> {
-    tauri::async_runtime::spawn_blocking(move || daemon::move_tab(&workspace, tab, &to))
+async fn move_tab(app: AppHandle, workspace: String, tab: u32, to: String) -> Answer<u32> {
+    let moved = tauri::async_runtime::spawn_blocking(move || daemon::move_tab(&workspace, tab, &to))
         .await
         .map_err(|e| e.to_string())?
-        .map_err(text)
+        .map_err(text);
+    windows::daemon_changed(&app);
+    moved
 }
 
 #[derive(Deserialize)]
@@ -144,13 +160,15 @@ struct Move {
 }
 
 #[tauri::command]
-async fn rearrange(workspace: String, moves: Vec<Move>) -> Answer<()> {
+async fn rearrange(app: AppHandle, workspace: String, moves: Vec<Move>) -> Answer<()> {
     let moves: Vec<PaneMove> =
         moves.into_iter().map(|m| PaneMove { tab: m.tab, split_of: m.split_of, split_dir: m.split_dir }).collect();
-    tauri::async_runtime::spawn_blocking(move || daemon::rearrange(&workspace, moves))
+    let done = tauri::async_runtime::spawn_blocking(move || daemon::rearrange(&workspace, moves))
         .await
         .map_err(|e| e.to_string())?
-        .map_err(text)
+        .map_err(text);
+    windows::daemon_changed(&app);
+    done
 }
 
 #[tauri::command]
@@ -192,13 +210,14 @@ async fn search(query: String, limit: u32, workspace: Option<String>, tab: Optio
 #[tauri::command]
 fn attach(
     sessions: State<'_, Arc<Sessions>>,
+    window: tauri::Window,
     workspace: String,
     tab: u32,
     cols: u16,
     rows: u16,
     channel: Channel<InvokeResponseBody>,
 ) -> Answer<u64> {
-    sessions.inner().attach(workspace, tab, cols, rows, channel).map_err(text)
+    sessions.inner().attach(window.label().to_string(), workspace, tab, cols, rows, channel).map_err(text)
 }
 
 #[tauri::command]
@@ -220,24 +239,6 @@ fn resize(sessions: State<'_, Arc<Sessions>>, handle: u64, cols: u16, rows: u16)
 #[tauri::command]
 fn detach(sessions: State<'_, Arc<Sessions>>, handle: u64) {
     sessions.detach(handle);
-}
-
-fn state_path(app: &AppHandle) -> Answer<PathBuf> {
-    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    Ok(settings::state_file(&dir))
-}
-
-#[tauri::command]
-fn load_state(app: AppHandle) -> Answer<Option<serde_json::Value>> {
-    Ok(settings::load(&state_path(&app)?))
-}
-
-#[tauri::command]
-fn save_state(app: AppHandle, state: serde_json::Value) -> Answer<()> {
-    settings::save(&state_path(&app)?, &state).map_err(|e| {
-        settings::log(&format!("estado não gravado: {e:#}"));
-        text(e)
-    })
 }
 
 /// What reading the state found wrong when the app opened, once: an
@@ -535,17 +536,12 @@ pub fn run() {
     tauri::Builder::default()
         // A second launch brings the window that is already open forward,
         // rather than a second viewer of the same daemon.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
-        }))
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| windows::show_front(app)))
         .plugin(
             tauri_plugin_window_state::Builder::new()
-                // The drop-down terminal is placed by quick.rs at every showing, never where it was left.
-                .with_denylist(&[quick::LABEL])
+                // The first window's size and place. The others' are kept with their records (windows.rs), and the
+                // drop-down terminal is placed by quick.rs at every showing, never where it was left.
+                .with_filter(|label| label == "main")
                 .with_state_flags(
                     tauri_plugin_window_state::StateFlags::SIZE
                         | tauri_plugin_window_state::StateFlags::POSITION
@@ -559,10 +555,19 @@ pub fn run() {
         // Ctrl+` from anywhere: the drop-down terminal (quick.rs).
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(sessions)
+        .manage(windows::Hub::default())
         .manage(quick::Quick::default())
         .setup(|app| {
+            windows::start(app.handle());
             quick::setup(app.handle());
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // A window that is gone lets go of the tabs it was showing.
+            if let tauri::WindowEvent::Destroyed = event {
+                window.state::<Arc<Sessions>>().detach_window(window.label());
+            }
+            windows::on_window_event(window, event);
         })
         .on_window_event(quick::on_window_event)
         .invoke_handler(tauri::generate_handler![
@@ -584,8 +589,11 @@ pub fn run() {
             input_bytes,
             resize,
             detach,
-            load_state,
-            save_state,
+            windows::window_boot,
+            windows::window_sync,
+            windows::window_open,
+            windows::window_under,
+            windows::window_show,
             state_warning,
             shells,
             choose_shell,
@@ -627,6 +635,8 @@ pub fn run() {
             // the app waits for them. A folder half dealt with and nobody
             // told is worse than a process that lingers a few seconds.
             tauri::RunEvent::ExitRequested { api, .. } if ia::trashing() > 0 => {
+                // The windows closing on the way out put nothing away.
+                windows::leave(app);
                 api.prevent_exit();
                 let app = app.clone();
                 std::thread::spawn(move || {
@@ -637,9 +647,13 @@ pub fn run() {
                     app.exit(0);
                 });
             }
+            tauri::RunEvent::ExitRequested { .. } => windows::leave(app),
             // Leaving lets go of every tab and nothing more: the shells are
             // the daemon's, and they keep running.
-            tauri::RunEvent::Exit => on_exit.detach_all(),
+            tauri::RunEvent::Exit => {
+                windows::leave(app);
+                on_exit.detach_all();
+            }
             // The panel, kept hidden between uses, would keep the app alive once the other windows are gone.
             tauri::RunEvent::WindowEvent { .. } => quick::on_run_event(app, &event),
             _ => {}

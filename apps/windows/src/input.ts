@@ -39,6 +39,7 @@ import type { TermView } from "./terminals";
 import { keysToCut } from "./cut";
 import { dropText, lightPane, paneAt, shellKind } from "./drop";
 import { kittyKey, watchLayout } from "./kittyKeys";
+import { openNewWindow } from "./windowSync";
 
 export function perform(action: Action): void {
   switch (action.kind) {
@@ -47,6 +48,9 @@ export function perform(action: Action): void {
       break;
     case "newWorkspace":
       void newWorkspace();
+      break;
+    case "newWindow":
+      void openNewWindow();
       break;
     case "nextTab":
       stepTab(1);
@@ -236,6 +240,7 @@ function isFieldTarget(target: EventTarget | null): boolean {
 const EVERYWHERE = new Set<Action["kind"]>([
   "newTab",
   "newWorkspace",
+  "newWindow",
   "nextTab",
   "previousTab",
   "goToTab",

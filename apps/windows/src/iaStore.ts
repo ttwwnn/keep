@@ -59,6 +59,7 @@ import {
   workspaces,
 } from "./store";
 import { viewKey } from "./terminals";
+import { isLeader } from "./windowPeers";
 
 // ------------------------------------------------------------------ state
 
@@ -525,7 +526,7 @@ let syncing = false;
 
 /** Tabs that follow the order move to the first account that can take work (the core decides). */
 async function synchronize(): Promise<void> {
-  if (!iaAvailable.value || !daemonUp() || syncing) return;
+  if (!iaAvailable.value || !daemonUp() || syncing || !isLeader.value) return;
   syncing = true;
   try {
     const answer = await api.iaAsk(["ia", "sincronizar", "--json"]);
@@ -548,7 +549,7 @@ let indexing = false;
  * core decides, with twenty minutes of grace and anything in doubt kept).
  */
 async function indexWorktrees(): Promise<void> {
-  if (!iaAvailable.value || !daemonUp() || indexing) return;
+  if (!iaAvailable.value || !daemonUp() || indexing || !isLeader.value) return;
   indexing = true;
   try {
     const answer = await api.iaAsk(["worktrees", "indexar", "--json"]);
@@ -566,7 +567,7 @@ let renewing = false;
 
 /** Every login of Claude the core looks after, renewed before it runs out — the one at rest too. */
 async function renewLogins(): Promise<void> {
-  if (!iaAvailable.value || renewing) return;
+  if (!iaAvailable.value || renewing || !isLeader.value) return;
   renewing = true;
   try {
     const answer = await api.iaAsk(["ia", "renovar", "--json"]);

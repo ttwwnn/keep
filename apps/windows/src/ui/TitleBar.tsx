@@ -34,6 +34,10 @@ import * as icon from "./icons";
 import { PaneMark } from "./paneIcons";
 import { startStripDrag, stripMove } from "./tabDrag";
 import { tabLook, useBreath } from "./tabLook";
+import { WindowMark } from "./windowMark";
+import { shownElsewhere } from "../windowModel";
+import { peers, windowLabel } from "../windowPeers";
+import { openNewWindow } from "../windowSync";
 
 function TabCapsule(props: {
   workspace: string;
@@ -55,13 +59,16 @@ function TabCapsule(props: {
   // Carried along the row by hand: this one follows the pointer, the others slide aside.
   const carry = stripMove.value?.workspace === workspace ? stripMove.value : null;
   const carried = carry !== null && carry.from === index;
+  const torn = carried && carry.tearing === true;
   const slid = carry && !carried ? carry.slid[index] : 0;
   const transform = carried ? `translateX(${carry.dx}px)` : slid ? `translateX(${slid}px)` : undefined;
+  // Another window has this tab in front.
+  const elsewhere = shownElsewhere(peers.value, windowLabel.value, workspace, tab.root.id);
   const style = look.wantsYou || transform ? { background: look.wantsYou ? look.fill : undefined, transform } : undefined;
   return (
     <div
       ref={badge as never}
-      class={`tab ${selected ? "selected" : ""} ${look.wantsYou ? "attention" : ""} ${alone ? "alone" : ""} ${carried ? "carried" : ""}`}
+      class={`tab ${selected ? "selected" : ""} ${look.wantsYou ? "attention" : ""} ${alone ? "alone" : ""} ${carried ? "carried" : ""} ${torn ? "torn" : ""}`}
       style={style}
       title={tab.root.cwd || undefined}
       data-tab={tabKey(workspace, tab.root.id)}
@@ -124,6 +131,7 @@ function TabCapsule(props: {
           {look.mark && <span class="busy-mark">{look.mark.glyph} </span>}
           {look.label}
           {tab.panes.length > 1 && <PaneMark />}
+          {elsewhere && <WindowMark />}
         </span>
       )}
       {!renaming && <AccountChevron workspace={workspace} tab={tab} label={look.label} />}
@@ -178,6 +186,8 @@ export function TitleBar() {
               label: vertical ? "Mostrar a fileira de abas" : "Abas só na barra lateral",
               action: toggleVerticalTabs,
             },
+            "separator",
+            { label: "Nova janela", hint: isMac.value ? "⌘⇧⌥N" : "Ctrl+Shift+Alt+N", action: () => void openNewWindow() },
           ])
         }
       >

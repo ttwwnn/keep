@@ -114,10 +114,8 @@ export const directories = () => invoke<string[]>("directories");
 export const search = (query: string, limit = 50, workspace?: string, tab?: number) =>
   invoke<SearchHit[]>("search", { query, limit, workspace: workspace ?? null, tab: tab ?? null }).then(withoutQuickHits);
 
-export const loadState = () => invoke<unknown | null>("load_state");
 /** What reading the state found wrong when the app opened (an unreadable file, and what was done about it), once. */
 export const stateWarning = () => invoke<string | null>("state_warning");
-export const saveState = (state: unknown) => invoke<void>("save_state", { state });
 export const shells = () => invoke<{ chosen: string; available: Shell[] }>("shells");
 export const chooseShell = (command: string) => invoke<void>("choose_shell", { command });
 /**
@@ -127,6 +125,62 @@ export const chooseShell = (command: string) => invoke<void>("choose_shell", { c
  */
 export const installedFonts = () => invoke<string[][]>("installed_fonts");
 export const e2eReport = (report: string) => invoke<void>("e2e_report", { report });
+
+/** What a window needs before it draws, from src-tauri's windows.rs. */
+export interface WindowBoot {
+  /** This window: `main`, `w1`, `w2`… */
+  label: string;
+  /** How many changes to the app's part of the state have been made: the order they are told in. */
+  seq: number;
+  /** The app's part of the state: what every window shares. */
+  shared: unknown;
+  /** This window's own part; null for a window that has none yet. */
+  window: unknown | null;
+  /** The first window's part, for a window with none to take the furniture from. */
+  inherit: unknown | null;
+  /** The windows that are open, oldest first (see windowModel.ts `readPeers`), and how many times that list has changed. */
+  windows: { version: number; list: unknown };
+  /** The windows of the last run that are not open: asked of the first window only. */
+  saved: { label: string; window: unknown; frame: WindowFrame | null }[];
+}
+
+/** A window's place on the screen, in physical pixels. */
+export interface WindowFrame {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  maximized?: boolean;
+}
+
+export interface OpenWindow {
+  /** The label to give it (a window of the last run); else the lowest free slot. */
+  label?: string;
+  frame?: WindowFrame;
+  maximized?: boolean;
+  /** What it says of itself until it speaks. */
+  placement?: unknown;
+  /** The part of the state it starts with, when it is not a blank window. */
+  record?: unknown;
+}
+
+export const windowBoot = () => invoke<WindowBoot>("window_boot");
+/**
+ * Tell the app, all at once, what changed in what the windows share (windowState.ts `Op`), what this window
+ * lists and shows, and its own part of the state; the order of the changes. Every window hears what made a
+ * difference (`keep://sync`).
+ */
+export const windowSync = (ops: unknown[], placement: unknown | null, record: unknown | null) =>
+  invoke<number>("window_sync", { ops, placement, record });
+/** The window that was opened, and where the app put it (before the system had a say). */
+export interface OpenedWindow {
+  label: string;
+  frame: WindowFrame | null;
+}
+export const windowOpen = (request: OpenWindow) => invoke<OpenedWindow>("window_open", { request });
+/** The window under a point of the screen (physical pixels), if any, other than `exclude`. */
+export const windowUnder = (x: number, y: number, exclude: string | null) => invoke<string | null>("window_under", { x, y, exclude });
+export const windowShow = (label: string) => invoke<void>("window_show", { label });
 
 /** Whether the core is here for the AI layer, and the home it reads the logins from. */
 export interface IaInfo {

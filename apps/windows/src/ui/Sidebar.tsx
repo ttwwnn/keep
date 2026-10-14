@@ -58,6 +58,9 @@ import * as icon from "./icons";
 import { PaneMark } from "./paneIcons";
 import { sidebarMove, startSidebarTabDrag, startWorkspaceDrag } from "./tabDrag";
 import { tabLook, useBreath } from "./tabLook";
+import { WindowMark } from "./windowMark";
+import { shownElsewhere } from "../windowModel";
+import { peers, severalWindows, windowLabel } from "../windowPeers";
 import { MemoryMeter } from "./MemoryMeter";
 import { UsageFooter } from "./UsageFooter";
 
@@ -83,6 +86,8 @@ function TabRow(props: { workspace: string; tab: RootTab; tabs: RootTab[]; index
   const program = tabAccountLabel(account.program, tab.root.command, account.key, account.running, usageLines.value, account.proven);
   const repeats = program === `— ${look.label}` || program === `— ${look.label.replace(/\.exe$/i, "")}`;
   const suffix = program && !repeats ? <span class="tab-program">{program}</span> : null;
+  // Another window has this tab in front.
+  const elsewhere = shownElsewhere(peers.value, windowLabel.value, workspace, tab.root.id);
   return (
     <div
       ref={badge as never}
@@ -143,6 +148,7 @@ function TabRow(props: { workspace: string; tab: RootTab; tabs: RootTab[]; index
           {tab.panes.length > 1 && <PaneMark />}
           {suffix}
           <AccountChevron workspace={workspace} tab={tab} label={look.label} />
+          {elsewhere && <WindowMark />}
         </span>
       )}
       {!renaming && (
@@ -342,7 +348,8 @@ function ZoomControl() {
 /** A new workspace is named where it is made: the field under the list, and return. */
 function NewWorkspaceField() {
   const [value, setValue] = useState("");
-  const empty = shownWorkspaces.value.length === 0;
+  // The first of all, not the first of a window opened beside others that have theirs.
+  const empty = shownWorkspaces.value.length === 0 && !severalWindows.value;
   return (
     <label class="new-workspace" title="Novo workspace (Ctrl+Shift+N)">
       <icon.Plus />

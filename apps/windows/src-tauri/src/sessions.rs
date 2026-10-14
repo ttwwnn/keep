@@ -30,6 +30,8 @@ pub mod kind {
 }
 
 struct Session {
+    /// The window whose page this tab is shown in: its attachments go when it does.
+    owner: String,
     writer: Mutex<Stream>,
     /// For shutting the connection down from outside the reader thread.
     control: Stream,
@@ -53,6 +55,7 @@ impl Sessions {
     /// handle the page uses for input, size and detaching.
     pub fn attach(
         self: &Arc<Self>,
+        owner: String,
         workspace: String,
         tab: u32,
         cols: u16,
@@ -64,7 +67,7 @@ impl Sessions {
         let reader = sock.try_clone()?;
         let control = sock.try_clone()?;
         let id = self.next.fetch_add(1, Ordering::Relaxed) + 1;
-        let session = Arc::new(Session { writer: Mutex::new(sock), control });
+        let session = Arc::new(Session { owner, writer: Mutex::new(sock), control });
         self.open.lock().map_err(|_| anyhow!("sessões envenenadas"))?.insert(id, session);
 
         let sessions = Arc::clone(self);
@@ -148,6 +151,19 @@ impl Sessions {
         };
         if let Some(session) = session {
             let _ = session.control.shutdown(std::net::Shutdown::Both);
+        }
+    }
+
+    /// A window is gone: let go of every tab it was showing. Its page can no longer say so, and a viewer
+    /// that stays counts in the size the daemon gives a tab other windows are looking at.
+    pub fn detach_window(&self, owner: &str) {
+        let ids: Vec<u64> = self
+            .open
+            .lock()
+            .map(|m| m.iter().filter(|(_, s)| s.owner == owner).map(|(id, _)| *id).collect())
+            .unwrap_or_default();
+        for id in ids {
+            self.detach(id);
         }
     }
 

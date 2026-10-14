@@ -799,44 +799,12 @@ pub fn quick_ready(app: AppHandle) {
     page_ready(&app);
 }
 
-/// How long to wait between tries at reading the state while something holds it for a moment.
-const LOOK_PAUSES: [Duration; 3] = [
-    Duration::from_millis(50),
-    Duration::from_millis(100),
-    Duration::from_millis(200),
-];
-
-/// The state file as a JSON object, with or without a byte order mark; anything else is nothing.
-fn parse_state(bytes: &[u8]) -> Option<serde_json::Value> {
-    let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
-    serde_json::from_slice::<serde_json::Value>(bytes)
-        .ok()
-        .filter(serde_json::Value::is_object)
-}
-
-fn read_look(path: &Path) -> Option<serde_json::Value> {
-    for pause in std::iter::once(Duration::ZERO).chain(LOOK_PAUSES) {
-        std::thread::sleep(pause);
-        match std::fs::read(path) {
-            Ok(bytes) => return parse_state(&bytes),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
-            Err(_) => {}
-        }
-    }
-    None
-}
-
-/// The window's state as it stands on the disk — what the panel wears: the theme, the face, the zoom — read and
-/// nothing more. `load_state` also puts a copy back when the file is bad, tells the person so, and stops the
-/// saving when it cannot be read; those are for the main window to do when it opens, and a second reader that did
-/// them could turn a moment's trouble reading into the main window's silence.
+/// The app's state as it stands — what the panel wears: the theme, the face, the zoom — read and nothing more,
+/// in one piece (`windows::look`). The windows keep it (windows.rs); the panel is a visitor in it, and a second
+/// writer could turn a moment's trouble into the main window's silence.
 #[tauri::command]
 pub async fn quick_look(app: AppHandle) -> Option<serde_json::Value> {
-    let path = crate::state_path(&app).ok()?;
-    tauri::async_runtime::spawn_blocking(move || read_look(&path))
-        .await
-        .ok()
-        .flatten()
+    crate::windows::look(&app)
 }
 
 #[cfg(test)]
@@ -877,30 +845,6 @@ mod tests {
         assert_eq!(margins.window_at(-1280, -433), (-1288, -434));
         // Nothing round it, as on the Mac: the window is the panel.
         assert_eq!(Margins::default().window_at(40, 50), (40, 50));
-    }
-
-    #[test]
-    fn the_state_is_read_as_it_is_and_never_touched() {
-        let dir = std::env::temp_dir().join(format!("keep-quick-look-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("state.json");
-        assert_eq!(read_look(&file), None, "no file yet");
-        std::fs::write(&file, b"\xEF\xBB\xBF{\"zoom\":1.25}").unwrap();
-        assert_eq!(read_look(&file).unwrap()["zoom"], 1.25);
-        // A file that is not a state is nothing, and is left where it is: no copy put back, no file kept aside.
-        std::fs::write(&file, "isto não é json").unwrap();
-        assert_eq!(read_look(&file), None);
-        std::fs::write(&file, "[1, 2]").unwrap();
-        assert_eq!(read_look(&file), None);
-        let mut names: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap()
-            .map(|e| e.unwrap().file_name())
-            .collect();
-        names.sort();
-        assert_eq!(names, vec![std::ffi::OsString::from("state.json")]);
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), "[1, 2]");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

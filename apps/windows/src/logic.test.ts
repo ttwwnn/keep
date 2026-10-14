@@ -87,6 +87,14 @@ describe("chords", () => {
     expect(shortcut(key("PageDown", { ctrlKey: true, altKey: true }))).toEqual({ kind: "nextWorkspace" });
     expect(shortcut(key("PageDown", { ctrlKey: true, altKey: true, shiftKey: true }))).toBeNull();
   });
+  it("a new window is Ctrl+Shift+Alt+N, where the Mac has ⇧⌘N", () => {
+    expect(shortcut(key("KeyN", { ctrlKey: true, shiftKey: true, altKey: true }))).toEqual({ kind: "newWindow" });
+    expect(shortcut(key("KeyN", { metaKey: true, shiftKey: true, altKey: true }), true)).toEqual({ kind: "newWindow" });
+    // The new workspace keeps Ctrl+Shift+N, Ctrl+Alt+N is the program's, and so is a Mac's Ctrl.
+    expect(shortcut(key("KeyN", { ctrlKey: true, shiftKey: true }))).toEqual({ kind: "newWorkspace" });
+    expect(shortcut(key("KeyN", { ctrlKey: true, altKey: true }))).toBeNull();
+    expect(shortcut(key("KeyN", { ctrlKey: true, shiftKey: true, altKey: true }), true)).toBeNull();
+  });
   it("cuts with Ctrl+X, or ⌘X, only on its own", () => {
     expect(isPlainCut(key("KeyX", { ctrlKey: true }))).toBe(true);
     expect(isPlainCut(key("KeyX", { ctrlKey: true, shiftKey: true }))).toBe(false);

@@ -19,6 +19,7 @@ import { isSafePaste, pasteQuestion, preparePaste, type Question } from "./paste
 import { SchemeReporter } from "./schemeReport";
 import { serializeBuffer } from "./serialize";
 import type { CursorShape } from "./state";
+import { viewerSize } from "./windowModel";
 
 export interface TerminalLook {
   fontFamily: string;
@@ -87,6 +88,8 @@ export class TermView {
   private opened = false;
   private disposed = false;
   private visible = false;
+  /** Another window is open: out of sight, this terminal says it is not looking (windowModel.ts `viewerSize`). */
+  private severalWindows = false;
   private sent = { cols: 0, rows: 0 };
   private host: HTMLElement | null = null;
   private readonly observer: ResizeObserver;
@@ -252,7 +255,7 @@ export class TermView {
   attachIfNeeded(): void {
     if (this.disposed || this.ended || this.attachment || this.attaching || !this.opened) return;
     this.attaching = true;
-    const { cols, rows } = this.term;
+    const { cols, rows } = this.viewing();
     api
       .attach(this.workspace, this.tab, cols, rows, (event) => this.receive(event))
       .then((attachment) => {
@@ -301,8 +304,18 @@ export class TermView {
     }
   }
 
+  /** The size this viewer tells the daemon: the terminal's, unless it is out of sight while other windows may be looking. */
+  private viewing(): { cols: number; rows: number } {
+    return viewerSize(this.visible, this.severalWindows, this.term.cols, this.term.rows);
+  }
+
+  /** The size the daemon was last told this viewer has (0×0: not looking). */
+  get told(): { cols: number; rows: number } {
+    return this.sent;
+  }
+
   private sendSize(): void {
-    const { cols, rows } = this.term;
+    const { cols, rows } = this.viewing();
     if (!this.attachment || (cols === this.sent.cols && rows === this.sent.rows)) return;
     this.sent = { cols, rows };
     void this.attachment.resize(cols, rows).catch(() => {});
@@ -353,6 +366,15 @@ export class TermView {
     } else {
       this.disableWebgl();
     }
+    // With other windows open, going out of sight or coming back changes what the daemon is told.
+    this.sendSize();
+  }
+
+  /** Whether another window is open: a terminal out of sight stops counting in the size of its tab. */
+  setSeveralWindows(several: boolean): void {
+    if (this.severalWindows === several) return;
+    this.severalWindows = several;
+    this.sendSize();
   }
 
   private enableWebgl(): void {
@@ -487,6 +509,7 @@ export class TermView {
 /** Every terminal the window has, by tab. */
 export class TerminalManager {
   private readonly views = new Map<string, TermView>();
+  private severalWindows = false;
   /** What the terminals of tabs asleep held, by view: given back to the terminal that takes theirs. */
   private readonly sleeping = new Map<string, string>();
 
@@ -501,6 +524,7 @@ export class TerminalManager {
     let view = this.views.get(key);
     if (!view) {
       view = new TermView(workspace, tab, this.look, this.hooks, this.platform, this.sleeping.get(key));
+      view.setSeveralWindows(this.severalWindows);
       this.sleeping.delete(key);
       this.views.set(key, view);
     }
@@ -569,6 +593,12 @@ export class TerminalManager {
   setLook(look: TerminalLook): void {
     this.look = look;
     for (const view of this.views.values()) view.setLook(look);
+  }
+
+  /** Other windows are open, or are not any more. */
+  setSeveralWindows(several: boolean): void {
+    this.severalWindows = several;
+    for (const view of this.views.values()) view.setSeveralWindows(several);
   }
 
   /** The daemon is back: attach whatever lost its connection. */
