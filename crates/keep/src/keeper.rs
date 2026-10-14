@@ -31,7 +31,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use keep_proto::{ClientMsg, ServerMsg};
-use keep_vt::{ClipboardAnswer, ClipboardReader, Device, Facts, Keyboard, Terminal};
+use keep_vt::{ClipboardAnswer, ClipboardReader, CursorStyle, Device, Facts, Keyboard, Terminal};
 
 use crate::attach::KittyFlags;
 
@@ -114,6 +114,10 @@ pub struct Options {
     /// Whether the surface's cursor blinks (mode 12) before any program
     /// says, as a program asking (DECRQM) is told.
     pub blink: bool,
+    /// The surface's cursor shape before any program says (`cursor-style`),
+    /// as a program asking (DECRQSS) a keeper is told. None: the mirror's
+    /// own, which no program can ask for.
+    pub cursor: Option<CursorStyle>,
     /// A kept tab to take over, by the directory its keeper is in.
     pub take: Option<PathBuf>,
     /// The app, whose end is the keeper's.
@@ -130,6 +134,7 @@ impl Options {
                 "mirror" => options.mirror = value.parse().ok().filter(|&n: &usize| n > 0),
                 "grapheme" => options.grapheme = value == "1",
                 "blink" => options.blink = value == "1",
+                "cursor" => options.cursor = CursorStyle::from_config(value),
                 "take" => options.take = Some(PathBuf::from(value)).filter(|p| !value.is_empty() && p.is_absolute()),
                 "app" => options.app = value.parse().ok().filter(|&p: &i32| p > 0),
                 _ => {}
@@ -149,6 +154,9 @@ pub struct Mirror {
     /// library has it: a mirror keeps none while its surface draws them,
     /// a keeper as much as a surface — answering the protocol as it does.
     image_limit: Option<u64>,
+    /// The cursor's blinking a program had set, to be said again once the
+    /// stream is between sequences: setting the keeper's cursor took it.
+    blink_owed: Option<bool>,
     /// What a write ended with that may be the start of an image: the
     /// introducer, or a command whose action is still to come.
     tail: Vec<u8>,
@@ -184,6 +192,7 @@ impl Mirror {
             size: (cols.max(1), rows.max(1)),
             images: false,
             image_limit,
+            blink_owed: None,
             tail: Vec::new(),
             dir: dir.to_path_buf(),
             options: options.clone(),
@@ -198,9 +207,21 @@ impl Mirror {
         Some(again)
     }
 
+    /// Say again the cursor's blinking owed, if the stream is between
+    /// sequences: written into the middle of one, it would end it.
+    fn pay_blink(&mut self) {
+        if let Some(blinking) = self.blink_owed {
+            if self.terminal.at_ground() {
+                self.terminal.write(if blinking { b"\x1b[?12h" } else { b"\x1b[?12l" });
+                self.blink_owed = None;
+            }
+        }
+    }
+
     /// Follow what was written to the surface.
     pub fn feed(&mut self, bytes: &[u8]) {
         self.terminal.write(bytes);
+        self.pay_blink();
         // An image (the Kitty graphics protocol, the only one the surface
         // draws) is something a handover cannot carry: once one has been
         // seen, the app is told not to let go of this surface.
@@ -542,6 +563,19 @@ fn send_input(daemon: &mut UnixStream, bytes: &[u8]) -> io::Result<()> {
 fn stand_in(mirror: &mut Mirror, facts: Facts, dir: &Path, reads: &Arc<Mutex<Reads>>) {
     if let Some(limit) = mirror.image_limit {
         let _ = mirror.terminal.set_image_storage_limit(limit);
+    }
+    // The surface's cursor until a program says otherwise, as it answers a
+    // program asking: the mirror's own, until now, no program can ask for.
+    // Both put the cursor's blinking (mode 12) back to the default: what
+    // it was — a program's — is said again, between sequences.
+    let blinking = mirror.terminal.dec_mode(12);
+    if let Some(style) = mirror.options.cursor {
+        mirror.terminal.set_default_cursor_style(style);
+    }
+    mirror.terminal.set_default_cursor_blink(mirror.options.blink);
+    if mirror.terminal.dec_mode(12) != blinking {
+        mirror.blink_owed = Some(blinking);
+        mirror.pay_blink();
     }
     let _ = mirror.terminal.act_as_terminal(facts);
     let _ = mirror.terminal.read_clipboard_with(clipboard_reader(dir.to_path_buf(), Arc::clone(reads)));
@@ -1216,6 +1250,56 @@ mod tests {
         assert_eq!(mirror.terminal.image_storage_limit(), surface, "standing in, as many as a terminal");
         mirror.feed(b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\");
         assert_eq!(mirror.terminal.take_events().replies, b"\x1b_Gi=31;OK\x1b\\");
+        done_with(&dir);
+    }
+
+    /// Standing in, a mirror answers a program asking for the cursor's
+    /// shape (DECRQSS) with the surface's — the config's, a blinking bar
+    /// here —, and a handover still says no shape where no program chose
+    /// one: the surface taking over keeps its own.
+    #[test]
+    fn a_keeper_answers_with_the_surfaces_cursor_and_hands_over_none() {
+        let dir = attach_dir("cursor-kept");
+        let options = Options::parse(["mirror=1048576", "blink=1", "cursor=bar"].into_iter());
+        assert_eq!(options.cursor, Some(CursorStyle::Bar));
+        assert_eq!(Options::parse(["cursor=sideways"].into_iter()).cursor, None, "a word it does not know");
+        let mut mirror = Mirror::new(80, 24, &options, &dir).expect("a mirror");
+        stand_in(&mut mirror, parse_facts(""), &dir, &Arc::new(Mutex::new(Reads::default())));
+        mirror.feed(b"\x1bP$q q\x1b\\");
+        assert_eq!(String::from_utf8_lossy(&mirror.terminal.take_events().replies), "\x1bP1$r5 q\x1b\\");
+        // And a program putting the cursor back to the default (CSI 0 q) has
+        // the surface's: a bar, blinking as the config says.
+        mirror.feed(b"\x1b[2 q\x1b[0 q\x1bP$q q\x1b\\");
+        assert_eq!(String::from_utf8_lossy(&mirror.terminal.take_events().replies), "\x1bP1$r5 q\x1b\\", "after CSI 0 q");
+        let handed = mirror.terminal.handover(None);
+        assert!(!String::from_utf8_lossy(&handed).contains(" q"), "no shape said: {:?}", String::from_utf8_lossy(&handed));
+        // One a program chose is said, as before.
+        let mut chosen = Mirror::new(80, 24, &options, &dir).expect("a mirror");
+        stand_in(&mut chosen, parse_facts(""), &dir, &Arc::new(Mutex::new(Reads::default())));
+        chosen.feed(b"\x1b[4 q");
+        assert!(chosen.terminal.handover(None).windows(5).any(|w| w == b"\x1b[4 q"));
+        done_with(&dir);
+    }
+
+    /// The cursor's blinking a program set stays the program's when the
+    /// keeper takes the surface's cursor — said again at once between
+    /// sequences, and only once the stream is between them if it is in the
+    /// middle of one, which it would otherwise end.
+    #[test]
+    fn a_programs_blinking_outlasts_the_keepers_cursor() {
+        let dir = attach_dir("cursor-blink");
+        let options = Options::parse(["mirror=1048576", "blink=1", "cursor=bar"].into_iter());
+        let reads = Arc::new(Mutex::new(Reads::default()));
+        let mut mirror = Mirror::new(80, 24, &options, &dir).expect("a mirror");
+        mirror.feed(b"\x1b[?12l");
+        stand_in(&mut mirror, parse_facts(""), &dir, &reads);
+        assert!(!mirror.terminal.dec_mode(12), "blinking off, as the program left it");
+        let mut cut = Mirror::new(80, 24, &options, &dir).expect("a mirror");
+        cut.feed(b"\x1b[?12l\x1b]2;half a ti");
+        stand_in(&mut cut, parse_facts(""), &dir, &reads);
+        cut.feed(b"tle\x07");
+        assert_eq!(cut.terminal.title(), "half a title", "the sequence it was in the middle of, whole");
+        assert!(!cut.terminal.dec_mode(12), "and blinking off once it ended");
         done_with(&dir);
     }
 

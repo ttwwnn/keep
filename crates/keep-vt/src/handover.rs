@@ -27,6 +27,28 @@ pub struct Keyboard {
     pub alternate: Vec<u8>,
 }
 
+/// A cursor's shape, as a terminal's config names it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CursorStyle {
+    Bar,
+    Block,
+    Underline,
+    BlockHollow,
+}
+
+impl CursorStyle {
+    /// The config's word for it: bar, block, underline, block_hollow.
+    pub fn from_config(word: &str) -> Option<Self> {
+        match word {
+            "bar" => Some(Self::Bar),
+            "block" => Some(Self::Block),
+            "underline" => Some(Self::Underline),
+            "block_hollow" => Some(Self::BlockHollow),
+            _ => None,
+        }
+    }
+}
+
 /// What decides how a row is written out (`Terminal::scan_row`).
 struct RowScan {
     /// It goes on in the next row: a soft wrap.
@@ -93,6 +115,11 @@ impl Terminal {
     /// terminal saw — yet before the start of a sequence its last write cut,
     /// which the next bytes to come complete.
     pub fn handover_then(&mut self, keyboard: Option<&Keyboard>, then: &[u8]) -> Vec<u8> {
+        // A shape a program chose is told apart from none by the default no
+        // program can ask for: the one a keeper answers with goes first.
+        let blinking = self.dec_mode(12);
+        self.set_default_cursor_style(CursorStyle::BlockHollow); // before any shape is read
+        self.set_default_cursor_blink(blinking);
         // The start of a sequence the last write ended in the middle of, said
         // last, for the rest of it to complete there as it will here. Read
         // before anything is written to this terminal, which would end it.
@@ -818,16 +845,34 @@ impl Terminal {
 
     /// Make the default cursor shape one no program can ask for, so that
     /// [`Terminal::handover`] can tell a shape a program chose from none.
-    pub fn with_default_cursor_unset(self) -> Self {
-        let hollow: c_int = ffi::CURSOR_STYLE_BLOCK_HOLLOW;
-        unsafe {
-            ffi::ghostty_terminal_set(
-                self.raw,
-                ffi::OPT_DEFAULT_CURSOR_STYLE,
-                &hollow as *const c_int as *const c_void,
-            );
-        }
+    pub fn with_default_cursor_unset(mut self) -> Self {
+        self.set_default_cursor_style(CursorStyle::BlockHollow);
         self
+    }
+
+    /// Whether the cursor blinks before any program says, and after one says
+    /// to go back to it (CSI 0 q): what a program asking (DECRQSS) is told.
+    /// The cursor's blinking now (mode 12) is set with it.
+    pub fn set_default_cursor_blink(&mut self, blink: bool) {
+        unsafe {
+            ffi::ghostty_terminal_set(self.raw, ffi::OPT_DEFAULT_CURSOR_BLINK, &blink as *const bool as *const c_void);
+        }
+    }
+
+    /// The cursor's shape before any program says, and after one says to go
+    /// back to it (CSI 0 q): what a program asking (DECRQSS) is told.
+    pub fn set_default_cursor_style(&mut self, style: CursorStyle) {
+        let style: c_int = match style {
+            CursorStyle::Bar => ffi::CURSOR_STYLE_BAR,
+            CursorStyle::Block => ffi::CURSOR_STYLE_BLOCK,
+            CursorStyle::Underline => ffi::CURSOR_STYLE_UNDERLINE,
+            CursorStyle::BlockHollow => ffi::CURSOR_STYLE_BLOCK_HOLLOW,
+        };
+        // The library puts the cursor's blinking (mode 12) back to the
+        // default blink with it; see `set_default_cursor_blink`.
+        unsafe {
+            ffi::ghostty_terminal_set(self.raw, ffi::OPT_DEFAULT_CURSOR_STYLE, &style as *const c_int as *const c_void);
+        }
     }
 
     /// OSC 10, 11, 12 and 4 for every colour a program changed: the rest are

@@ -259,6 +259,18 @@ unit "the reader not told which clipboard the program named" keep-vt crates/keep
     "s/        Some(reader) => reader(kind),/        Some(reader) => reader(b'c'),/"
 unit "a read of the clipboard put to the app before the one before it is answered" keep crates/keep/src/keeper.rs \
     's/        if reads.queue.len() == 1 {/        if true {/'
+unit "a keeper answers with the mirror's own cursor, not the surface's" keep crates/keep/src/keeper.rs \
+    's/        mirror.terminal.set_default_cursor_style(style);/        let _ = style;/'
+unit "a keeper's cursor said not to blink where the surface's does" keep crates/keep/src/keeper.rs \
+    's/    mirror.terminal.set_default_cursor_blink(mirror.options.blink);/    let _ = \&mirror;/'
+unit "a keeper's cursor handed over as one a program chose" keep crates/keep-vt/src/handover.rs \
+    's|        self.set_default_cursor_style(CursorStyle::BlockHollow); // before any shape is read|        let _ = CursorStyle::BlockHollow;|'
+unit "the cursor's blinking lost in a handover with the default cursor's change" keep-vt crates/keep-vt/src/handover.rs \
+    's/        self.set_default_cursor_blink(blinking);/        let _ = blinking;/'
+unit "a program's blinking lost to the keeper's cursor" keep crates/keep/src/keeper.rs \
+    's/        mirror.blink_owed = Some(blinking);/        let _ = blinking;/'
+unit "a program's blinking said into the middle of a sequence" keep crates/keep/src/keeper.rs \
+    's/            if self.terminal.at_ground() {/            if true {/'
 unit "the attach file's options not read" keep crates/keep/src/keeper.rs \
     's/"mirror" => options.mirror = value.parse().ok().filter(|\&n: \&usize| n > 0),/"mirror" => {}/'
 

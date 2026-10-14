@@ -77,6 +77,11 @@ final class GhosttyApp {
     /// starts the same way, for a program asking.
     private(set) var cursorBlinks = true
 
+    /// The surface's cursor before any program says (`cursor-style`: bar,
+    /// block, underline, block_hollow): what its client's mirror answers a
+    /// program asking (DECRQSS) once it keeps the pane. Nil where unset.
+    private(set) var cursorStyle: String?
+
     /// `clipboard-write`: whether a program may put text on the clipboard
     /// (OSC 52). libghostty refuses for a surface; a kept pane's client
     /// relays it to the app, which refuses the same way (`KeeperWatch`).
@@ -605,6 +610,7 @@ final class GhosttyApp {
         scrollbackLimit = Self.scrollbackLimit(of: config) ?? scrollbackLimit
         clustersGraphemes = Self.graphemeWidthMethod(of: config).map { $0 != "legacy" } ?? true
         cursorBlinks = Self.cursorStyleBlink(of: config) ?? true
+        cursorStyle = Self.enumValue("cursor-style", of: config)
         clipboardWritePolicy = Self.enumValue("clipboard-write", of: config)
         clipboardReadPolicy = Self.enumValue("clipboard-read", of: config)
         themeColours = Self.themeColours(of: config)

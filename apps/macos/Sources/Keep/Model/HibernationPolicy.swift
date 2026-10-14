@@ -67,12 +67,18 @@ enum KeeperProtocol {
     /// for a pane that was kept, which client to take it over from. Nothing
     /// when panes are never let go of: then nobody needs a mirror.
     static func clientOptions(
-        hibernating: Bool, scrollback: UInt, grapheme: Bool, blink: Bool, pid: Int32, take: String?
+        hibernating: Bool, scrollback: UInt, grapheme: Bool, blink: Bool, cursor: String? = nil, pid: Int32,
+        take: String?
     ) -> [String] {
         guard hibernating, scrollback > 0 else { return [] }
         var lines = [
             "mirror=\(scrollback)", "grapheme=\(grapheme ? 1 : 0)", "blink=\(blink ? 1 : 0)", "app=\(pid)",
         ]
+        // The cursor's shape before any program says, as the config has it:
+        // one of libghostty's four words, nothing else passed on.
+        if let cursor, ["bar", "block", "underline", "block_hollow"].contains(cursor) {
+            lines.append("cursor=\(cursor)")
+        }
         if let take, take.hasPrefix("/") { lines.append("take=\(take)") }
         return lines
     }

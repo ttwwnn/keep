@@ -80,6 +80,12 @@ cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage changed nothing
 build "$WORK/Sabotaged.swift" || exit 1
 if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
 
+echo "sabotage: the surface's cursor not passed on"
+sed 's/            lines.append("cursor=\\(cursor)")/            _ = cursor/' "$SOURCE" > "$WORK/Sabotaged.swift"
+cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage changed nothing"; exit 1; }
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
 echo "sabotage: the pane to take over is not named"
 sed 's/if let take, take.hasPrefix("\/") { lines.append("take=\\(take)") }/_ = take/' "$SOURCE" > "$WORK/Sabotaged.swift"
 cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage changed nothing"; exit 1; }
