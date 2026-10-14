@@ -338,14 +338,14 @@ describe("the selection", () => {
 });
 
 describe("the palette's commands", () => {
-  it("the Mac's seventeen and Windows' three, in three groups", async () => {
+  it("the Mac's seventeen and Windows' four, in three groups", async () => {
     vi.resetModules();
     const { commandItems: items } = await import("./items");
     const list = items();
-    expect(list).toHaveLength(20);
+    expect(list).toHaveLength(21);
     const ofGroup = (g: string) => list.filter((i) => i.context === g).length;
-    expect([ofGroup("janela"), ofGroup("workspace"), ofGroup("aparência")]).toEqual([8, 6, 6]);
-    for (const title of ["Mudar o tema…", "Mudar a fonte…", "Redefinir o tamanho do texto", "Usar o tema do Keep", "Encerrar este workspace", "Configurações", "Tela cheia", "Colar imagem"]) {
+    expect([ofGroup("janela"), ofGroup("workspace"), ofGroup("aparência")]).toEqual([9, 6, 6]);
+    for (const title of ["Mudar o tema…", "Mudar a fonte…", "Redefinir o tamanho do texto", "Usar o tema do Keep", "Encerrar este workspace", "Configurações", "Tela cheia", "Colar imagem", "Janela rápida"]) {
       expect(list.map((i) => i.title)).toContain(title);
     }
   });

@@ -115,8 +115,11 @@ não foram vistos no Windows de verdade.
 
 ## Fatia `tabs`
 
-Conferida no Mac (roteiro do app, `src/e2eTabs.ts`, com eventos de ponteiro da própria página, e testes
-do vitest); o mouse real, os cursores e a dica nativa do workspace não foram exercitados no Windows.
+Conferida no Mac e no Windows do CI (roteiro do app, `src/e2eTabs.ts`, com eventos de ponteiro da própria
+página, e testes do vitest); o mouse real, os cursores e a dica nativa do workspace não foram exercitados no
+Windows. A janela do CI deixa 286 px para a lista da barra lateral: o roteiro mostra a linha (`reveal`) antes de
+puxá-la, como uma pessoa faz, e o log do app traz o que a página via em cada arrasto (elemento sob o ponteiro,
+caixa da linha, rolagem da lista, estado do movimento, fim do arrasto por `pointerup`, `blur` ou Esc).
 
 - [x] Reordenar abas por arrasto, na fileira (a aba segue o ponteiro e as outras abrem a lacuna) e na barra
   lateral (cópia na mão, linha apagada no lugar de pouso, lacuna que acompanha), com a ordem no estado
@@ -125,6 +128,11 @@ do vitest); o mouse real, os cursores e a dica nativa do workspace não foram ex
   religado, não refeito, e o nome, o lugar, o painel com o teclado e o estado do Claude vão junto. Soltar
   no cabeçalho põe no fim; soltar sobre uma aba põe antes dela.
 - [x] Arrastar o cabeçalho do workspace reordena a lista, com a mesma lacuna.
+- [x] Lista mais longa que a janela: com o ponteiro a menos de 36 px da borda de cima ou de baixo a lista rola
+  sozinha, mais depressa quanto mais perto (no máximo 14 px por quadro, também além da borda), o pouso é
+  refeito a cada rolagem mesmo com o ponteiro parado, e soltar faz o que estava mostrado (`drag.ts`
+  `scrollStep`/`autoScroll`, `ui/tabDrag.ts`). Antes, a velocidade crescia sem limite além da borda e a soltura
+  refazia a conta com a lista já rolada: a aba voltava sem mudar de lugar.
 - [x] Alça do painel (44x14, três pontos, só com mais de um painel): cartão com o texto do painel, pouso nos
   quatro lados e na troca (`api.rearrange`), soltar numa aba da fileira junta o painel a ela, soltar fora o
   destaca em aba nova, 0,45 s sobre uma aba a abre (a mola). Trocar dois painéis mantém o layout e troca
@@ -152,19 +160,65 @@ do vitest); o mouse real, os cursores e a dica nativa do workspace não foram ex
 
 ## Fatia `terminal`
 
-- [ ] Caminhos de arquivo clicáveis (relativos ao cwd, ~, :linha:col, quebrados
-  em duas linhas), clique abre; menu Abrir / Mostrar no Explorer / Copiar.
-- [ ] URLs mailto: e file://; Ctrl+clique.
-- [ ] Endereços web: clique simples abre no navegador, inclusive o link OSC 8
-  atrás do texto (markdown do Claude Code) e o endereço quebrado em linhas;
-  menu Abrir link / Copiar link (Mac: 0e8c0bc). Com o mouse tomado pelo
-  programa (Claude Code em tela cheia), o clique simples deixa o endereço
-  para ele, que já o abre (Mac: 62be02e).
-- [ ] OSC 52 com política; confirmar colagem multi-linha; colar arquivo copiado.
-- [ ] Soltar arquivos: realce do painel sob o ponteiro.
-- [ ] Teclado kitty (CSI u): Ctrl+Enter, desambiguação.
-- [ ] Cut multi-linha no prompt do Claude.
-- [ ] Título OSC imediato (onTitleChange); grafemas Unicode (modo 2027).
+- [x] Caminhos de arquivo clicáveis (`paths.ts`, `links.ts`, `links.rs`): `C:\x\y.txt`, UNC, `\\wsl$`, `.\rel`,
+  `..\rel`, `/mnt/c/...`, `~/x`, relativos ao cwd do painel, `:linha` e `:linha:coluna` (e `(linha,coluna)`),
+  quebrados em linhas pelo ajuste, com espaço escapado ou entre aspas. Só vira link o que o sistema confirma
+  (`find_paths`: 2 s no máximo, sem nomes de dispositivo). 26 testes; visto no app com eventos de mouse reais.
+- [x] Endereços web (`urls.ts`): https, http, ftp, mailto, `www.` e `file:` (que vira caminho), pontuação do fim
+  da frase fora, link quebrado em até três linhas pela linha que vai até a borda, e o OSC 8 atrás do texto.
+  17 testes; visto no app.
+- [x] Clique simples (500 ms depois do duplo clique, sem arrasto, painel já com o foco) ou Ctrl+clique abrem;
+  sublinhado sempre sob o ponteiro; botão direito: sobre o caminho Abrir / Mostrar no Explorer / Copiar o
+  caminho, sobre o endereço Abrir link / Copiar link, e nada disso onde não há nada sob o ponteiro.
+- [~] O que o Windows faz com o clique: `open_path`, `reveal_path` e `open_url` (o plugin opener: ShellExecute e
+  `SHOpenFolderAndSelectItems`) compilam para o Windows (`cargo check --target x86_64-pc-windows-msvc`) e não
+  rodaram nele; executáveis e scripts são mostrados no Explorer em vez de executados (o Mac faz o mesmo), e
+  `open_url` recusa o que não é http, https, mailto ou ftp (o Mac entrega `vscode://` e `tel:` ao sistema no
+  ⌘-clique; aqui não: texto de programa não inicia programa). Diferença do Mac: com o mouse tomado pelo programa (Claude Code em
+  tela cheia) o Mac deixa o endereço para ele (62be02e), que o abre porque o terminal se diz ghostty; aqui o
+  terminal se diz `TERM_PROGRAM=keep`, então o clique simples continua abrindo. Não visto com o Claude Code no
+  Windows.
+- [x] OSC 52 (`osc52.ts`): escrita permitida só no `c` (`s` e `p` descartados); leitura pergunta primeiro
+  ("Permitir a leitura da área de transferência?", com prévia) e responde `ESC ] 52 ; c ; base64 ESC \`. 12
+  testes; visto no app.
+- [x] Colar (`paste.ts`): sem o bracketed paste, qualquer quebra de linha pergunta ("Colar isto?", prévia de 400
+  caracteres; o Mac só conta `\n`, aqui `\r` também); com ele, só um `ESC [ 201 ~` dentro do texto pergunta;
+  os controles viram espaço. Testes e visto no app.
+- [ ] Colar arquivo copiado no Explorer (digitar o caminho): exigiria ler o `CF_HDROP` da área de transferência
+  do Windows, código `unsafe` do Win32 que só compila aqui e não se prova; o Mac também só lê texto.
+- [~] Soltar arquivos (`drop.ts`): o painel sob o ponteiro se realça e os caminhos são digitados como o shell
+  do painel os lê (PowerShell: entre aspas, ou aspas simples se há `$`, crase ou `'`; WSL: o caminho Linux,
+  `/mnt/c/...`, escapado como o Mac; outros: aspas duplas se há espaço). Lógica testada; o arrasto do sistema
+  não se exercita daqui (o realce e o drop reais ficam para o Windows).
+- [~] Teclado Kitty (`kitty.ts`, `kittyKeys.ts`): o programa liga o protocolo (`CSI > flags u`, pilha de oito por
+  tela, `CSI < n u`, `CSI = flags ; modo u`, `CSI ? u` respondida) e as teclas saem como ele pediu: Shift+Enter,
+  Ctrl+Enter, Esc, Ctrl+Shift+letra, setas e F-teclas com modificadores, eventos, alternativas, todas as
+  teclas e texto associado; é o codificador do Ghostty (os seus testes, menos os de CapsLock e NumLock, que o
+  Mac nunca informa) e as duas escolhas do Mac, Shift+Tab sempre `ESC [ Z` e Alt+Backspace sempre `ESC DEL`.
+  O texto digitado, o AltGr, a composição e as teclas mortas ficam com o xterm.js; sem o protocolo nada muda e
+  Shift+Enter segue mandando `ESC CR`. Visto no app (Mac) com uma sonda que liga as flags 5 (as do Claude
+  Code) e 31: todas as teclas acima, o `CSI = n ; 1 u` do repaint devolvendo as flags a um app reaberto. No
+  Windows resta o que só um ConPTY mostra: lendo o OpenConsole (`main`), a saída do programa vai ao terminal
+  como foi escrita e uma sequência de teclas que ele não conhece chega ao programa como texto; não rodou. O
+  passo "teclado Kitty" do roteiro do CI (`e2e/sonda-teclado.mjs`) confere nos dois sentidos, com um Node de
+  verdade no ConPTY; se ele falhar, o ConPTY não deixa passar `CSI > u` ou `CSI ? u`.
+- [~] Cortar (Ctrl+X) na caixa de prompt do Claude com várias linhas e na seleção que o próprio programa copiou
+  (`cut.ts`): o CutSelection do Mac, testado com as oito gravações reais da caixa (`tools/cut-test`); a tecla
+  no app não foi exercitada.
+- [x] Título OSC imediato: `onTitleChange` pede a lista ao keepd em 120 ms (`refreshSoon`), em vez de esperar o
+  giro do segundo; visto no app em 0,3 s, e o roteiro do CI mede.
+- [ ] Grafemas Unicode (modo 2027): o `@xterm/addon-unicode-graphemes` 0.4.0 existe para o xterm 6.0.0, mas
+  como "experimental", o xterm 6.0.0 não trata o modo 2027 e o grid do keepd só agrupa grafemas quando o
+  programa o liga; ligado fixo, desalinharia as linhas. Pede uma dependência nova (o `node_modules` é de
+  todas as árvores) e `CSI ? 2027 h/l` e a consulta DECRQM tratados na página, e não se prova daqui.
+- [~] Responder sozinho "Confiar nesta pasta?" do Claude Code (`trust.ts`): a seta até o "Yes, I trust this
+  folder" e, quando o próximo olhar a encontra lá, Enter; nunca Enter no "No, exit". O layout antigo e o
+  numerado; o marcador `~/.local/state/keep/trust/<pid do shell>` do vigia do shell evita a seta dupla. Visto
+  no app (Mac) com um `claude` de mentira que desenha a pergunta; o Windows (o marcador com `\`) e o Claude
+  Code de verdade não.
+- [x] Verificação no roteiro do CI (`e2eTerminal.ts`): o protocolo pelo PTY (acima), o título que o programa
+  põe chegar à aba e os caminhos que o sistema confirma (pasta, arquivo, ausente, nomes de dispositivo). Os
+  três passaram no Mac com o roteiro inteiro; no Windows quem diz é o CI.
 
 ## Fatia `ai`
 
@@ -247,9 +301,81 @@ formato do Mac) e quem prende é o `keep ia confinar -- <programa>`.
   movido (não copiado) de fora para dentro da pasta presa leva a permissão que
   tinha, e a IA não o abre.
 
+## Fatia `quick` (janela rápida)
+
+O terminal que desce do topo da tela com um atalho global (o ⌃` do Mac). A janela é a metade passageira: o
+shell é uma aba do workspace `quick` do keepd, que sobrevive à janela, ao app e ao login, e que nenhuma outra
+parte da janela lista. Código: `src-tauri/src/quick.rs` (atalho, janela, deslize), com `quick/geometry.rs` (as
+medidas e as curvas) e `quick/shortcut.rs` (o atalho e a tecla do layout) à parte para serem testados sem janela;
+`src/quick/` (a página do painel, o teclado dele, o que a janela principal mostra), `src/quickWorkspace.ts` (o
+filtro) e `capabilities/quick.json`.
+
+Conferida no Mac pelo roteiro do app (`src/e2eQuick.ts`, sete passos contra um keepd de verdade: atalho,
+geometria, workspace oculto, shell vivo, volta ao mesmo shell, troca do atalho) e à mão, com um atalho de teste
+apertado por tecla de verdade pelo HID: a entrada, a saída, o clique fora, o shell que acaba, o tema e o zoom
+lidos do estado, a paleta, as Configurações, o atalho recusado e a sugestão. O que é só do Windows foi
+compilado (`cargo check --target x86_64-pc-windows-msvc`) e não rodou num Windows; o CI confere o que a janela
+real pode dizer de si (o atalho entregue e a geometria; o foco não: uma máquina sem ninguém na frente pode não
+dá-lo).
+
+- [x] O workspace `quick` é invisível para o resto: sai de `api.list` e `api.search` (`quickWorkspace.ts`), e
+  portanto da barra lateral, do Ir para, da paleta, da busca em tudo, da ordem e do restauro (um keepd só com ele
+  conta como vazio para o `restoreIfEmpty`, pelo código: não exercitado); o retrato do core já o ignorava (`RAPIDO`). Visto no Mac: a barra lateral
+  sem ele, `keep ls` com ele, `state.json` sem uma palavra sobre ele.
+- [~] Atalho global Ctrl+` (`tauri-plugin-global-shortcut`, `RegisterHotKey`). No Windows o atalho é registrado
+  pela tecla que o layout em uso dá àquele lugar do teclado (`MapVirtualKeyW` por scancode, depois a tabela do
+  `global-hotkey`, que é a do layout US), para que a tecla à esquerda do 1 seja a mesma em US, ABNT2, alemão e
+  AZERTY, e uma letra seja a do lugar, não a que digita (como o `kVK_ANSI_Grave` do Mac). A conta é pura e
+  testada com layouts de mentira; a chamada ao sistema e o que ela devolve num ABNT2 de verdade não foram vistos
+  (a suposição é que o thread tem o layout em uso).
+- [x] Configurável em Configurações, Janela rápida: Alterar (aperta o novo), Usar o padrão, Abrir agora. Fica em
+  `quick.json` ao lado do `state.json` (só o que a pessoa escolheu). Recusa Esc e um atalho sem Ctrl, Alt ou Win
+  (a não ser tecla de função); o novo é tomado antes de soltar o antigo, então um recusado deixa tudo como estava.
+- [x] Atalho recusado pelo sistema (outro programa o tem): aviso ao abrir o app, o motivo nas Configurações e um
+  atalho livre para pôr no lugar (Ctrl+Shift+`, Ctrl+Alt+`, Ctrl+Shift+K, Ctrl+Alt+Espaço: o que se pode tomar
+  agora, provado tomando e devolvendo), com um botão que o usa. Visto no Mac com um atalho que ele não registra.
+- [x] Segunda janela `quick`, feita na primeira vez e reaproveitada: sem moldura, sempre no topo, fora da barra de
+  tarefas, na largura do monitor onde está o ponteiro e 42% da altura útil, pendurada no topo da área útil (as
+  medidas de `QuickTerminal.swift`, testadas em Rust com monitores de coordenada negativa e ponteiro entre
+  monitores). Desliza de cima em 0,18 s (ease-out) e sai em 0,15 s (ease-in), as curvas do Core Animation, e um
+  deslize novo vira de onde a janela está. Some ao perder o foco que teve; fechá-la (Alt+F4) só a esconde, para
+  reaproveitá-la (isso não foi exercitado: no Mac de desenvolvimento nada fecha uma janela sem moldura). Esc é do
+  programa, como no Mac. A primeira vez espera a página desenhar (até 3 s) para não entrar em branco.
+- [~] No Windows: a sombra do sistema como borda (`shadow`), sem o arredondamento nem o filete do DWM
+  (`DWMWA_WINDOW_CORNER_PREFERENCE`, `DWMWA_BORDER_COLOR`), e a janela vai para a área de trabalho virtual em uso
+  (`IVirtualDesktopManager`, o `canJoinAllSpaces` do Mac). A janela sem moldura com sombra é, no Windows, maior que
+  o painel (a borda invisível do quadro: 8 px nos lados e embaixo, 1 em cima no Windows 11, a escala do monitor), então
+  o que se posiciona é a parte desenhada (`Margins`, medida na própria janela pela diferença entre a posição interna
+  e a externa) e o roteiro compara essa parte com o lugar pedido. Só compilado. O foco é pedido de novo até quatro vezes
+  se o sistema demora a dá-lo (o Windows só dá o teclado a quem recebeu a última entrada).
+- [ ] Os cantos de baixo arredondados em 10 pt e o fundo translúcido do painel do Mac: a janela é opaca, porque
+  `transparent` pede API privada no Mac e, no Windows, uma janela transparente deixa a faixa transparente pegar o
+  mouse e perde a sombra do sistema. O contorno é o do DWM do Windows.
+- [x] A página `?quick=1` (a mesma página, `main.tsx`) mostra só o primeiro terminal vivo do workspace, sem barra
+  lateral nem fileira de abas, nas margens do painel do Mac (8 nos lados, 6 em cima, 8 embaixo). Se o shell
+  acaba, abre outra aba, inclusive quando o keepd devolve o número da que morreu. Tema, fonte, zoom e cursor são os
+  da janela principal, lidos do `state.json` a cada entrada por `quick_look`, que só lê (não faz as recuperações,
+  os avisos nem o travamento do `load_state`) e que nada grava: o estado é da janela principal. Teclado (a tecla
+  que não é da janela é de `terminalKey`: Kitty, Ctrl+C numa seleção, Ctrl+X, Shift+Enter), menu de contexto,
+  arquivos soltos e a pergunta da colagem de várias linhas são os de uma aba. Vistos no painel: as teclas da
+  janela engolidas sem deixar caractere no shell, Ctrl+Shift+L, o menu de contexto (Limpar a tela, e o teclado
+  volta ao terminal). Não exercitados nele: copiar e colar (a área de transferência é da pessoa), soltar
+  arquivos e a pergunta da colagem de várias linhas; são o código das abas, ligado à página do painel.
+- [x] "Janela rápida" na paleta, com o atalho em uso desenhado, ligada por `registerCommand` (`quick/main.ts`).
+- [x] Ciclo de vida: a janela é do mesmo processo (o single-instance não vê um segundo app); fechar a janela
+  principal sai do app, como no Mac, e leva a rápida junto; sem isso a rápida escondida contaria ao Tauri como
+  janela aberta e deixaria um processo sem nada à vista (`on_run_event`); sair deixa o keepd.
+- [ ] No Mac, o `work_area` do tao não desconta a barra de menus, e o painel de desenvolvimento a cobre; no
+  Windows é o `rcWork`, que desconta a barra de tarefas.
+- Para quem for ver no Windows: o `app.log` (`%LOCALAPPDATA%\Keep\app.log`) diz, com `janela rápida:`, se o atalho
+  foi registrado, quanto a página levou a ficar pronta e se a janela recebeu o foco ao entrar; com a variável
+  `KEEP_QUICK_TRACE=1` ele também registra cada passo do deslize e cada ganho e perda de foco. O VS Code usa
+  Ctrl+` para o terminal dele, e o atalho global o toma enquanto o Keep estiver aberto: quem usa os dois escolhe
+  outro nas Configurações.
+
 ## Fatia `windows` (várias janelas)
 
 - [ ] Nova janela; lista de workspaces, aba e painel por janela; mover
   workspace entre janelas; arrancar a aba da faixa.
-- [ ] Janela rápida global (Ctrl+`), com o workspace `quick` oculto.
+- [~] Janela rápida global (Ctrl+`), com o workspace `quick` oculto: feita na fatia `quick`, acima.
 - [ ] Estado das janelas (quadro, tela cheia).

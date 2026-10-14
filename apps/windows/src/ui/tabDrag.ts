@@ -114,6 +114,8 @@ export type SidebarMove =
       /** The place among its own group's tabs it would take. */
       to: number;
       slid: number[];
+      /** The pointer is over the tabs of its own group, where letting go keeps the order shown. */
+      onGroup: boolean;
       /** Another workspace the pointer is over, and the tab of it the dragged one would go before. */
       into: string | null;
       before: number | null;
@@ -163,47 +165,51 @@ export function startSidebarTabDrag(event: PointerEvent, workspace: string, tabs
   // The place it would take among its own group's tabs: kept while the pointer is elsewhere.
   let place = index;
   const dragged = tabs[index];
+  /** What the pointer is over, now: asked again whenever it moves and whenever the list scrolls under it. */
+  const look = (at: Point) => {
+    const y = inList(list, at);
+    const onGroup = y >= spans[0].start && y < spans[spans.length - 1].start + spans[spans.length - 1].size;
+    const elsewhere = onGroup ? null : overWorkspace(at);
+    const into = elsewhere && elsewhere.workspace !== workspace ? elsewhere : null;
+    if (onGroup) place = Math.max(0, slotAt(spans, y));
+    sidebarMove.value = {
+      kind: "tab",
+      workspace,
+      root: dragged.root.id,
+      from: index,
+      to: place,
+      slid: slides(pitch, index, place),
+      onGroup,
+      into: into?.workspace ?? null,
+      before: into?.before ?? null,
+    };
+  };
   trackDrag(event, {
     start(at) {
       spans = listSpans(list, [...group.querySelectorAll(".tab-row")]);
       if (spans.length !== tabs.length) return false;
       pitch = pitches(spans);
       ghost = hangGhost(row, at);
-      stopScrolling = autoScroll(list, () => pointer);
+      stopScrolling = autoScroll(list, () => pointer, look);
       return true;
     },
     move(at) {
       pointer = at;
       ghost?.follow(at);
-      const y = inList(list, at);
-      const inGroup = y >= spans[0].start && y < spans[spans.length - 1].start + spans[spans.length - 1].size;
-      const elsewhere = inGroup ? null : overWorkspace(at);
-      const into = elsewhere && elsewhere.workspace !== workspace ? elsewhere : null;
-      if (inGroup) place = Math.max(0, slotAt(spans, y));
-      sidebarMove.value = {
-        kind: "tab",
-        workspace,
-        root: dragged.root.id,
-        from: index,
-        to: place,
-        slid: slides(pitch, index, place),
-        into: into?.workspace ?? null,
-        before: into?.before ?? null,
-      };
+      look(at);
     },
-    end(at, dropped) {
+    end(_at, dropped) {
       const moved = sidebarMove.value;
       stopScrolling?.();
       ghost?.remove();
       sidebarMove.value = null;
       if (!dropped || moved?.kind !== "tab") return;
+      // What was shown when it was let go is what is done.
       if (moved.into !== null) {
         void moveTabTo(workspace, dragged, moved.into, moved.before);
         return;
       }
-      const y = inList(list, at);
-      const onGroup = y >= spans[0].start && y < spans[spans.length - 1].start + spans[spans.length - 1].size;
-      if (onGroup && moved.to !== moved.from) {
+      if (moved.onGroup && moved.to !== moved.from) {
         reorderTabs(workspace, moveId(tabs.map((t) => t.root.id), dragged.root.id, moved.to));
       }
     },
@@ -226,20 +232,23 @@ export function startWorkspaceDrag(event: PointerEvent, name: string): void {
   let ghost: Ghost | null = null;
   let stopScrolling: (() => void) | null = null;
   let pointer: Point | null = null;
+  const look = (at: Point) => {
+    const to = Math.max(0, slotAt(spans, inList(list, at)));
+    sidebarMove.value = { kind: "workspace", name, from: index, to, slid: slides(pitch, index, to) };
+  };
   trackDrag(event, {
     start(at) {
       spans = listSpans(list, [...list.querySelectorAll(".workspace")]);
       if (spans.length !== names.length || index < 0) return false;
       pitch = pitches(spans);
       ghost = hangGhost(header, at);
-      stopScrolling = autoScroll(list, () => pointer);
+      stopScrolling = autoScroll(list, () => pointer, look);
       return true;
     },
     move(at) {
       pointer = at;
       ghost?.follow(at);
-      const to = Math.max(0, slotAt(spans, inList(list, at)));
-      sidebarMove.value = { kind: "workspace", name, from: index, to, slid: slides(pitch, index, to) };
+      look(at);
     },
     end(_at, dropped) {
       const moved = sidebarMove.value;

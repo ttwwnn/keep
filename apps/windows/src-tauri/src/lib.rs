@@ -9,8 +9,10 @@ mod confinement;
 mod daemon;
 mod fonts;
 mod ia;
+mod links;
 mod memory;
 mod names;
+mod quick;
 mod sessions;
 mod settings;
 mod status;
@@ -441,6 +443,31 @@ fn path_exists(path: String) -> bool {
     std::path::Path::new(&path).exists()
 }
 
+/// For each group of spellings of one path the terminal printed, the first
+/// that exists; see `links`.
+#[tauri::command]
+async fn find_paths(groups: Vec<Vec<String>>) -> Answer<Vec<Option<links::Hit>>> {
+    tauri::async_runtime::spawn_blocking(move || links::find(groups)).await.map_err(|e| e.to_string())
+}
+
+/// Open a file or folder the terminal printed, with what the system opens it with.
+#[tauri::command]
+async fn open_path(path: String) -> Answer<()> {
+    tauri::async_runtime::spawn_blocking(move || links::open(&path)).await.map_err(|e| e.to_string())?
+}
+
+/// Show a file the terminal printed in the file manager, selected.
+#[tauri::command]
+async fn reveal_path(path: String) -> Answer<()> {
+    tauri::async_runtime::spawn_blocking(move || links::reveal(&path)).await.map_err(|e| e.to_string())?
+}
+
+/// Open an address the terminal printed: a page, a mail or a phone link.
+#[tauri::command]
+async fn open_url(url: String) -> Answer<()> {
+    tauri::async_runtime::spawn_blocking(move || links::open_url(&url)).await.map_err(|e| e.to_string())?
+}
+
 /// For the scripted check: have the test photograph the screen now, as
 /// `<name>.png` beside the report, and wait until it has.
 #[tauri::command]
@@ -501,7 +528,8 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| windows::show_front(app)))
         .plugin(
             tauri_plugin_window_state::Builder::new()
-                // The first window's size and place; the others' are kept with their records (windows.rs).
+                // The first window's size and place. The others' are kept with their records (windows.rs), and the
+                // drop-down terminal is placed by quick.rs at every showing, never where it was left.
                 .with_filter(|label| label == "main")
                 .with_state_flags(
                     tauri_plugin_window_state::StateFlags::SIZE
@@ -513,10 +541,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        // Ctrl+` from anywhere: the drop-down terminal (quick.rs).
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(sessions)
         .manage(windows::Hub::default())
+        .manage(quick::Quick::default())
         .setup(|app| {
             windows::start(app.handle());
+            quick::setup(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -526,6 +558,7 @@ pub fn run() {
             }
             windows::on_window_event(window, event);
         })
+        .on_window_event(quick::on_window_event)
         .invoke_handler(tauri::generate_handler![
             startup,
             ensure_daemon,
@@ -570,7 +603,16 @@ pub fn run() {
             app_log,
             confinement::confinement_all,
             confinement::confinement_set,
+            quick::quick_toggle,
+            quick::quick_status,
+            quick::quick_set_shortcut,
+            quick::quick_ready,
+            quick::quick_look,
             path_exists,
+            find_paths,
+            open_path,
+            reveal_path,
+            open_url,
             e2e_shot,
             e2e_fake,
             e2e_report,
@@ -601,6 +643,8 @@ pub fn run() {
                 windows::leave(app);
                 on_exit.detach_all();
             }
+            // The panel, kept hidden between uses, would keep the app alive once the other windows are gone.
+            tauri::RunEvent::WindowEvent { .. } => quick::on_run_event(app, &event),
             _ => {}
         });
 }

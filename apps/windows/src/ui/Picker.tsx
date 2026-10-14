@@ -168,7 +168,7 @@ function Entry(props: {
           <span class="pk-command-title">
             <Marked text={item.title} ranges={on(lit, "title")} />
           </span>
-          <KeyCaps keys={spec.keys} />
+          <KeyCaps keys={spec.chord?.() ?? spec.keys} />
         </>
       );
       break;

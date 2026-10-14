@@ -143,6 +143,21 @@ impl Doc {
     pub fn to_value(&self) -> Value {
         json!({ "version": 2, "shared": self.shared, "windows": self.windows })
     }
+
+    /// What the app keeps, as one object, in the shape the state had while the app had one window: the app's
+    /// part and the first window's own. What the drop-down terminal reads to wear the theme, the face and the
+    /// zoom (src/state.ts `normalizeState` takes it as it takes a state file). None when nothing is kept yet.
+    pub fn flat(&self) -> Option<Value> {
+        let main = self.windows.get(MAIN).map(without_frame);
+        if self.shared.is_empty() && main.is_none() {
+            return None;
+        }
+        let mut flat = self.shared.clone();
+        if let Some(Value::Object(own)) = main {
+            flat.extend(own);
+        }
+        Some(Value::Object(flat))
+    }
 }
 
 /// A record without the frame, which the page does not keep.
@@ -547,6 +562,11 @@ pub fn start(app: &AppHandle) {
     hub(app).change(app, MAIN, |inner| ((), inner.known(MAIN)));
 }
 
+/// The state as it stands, as one object: for whoever only looks at it (`Doc::flat`); it changes nothing.
+pub fn look(app: &AppHandle) -> Option<Value> {
+    hub(app).with(app, |inner| inner.doc.flat())
+}
+
 /// The app is leaving: what is on disk is written, and the windows closing from here on put nothing away.
 pub fn leave(app: &AppHandle) {
     let hub = hub(app);
@@ -912,6 +932,31 @@ mod tests {
         // A record that is not an object is not a window.
         let odd = Doc::from_value(json!({"version": 2, "shared": {"zoom": 1}, "windows": {"main": 3, "w1": {"order": []}}}));
         assert_eq!(odd.windows.keys().collect::<Vec<_>>(), ["w1"]);
+    }
+
+    #[test]
+    fn what_the_drop_down_terminal_reads_is_the_state_in_one_piece() {
+        let mut doc = Doc::default();
+        assert_eq!(doc.flat(), None, "nothing kept yet");
+        doc.shared = json!({"theme": "Nord", "zoom": 1.25, "hidden": ["x"]}).as_object().unwrap().clone();
+        assert_eq!(doc.flat().unwrap()["theme"], json!("Nord"));
+        doc.windows.insert("main".into(), json!({"order": ["a"], "sidebar": {"visible": false, "width": 250}, "frame": {"x": 1}}));
+        doc.windows.insert("w1".into(), json!({"order": ["b"]}));
+        let flat = doc.flat().unwrap();
+        assert_eq!(flat["zoom"], json!(1.25));
+        assert_eq!(flat["order"], json!(["a"]), "the first window's, not another's");
+        assert_eq!(flat["sidebar"]["visible"], json!(false));
+        assert!(flat.get("frame").is_none(), "no frame: it is not the state's");
+        // What the page makes of it is what it made of a state file: every field of the old state is there.
+        let old = json!({
+            "version": 1, "order": [], "folded": [], "tabNames": {}, "workspaceNames": {}, "active": null, "lastTab": {},
+            "tabOrder": {}, "hidden": [], "verticalTabs": false, "zoom": 2, "appearance": "dark",
+            "sidebar": {"visible": true, "width": 250}, "font": {"family": "", "size": 0}, "theme": "", "terminal": {}, "daemon": ""
+        });
+        let again = Doc::from_value(old.clone()).flat().unwrap();
+        for key in old.as_object().unwrap().keys().filter(|k| *k != "version") {
+            assert!(again.get(key).is_some(), "{key}");
+        }
     }
 
     #[test]

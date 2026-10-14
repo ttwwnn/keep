@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "quick",
+  "description": "O que a janela rápida pode pedir ao sistema: o terminal, a área de transferência e os links. Da janela, só o que o próprio terminal usa; quem a move é o app.",
+  "windows": ["quick"],
+  "permissions": [
+    "core:default",
+    "opener:allow-open-url",
+    "clipboard-manager:allow-read-text",
+    "clipboard-manager:allow-write-text"
+  ]
+}

@@ -39,6 +39,8 @@ import {
 } from "./store";
 import { appearanceSteps } from "./e2eAppearance";
 import { paletteSteps } from "./e2ePalette";
+import { quickSteps } from "./e2eQuick";
+import { terminalSteps } from "./e2eTerminal";
 import { viewKey } from "./terminals";
 import { menu } from "./ui/common";
 
@@ -183,6 +185,8 @@ export async function runE2E(): Promise<void> {
     return "done";
   });
 
+  await terminalSteps(step, { waitFor, workspace: WORKSPACE, windows });
+
   await appearanceSteps(step, WORKSPACE);
 
   if (info.value?.e2eIa) await aiSteps(step, info.value.e2eIa === "real");
@@ -217,6 +221,9 @@ export async function runE2E(): Promise<void> {
 
   await tabsSteps(step, windows, WORKSPACE);
   await windowsSteps(step, windows);
+
+  // Last: the panel takes the keyboard when it comes in, and nothing after it should have to ask for it back.
+  await quickSteps(step, { waitForAsync });
 
   const tab = firstTab();
   const report = {

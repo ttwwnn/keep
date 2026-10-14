@@ -19,15 +19,6 @@ import { putAwayWith, putAwayWithout } from "./putAway";
 /** The window the app starts with: slot 0, as the macOS app's first window. */
 export const MAIN_LABEL = "main";
 
-/**
- * The quick terminal's workspace (the drop-down window's): it is that
- * window's, not any other's, and so no window lists it, takes it or puts it
- * away. The one place that says which workspace that is.
- */
-export const QUICK_WORKSPACE = "quick";
-
-export const isQuickWorkspace = (name: string): boolean => name === QUICK_WORKSPACE;
-
 // ------------------------------------------------------------------ which window
 
 /** The window of a slot: `main` for the first, `w1`, `w2`… for the rest. */
@@ -107,10 +98,10 @@ export function readPeers(raw: unknown): Peer[] {
   return peers;
 }
 
-/** The workspaces a window lists: its order less the ones put away, and never the quick terminal's. */
+/** The workspaces a window lists: its order less the ones put away. (The quick terminal's is never in the list the window is given: quickWorkspace.ts.) */
 export function carriedOf(order: readonly string[], hidden: readonly string[]): string[] {
   const away = new Set(hidden);
-  return order.filter((name) => !away.has(name) && !isQuickWorkspace(name));
+  return order.filter((name) => !away.has(name));
 }
 
 /** Whether a window other than `me` lists the workspace. */
@@ -133,7 +124,7 @@ export function carriedByAll(peers: readonly Peer[], me: string, mine: readonly 
  */
 export function orphansOf(running: readonly string[], listed: ReadonlySet<string>, hidden: readonly string[]): string[] {
   const away = new Set(hidden);
-  return running.filter((name) => !listed.has(name) && !away.has(name) && !isQuickWorkspace(name));
+  return running.filter((name) => !listed.has(name) && !away.has(name));
 }
 
 /** The oldest window: the one that takes what nobody lists and does what the app does once. */

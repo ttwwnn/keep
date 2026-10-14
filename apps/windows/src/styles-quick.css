@@ -1,0 +1,53 @@
+/* The drop-down terminal: its own window (quick/boot.tsx) and its part of the settings. */
+
+/* ------------------------------------------------------------ the window */
+
+/* The terminal, in the margin the Mac's panel gives it: 8 on the sides, 6 above, 8 below
+   (QuickTerminal.swift). The ground is the terminal's own, so the margin continues it. */
+html.quick,
+html.quick body,
+html.quick #app {
+  background: var(--ground, #282c34);
+}
+
+.quick-shell {
+  position: fixed;
+  inset: 0;
+  padding: 6px 8px 8px;
+  background: var(--ground);
+  overflow: hidden;
+}
+
+.quick-host {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+/* A question (the paste of many lines) in a window this short: the card near the top, and its text scrolls. */
+html.quick .modal-backdrop {
+  padding-top: 6px;
+}
+
+/* ------------------------------------------------------------ the settings */
+
+.quick-caps .cap {
+  min-width: 22px;
+  height: 22px;
+  background: var(--wash-strong);
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.quick-listening {
+  font: 12.5px var(--ui-font);
+  color: var(--ink-resting);
+}
+
+.quick-problem {
+  color: var(--attention);
+}
+
+.quick-problem .small-button {
+  margin-left: 4px;
+}

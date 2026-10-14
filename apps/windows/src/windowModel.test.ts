@@ -13,7 +13,6 @@ import {
   frameOfTornTab,
   freeLabel,
   isAppWindow,
-  isQuickWorkspace,
   labelOfSlot,
   leaderOf,
   orphansOf,
@@ -73,11 +72,9 @@ describe("what a window says of itself", () => {
     expect(leaderOf(peers)).toBe("main");
     expect(leaderOf([])).toBeNull();
   });
-  it("lists the workspaces of the order that are not put away, and never the quick terminal's", () => {
-    expect(carriedOf(["a", "b", "quick", "c"], ["b"])).toEqual(["a", "c"]);
+  it("lists the workspaces of the order that are not put away", () => {
+    expect(carriedOf(["a", "b", "c"], ["b"])).toEqual(["a", "c"]);
     expect(carriedOf([], ["b"])).toEqual([]);
-    expect(isQuickWorkspace("quick")).toBe(true);
-    expect(isQuickWorkspace("Quick")).toBe(false);
   });
   it("knows when another window lists a workspace", () => {
     const peers = [peer("main", ["a", "b"]), peer("w1", ["b", "c"])];
@@ -104,9 +101,6 @@ describe("the workspaces nobody lists", () => {
   it("are the running ones no window lists and nobody put away, in the daemon's order", () => {
     const listed = new Set(["a", "c"]);
     expect(orphansOf(["a", "b", "c", "d", "e"], listed, ["d"])).toEqual(["b", "e"]);
-  });
-  it("are not the quick terminal's", () => {
-    expect(orphansOf(["quick", "a"], new Set(), [])).toEqual(["a"]);
   });
   it("are none when every window lists what runs", () => {
     expect(orphansOf(["a", "b"], new Set(["a", "b"]), [])).toEqual([]);

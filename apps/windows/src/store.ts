@@ -47,6 +47,7 @@ import { keepShares, moveShares } from "./splits";
 import { listed, neighbour, stillRunning } from "./putAway";
 import { arrangeTabs, heirsOf, insertBefore, memberIds, pruneOrders, substitute } from "./tabOrder";
 import { TerminalManager, viewKey, type TermView } from "./terminals";
+import { TrustWatch, type TrustPane } from "./trust";
 import { DEFAULT_FONT_SIZE, applyPalette, onSystemAppearanceChange, resolvePalette } from "./theme";
 import { loadThemes, themePreview } from "./themes";
 import {
@@ -58,7 +59,7 @@ import {
   type WorktreeAnswer,
   type WorktreeTarget,
 } from "./worktrees";
-import { adopt, carriedByAll, carriedOf, isQuickWorkspace, orphansOf, readPeers, remove } from "./windowModel";
+import { adopt, carriedByAll, carriedOf, orphansOf, readPeers, remove } from "./windowModel";
 import { isLeader, peers, windowLabel } from "./windowPeers";
 import { joinState } from "./windowState";
 import { zoomStep, zoomedSize } from "./zoom";
@@ -133,6 +134,8 @@ export interface DialogField {
 export interface Dialog {
   title: string;
   message?: string;
+  /** Text the question is about, shown as it is in a box under the message. */
+  preview?: string;
   fields?: DialogField[];
   buttons: DialogButton[];
   resolve: (result: { button: string; values: Record<string, string> } | null) => void;
@@ -201,7 +204,7 @@ const orphans = computed(() =>
 export const shownWorkspaces = computed(() => {
   const mine = new Set(gui.value.order);
   const taken = isLeader.value ? new Set(orphans.value) : null;
-  const here = orderedWorkspaces.value.filter((w) => !isQuickWorkspace(w.name) && (mine.has(w.name) || taken?.has(w.name)));
+  const here = orderedWorkspaces.value.filter((w) => mine.has(w.name) || taken?.has(w.name));
   return listed(here, gui.value.hidden);
 });
 
@@ -398,6 +401,22 @@ async function refreshOnce(): Promise<void> {
     // say. Its tabs are gone with it, which the core's restore is for.
     void api.ensureDaemon().catch(() => {});
   }
+}
+
+let soonTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * Ask the daemon again in a moment, rather than at the second's turn: a
+ * program changed its tab's title, which the daemon already has. Asks are
+ * gathered, since a title can spin.
+ */
+export function refreshSoon(): void {
+  if (soonTimer !== undefined) return;
+  // `refresh` waits its turn: asked with one on its way, it asks once more when that arrives.
+  soonTimer = setTimeout(() => {
+    soonTimer = undefined;
+    void refresh();
+  }, 120);
 }
 
 function applyList(list: WorkspaceInfo[], fresh = false): void {
@@ -609,6 +628,8 @@ function guessSize(): { cols: number; rows: number } {
 
 // ------------------------------------------------------------------ reading Claude Code
 
+const trustWatch = new TrustWatch();
+
 let readingScreens = false;
 
 /**
@@ -641,6 +662,7 @@ async function readScreens(): Promise<void> {
 }
 
 function readScreensFrom(unseen: ReadonlyMap<string, string>): void {
+  const claudePanes: TrustPane[] = [];
   const nextActivities = new Map<string, ClaudeActivity>();
   const nextModes = new Map<string, ClaudeMode | null>();
   const forBar: BarInput[] = [];
@@ -661,6 +683,7 @@ function readScreensFrom(unseen: ReadonlyMap<string, string>): void {
         forBar.push({ key, program: "codex", shellPid: pane.shellPid, screen: text, activity: kept });
         continue;
       }
+      if (view) claudePanes.push({ key, screen: text, shellPid: pane.shellPid, send: (keys) => view.type(keys) });
       // Undefined is "cannot tell": what was known stands.
       const m = text ? declaredMode(text) : undefined;
       if (m !== undefined) nextModes.set(key, m);
@@ -672,6 +695,14 @@ function readScreensFrom(unseen: ReadonlyMap<string, string>): void {
     }
   }
   void readBars(forBar);
+  // Claude Code asking whether to trust a folder is answered for the person who typed `claude` there.
+  void trustWatch.look(claudePanes, {
+    home: info.value?.home ?? "",
+    windows: isWindows.value,
+    markerExists: (path) => api.pathExists(path),
+    log,
+    now: Date.now,
+  });
   const since = new Map<string, number>();
   const seconds = Date.now() / 1000;
   for (const [key, activity] of nextActivities) {
@@ -1507,6 +1538,24 @@ export async function start(options: StartOptions): Promise<api.WindowBoot> {
       focused: (view) => {
         const tab = (tabsByWorkspace.value.get(view.workspace) ?? []).find((t) => t.panes.some((p) => p.id === view.tab));
         if (tab) focusPane(view.workspace, tab.root.id, view.tab);
+      },
+      cwd: (view) => workspaces.value.find((w) => w.name === view.workspace)?.tabs.find((t) => t.id === view.tab)?.cwd ?? "",
+      home: () => info.value?.home ?? "",
+      say: (message) => say(message),
+      titleChanged: () => refreshSoon(),
+      // A second question waits for no one: it is a no.
+      confirm: async (q) => {
+        if (dialog.value) return false;
+        const answered = await ask({
+          title: q.title,
+          message: q.message,
+          preview: q.preview,
+          buttons: [
+            { label: q.no, value: "no" },
+            { label: q.yes, value: "yes", primary: true },
+          ],
+        });
+        return answered?.button === "yes";
       },
     },
     { name: startup.platform, windowsBuild: startup.windowsBuild },
