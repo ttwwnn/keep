@@ -224,6 +224,7 @@ final class TerminalSurfaceView: NSView {
             scrollback: GhosttyApp.shared.scrollbackLimit,
             grapheme: GhosttyApp.shared.clustersGraphemes,
             blink: GhosttyApp.shared.cursorBlinks,
+            cursor: GhosttyApp.shared.cursorStyle,
             pid: getpid(),
             take: take?.path)
     }

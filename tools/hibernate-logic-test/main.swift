@@ -87,6 +87,12 @@ lines("with hibernation off, nothing: no mirror, nothing to take",
 lines("a take that is not a path is not passed on",
       KeeperProtocol.clientOptions(hibernating: true, scrollback: 1, grapheme: true, blink: true, pid: 1, take: "relative"),
       ["mirror=1", "grapheme=1", "blink=1", "app=1"])
+lines("the surface's cursor before any program says, as the config names it",
+      KeeperProtocol.clientOptions(hibernating: true, scrollback: 1, grapheme: true, blink: true, cursor: "bar", pid: 1, take: nil),
+      ["mirror=1", "grapheme=1", "blink=1", "app=1", "cursor=bar"])
+lines("a cursor word it does not know is not passed on",
+      KeeperProtocol.clientOptions(hibernating: true, scrollback: 1, grapheme: true, blink: true, cursor: "sideways", pid: 1, take: nil),
+      ["mirror=1", "grapheme=1", "blink=1", "app=1"])
 let palette: [[UInt8]] = (0..<256).map { [UInt8($0), 0, 0] }
 let facts = KeeperProtocol.facts(
     foreground: [0xff, 0xff, 0xff], background: [0x28, 0x2c, 0x34], cursor: nil, palette: palette,

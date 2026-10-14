@@ -14,7 +14,7 @@ mod effects;
 mod handover;
 
 pub use effects::{ClipboardAnswer, ClipboardReader, Device, Events, Facts};
-pub use handover::Keyboard;
+pub use handover::{CursorStyle, Keyboard};
 
 /// Raw FFI surface. Prefer the safe wrappers below.
 pub mod ffi {
@@ -507,6 +507,7 @@ pub mod ffi {
     pub const CURSOR_STYLE_BLOCK_HOLLOW: c_int = 3;
     /// The shape CSI 0 q goes back to, and the one before any CSI q.
     pub const OPT_DEFAULT_CURSOR_STYLE: c_int = 22;
+    pub const OPT_DEFAULT_CURSOR_BLINK: c_int = 23;
 }
 
 /// What a formatted snapshot should look like.

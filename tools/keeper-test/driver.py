@@ -216,6 +216,8 @@ class Surface:
             lines.append("mirror=10000000")
             lines.append("grapheme=1")
             lines.append("blink=1")
+            # The app's config here: a bar (Keep's own, 714bd31).
+            lines.append("cursor=bar")
         if take:
             lines.append("take=" + take)
         lines.append("app=%d" % (app_pid or app.pid))
@@ -362,7 +364,7 @@ try:
         "print 2000",
         "raw \\e]2;second title\\a\\e]7;file://host/tmp/elsewhere\\a\\e]52;c;aGVsbG8=\\a\\e]11;rgb:01/02/03\\a",
         "ask \\e[c|\\e[>c|\\e[=c|\\e[>q|\\e]11;?\\e\\\\|\\e[?996n|\\e[14t|\\e[18t|\\e[?u"
-        "|\\eP+q544E\\e\\\\|\\e_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\\e\\\\",
+        "|\\eP+q544E\\e\\\\|\\e_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\\e\\\\|\\eP$q q\\e\\\\",
     )
     answers = open(os.path.join(WORK, "answers-1")).read().splitlines()
     check("CSI c is answered as the surface answers it", repr(b"\x1b[?62;22;52c"), answers[0])
@@ -378,6 +380,8 @@ try:
           answers[9])
     check("and pictures spoken, as a surface answers asked (the Kitty graphics query)",
           repr(b"\x1b_Gi=31;OK\x1b\\"), answers[10])
+    check("the cursor's shape, the surface's (a blinking bar), as DECRQSS asks it",
+          repr(b"\x1bP1$r5 q\x1b\\"), answers[11])
     read = lambda name: open(os.path.join(one.dir, name), "rb").read() if os.path.exists(os.path.join(one.dir, name)) else b""
     check("the title is left for the app", b"second title", read("title"))
     check("and the directory", b"file://host/tmp/elsewhere", read("pwd"))
