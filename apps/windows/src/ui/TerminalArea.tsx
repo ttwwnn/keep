@@ -3,7 +3,6 @@
 // at the same size out of sight, so a tab you go back to is already drawn and
 // its program never had to redraw for a size nobody saw.
 
-import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { PaneTree } from "../layout";
 import { awake } from "../hibernation";
@@ -86,7 +85,7 @@ function PaneHost(props: {
             {
               label: "Colar",
               hint: "Ctrl+V",
-              action: () => void readText().then((text) => text && view?.paste(text)).catch(() => {}),
+              action: () => void view?.pasteFromSystem().catch(() => {}),
             },
             {
               label: "Colar imagem",

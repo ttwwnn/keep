@@ -12,6 +12,8 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { SearchAddon } from "@xterm/addon-search";
 import * as api from "./api";
+import { pasteContent } from "./clipboardFiles";
+import { shellKind } from "./drop";
 import { installKitty, type Kitty } from "./kitty";
 import { installLinks, type LinkEnv, type Links } from "./links";
 import { installOsc52 } from "./osc52";
@@ -43,6 +45,8 @@ export interface TerminalHooks {
   focused(view: TermView): void;
   /** Where the pane's program works, for the paths it prints; empty when unknown. */
   cwd(view: TermView): string;
+  /** What runs in the pane (`pwsh`, `wsl`, `claude`…), for saying a path the way its shell reads it. */
+  command(view: TermView): string;
   /** The person's home folder. */
   home(): string;
   /** A quiet line for the person. */
@@ -77,6 +81,8 @@ export class TermView {
   readonly links: Links;
   /** The keyboard protocol the program in it has turned on. */
   private readonly kitty: Kitty;
+  /** Only there can the clipboard hold files to be typed as paths. */
+  private readonly onWindows: boolean;
   /** The last text a program put on the clipboard (OSC 52), and when. */
   programCopied: { text: string; at: number } | null = null;
   /** When the pointer last went down in this terminal. */
@@ -115,6 +121,7 @@ export class TermView {
     private history = "",
   ) {
     this.key = viewKey(workspace, tab);
+    this.onWindows = platform.name === "windows";
     this.element = document.createElement("div");
     this.element.className = "term-root";
     const linkEnv: LinkEnv = {
@@ -169,7 +176,7 @@ export class TermView {
       (event) => {
         event.preventDefault();
         event.stopPropagation();
-        this.paste(event.clipboardData?.getData("text/plain") ?? "");
+        void this.pasteClipboard(event.clipboardData?.getData("text/plain") ?? "");
       },
       true,
     );
@@ -439,6 +446,23 @@ export class TermView {
     const lines: string[] = [];
     for (let i = 0; i < buffer.length; i++) lines.push(buffer.getLine(i)?.translateToString(true) ?? "");
     return lines.join("\n");
+  }
+
+  /**
+   * A paste from the clipboard, whose text the caller has read: the files the
+   * Explorer copied, typed as paths, when it holds any (see clipboardFiles.ts),
+   * and otherwise that text. The question to the app is asked only where there
+   * are files of that kind to find.
+   */
+  async pasteClipboard(text: string): Promise<void> {
+    const paths = this.onWindows ? await api.clipboardFiles().catch(() => []) : [];
+    this.paste(pasteContent(paths, text, shellKind(this.hooks.command(this))));
+  }
+
+  /** A paste the app asks the clipboard for, rather than the page's paste event: the menu's "Colar", a chord outside the terminal. */
+  async pasteFromSystem(): Promise<void> {
+    // A clipboard with files on it and no text is not an error: the files are the paste.
+    await this.pasteClipboard(await readText().catch(() => ""));
   }
 
   /**
