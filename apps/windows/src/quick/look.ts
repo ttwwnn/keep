@@ -11,8 +11,8 @@ import { quickLook } from "./api";
 
 /** The part of the state the panel wears. */
 function worn(state: GuiState) {
-  const { appearance, theme, font, zoom, terminal } = state;
-  return { appearance, theme, font, zoom, terminal };
+  const { appearance, theme, font, zoom, terminal, glass } = state;
+  return { appearance, theme, font, zoom, terminal, glass };
 }
 
 /** Whether two states dress the panel alike: what else changed (the sidebar, the tabs' names) is not its business. */

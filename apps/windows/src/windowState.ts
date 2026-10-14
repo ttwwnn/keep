@@ -31,6 +31,7 @@ const KINDS = {
   font: "value",
   theme: "value",
   terminal: "value",
+  glass: "value",
 } as const;
 
 export type SharedField = keyof typeof KINDS;
@@ -61,6 +62,7 @@ export function sharedOf(state: GuiState): Shared {
     font: state.font,
     theme: state.theme,
     terminal: state.terminal,
+    glass: state.glass,
   };
 }
 

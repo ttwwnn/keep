@@ -54,7 +54,7 @@ const EVENT_REFRESH: &str = "keep://refresh";
 const MAIN: &str = "main";
 
 /// The fields of the state every window shares (src/windowState.ts: `SHARED_FIELDS`).
-const SHARED: [&str; 11] = [
+const SHARED: [&str; 12] = [
     "tabNames",
     "workspaceNames",
     "tabOrder",
@@ -66,6 +66,7 @@ const SHARED: [&str; 11] = [
     "font",
     "theme",
     "terminal",
+    "glass",
 ];
 
 /// The fields each window keeps for itself (`WINDOW_FIELDS`).
@@ -191,7 +192,7 @@ fn kind_of(field: &str) -> Option<Kind> {
     match field {
         "tabNames" | "workspaceNames" | "tabOrder" | "lastTab" => Some(Kind::Map),
         "hidden" => Some(Kind::Set),
-        "daemon" | "zoom" | "appearance" | "font" | "theme" | "terminal" => Some(Kind::Value),
+        "daemon" | "zoom" | "appearance" | "font" | "theme" | "terminal" | "glass" => Some(Kind::Value),
         _ => None,
     }
 }
@@ -897,7 +898,7 @@ mod tests {
             "active": {"workspace": "a", "tab": 1}, "lastTab": {"a": 1}, "tabOrder": {"a": [2, 1]}, "hidden": ["b"],
             "verticalTabs": true, "zoom": 1.25, "appearance": "dark", "sidebar": {"visible": true, "width": 260},
             "font": {"family": "", "size": 0}, "theme": "Nord", "terminal": {"cursor": "bar", "blink": true, "scrollback": 10000},
-            "daemon": "1-2"
+            "glass": {"opacity": 0.8, "blur": "mica"}, "daemon": "1-2"
         });
         let doc = Doc::from_value(old);
         assert_eq!(doc.shared.len(), SHARED.len());
@@ -906,6 +907,7 @@ mod tests {
         }
         assert_eq!(doc.shared["hidden"], json!(["b"]));
         assert_eq!(doc.shared["zoom"], json!(1.25));
+        assert_eq!(doc.shared["glass"], json!({"opacity": 0.8, "blur": "mica"}));
         let main = doc.windows["main"].as_object().unwrap();
         assert_eq!(main.len(), OWN.len());
         assert_eq!(main["order"], json!(["a", "b"]));

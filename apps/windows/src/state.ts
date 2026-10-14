@@ -4,6 +4,7 @@
 // back after a reboot from the core (`keep restauro`, docs/restauro.md), not
 // from here.
 
+import { defaultGlass, normalizeGlass, type Glass } from "./glass";
 import type { Appearance } from "./theme";
 import { normalizeZoom } from "./zoom";
 
@@ -47,6 +48,8 @@ export interface GuiState {
   theme: string;
   /** What the terminals do with the cursor and with what scrolls off. */
   terminal: { cursor: CursorShape; blink: boolean; scrollback: number };
+  /** The translucent ground and what is behind it (glass.ts); opaque unless asked. */
+  glass: Glass;
   /**
    * The daemon the window last saw, as `api.daemonIdentity` says it: tab numbers
    * (the names given, the tab in front) are one daemon's, and a new one counts
@@ -87,6 +90,7 @@ export function defaultState(): GuiState {
     font: { family: "", size: 0 },
     theme: "",
     terminal: { cursor: "bar", blink: true, scrollback: DEFAULT_SCROLLBACK },
+    glass: defaultGlass(),
     daemon: "",
   };
 }
@@ -160,6 +164,7 @@ export function normalizeState(raw: unknown): GuiState {
       blink: typeof terminal.blink === "boolean" ? terminal.blink : true,
       scrollback: normalizeScrollback(terminal.scrollback),
     },
+    glass: normalizeGlass(raw.glass),
     daemon: typeof raw.daemon === "string" ? raw.daemon : "",
   };
 }
