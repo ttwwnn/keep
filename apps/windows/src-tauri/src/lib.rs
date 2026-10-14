@@ -8,6 +8,7 @@ mod claude_settings;
 mod clipboard;
 mod confinement;
 mod daemon;
+mod deeplink;
 mod fonts;
 mod ia;
 mod links;
@@ -536,8 +537,14 @@ pub fn run() {
     let on_exit = Arc::clone(&sessions);
     tauri::Builder::default()
         // A second launch brings the window that is already open forward,
-        // rather than a second viewer of the same daemon.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| windows::show_front(app)))
+        // rather than a second viewer of the same daemon. One made by a claude-cli:// link
+        // (deeplink.rs) also asks for its tab.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if let Some(link) = deeplink::link_in(&args) {
+                deeplink::open(app, resources(app), link);
+            }
+            windows::show_front(app)
+        }))
         .plugin(
             tauri_plugin_window_state::Builder::new()
                 // The first window's size and place. The others' are kept with their records (windows.rs), and the
@@ -561,6 +568,11 @@ pub fn run() {
         .setup(|app| {
             windows::start(app.handle());
             quick::setup(app.handle());
+            // A link that started the app: its tab is asked for as soon as the app is up.
+            let launch: Vec<String> = std::env::args().collect();
+            if let Some(link) = deeplink::link_in(&launch) {
+                deeplink::open(app.handle(), resources(app.handle()), link);
+            }
             Ok(())
         })
         .on_window_event(|window, event| {

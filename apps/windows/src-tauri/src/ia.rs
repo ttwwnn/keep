@@ -114,6 +114,9 @@ pub fn deadline(args: &[String]) -> Option<Duration> {
             asked.clamp(0.5, 30.0) + 1.5
         }
         ("worktrees", "indexar") => 120.0,
+        // The claude-cli:// links opening here: the state, and the person turning it on or off in Settings. Never
+        // `abrir`: a link is opened by deeplink.rs, from what Windows launched, not by the page.
+        ("links", "conferir" | "instalar" | "remover") => 20.0,
         // The tabs back after a restart (docs/restauro.md): the first phase is
         // quick and the window waits for it; the second brings the
         // conversations back one at a time, and the picture of the tabs for
@@ -151,6 +154,10 @@ fn run(resources: Option<&Path>, daemon: &Path, args: &[String], within: Duratio
     let exe = cli(resources).ok_or_else(|| "o keep.exe não está junto do app".to_string())?;
     let mut cmd = Command::new(&exe);
     cmd.args(args).env("KEEP_SOCKET", daemon).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    // The program a registered claude-cli:// link opens is this one (`keep links instalar`).
+    if let Ok(app) = std::env::current_exe() {
+        cmd.env("KEEP_APP_EXE", app);
+    }
     // What the core keeps beside the app's own: the pictures of the tabs and
     // the names given to them (docs/restauro.md). A test app, with a daemon
     // of its own, never reads the person's.
@@ -791,6 +798,11 @@ mod tests {
         assert_eq!(deadline(&args("continuar")), Some(Duration::from_secs(120)));
         assert_eq!(deadline(&args("continuar --status")), Some(Duration::from_secs(120)));
         assert_eq!(deadline(&args("nova --workspace a")), None);
+        // The links opening here: the page turns them on and off and looks; opening one is not its to ask.
+        assert_eq!(deadline(&args("links conferir --json")), Some(Duration::from_secs(20)));
+        assert_eq!(deadline(&args("links instalar --json")), Some(Duration::from_secs(20)));
+        assert_eq!(deadline(&args("links remover --json")), Some(Duration::from_secs(20)));
+        assert_eq!(deadline(&args("links abrir claude-cli://open")), None);
     }
 
     #[test]

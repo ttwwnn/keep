@@ -19,8 +19,11 @@
 pub mod cli;
 pub mod continuar;
 pub mod daemon;
+pub mod deeplink;
 pub mod links;
+pub mod membro_json;
 pub mod nova;
+pub mod protocolo;
 pub mod restaurar;
 pub mod retrato;
 

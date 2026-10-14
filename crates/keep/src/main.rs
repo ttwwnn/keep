@@ -353,6 +353,7 @@ USAGE
   keep kill <name>     end a workspace
   keep restauro …      the tabs back after a restart (the app runs it)
   keep nova …          a new Claude conversation in a new tab (keep nova --help)
+  keep links …         the claude-cli:// links opening a tab (keep links conferir)
   keep continuar       continue the conversations a dropped login, network or
                        usage limit stopped (the app runs it; --status, --seco)
 
