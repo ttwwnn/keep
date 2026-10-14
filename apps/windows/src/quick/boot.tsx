@@ -16,9 +16,11 @@ import { render } from "preact";
 import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
 import * as api from "../api";
 import { loadSymbolsFont } from "../fonts";
+import { glassTheme } from "../glass";
+import { startGlass } from "../glassStore";
 import { QUICK_WORKSPACE } from "../quickWorkspace";
 import { normalizeState } from "../state";
-import { ask, dialog, fontFamily, fontSize, gui, info, notice, palette, say } from "../store";
+import { ask, dialog, fontFamily, fontSize, glassAlpha, gui, info, notice, palette, say } from "../store";
 import { TerminalManager, viewKey, type TermView, type TerminalLook } from "../terminals";
 import { applyPalette, onSystemAppearanceChange } from "../theme";
 import { loadThemes } from "../themes";
@@ -43,7 +45,8 @@ function look(): TerminalLook {
   return {
     fontFamily: fontFamily.value,
     fontSize: fontSize.value,
-    theme: palette.value.terminal,
+    theme: glassTheme(palette.value.terminal, glassAlpha.value),
+    translucent: glassAlpha.value < 1,
     cursor,
     blink,
     scrollback,
@@ -155,6 +158,8 @@ export async function bootQuick(): Promise<void> {
   try {
     const startup = await api.startup();
     info.value = startup;
+    // Made transparent (quick.rs) on Windows, for the bottom corners the page rounds (styles-glass.css).
+    if (startup.windowTransparent) document.documentElement.classList.add("quick-round");
     gui.value = normalizeState(await quickLook().catch(() => null));
     // As the main window does before it draws: the catalogue, if a theme was chosen, and the symbols font.
     await Promise.all([gui.value.theme ? loadThemes().catch(() => {}) : undefined, loadSymbolsFont()]);
@@ -196,6 +201,7 @@ export async function bootQuick(): Promise<void> {
     );
     effect(() => applyPalette(palette.value));
     effect(() => terminals.setLook(look()));
+    startGlass();
     effect(() => document.documentElement.style.setProperty("--zoom", String(gui.value.zoom)));
     installQuickInput(current, () => shellCommand);
 

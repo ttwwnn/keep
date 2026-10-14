@@ -25,6 +25,8 @@ export interface TerminalLook {
   fontFamily: string;
   fontSize: number;
   theme: ITheme;
+  /** The theme's background has an alpha that is to show through (xterm draws it opaque otherwise). */
+  translucent?: boolean;
   cursor: CursorShape;
   blink: boolean;
   /** Lines of history kept. */
@@ -128,6 +130,7 @@ export class TermView {
       fontFamily: look.fontFamily,
       fontSize: look.fontSize,
       theme: look.theme,
+      allowTransparency: look.translucent === true,
       scrollback: look.scrollback,
       allowProposedApi: true,
       cursorBlink: look.blink,
@@ -407,6 +410,9 @@ export class TermView {
     const options = this.term.options;
     if (options.fontFamily !== look.fontFamily) options.fontFamily = look.fontFamily;
     if (options.fontSize !== look.fontSize) options.fontSize = look.fontSize;
+    // Before the theme: a background with an alpha is drawn opaque until the terminal is told it may show through.
+    const translucent = look.translucent === true;
+    if (options.allowTransparency !== translucent) options.allowTransparency = translucent;
     options.theme = look.theme;
     if (options.cursorStyle !== look.cursor) options.cursorStyle = look.cursor;
     if (options.cursorBlink !== look.blink) options.cursorBlink = look.blink;

@@ -7,6 +7,7 @@
 import { batch, effect } from "@preact/signals";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { fontPreview } from "./fonts";
+import { normalizeOpacity, type GlassBlur } from "./glass";
 import { normalizeScrollback, type CursorShape } from "./state";
 import { activeTab, activeWorkspace, gui, setFont, tabLabel, tabsByWorkspace, update, workspaceLabel } from "./store";
 import { themePreview } from "./themes";
@@ -68,6 +69,16 @@ export function setCursorBlink(blink: boolean): void {
 
 export function setScrollback(lines: number): void {
   update((state) => void (state.terminal.scrollback = normalizeScrollback(lines)));
+}
+
+/** How much of the ground is painted, 0.5 to 1 (glass.ts); whole is the opaque window. */
+export function setGlassOpacity(opacity: number): void {
+  update((state) => void (state.glass.opacity = normalizeOpacity(opacity)));
+}
+
+/** What is put behind a translucent ground. */
+export function setGlassBlur(blur: GlassBlur): void {
+  update((state) => void (state.glass.blur = blur));
 }
 
 /** Keep the window's title the tab in front's, from here on. */

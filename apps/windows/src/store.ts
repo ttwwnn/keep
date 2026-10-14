@@ -48,6 +48,7 @@ import { listed, neighbour, stillRunning } from "./putAway";
 import { arrangeTabs, heirsOf, insertBefore, memberIds, pruneOrders, substitute } from "./tabOrder";
 import { TerminalManager, viewKey, type TermView } from "./terminals";
 import { TrustWatch, type TrustPane } from "./trust";
+import { effectiveAlpha, glassTheme, holdsOpaque } from "./glass";
 import { DEFAULT_FONT_SIZE, applyPalette, onSystemAppearanceChange, resolvePalette } from "./theme";
 import { loadThemes, themePreview } from "./themes";
 import {
@@ -167,6 +168,14 @@ export const palette = computed(() => {
   return resolvePalette(gui.value.appearance, themePreview.value ?? gui.value.theme);
 });
 const systemTheme = signal(0);
+
+/**
+ * How much of the ground is painted (glass.ts): the opacity chosen, in a window made transparent, and whole while a
+ * picker is up over it (the macOS KeepWindow.holdOpaque).
+ */
+export const glassAlpha = computed(() =>
+  effectiveAlpha(gui.value.glass, info.value?.windowTransparent === true, holdsOpaque(overlay.value)),
+);
 
 /**
  * Whether the terminals' ground is dark as chosen — not as a theme being
@@ -328,7 +337,8 @@ function look() {
   return {
     fontFamily: fontFamily.value,
     fontSize: fontSize.value,
-    theme: palette.value.terminal,
+    theme: glassTheme(palette.value.terminal, glassAlpha.value),
+    translucent: glassAlpha.value < 1,
     cursor: cursorShape.value,
     blink: cursorBlink.value,
     scrollback: scrollback.value,

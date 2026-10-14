@@ -63,6 +63,8 @@ export interface Startup {
   e2eReport: string | null;
   /** Set when that check covers the AI layer: "falso" (a stand-in core) or "real". */
   e2eIa: string | null;
+  /** Whether this window was made transparent, which the translucent ground needs (src-tauri/src/glass.rs). */
+  windowTransparent: boolean;
 }
 
 export interface Shell {
@@ -75,6 +77,10 @@ export const SPLIT_RIGHT = 1;
 export const SPLIT_DOWN = 2;
 
 export const startup = () => invoke<Startup>("startup");
+/** Put a material behind the windows that were made transparent ("none", "mica" or "acrylic"); `dark` is the ground's. */
+export const glassApply = (blur: string, dark: boolean) => invoke<void>("glass_apply", { blur, dark });
+/** Open the app again (the daemon and the tabs stay): a window is made transparent only when it is made. */
+export const restartApp = () => invoke<void>("restart_app");
 export const ensureDaemon = () => invoke<void>("ensure_daemon");
 /** Which daemon answers (its process and start time), or null where unknown. */
 export const daemonIdentity = () => invoke<string | null>("daemon_identity");

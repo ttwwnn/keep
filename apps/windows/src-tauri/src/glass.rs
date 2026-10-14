@@ -130,6 +130,15 @@ pub fn made_like_main(app: &AppHandle, label: &str) -> bool {
     transparent
 }
 
+/// The drop-down terminal's panel: always transparent on Windows, whatever the state says, because its bottom
+/// corners are rounded by the page (the macOS panel's 10 points) and only a transparent window shows what is
+/// outside a rounded corner. Not elsewhere: the Mac's `transparent` is a private API.
+pub fn made_transparent_for_corners(app: &AppHandle, label: &str) -> bool {
+    let transparent = cfg!(windows);
+    app.state::<Glass>().remember(label, transparent);
+    transparent
+}
+
 /// Put on a window the material the others wear, if any: a window made after the page said what it wanted.
 pub fn wear(app: &AppHandle, window: &WebviewWindow) {
     let glass = app.state::<Glass>();
