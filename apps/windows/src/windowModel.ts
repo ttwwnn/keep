@@ -16,39 +16,12 @@
 
 import { putAwayWith, putAwayWithout } from "./putAway";
 
-/** The window the app starts with: slot 0, as the macOS app's first window. */
-export const MAIN_LABEL = "main";
-
-// ------------------------------------------------------------------ which window
-
-/** The window of a slot: `main` for the first, `w1`, `w2`… for the rest. */
-export const labelOfSlot = (slot: number): string => (slot === 0 ? MAIN_LABEL : `w${slot}`);
-
-/** The slot a window's label names; null for a window that is not one of these (the quick terminal's). */
-export function slotOfLabel(label: string): number | null {
-  if (label === MAIN_LABEL) return 0;
-  const match = /^w([1-9]\d{0,5})$/.exec(label);
-  return match ? Number(match[1]) : null;
-}
-
-/** Whether a label is one of the windows that list workspaces. */
-export const isAppWindow = (label: string): boolean => slotOfLabel(label) !== null;
-
 /**
- * The lowest slot nobody is using. Reused rather than always fresh, so the
- * furniture of a window that closed — its sidebar, its folds — is inherited by
- * the next one opened instead of accumulating records for windows that are gone.
+ * The window the app starts with: slot 0, as the macOS app's first window. The others are `w1`, `w2`… and the
+ * app gives them (src-tauri: windows.rs), the lowest slot nobody is using, so that the furniture of a window that
+ * closed goes to the next.
  */
-export function freeLabel(taken: Iterable<string>): string {
-  const slots = new Set<number>();
-  for (const label of taken) {
-    const slot = slotOfLabel(label);
-    if (slot !== null) slots.add(slot);
-  }
-  let slot = 0;
-  while (slots.has(slot)) slot += 1;
-  return labelOfSlot(slot);
-}
+export const MAIN_LABEL = "main";
 
 // ------------------------------------------------------------------ what a window carries and shows
 
@@ -98,7 +71,10 @@ export function readPeers(raw: unknown): Peer[] {
   return peers;
 }
 
-/** The workspaces a window lists: its order less the ones put away. (The quick terminal's is never in the list the window is given: quickWorkspace.ts.) */
+/**
+ * The workspaces a window lists: its order less the ones put away. (The drop-down terminal's workspace is never
+ * among what the window is given: quickWorkspace.ts.)
+ */
 export function carriedOf(order: readonly string[], hidden: readonly string[]): string[] {
   const away = new Set(hidden);
   return order.filter((name) => !away.has(name));
@@ -179,11 +155,6 @@ export function forgetTaken(order: readonly string[], hiddenBefore: readonly str
   const now = new Set(hiddenNow);
   const taken = new Set(hiddenBefore.filter((name) => !now.has(name)));
   return taken.size === 0 ? [...order] : order.filter((name) => !taken.has(name));
-}
-
-/** A workspace put at the end of an order, unless the order has it. */
-export function appended(order: readonly string[], workspace: string): string[] {
-  return order.includes(workspace) ? [...order] : [...order, workspace];
 }
 
 // ------------------------------------------------------------------ a tab pulled out of the row

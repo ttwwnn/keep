@@ -21,6 +21,7 @@ import {
   carriedHere,
   gui,
   log,
+  refreshSoon,
   say,
   select,
   tabsByWorkspace,
@@ -212,6 +213,8 @@ export async function startWindows(boot: api.WindowBoot): Promise<void> {
     // Said to one window (`emitTo`): heard by this one only if it listens as itself — a listener of the page
     // as a whole hears everything said to anybody.
     getCurrentWebviewWindow().listen<{ workspace: string; tab: number }>("keep://show-tab", (event) => showTab(event.payload)),
+    // Another window made, closed or moved a tab: the daemon is asked again at once, not at the second's turn.
+    listen("keep://refresh", () => refreshSoon()),
   ]);
   // What was told between the answer the app gave at the start and the listening.
   await resync();

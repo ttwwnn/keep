@@ -103,6 +103,7 @@ async fn list() -> Answer<Vec<daemon::Workspace>> {
 
 #[tauri::command]
 async fn new_tab(
+    app: AppHandle,
     workspace: String,
     cwd: Option<String>,
     cols: u16,
@@ -110,36 +111,44 @@ async fn new_tab(
     split_of: Option<u32>,
     split_dir: Option<u8>,
 ) -> Answer<u32> {
-    tauri::async_runtime::spawn_blocking(move || {
+    let made = tauri::async_runtime::spawn_blocking(move || {
         daemon::new_tab(&workspace, cwd, cols, rows, split_of.unwrap_or(0), split_dir.unwrap_or(0))
     })
     .await
     .map_err(|e| e.to_string())?
-    .map_err(text)
+    .map_err(text);
+    windows::daemon_changed(&app);
+    made
 }
 
 #[tauri::command]
-async fn close_tab(workspace: String, tab: u32) -> Answer<()> {
-    tauri::async_runtime::spawn_blocking(move || daemon::close_tab(&workspace, tab))
+async fn close_tab(app: AppHandle, workspace: String, tab: u32) -> Answer<()> {
+    let closed = tauri::async_runtime::spawn_blocking(move || daemon::close_tab(&workspace, tab))
         .await
         .map_err(|e| e.to_string())?
-        .map_err(text)
+        .map_err(text);
+    windows::daemon_changed(&app);
+    closed
 }
 
 #[tauri::command]
-async fn kill_workspace(workspace: String) -> Answer<()> {
-    tauri::async_runtime::spawn_blocking(move || daemon::kill(&workspace))
+async fn kill_workspace(app: AppHandle, workspace: String) -> Answer<()> {
+    let killed = tauri::async_runtime::spawn_blocking(move || daemon::kill(&workspace))
         .await
         .map_err(|e| e.to_string())?
-        .map_err(text)
+        .map_err(text);
+    windows::daemon_changed(&app);
+    killed
 }
 
 #[tauri::command]
-async fn move_tab(workspace: String, tab: u32, to: String) -> Answer<u32> {
-    tauri::async_runtime::spawn_blocking(move || daemon::move_tab(&workspace, tab, &to))
+async fn move_tab(app: AppHandle, workspace: String, tab: u32, to: String) -> Answer<u32> {
+    let moved = tauri::async_runtime::spawn_blocking(move || daemon::move_tab(&workspace, tab, &to))
         .await
         .map_err(|e| e.to_string())?
-        .map_err(text)
+        .map_err(text);
+    windows::daemon_changed(&app);
+    moved
 }
 
 #[derive(Deserialize)]
@@ -151,13 +160,15 @@ struct Move {
 }
 
 #[tauri::command]
-async fn rearrange(workspace: String, moves: Vec<Move>) -> Answer<()> {
+async fn rearrange(app: AppHandle, workspace: String, moves: Vec<Move>) -> Answer<()> {
     let moves: Vec<PaneMove> =
         moves.into_iter().map(|m| PaneMove { tab: m.tab, split_of: m.split_of, split_dir: m.split_dir }).collect();
-    tauri::async_runtime::spawn_blocking(move || daemon::rearrange(&workspace, moves))
+    let done = tauri::async_runtime::spawn_blocking(move || daemon::rearrange(&workspace, moves))
         .await
         .map_err(|e| e.to_string())?
-        .map_err(text)
+        .map_err(text);
+    windows::daemon_changed(&app);
+    done
 }
 
 #[tauri::command]

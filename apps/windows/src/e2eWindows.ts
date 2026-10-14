@@ -229,8 +229,8 @@ function line(a: Point, b: Point, steps = 10): Point[] {
   }));
 }
 
-/** Press on a tab of the row, pull it through `via` and let go at the last point. */
-async function pull(tab: Element, via: Point[], held?: () => void): Promise<void> {
+/** Press on a tab of the row, pull it through `via` and, with the button still down at the last point, `held`; let go there. */
+async function pull(tab: Element, via: Point[], held?: () => Promise<void> | void): Promise<void> {
   pointerId += 1;
   fire(tab, "pointerdown", middle(tab), 1);
   for (const at of via) {
@@ -238,19 +238,8 @@ async function pull(tab: Element, via: Point[], held?: () => void): Promise<void
     await sleep(35);
   }
   await sleep(150);
-  held?.();
+  await held?.();
   fire(window, "pointerup", via[via.length - 1], 0);
-  await sleep(300);
-}
-
-/**
- * Bring this window to the front and wait until it is looked at. A window that another covers does not draw (a
- * page that is not seen is not painted, which the system takes care of), so what the check reads off the screen
- * is read from the one in front.
- */
-async function front(): Promise<void> {
-  await getCurrentWindow().setFocus();
-  await waitFor(() => document.visibilityState === "visible" && document.hasFocus(), 8000, "esta janela à frente");
   await sleep(300);
 }
 
@@ -341,7 +330,6 @@ export async function windowsSteps(step: StepRunner, windows: boolean): Promise<
     // Each says the tab is in front elsewhere, and this one draws the mark, in the row and in the sidebar.
     await seen(second, (s) => s.elsewhere, "a janela nova saber que a aba está em frente em outra");
     check(shownElsewhere(peers.value, windowLabel.value, SPACE, tabs[0]), "esta janela não sabe que a aba está em frente na outra");
-    await front();
     await waitFor(() => stripTab(SPACE, tabs[0])?.querySelector(".window-mark"), 10000, "a marca na fileira daqui").catch((e) => {
       throw new Error(`${e.message}; janelas: ${peersText()}; fileira: ${tabIds(".strip .tab", "data-tab")}`);
     });
@@ -407,7 +395,6 @@ export async function windowsSteps(step: StepRunner, windows: boolean): Promise<
   await step("janelas: arrancar uma aba da fileira abre uma janela com ela, e a janela de origem segue para a vizinha", async () => {
     // Back in this window, the first tab in front, and the three in the row.
     select(SPACE, tabs[0]);
-    await front();
     await waitFor(() => stripTab(SPACE, tabs[0]) && stripTab(SPACE, tabs[2]), 5000, "as abas na fileira");
     const tab = stripTab(SPACE, tabs[0])!;
     const strip = document.querySelector(".strip")!.getBoundingClientRect();
@@ -418,8 +405,9 @@ export async function windowsSteps(step: StepRunner, windows: boolean): Promise<
     hooks.windowUnder = async () => null;
     let hung = false;
     try {
-      await pull(tab, line(from, { x: from.x, y: strip.bottom + 150 }), () => {
+      await pull(tab, line(from, { x: from.x, y: strip.bottom + 150 }), async () => {
         hung = document.querySelector(".strip.reordering .tab.torn") !== null && document.querySelector(".drag-ghost") !== null;
+        await photo("janelas-arrancando", windows, 1);
       });
     } finally {
       hooks.windowUnder = asks;
@@ -431,7 +419,6 @@ export async function windowsSteps(step: StepRunner, windows: boolean): Promise<
     // This one went on to the tab beside it, and the torn one wears the mark.
     await waitFor(() => activeTab.value?.root.id === tabs[1], 5000, "a janela de origem seguir para a aba vizinha");
     await waitFor(() => shownElsewhere(peers.value, windowLabel.value, SPACE, tabs[0]), 10000, "esta janela saber que a aba arrancada está em outra");
-    await front();
     await waitFor(() => stripTab(SPACE, tabs[0])?.querySelector(".window-mark"), 10000, "a marca na aba arrancada");
     check(idsOf(SPACE).join() === tabs.join(), "a aba saiu do workspace");
     await photo("janelas-arrancada", windows, 3);
@@ -443,7 +430,6 @@ export async function windowsSteps(step: StepRunner, windows: boolean): Promise<
 
   await step("janelas: soltar a aba arrancada sobre outra janela a leva para lá", async () => {
     select(SPACE, tabs[1]);
-    await front();
     await waitFor(() => stripTab(SPACE, tabs[2]), 5000, "as abas na fileira");
     // Let go over the second window.
     const tab = stripTab(SPACE, tabs[2])!;
@@ -471,6 +457,8 @@ export async function windowsSteps(step: StepRunner, windows: boolean): Promise<
     putAway(SPACE);
     check(!gui.value.hidden.includes(SPACE), "guardou, e a outra janela ainda o listava");
     check(!shownWorkspaces.value.some((w) => w.name === SPACE), "a primeira ainda lista o workspace");
+    // The app knows it before the window goes: what this one lists is what it has been told.
+    await waitFor(() => !peers.value.find((p) => p.label === windowLabel.value)?.placement.carries.includes(SPACE), 5000, "o app saber que esta janela não lista mais");
     await ask(second, "close");
     await waitFor(() => peers.value.length === 1, 10000, "a janela sair da lista");
     await waitFor(() => gui.value.hidden.includes(SPACE), 5000, "o workspace guardado");

@@ -2,18 +2,13 @@
 // list or going to one does, and the tab shown in two windows.
 import { describe, expect, it } from "vitest";
 import {
-  MAIN_LABEL,
   adopt,
-  appended,
   carriedByAll,
   carriedElsewhere,
   carriedOf,
   cascaded,
   forgetTaken,
   frameOfTornTab,
-  freeLabel,
-  isAppWindow,
-  labelOfSlot,
   leaderOf,
   orphansOf,
   pulledOut,
@@ -21,7 +16,6 @@ import {
   readPlacement,
   remove,
   shownElsewhere,
-  slotOfLabel,
   viewerSize,
   type Peer,
 } from "./windowModel";
@@ -29,28 +23,6 @@ import {
 const peer = (label: string, carries: string[], showing: Peer["placement"]["showing"] = null): Peer => ({
   label,
   placement: { carries, showing },
-});
-
-describe("which window", () => {
-  it("is main for the first slot and w<n> for the rest", () => {
-    expect(labelOfSlot(0)).toBe(MAIN_LABEL);
-    expect(labelOfSlot(3)).toBe("w3");
-    expect(slotOfLabel("main")).toBe(0);
-    expect(slotOfLabel("w12")).toBe(12);
-  });
-  it("is read back only from the labels the app gives its windows", () => {
-    for (const label of ["quick", "w0", "w01", "wx", "w", "main2", "", "w1000000"]) expect(slotOfLabel(label)).toBeNull();
-    expect(isAppWindow("w2")).toBe(true);
-    expect(isAppWindow("quick")).toBe(false);
-  });
-  it("takes the lowest slot nobody is using, so a closed window's furniture goes to the next", () => {
-    expect(freeLabel(["main"])).toBe("w1");
-    expect(freeLabel(["main", "w1", "w2"])).toBe("w3");
-    expect(freeLabel(["main", "w2"])).toBe("w1");
-    expect(freeLabel(["w1", "w2"])).toBe("main");
-    expect(freeLabel(["main", "quick"])).toBe("w1");
-    expect(freeLabel([])).toBe("main");
-  });
 });
 
 describe("what a window says of itself", () => {
@@ -148,10 +120,6 @@ describe("what another window's going to a workspace does to this one's memory",
   it("changes nothing when nothing left it", () => {
     expect(forgetTaken(["a", "b"], ["b"], ["b", "c"])).toEqual(["a", "b"]);
     expect(forgetTaken(["a"], [], [])).toEqual(["a"]);
-  });
-  it("appends a workspace once", () => {
-    expect(appended(["a"], "b")).toEqual(["a", "b"]);
-    expect(appended(["a", "b"], "b")).toEqual(["a", "b"]);
   });
 });
 

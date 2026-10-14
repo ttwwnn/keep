@@ -208,6 +208,3 @@ export function readOps(raw: unknown): Op[] {
 export function withShared(state: GuiState, shared: Shared): GuiState {
   return normalizeState({ ...state, ...shared });
 }
-
-/** Whether two parts of the app's state say the same. */
-export const sameShared = (a: Shared, b: Shared): boolean => same(a, b);

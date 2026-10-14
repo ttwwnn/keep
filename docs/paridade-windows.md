@@ -58,8 +58,8 @@ não foram vistos no Windows de verdade.
   (`ThemePicker`, `FontPicker`) no lugar do cartão da paleta: a seta veste ao
   vivo, Enter usa e fecha tudo, Esc volta à paleta (um passo para trás, como
   no Mac) e desfaz o que se viu.
-- [ ] "Nova janela" fica cinza na paleta até a fatia `windows` ligá-la com
-  `registerCommand` (commands.ts), que vale mais que qualquer padrão da janela.
+- [x] "Nova janela" na paleta: ligada pela fatia `windows` com `registerCommand` (windowSync.ts), com a tecla
+  Ctrl+Shift+Alt+N desenhada.
 - [x] Busca no painel (Ctrl+F, pelo keepd) e em tudo (Ctrl+Shift+F): escopo,
   contador "3 de 47", prévia, ida à aba, ao painel e à linha exata (contada do
   fim, como o Mac), com a linha marcada por instantes nas cores de busca do
@@ -375,7 +375,63 @@ dá-lo).
 
 ## Fatia `windows` (várias janelas)
 
-- [ ] Nova janela; lista de workspaces, aba e painel por janela; mover
-  workspace entre janelas; arrancar a aba da faixa.
+Cada janela é uma página (um webview) com o seu próprio estado, como cada `MainWindowController` do Mac sobre a
+mesma `Session`; o que as páginas têm de combinar vive uma vez só no app (`src-tauri/src/windows.rs`), e o modelo
+puro (quem lista o quê, guardar, ir para, as órfãs, a marca, o arrasto) está em `src/windowModel.ts` e
+`src/windowState.ts`, com testes. Com uma janela só nada mudou: o roteiro do app (`src/e2e.ts`, 51 passos contra
+um keepd de verdade) passa igual, e `state.json` de uma janela só é lido sem perder nada.
+
+Conferido no Mac pelo roteiro (`src/e2eWindows.ts`: a janela que o próprio roteiro abre responde a ele por eventos)
+e à mão (abrir, ir para, fechar, sair e reabrir com duas janelas). O que só o Windows real mostra está marcado.
+
+- [x] Nova janela: Ctrl+Shift+Alt+N (o ⇧⌘N do Mac, cuja tecla no Windows já é "Novo workspace", com o Alt que a
+  paleta também leva), "Nova janela" na paleta e no menu da fileira de abas. Nasce vazia, do tamanho da de origem,
+  24 px abaixo e ao lado (maximizada se a origem estiver), com a barra lateral (largura, abas verticais) da primeira
+  janela. O que o app pôs é devolvido a quem pediu (o roteiro confere): um gerenciador de janelas que maximiza toda
+  janela nova (o do Mac de desenvolvimento) fala depois disso.
+- [x] Lista de workspaces por janela: a ordem é da janela (`order`, que também lembra o lugar do que foi guardado);
+  os guardados (`hidden`) são de todas, como o put-away.json do Mac. A janela mais antiga toma o que ninguém lista
+  (criado pela linha de comando, ou enquanto o app não rodava: `placeOrphans`). Ir para adota o workspace na janela
+  (no fim da lista, ou onde ela o lembrava) e o tira dos guardados; "Remover da barra lateral" (e "Remover este
+  workspace da janela") só tira da lista desta janela se outra o lista, e guarda de verdade se for a última.
+- [x] O que é do app e o que é da janela: de todas, os nomes dados, a ordem das abas, a última aba de cada
+  workspace, os guardados, o daemon, o zoom, a aparência, o tema, a fonte e o cursor; de cada janela, a lista, o que
+  está recolhido, as abas verticais, a barra lateral e a aba em frente. Uma janela diz tudo ao app numa mensagem
+  (`window_sync`: o que mudou no que é de todos, o que lista e mostra, a ficha própria) e o app diz a todas numa
+  (`keep://sync`, na ordem em que as mudanças foram feitas, inclusive a de quem as fez): um workspace guardado pela
+  última janela que o listava sai da lista dela e entra nos guardados de uma vez, e a janela mais antiga nunca o vê
+  como "de ninguém". A lista das janelas leva uma versão que só cresce.
+- [x] `state.json` (versão 2): `shared`, mais `windows.<rótulo>` (`main`, `w1`, `w2`…, o mesmo espaço que o Mac chama
+  de slot e reaproveita: a janela nova herda a ficha da que fechou). Tudo é lido, mudado e gravado de uma vez no
+  Rust, sob uma trava, com as cópias rotativas, a recuperação e o aviso da fatia `ai`. O formato de antes (um objeto
+  só) vira o `shared` e a ficha de `main`. A janela rápida lê o estado em uma peça só (`windows::look`) e continua
+  sem gravar nada.
+- [x] A marca da aba que outra janela mostra: duas janelas sobrepostas depois do título, na fileira e na barra
+  lateral (o `macwindow.on.rectangle` do Mac), com o texto "Aberta em outra janela".
+- [x] A mesma aba em duas janelas são dois visualizadores no keepd (o roteiro vê `clients` = 2). O terminal fora de
+  vista numa janela diz ao keepd 0×0 ("não estou olhando") só quando há mais de uma janela: com uma, ele segue
+  dizendo o seu tamanho, como sempre fez. A aba adormecida (hibernação) larga a ligação, como antes.
+- [~] Arrancar a aba da fileira: puxar 40 px para cima ou para baixo da faixa dela pendura uma cópia no ponteiro e
+  fecha o vão; solta, abre uma janela do tamanho da origem com a aba debaixo do ponteiro (o mesmo lugar da fileira)
+  ou a entrega à janela que está debaixo dele (a mais à frente das que o contêm: `window_under`, por geometria e
+  pela ordem em que as janelas estiveram à frente); a janela de origem segue para a aba vizinha se era a que a
+  mostrava, e a aba continua no workspace. Conferido no Mac com os eventos de ponteiro da própria página e testado
+  por testes (geometria, janela sob um ponto); o ponteiro de verdade fora da janela no WebView2 e a ordem real das
+  janelas no Windows não foram vistos.
+- [x] Fechar uma janela com outras abertas põe de lado (guardados) o que só ela listava, sem passar para outra
+  janela (`Session.removeWindow` do Mac: o pedido da fatia dizia que passa para a primeira, mas o código do Mac
+  guarda; seguimos o código) e esquece a ficha dela. Fechar a última é sair: não guarda nada e a ficha fica. Sair
+  com várias abertas também não guarda nada (o app sabe que está saindo).
+- [~] Abrir as janelas da última vez: a janela mais antiga as abre depois de o daemon ter as abas e de saber o que
+  foi das antigas (o número da aba em frente de cada uma é levado ao novo, ou esquecido), com a lista, a aba e o
+  quadro (posição, tamanho, maximizada), e só em monitor que existe (senão o sistema escolhe o lugar). Visto no Mac
+  reabrindo o app com duas janelas; o quadro de uma janela maximizada e o monitor que some só no Windows real.
+- [x] As rodadas do núcleo que mudam alguma coisa (restauro, `continuar`, os nomes, `sincronizar`, índice de
+  worktrees, renovar logins) são da janela mais antiga; as que só leem (uso, abas) rodam em cada janela.
+- [x] Quando uma janela cria, fecha ou move uma aba, as outras perguntam ao daemon na hora (`keep://refresh`) em
+  vez de esperar a rodada do segundo.
+- [x] Capabilities: `windows: ["main", "w*"]` (o Tauri aceita padrão); as janelas se criam em código a partir da
+  configuração da primeira (sem moldura no Windows, a barra de título do Mac), com o filtro do plugin de estado de
+  janela só para `main`.
+- [ ] Tela cheia por janela no estado: o Mac também só guarda o quadro; a janela volta no quadro, não em tela cheia.
 - [~] Janela rápida global (Ctrl+`), com o workspace `quick` oculto: feita na fatia `quick`, acima.
-- [ ] Estado das janelas (quadro, tela cheia).

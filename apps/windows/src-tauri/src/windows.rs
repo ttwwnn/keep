@@ -48,6 +48,8 @@ type Answer<T> = Result<T, String>;
 /// Told to every window when something changes: `{seq, from, ops, windows}` — the changes to the app's part of
 /// the state that made a difference, and the list of windows when that changed (`{version, list}`, else null).
 const EVENT_SYNC: &str = "keep://sync";
+/// Told to every window when a page changed what the daemon holds (a tab made, closed, moved): ask it again.
+const EVENT_REFRESH: &str = "keep://refresh";
 
 const MAIN: &str = "main";
 
@@ -560,6 +562,12 @@ fn persist(inner: &Inner) {
 /// The app starts: the first window is known before its page asks.
 pub fn start(app: &AppHandle) {
     hub(app).change(app, MAIN, |inner| ((), inner.known(MAIN)));
+}
+
+/// A page changed what the daemon holds: the other windows ask it again now, rather than at the turn of the
+/// second, as the one window of the macOS app is told by its own session.
+pub fn daemon_changed(app: &AppHandle) {
+    let _ = app.emit(EVENT_REFRESH, ());
 }
 
 /// The state as it stands, as one object: for whoever only looks at it (`Doc::flat`); it changes nothing.

@@ -10,7 +10,6 @@ import {
   diffShared,
   joinState,
   readOps,
-  sameShared,
   sharedOf,
   windowOf,
   withShared,
@@ -183,7 +182,6 @@ describe("saying what changed", () => {
       }
       const ops = diffShared(current, target);
       const applied = applyOps(current, ops);
-      expect(sameShared(applied, target) || [...applied.hidden].sort().join() === [...target.hidden].sort().join()).toBe(true);
       expect({ ...applied, hidden: [...applied.hidden].sort() }).toEqual({ ...target, hidden: [...target.hidden].sort() });
       current = applied;
     }
