@@ -195,7 +195,7 @@ caixa da linha, rolagem da lista, estado do movimento, fim do arrasto por `point
   buffers sintéticos (8 testes Rust: vários caminhos, fora do plano básico, deslocamento do cabeçalho, lista sem
   o NUL final, bloco ilegível, forma ANSI recusada) e a decisão e o escape (vitest). O código `#[cfg(windows)]`
   compila para `x86_64-pc-windows-msvc` e não rodou: quem prova o clipboard real é o passo "colar" do roteiro do
-  CI (`e2eClip.ts`: `Set-Clipboard -Path` num arquivo com espaço no nome, o comando devolve o caminho, o colar o
+  CI (`e2eClip.ts`: `SetFileDropList` num arquivo com espaço no nome, o comando devolve o caminho, o colar o
   digita entre aspas; depois `Set-Clipboard -Value` e o texto é colado como texto). Não coberto: o evento de colar
   do WebView2 com arquivos no Ctrl+V real (o passo chama `pasteFromSystem`, não o evento); arquivos copiados na
   forma ANSI (Windows 9x) caem no texto.

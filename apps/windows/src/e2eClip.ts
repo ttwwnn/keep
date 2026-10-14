@@ -1,8 +1,8 @@
 // The clipboard's part of the scripted check (see e2e.ts): the files the
 // Explorer copies have to reach the page as their paths, and be typed in the
 // pane as the shell there reads them; text has to go on being pasted as it was.
-// The shell puts them on the clipboard itself (Set-Clipboard -Path writes the
-// same CF_HDROP the Explorer's Ctrl+C does), so only the Windows run has them.
+// The shell puts them on the clipboard itself (SetFileDropList writes the same
+// CF_HDROP the Explorer's Ctrl+C does), so only the Windows run has them.
 // And the other thing only a real PTY shows: that mode 2027, switched on by a
 // program, gets through ConPTY to the page, which then clusters (graphemes.ts).
 
@@ -48,8 +48,12 @@ export async function clipSteps(step: StepRunner, { waitFor, workspace, windows 
     await until("o prompt", atPrompt, 30000);
 
     // A file with a blank in its name, so that the escape shows; the marker is built so that the echo of the command does not contain it.
+    // Windows PowerShell, in a single-threaded apartment as the clipboard wants, puts the file on it (PowerShell 7's Set-Clipboard has no -Path).
+    const copy =
+      "Add-Type -AssemblyName System.Windows.Forms; $l = New-Object System.Collections.Specialized.StringCollection; " +
+      "[void]$l.Add($env:KEEP_E2E_CLIPFILE); [System.Windows.Forms.Clipboard]::SetFileDropList($l)";
     view.term.input(
-      "$f = Join-Path $env:TEMP 'keep e2e clip.txt'; Set-Content -Path $f -Value x; Set-Clipboard -Path $f; Write-Host ('keep-e2e-' + 'clip-pronto')\r",
+      `$env:KEEP_E2E_CLIPFILE = Join-Path $env:TEMP 'keep e2e clip.txt'; Set-Content -Path $env:KEEP_E2E_CLIPFILE -Value x; powershell.exe -NoProfile -STA -Command '${copy}'; Write-Host ('keep-e2e-' + 'clip-pronto')\r`,
       true,
     );
     await until("a cópia do arquivo", () => view.allText().includes("keep-e2e-clip-pronto") && atPrompt());
