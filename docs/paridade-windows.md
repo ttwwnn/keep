@@ -229,11 +229,11 @@ caixa da linha, rolagem da lista, estado do movimento, fim do arrasto por `point
   no PowerShell 5.1. Cmd e Git Bash ficam de fora (rodam no login global) e o WSL é invisível ao crate
   (docs/ia.md). O `--` digitado sem aspas é consumido pelo PowerShell antes de qualquer função (`claude --
   texto` chega como `claude texto`).
-- [ ] A subida presa a uma pasta (`keep ia confinar --`, o `_keep_ia` da função do Mac): pronta e DESLIGADA,
-  porque a contenção está desligada até o CI do Windows prová-la (`CONFINEMENT_ENFORCED = false`). Um
-  `confinar` de mentira e o `pwsh` testam a rota ligada (nunca solta quando o keep recusa, o `claude.exe`
-  ou o `claude.cmd` e não o `claude.ps1`, `agents`/`attach` presos, o resto direto); ligar é trocar
-  `{ $false }` por `{ $true }` na linha `__KeepConfining` de `ai.ps1`, com o `CONFINEMENT_ENFORCED`.
+- [~] A subida presa a uma pasta (`keep ia confinar --`, o `_keep_ia` da função do Mac): LIGADA, porque a
+  contenção passou no CI do Windows (`CONFINEMENT_ENFORCED = true`; fatia `confine`). Um `confinar` de mentira e
+  o `pwsh` testam a rota (nunca solta quando o keep recusa, o `claude.exe` ou o `claude.cmd` e não o
+  `claude.ps1`, `agents`/`attach` presos, o resto direto); desligar é trocar `{ $true }` por `{ $false }` na
+  linha `__KeepConfining` de `ai.ps1`, com o `CONFINEMENT_ENFORCED`.
 - [~] Restauro depois de reiniciar, com as conversas (`keep restauro`), sem o retrato apagado cedo: o app
   deixou de recriar abas em JS; `restaurar --fase=abas` antes de mostrar o vazio (espera até 1 min por um
   keepd lento), `manter` a cada 30 s, nomes das abas pelo `names.json`, trava do crate que agora trava no
@@ -273,33 +273,64 @@ formato do Mac) e quem prende é o `keep ia confinar -- <programa>`.
   menu do botão ("A IA só acessa …", "Trocar a pasta…", "Liberar a IA") e itens
   do menu do cabeçalho ("Restringir a IA a uma pasta…", "Liberar a IA (hoje:
   …)"), com o diálogo de pasta do sistema. Vale para as sessões iniciadas
-  depois, e o tooltip diz. Recusa a raiz de uma unidade e a pasta do usuário.
-  Testado (vitest, `confinement.rs`) e visto na tela do app.
-- [~] A contenção: token restrito (`CreateRestrictedToken`) com permissões só na
-  pasta, no git dela e no mínimo de que a IA precisa, Job que mata junto, prova
-  do token antes de subir (o de fora é negado, a pasta funciona) e falha
-  fechada (`crates/keep-ia/src/confinar_win*`). Só compilada para o Windows
-  daqui; o CI roda o autoteste (`keep ia confinar --autoteste`, também
-  dentro de uma aba) e `tools/confine-test.ps1` repete o roteiro à mão.
-  `CONFINEMENT_ENFORCED` (confinement.ts) tira o botão e os itens do menu.
-- [ ] Encaixe nas funções `claude` e `codex` do PowerShell (fatia `ai`): pronto e DESLIGADO enquanto a
-  contenção está desligada. As funções não chamam o `confinar` hoje (a subida é a de sempre); a rota ligada
-  é uma linha de `crates/keepd/src/ai.ps1` (`__KeepConfining`, `{ $false }` -> `{ $true }`), que faz as
-  duas subirem por `keep ia confinar -- <programa> …` em toda aba do Keep, como o `_keep_ia` do Mac, sem cair
-  para a subida solta quando o keep recusa; sem pasta para o workspace o `confinar` roda o programa como
-  sempre. Testada ligada com um `pwsh` 7 e um `confinar` de mentira (docs/ia.md); digitar `claude` numa aba
-  do Windows com a pasta presa não foi visto. Um `claude.ps1` sozinho (sem `.exe` nem `.cmd` ao lado), o
-  Cmd e o Git Bash rodam sem prender.
+  depois, e o tooltip diz, bem como diz que o Git Bash não roda preso. Recusa a
+  raiz de uma unidade e a pasta do usuário. Testado (vitest, `confinement.rs`)
+  e visto na tela do app.
+- [x] A contenção: token restrito (`CreateRestrictedToken`) com permissões só na
+  pasta, no git dela e no mínimo de que a IA precisa, mais os atributos (sem
+  listar) das pastas no caminho até elas, privilégios apagados, Job que mata
+  junto, prova do token antes de subir (o de fora é negado, a pasta funciona) e
+  falha fechada (`crates/keep-ia/src/confinar_win*`). Conferida no CI do
+  Windows (workflow Núcleo), com o token elevado do CI e com o de quem não
+  está elevado (`keep ia confinar --como-comum`, o do UAC ligado): o autoteste
+  (`keep ia confinar --autoteste`), o teste `o_programa_preso_so_toca_na_pasta_dele`,
+  o programa preso dentro de um ConPTY de verdade, com a saída, a entrada
+  digitada e o código de saída (`crates/keep/tests/confinar_pty.rs`), e o
+  roteiro `tools/confine-test.ps1`: `cmd`, `pwsh`,
+  `powershell`, `git`, `node` (com o `localhost`) e o Claude Code, que só
+  leem, listam e gravam o que a pasta permite. `keep ia confinar --diagnostico`
+  mostra o que o Windows aceita do token. `CONFINEMENT_ENFORCED`
+  (confinement.ts) tira o botão e os itens do menu.
+- [x] O Claude preso sem o Git Bash, que não roda preso: o runtime do MSYS2 cria
+  um canal de sinais com nome e uma DACL só do usuário e do sistema, e o token
+  restrito não leva nenhum dos dois (`couldn't create signal pipe`, erro 5),
+  com ou sem outro bash aberto. O Claude Code usa o Git Bash para a ferramenta
+  Bash; preso, o Keep a nega por um arquivo de configuração (`--settings`, em
+  `%LOCALAPPDATA%\Keep\confine`) e liga a ferramenta PowerShell
+  (`CLAUDE_CODE_USE_POWERSHELL_TOOL=1`). Conferido no CI: o Claude preso lista
+  `PowerShell` e não lista `Bash`.
+- [~] O Claude Code logado, de verdade, preso: o CI não tem login. Conferido até
+  a lista de ferramentas e o pedido de login; não conferido o PowerShell dele
+  rodando comandos, os ganchos e a linha de status (que ele roda pelo Git Bash
+  quando existe) e a gravação de `.claude.json` (o arquivo temporário e a
+  trava ficam na casa, que a IA não pode gravar). O Gerenciador de Credenciais
+  não funciona preso (conferido no CI: não vê as credenciais do usuário e não
+  grava, "Credentials cannot be saved from this logon session"): o Claude Code
+  só guarda o login nele quando uma opção do servidor está ligada, e cai para
+  o arquivo `.credentials.json` da `.claude`, que a IA alcança; com a opção
+  ligada, preso ele não vê o login do usuário e pede outro. O Codex só tem o
+  encaixe (`--no-daemon`): sem Codex no CI.
+- [~] Encaixe nas funções `claude` e `codex` do PowerShell (fatia `ai`): LIGADO
+  (`__KeepConfining` em `crates/keepd/src/ai.ps1`, com o `CONFINEMENT_ENFORCED`). As duas sobem por
+  `keep ia confinar -- <programa> …` em toda aba do Keep, como o `_keep_ia` do Mac, sem cair para a subida
+  solta quando o keep recusa; sem pasta para o workspace o `confinar` roda o programa como sempre. Testada
+  com um `pwsh` 7 e um `confinar` de mentira (docs/ia.md) e, no CI, com o `keep ia confinar` de verdade;
+  digitar `claude` numa aba do Windows com a pasta presa não foi visto. Um `claude.ps1` sozinho (sem `.exe`
+  nem `.cmd` ao lado), o Cmd e o Git Bash rodam sem prender.
 - [ ] O que o Windows não deixa fechar sem administrador: pastas de rede (o
   servidor confere o usuário, não o token), o que o Windows deixa qualquer um
-  ler (`C:\Windows`, `Arquivos de Programas`, e, nos níveis compatível e amplo,
-  que valem se o estrito não deixa o programa partir, o que `Usuários` lê em
-  outras unidades), o registro do sistema, a área de trabalho (o programa preso
-  pode mandar teclas a outras janelas), o WSL. Programas
-  instalados só para o usuário (nvm, cargo, pyenv) ficam de fora, como o
-  `~/.nvm` no Mac; o Gerenciador de Credenciais do Git também. Um arquivo
-  movido (não copiado) de fora para dentro da pasta presa leva a permissão que
-  tinha, e a IA não o abre.
+  ler (`C:\Windows`, `Arquivos de Programas`, o que `Usuários` lê em outras
+  unidades, `C:\Users\Public`) ou gravar (`C:\ProgramData`, `C:\Windows\Temp`),
+  o registro do sistema, a área de trabalho (o programa preso pode mandar
+  teclas a outras janelas), o WSL. Programas instalados só para o usuário
+  (nvm, cargo, pyenv, Python do usuário) ficam de fora, como o `~/.nvm` no Mac;
+  o Gerenciador de Credenciais do Git também. Um arquivo movido (não copiado)
+  de fora para dentro da pasta presa leva a permissão que tinha, e a IA não o
+  abre. As permissões dadas (as pastas, e os atributos das pastas do caminho)
+  ficam quando a pasta é trocada ou liberada. Uma alternativa mais fechada,
+  que não tem esses limites nem o do Git Bash, é um usuário dedicado do
+  Windows para a IA (como o sandbox do Claude Code), que pede administrador
+  uma vez.
 
 ## Fatia `quick` (janela rápida)
 

@@ -25,26 +25,26 @@
 //!    `--version`…) is passed through untouched, and so is a Claude opened
 //!    from inside another (the variable is inherited, so it gets no store);
 //!    `claude agents|attach|rc|remote-control` get no store either;
-//!  - ready to hold the AI to a folder, and off: with `__KeepConfining` made
-//!    to answer `$true` — one line of `ai.ps1`, `$false` as shipped, until
-//!    the confinement is proven on Windows (`CONFINEMENT_ENFORCED` in the
-//!    app) — both programs are run by `keep ia confinar -- <program> …`, as
-//!    in the Mac's functions: the AI of a workspace with a folder chosen for
-//!    it is held to that folder (docs/ia.md), and with none the core runs the
-//!    program as it would have. The function then never falls back to
-//!    running it unheld when the core refuses to hold it: what the core said
-//!    is the answer. The program given to the core is a file it can start —
-//!    the `claude.exe` or the npm `claude.cmd`, not a `claude.ps1`
-//!    PowerShell would have preferred. `claude agents|attach|rc|remote-control`
-//!    and a Claude opened from inside another go through it too (the core
-//!    refuses the ones that send work to a server outside the folder);
+//!  - holding the AI to a folder: with `__KeepConfining` answering `$true` —
+//!    one line of `ai.ps1`, on since the confinement was proven on Windows
+//!    (`CONFINEMENT_ENFORCED` in the app) — both programs are run by
+//!    `keep ia confinar -- <program> …`, as in the Mac's functions: the AI of
+//!    a workspace with a folder chosen for it is held to that folder
+//!    (docs/ia.md), and with none the core runs the program as it would have.
+//!    The function then never falls back to running it unheld when the core
+//!    refuses to hold it: what the core said is the answer. The program given
+//!    to the core is a file it can start — the `claude.exe` or the npm
+//!    `claude.cmd`, not a `claude.ps1` PowerShell would have preferred.
+//!    `claude agents|attach|rc|remote-control` and a Claude opened from inside
+//!    another go through it too (the core refuses the ones that send work to a
+//!    server outside the folder);
 //!  - piped input, arguments (the empty ones too) and the exit code reach the
 //!    real program as they would have.
 //!
-//! Run directly — as shipped, always; once the hold is on, outside a tab of
-//! the Keep, for what opens no conversation, with no `keep` to ask, or when
-//! the only `claude` found is a script of PowerShell (which no one holds to a
-//! folder) — the real program is the one PowerShell would have run without
+//! Run directly — outside a tab of the Keep, for what opens no conversation,
+//! with no `keep` to ask, or when the only `claude` found is a script of
+//! PowerShell (which no one holds to a folder) — the real program is the one
+//! PowerShell would have run without
 //! the function: the first `claude` in the path that is a program or a
 //! script, `claude.exe` of the native install or the npm `claude.cmd`.
 //! Defined only when the person's profile has no function or alias of that
@@ -191,14 +191,15 @@ mod in_powershell {
     }
 
     /// The line of `ai.ps1` that decides whether `claude` and `codex` go through `keep ia confinar`, as shipped
-    /// (off, while the confinement is off in the app: `CONFINEMENT_ENFORCED`), and as it is edited to turn it on.
-    const HOLD_OFF: &str = "function global:__KeepConfining { $false }";
+    /// (on, since the confinement is proven on Windows: `CONFINEMENT_ENFORCED`), and as it is edited to turn it off.
     const HOLD_ON: &str = "function global:__KeepConfining { $true }";
+    const HOLD_OFF: &str = "function global:__KeepConfining { $false }";
 
-    /// The script with the hold turned on by that one edit.
-    fn holding() -> String {
-        assert_eq!(AI.matches(HOLD_OFF).count(), 1, "the switch is one line of the script");
-        AI.replace(HOLD_OFF, HOLD_ON)
+    /// The script with the hold turned off by that one edit: the functions as they were before the hold, which
+    /// is what most of these tests are about.
+    fn not_holding() -> String {
+        assert_eq!(AI.matches(HOLD_ON).count(), 1, "the switch is one line of the script");
+        AI.replace(HOLD_ON, HOLD_OFF)
     }
 
     fn write_script(path: &Path, body: &str) {
@@ -215,7 +216,7 @@ mod in_powershell {
 
     impl World {
         fn new(name: &str, pwsh: PathBuf) -> World {
-            World::with_script(name, pwsh, AI)
+            World::with_script(name, pwsh, &not_holding())
         }
 
         fn with_script(name: &str, pwsh: PathBuf, script: &str) -> World {
@@ -341,8 +342,8 @@ mod in_powershell {
         let (out, asked) = w.run(&tab, "", "codex resume abc");
         assert!(out.contains("[codex] n=2") && out.contains("  arg=[resume]") && out.contains("  store=[]") && asked.is_empty(), "{out} {asked}");
 
-        // As shipped, neither goes through `keep ia confinar`, whatever that would say: the confinement is off
-        // until it is proven on Windows. A core that would refuse to hold changes nothing.
+        // With the hold off, neither goes through `keep ia confinar`, whatever that would say. A core that would
+        // refuse to hold changes nothing.
         let mut refusing = tab.to_vec();
         refusing.push(("KEEP_TEST_HOLD", "refuse"));
         for line in ["claude hi", "codex hi", "claude agents"] {
@@ -355,14 +356,14 @@ mod in_powershell {
         assert!(out.contains("The term 'claude' is not recognized"), "{out}");
     }
 
-    /// The hold, switched on by the one-line edit: what the function does the day the confinement is proven.
+    /// The hold, as shipped: what the function does with the AI of a workspace.
     #[test]
     fn what_the_core_is_to_hold_is_never_run_unheld() {
         let Some(pwsh) = pwsh() else {
             eprintln!("sem pwsh (KEEP_TEST_PWSH ou no PATH): pulado");
             return;
         };
-        let w = World::with_script("hold", pwsh, &holding());
+        let w = World::with_script("hold", pwsh, AI);
         let keep = w.dir.join("keep");
         let tab = [("KEEP_WORKSPACE", "w1"), ("KEEP_IA_BIN", keep.to_str().unwrap()), ("KEEP_TEST_CORE", "ok")];
 
@@ -457,7 +458,7 @@ mod in_powershell {
         let w = World::new("encoded", pwsh);
         let keep = w.dir.join("keep");
         let out = Command::new(&w.pwsh)
-            .args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &encoded(&format!("{AI}\nclaude hi"))])
+            .args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &encoded(&format!("{}\nclaude hi", not_holding()))])
             .env_clear()
             .env("PATH", format!("{}:/usr/bin:/bin", w.dir.join("bin").display()))
             .env("HOME", w.dir.join("home"))

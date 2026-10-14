@@ -1,7 +1,7 @@
 function global:__KeepProgram([string]$name) {
   Get-Command -Name $name -CommandType Application,ExternalScript -All -ErrorAction SilentlyContinue | Select-Object -First 1
 }
-function global:__KeepConfining { $false }
+function global:__KeepConfining { $true }
 function global:__KeepKind([string]$name, $rest) {
   if ($name -ne 'claude') { return 'conversation' }
   $first = ''

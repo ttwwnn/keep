@@ -18,10 +18,17 @@
  * Turn this off if the mechanism has to be pulled back: the choice already
  * made stays in the file and the button and the menu items go.
  */
-export const CONFINEMENT_ENFORCED = false;
+export const CONFINEMENT_ENFORCED = true;
 
 /** The folder of each workspace that has one, by workspace name. */
 export type Confinements = Readonly<Record<string, string>>;
+
+/**
+ * What the held AI loses on Windows: the Git Bash (MSYS2) does not run under
+ * the restricted token, so the AI uses PowerShell in its place (the core turns
+ * the Bash tool off for Claude Code and its PowerShell tool on).
+ */
+export const HELD_SHELL = "O Git Bash não roda preso à pasta; a IA usa o PowerShell no lugar.";
 
 /** What a session started later is told, and an open one is not: said where the choice is made. */
 export const LATER_SESSIONS =
@@ -54,7 +61,7 @@ export function confineLook(label: string, folder: string | null): ConfineLook {
   if (folder === null) {
     return { held: false, title: `Restringir a IA de ${label} a uma pasta\n${LATER_SESSIONS}` };
   }
-  return { held: true, title: `A IA de ${label} só acessa ${folder}\n${LATER_SESSIONS}` };
+  return { held: true, title: `A IA de ${label} só acessa ${folder}\n${HELD_SHELL}\n${LATER_SESSIONS}` };
 }
 
 /**
