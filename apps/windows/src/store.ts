@@ -1478,7 +1478,7 @@ export async function start(options: StartOptions): Promise<api.WindowBoot> {
   // The app's state and this window's own, and which windows there are (src-tauri: windows.rs).
   const boot = await api.windowBoot();
   windowLabel.value = boot.label;
-  peers.value = readPeers(boot.windows);
+  peers.value = readPeers(boot.windows.list);
   gui.value = joinState(boot.shared, boot.window, boot.inherit);
   // A state that could not be read is told, once, with what was done about it.
   void api

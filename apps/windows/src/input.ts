@@ -36,6 +36,7 @@ import {
 import { toggleOverlay } from "./palette/overlay";
 import type { TermView } from "./terminals";
 import { cutKeys, quotePaths } from "./text";
+import { openNewWindow } from "./windowSync";
 
 export function perform(action: Action): void {
   switch (action.kind) {
@@ -44,6 +45,9 @@ export function perform(action: Action): void {
       break;
     case "newWorkspace":
       void newWorkspace();
+      break;
+    case "newWindow":
+      void openNewWindow();
       break;
     case "nextTab":
       stepTab(1);
@@ -216,6 +220,7 @@ function isFieldTarget(target: EventTarget | null): boolean {
 const EVERYWHERE = new Set<Action["kind"]>([
   "newTab",
   "newWorkspace",
+  "newWindow",
   "nextTab",
   "previousTab",
   "goToTab",

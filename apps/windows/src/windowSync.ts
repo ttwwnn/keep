@@ -6,8 +6,9 @@
 // (src-tauri: windows.rs) is where they meet. What the lists mean is
 // windowModel.ts's; this only keeps them in step.
 
-import { effect } from "@preact/signals";
+import { batch, effect } from "@preact/signals";
 import { emitTo, listen } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as api from "./api";
 import { registerCommand } from "./commands";
@@ -47,27 +48,29 @@ import {
   type Shared,
 } from "./windowState";
 
-/** After the last change to the state: a burst of them (a divider dragged) is one write. */
-const SAVE_MS = 200;
-/** After the last change to what this window lists or shows. */
-const REPORT_MS = 100;
+/** After the last change to the state: a burst of them (a divider dragged) is one message. */
+const KEEP_MS = 200;
 
 /** The order of the last change to the app's part of the state this window has heard. */
 let seq = 0;
+/** How many times the list of windows had changed when this window last heard it. */
+let peersVersion = 0;
 /** The app's part of the state as the app has it, as far as this window knows. */
 let lastShared: Shared;
-/** This window's own part as it was last kept, as text. */
+/** This window's own part as it was last kept, and what it last said of itself, as text. */
 let savedWindow = "";
-let saveTimer: ReturnType<typeof setTimeout> | undefined;
-let reportTimer: ReturnType<typeof setTimeout> | undefined;
-let reported = "";
+let saidPlacement = "";
+let keepTimer: ReturnType<typeof setTimeout> | undefined;
 let started = false;
 
-/** What the app tells every window when it changes the app's part of the state. */
-interface SharedEvent {
+/** What the app tells every window when something changes. */
+interface SyncEvent {
   seq: number;
   from: string;
+  /** The changes to the app's part of the state that made a difference. */
   ops: unknown;
+  /** The windows, when the list changed. */
+  windows: { version: number; list: unknown } | null;
 }
 
 /** One call to the app at a time, in the order made: changes told out of order are not the changes made. */
@@ -79,34 +82,47 @@ function inOrder(job: () => Promise<unknown>): Promise<unknown> {
 
 // ------------------------------------------------------------------ keeping the state
 
-/** Keep what changed: this window's own part, and the changes to the app's. */
+/** What this window lists and shows, for the others. */
+function placementNow(): Placement {
+  const workspace = activeWorkspace.peek();
+  const tab = activeTab.peek();
+  return { carries: carriedHere.peek(), showing: workspace && tab ? { workspace, tab: tab.root.id } : null };
+}
+
+/**
+ * Tell the app what changed: the changes to the app's part of the state, what this window lists and shows,
+ * and its own part — in one message, so that a workspace put away by the last window that listed it never
+ * reaches the others as one that nobody lists and nobody put away.
+ */
 async function keep(): Promise<void> {
   const state = gui.peek();
   const own = windowOf(state);
-  const text = JSON.stringify(own);
-  if (text !== savedWindow) {
-    savedWindow = text;
-    await api.windowSave(own).catch(() => {
-      savedWindow = "";
-    });
-  }
+  const ownText = JSON.stringify(own);
+  const placement = placementNow();
+  const placementText = JSON.stringify(placement);
   const ops = diffShared(lastShared, sharedOf(state));
-  if (ops.length === 0) return;
+  const record = ownText !== savedWindow ? own : null;
+  const said = placementText !== saidPlacement ? placement : null;
+  if (ops.length === 0 && record === null && said === null) return;
+  const before = { lastShared, savedWindow, saidPlacement };
   lastShared = applyOps(lastShared, ops);
-  await api.sharedApply(ops).catch(() => {
-    // Not told: told again, a moment on.
-    setTimeout(() => void inOrder(() => api.sharedApply(ops).catch(() => {})), 1000);
+  savedWindow = ownText;
+  saidPlacement = placementText;
+  await api.windowSync(ops, said, record).catch(() => {
+    // Not told: told again at the next round, from what the app was last told.
+    ({ lastShared, savedWindow, saidPlacement } = before);
+    scheduleKeep();
   });
 }
 
 function scheduleKeep(): void {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => void inOrder(keep), SAVE_MS);
+  clearTimeout(keepTimer);
+  keepTimer = setTimeout(() => void inOrder(keep), KEEP_MS);
 }
 
 /** Keep it now, and wait until it is kept. */
 export function keepNow(): Promise<unknown> {
-  clearTimeout(saveTimer);
+  clearTimeout(keepTimer);
   return inOrder(keep);
 }
 
@@ -125,7 +141,6 @@ function takeShared(state: GuiState, before: Shared, next: Shared): GuiState {
 
 /** Changes another window made (or this one did, told back): made here too. */
 function apply(ops: ReturnType<typeof readOps>): void {
-  if (ops.length === 0) return;
   const state = gui.peek();
   const before = sharedOf(state);
   lastShared = applyOps(lastShared, ops);
@@ -133,41 +148,44 @@ function apply(ops: ReturnType<typeof readOps>): void {
   if (next !== before) gui.value = takeShared(state, before, next);
 }
 
-function heard(event: SharedEvent): void {
-  if (event.seq <= seq) return;
-  // One was missed: the app is asked for everything, and the changes it tells from here on are on top of it.
-  if (event.seq > seq + 1) {
-    void resync();
-    return;
-  }
-  seq = event.seq;
-  apply(readOps(event.ops));
+/** The windows as the app lists them, unless a newer list has been heard. */
+function takeWindows(windows: { version: number; list: unknown }): void {
+  if (windows.version <= peersVersion) return;
+  peersVersion = windows.version;
+  peers.value = readPeers(windows.list);
+}
+
+/**
+ * What the app told: the changes, and the list of windows, taken together —
+ * the page draws after both, never between them.
+ */
+function heard(event: SyncEvent): void {
+  batch(() => {
+    const ops = readOps(event.ops);
+    if (ops.length > 0 && event.seq > seq) {
+      // One was missed: the app is asked for everything, and the changes it tells from here on are on top of it.
+      if (event.seq > seq + 1) void resync();
+      else {
+        seq = event.seq;
+        apply(ops);
+      }
+    }
+    if (event.windows) takeWindows(event.windows);
+  });
 }
 
 async function resync(): Promise<void> {
   const fresh = await api.windowBoot().catch(() => null);
   if (!fresh) return;
-  peers.value = readPeers(fresh.windows);
-  if (fresh.seq <= seq) return;
-  seq = fresh.seq;
-  const next = sharedOf(joinState(fresh.shared, null));
-  lastShared = next;
-  const state = gui.peek();
-  gui.value = takeShared(state, sharedOf(state), next);
-}
-
-// ------------------------------------------------------------------ saying what this window shows
-
-function scheduleReport(placement: Placement): void {
-  clearTimeout(reportTimer);
-  reportTimer = setTimeout(() => {
-    const text = JSON.stringify(placement);
-    if (text === reported) return;
-    reported = text;
-    void api.windowsReport(placement).catch(() => {
-      reported = "";
-    });
-  }, REPORT_MS);
+  batch(() => {
+    takeWindows(fresh.windows);
+    if (fresh.seq <= seq) return;
+    seq = fresh.seq;
+    const next = sharedOf(joinState(fresh.shared, null));
+    lastShared = next;
+    const state = gui.peek();
+    gui.value = takeShared(state, sharedOf(state), next);
+  });
 }
 
 /** Another window handed a tab to this one: it is in front here. */
@@ -186,25 +204,23 @@ export async function startWindows(boot: api.WindowBoot): Promise<void> {
   if (started) return;
   started = true;
   seq = boot.seq;
+  peersVersion = boot.windows.version;
   lastShared = sharedOf(joinState(boot.shared, null));
   savedWindow = boot.window === null ? "" : JSON.stringify(windowOf(gui.peek()));
   await Promise.all([
-    listen<SharedEvent>("keep://shared", (event) => heard(event.payload)),
-    listen<unknown>("keep://windows", (event) => {
-      peers.value = readPeers(event.payload);
-    }),
-    listen<{ workspace: string; tab: number }>("keep://show-tab", (event) => showTab(event.payload)),
+    listen<SyncEvent>("keep://sync", (event) => heard(event.payload)),
+    // Said to one window (`emitTo`): heard by this one only if it listens as itself — a listener of the page
+    // as a whole hears everything said to anybody.
+    getCurrentWebviewWindow().listen<{ workspace: string; tab: number }>("keep://show-tab", (event) => showTab(event.payload)),
   ]);
   // What was told between the answer the app gave at the start and the listening.
   await resync();
   effect(() => {
     void gui.value;
+    void carriedHere.value;
+    void activeWorkspace.value;
+    void activeTab.value;
     scheduleKeep();
-  });
-  effect(() => {
-    const workspace = activeWorkspace.value;
-    const tab = activeTab.value;
-    scheduleReport({ carries: carriedHere.value, showing: workspace && tab ? { workspace, tab: tab.root.id } : null });
   });
   // With other windows open, a terminal out of sight here may be one another window looks at.
   effect(() => terminals.setSeveralWindows(severalWindows.value));
@@ -229,9 +245,9 @@ async function whereThisIs(): Promise<{ at: Point; size: { width: number; height
 /**
  * Open a window, on purpose: the size of this one, stepped down and across,
  * with no workspace in it — every one there is a Go To away. The label it was
- * given.
+ * given and where the app put it.
  */
-export async function openNewWindow(): Promise<string | null> {
+export async function openNewWindow(): Promise<api.OpenedWindow | null> {
   try {
     const here = await whereThisIs();
     const frame = cascaded({ ...here.at, ...here.size }, here.scale);
@@ -264,7 +280,7 @@ export async function openSavedWindows(boot: api.WindowBoot, remap: (active: Gui
   await keepNow();
   const shared = sharedOf(gui.peek());
   for (const saved of boot.saved) {
-    const state = joinState(shared, saved.window);
+    const state = joinState(shared, saved.window, boot.inherit);
     const active = remap(state.active);
     const record = { ...windowOf(state), active };
     const frame = frameOf(saved.frame);
@@ -286,6 +302,9 @@ export async function openSavedWindows(boot: api.WindowBoot, remap: (active: Gui
 }
 
 // ------------------------------------------------------------------ a tab pulled out of the row
+
+/** What the scripted check puts in place of what asks the system, to be sure of where a tab is let go. */
+export const hooks = { windowUnder: api.windowUnder };
 
 /** Leave a tab to the window it went to: this one carries on with the tab beside it, if it was the one showing it. */
 function stepOff(workspace: string, root: number): void {
@@ -309,7 +328,7 @@ export async function tearOffTab(workspace: string, tab: RootTab, press: Point, 
     const win = getCurrentWindow();
     const [inner, scale, size] = await Promise.all([win.innerPosition(), win.scaleFactor(), win.innerSize()]);
     const cursor = { x: Math.round(inner.x + release.x * scale), y: Math.round(inner.y + release.y * scale) };
-    const over = await api.windowUnder(cursor.x, cursor.y, windowLabel.value).catch(() => null);
+    const over = await hooks.windowUnder(cursor.x, cursor.y, windowLabel.value).catch(() => null);
     const root = tab.root.id;
     if (over) {
       await emitTo(over, "keep://show-tab", { workspace, tab: root });

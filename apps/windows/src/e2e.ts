@@ -9,6 +9,7 @@ import { parseStatusFile } from "./aiStatus";
 import { busyMark, programOf, readActivity } from "./claude";
 import { defaultsOf, parseSettings, statusLineCommand } from "./claudeSettings";
 import { tabsSteps } from "./e2eTabs";
+import { windowsSteps } from "./e2eWindows";
 import { iaName, lineId } from "./ia";
 import { chooseAccount, e2eHooks, iaAvailable, measureNow, moveOrder, signIn, usageLines } from "./iaStore";
 import {
@@ -215,6 +216,7 @@ export async function runE2E(): Promise<void> {
   }
 
   await tabsSteps(step, windows, WORKSPACE);
+  await windowsSteps(step, windows);
 
   const tab = firstTab();
   const report = {

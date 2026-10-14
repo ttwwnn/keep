@@ -256,6 +256,11 @@ export class TermView {
     return viewerSize(this.visible, this.severalWindows, this.term.cols, this.term.rows);
   }
 
+  /** The size the daemon was last told this viewer has (0×0: not looking). */
+  get told(): { cols: number; rows: number } {
+    return this.sent;
+  }
+
   private sendSize(): void {
     const { cols, rows } = this.viewing();
     if (!this.attachment || (cols === this.sent.cols && rows === this.sent.rows)) return;

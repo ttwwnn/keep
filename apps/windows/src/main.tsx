@@ -7,6 +7,7 @@ import "./styles-appearance.css";
 import "./styles-confine.css";
 import "./styles-palette.css";
 import "./styles-tabs.css";
+import "./styles-windows.css";
 import { render } from "preact";
 import { startAppearance } from "./appearance";
 import { startConfinement } from "./confinementStore";
@@ -29,6 +30,8 @@ async function boot() {
   await startWindows(booted);
   render(<App />, document.getElementById("app")!);
   watchSleep();
+  // A window the scripted check opened answers it (e2eWindows.ts).
+  if (info.value?.e2eReport && windowLabel.value !== MAIN_LABEL) void import("./e2eWindows").then((m) => m.answerTheScript());
   await connect({
     // The tabs back after a restart are the oldest window's to ask for; the windows of the last run open once they are.
     restore: () => (isLeader.value ? restoreTabs() : Promise.resolve(null)),

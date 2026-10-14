@@ -134,8 +134,8 @@ export interface WindowBoot {
   window: unknown | null;
   /** The first window's part, for a window with none to take the furniture from. */
   inherit: unknown | null;
-  /** The windows that are open, oldest first (see windowModel.ts `readPeers`). */
-  windows: unknown;
+  /** The windows that are open, oldest first (see windowModel.ts `readPeers`), and how many times that list has changed. */
+  windows: { version: number; list: unknown };
   /** The windows of the last run that are not open: asked of the first window only. */
   saved: { label: string; window: unknown; frame: WindowFrame | null }[];
 }
@@ -161,15 +161,19 @@ export interface OpenWindow {
 }
 
 export const windowBoot = () => invoke<WindowBoot>("window_boot");
-/** Tell the other windows what changed in what they share; the order of the change. */
-export const sharedApply = (ops: unknown[]) => invoke<number>("shared_apply", { ops });
-/** Keep this window's own part of the state. */
-export const windowSave = (record: unknown) => invoke<void>("window_save", { record });
-/** Say what this window lists and shows. */
-export const windowsReport = (placement: unknown) => invoke<void>("windows_report", { placement });
-export const windowsList = () => invoke<unknown>("windows_list");
-/** Open a window; its label. */
-export const windowOpen = (request: OpenWindow) => invoke<string>("window_open", { request });
+/**
+ * Tell the app, all at once, what changed in what the windows share (windowState.ts `Op`), what this window
+ * lists and shows, and its own part of the state; the order of the changes. Every window hears what made a
+ * difference (`keep://sync`).
+ */
+export const windowSync = (ops: unknown[], placement: unknown | null, record: unknown | null) =>
+  invoke<number>("window_sync", { ops, placement, record });
+/** The window that was opened, and where the app put it (before the system had a say). */
+export interface OpenedWindow {
+  label: string;
+  frame: WindowFrame | null;
+}
+export const windowOpen = (request: OpenWindow) => invoke<OpenedWindow>("window_open", { request });
 /** The window under a point of the screen (physical pixels), if any, other than `exclude`. */
 export const windowUnder = (x: number, y: number, exclude: string | null) => invoke<string | null>("window_under", { x, y, exclude });
 export const windowShow = (label: string) => invoke<void>("window_show", { label });

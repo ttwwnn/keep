@@ -2,7 +2,9 @@
 // a tab or a workspace along the sidebar, and a tab dropped on another
 // workspace. What is dragged slides with the pointer and the others open a
 // place for it, as the macOS app's do (TabStripView.carry, the sidebar's
-// drop delegates); nothing is kept until it is let go.
+// drop delegates); nothing is kept until it is let go. A tab pulled out of the
+// row, up or down past its band, leaves it: let go, it makes a window of its own
+// or goes to the one it is let go over.
 
 import { signal } from "@preact/signals";
 import { autoScroll, hangGhost, trackDrag, type Ghost, type Point } from "../drag";
@@ -10,11 +12,24 @@ import type { RootTab } from "../layout";
 import { pitches, slides, slotAt, type Span } from "../reorder";
 import { moveId } from "../tabOrder";
 import { moveTabTo, moveWorkspace, reorderTabs, shownWorkspaces } from "../store";
+import { pulledOut } from "../windowModel";
+import { tearOffTab } from "../windowSync";
 
 // ------------------------------------------------------------------ the row above the terminal
 
-/** The tab being carried along the row, and how the others have slid for it. */
-export const stripMove = signal<{ workspace: string; from: number; to: number; dx: number; slid: number[] } | null>(null);
+/**
+ * The tab being carried along the row, and how the others have slid for it.
+ * `tearing`: it has been pulled out of the row — a copy of it hangs from the
+ * pointer, and the others have closed the gap it left.
+ */
+export const stripMove = signal<{
+  workspace: string;
+  from: number;
+  to: number;
+  dx: number;
+  slid: number[];
+  tearing?: boolean;
+} | null>(null);
 
 /** The box of each element along an axis, from where the move began. */
 function spansOf(elements: Element[], axis: "x" | "y", origin = 0): Span[] {
@@ -29,15 +44,22 @@ function spansOf(elements: Element[], axis: "x" | "y", origin = 0): Span[] {
  * pointer sideways — it never leaves the row, and the row puts it first or
  * last when the pointer goes past either end — and the others slide to
  * leave a gap where it would land; let go, the row is kept in that order.
+ * Pulled up or down out of the row's band (windowModel.ts `pulledOut`) it is
+ * no longer being put in a place of the row: a copy of it hangs from the
+ * pointer, the others close the gap, and let go it is torn out — into a new
+ * window, or the window it is let go over (windowSync.ts).
  */
 export function startStripDrag(event: PointerEvent, workspace: string, tabs: RootTab[], index: number): void {
   if (tabs.length < 2 || (event.target as HTMLElement).closest("button, input")) return;
-  const strip = (event.currentTarget as HTMLElement).closest<HTMLElement>(".strip");
+  const tab = event.currentTarget as HTMLElement;
+  const strip = tab.closest<HTMLElement>(".strip");
   if (!strip) return;
   let spans: Span[] = [];
   let pitch: number[] = [];
   let limits = { min: 0, max: 0 };
-  const startX = event.clientX;
+  let band = { top: 0, bottom: 0 };
+  let ghost: Ghost | null = null;
+  const start = { x: event.clientX, y: event.clientY };
   trackDrag(event, {
     start() {
       spans = spansOf([...strip.querySelectorAll(".tab")], "x");
@@ -45,19 +67,36 @@ export function startStripDrag(event: PointerEvent, workspace: string, tabs: Roo
       pitch = pitches(spans);
       const room = strip.getBoundingClientRect();
       limits = { min: room.left - spans[index].start, max: room.right - (spans[index].start + spans[index].size) };
+      band = { top: room.top, bottom: room.bottom };
       return true;
     },
     move(at) {
-      const dx = Math.min(Math.max(at.x - startX, limits.min), limits.max);
+      if (pulledOut(at.y, band)) {
+        if (!ghost) ghost = hangGhost(tab, at);
+        ghost.follow(at);
+        // The gap it left is closed: the ones after it slide into its place.
+        stripMove.value = { workspace, from: index, to: index, dx: 0, slid: slides(pitch, index, pitch.length - 1), tearing: true };
+        return;
+      }
+      ghost?.remove();
+      ghost = null;
+      const dx = Math.min(Math.max(at.x - start.x, limits.min), limits.max);
       // The middle of the carried tab decides the place, as the macOS row does.
       const middle = spans[index].start + spans[index].size / 2 + dx;
       const to = Math.max(0, slotAt(spans, middle));
       stripMove.value = { workspace, from: index, to, dx, slid: slides(pitch, index, to) };
     },
-    end(_at, dropped) {
+    end(at, dropped) {
       const moved = stripMove.value;
+      ghost?.remove();
+      ghost = null;
       stripMove.value = null;
-      if (!dropped || !moved || moved.to === moved.from) return;
+      if (!dropped || !moved) return;
+      if (moved.tearing) {
+        void tearOffTab(workspace, tabs[index], start, at);
+        return;
+      }
+      if (moved.to === moved.from) return;
       reorderTabs(workspace, moveId(tabs.map((t) => t.root.id), tabs[moved.from].root.id, moved.to));
     },
   });

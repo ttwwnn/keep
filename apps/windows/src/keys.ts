@@ -7,6 +7,7 @@
 export type Action =
   | { kind: "newTab" }
   | { kind: "newWorkspace" }
+  | { kind: "newWindow" }
   | { kind: "nextTab" }
   | { kind: "previousTab" }
   | { kind: "goToTab"; index: number }
@@ -67,10 +68,11 @@ export function shortcut(ev: KeyLike, mac = false): Action | null {
     return { kind: ev.shiftKey ? "resizePane" : "focusPane", direction: ARROWS[ev.code] };
   }
   // With Alt and the modifier: the palette (Ctrl+Shift+Alt+P, as the Mac's ⌘⇧P with Alt for the shell's Ctrl+P),
+  // a new window (Ctrl+Shift+Alt+N: the Mac's ⇧⌘N, whose Windows chord is taken by the new workspace, with Alt),
   // the find bar on the screen (Ctrl+Alt+F; Ctrl+F is the search of the pane's history),
   // and workspace to workspace: Ctrl+Alt+PageDown / PageUp (Ctrl+Alt+Tab is the system's).
   if (mod && ev.altKey && !otherMod) {
-    if (ev.shiftKey) return ev.code === "KeyP" ? { kind: "palette" } : null;
+    if (ev.shiftKey) return ev.code === "KeyP" ? { kind: "palette" } : ev.code === "KeyN" ? { kind: "newWindow" } : null;
     if (ev.code === "PageDown") return { kind: "nextWorkspace" };
     if (ev.code === "PageUp") return { kind: "previousWorkspace" };
     if (ev.code === "KeyF") return { kind: "findOnScreen" };

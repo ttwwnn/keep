@@ -11,7 +11,7 @@
 // or late — and shows dim in the list until it is:
 //
 //   toggleVerticalTabs   the tabs' side-bar-only layout
-//   newWindow            a second window
+//   newWindow            a second window (windowSync.ts)
 //   removeWorkspace      take a workspace off this window's list
 //
 // The two commands that open a list — the themes and the fonts — do not run
@@ -70,7 +70,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   { id: "splitDown", title: "Dividir abaixo", group: "janela", icon: "splitDown", keys: ["Ctrl", "Shift", "E"] },
   // Nothing closes a pane or a tab from the keyboard (keys.ts): no chord to show.
   { id: "closePane", title: "Fechar este painel", group: "janela", icon: "closePane", keys: [], destructive: true },
-  { id: "newWindow", title: "Nova janela", group: "janela", icon: "newWindow", keys: [] },
+  { id: "newWindow", title: "Nova janela", group: "janela", icon: "newWindow", keys: ["Ctrl", "Shift", "Alt", "N"] },
   { id: "settings", title: "Configurações", group: "janela", icon: "settings", keys: ["Ctrl", ","] },
   { id: "fullscreen", title: "Tela cheia", group: "janela", icon: "fullscreen", keys: ["F11"] },
 

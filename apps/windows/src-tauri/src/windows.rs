@@ -8,14 +8,20 @@
 //!
 //!  - the app's part of the state (the names given, the order of the tabs, the
 //!    workspaces put away, the zoom and the look), which a page changes by
-//!    sending the changes (`shared_apply`) and everybody hears, in the order
-//!    they were made, the one that made them too;
+//!    sending the changes and everybody hears, in the order they were made, the
+//!    one that made them too;
 //!  - each window's own part (its list of workspaces, what is folded, the tab in
-//!    front), which only that window writes (`window_save`), and its frame,
-//!    which is read from the window itself as it moves;
+//!    front), which only that window writes, and its frame, which is read from
+//!    the window itself as it moves;
 //!  - the list of the windows that are open, oldest first, each with what it
 //!    says of itself — the workspaces it lists, the tab in front — for the ⧉ on
 //!    a tab shown elsewhere and for deciding who takes a workspace nobody lists.
+//!
+//! A window tells all of it in one message (`window_sync`), and the app tells
+//! every window in one (`keep://sync`): a workspace put away by the last window
+//! that listed it leaves that window's list and enters the put-away list at one
+//! stroke, so that no window ever hears of a workspace that nobody lists and
+//! nobody put away — which is what the first window takes for its own.
 //!
 //! Everything is read, changed and written under one lock, so that two windows
 //! saving at once do not step on each other, and state.json keeps the rotating
@@ -39,10 +45,9 @@ use crate::settings;
 
 type Answer<T> = Result<T, String>;
 
-/// Told to every window when the app's part of the state changes: `{seq, from, ops}`.
-const EVENT_SHARED: &str = "keep://shared";
-/// Told to every window when a window opens or closes or says something of itself: the list of windows.
-const EVENT_WINDOWS: &str = "keep://windows";
+/// Told to every window when something changes: `{seq, from, ops, windows}` — the changes to the app's part of
+/// the state that made a difference, and the list of windows when that changed (`{version, list}`, else null).
+const EVENT_SYNC: &str = "keep://sync";
 
 const MAIN: &str = "main";
 
@@ -147,6 +152,13 @@ fn without_frame(record: &Value) -> Value {
         object.remove("frame");
     }
     copy
+}
+
+/// What a window kept for itself, if it kept anything: a record that is only its frame — a window that has never
+/// said anything — is a window with no state yet, which starts from the furniture of the first.
+fn own_part(record: &Value) -> Option<Value> {
+    let own = without_frame(record);
+    own.as_object().is_some_and(|o| OWN.iter().any(|k| o.contains_key(*k))).then_some(own)
 }
 
 // ------------------------------------------------------------------ saying what changed
@@ -349,7 +361,124 @@ struct Inner {
     doc: Doc,
     /// How many changes to the app's part have been made: every window hears them in this order.
     seq: u64,
+    /// How many times the list of windows has changed: a list told late is not taken for a newer one.
+    version: u64,
     registry: Registry,
+}
+
+/// What a change was: for the windows to be told, and the disk to be written.
+#[derive(Debug, Default, PartialEq)]
+struct News {
+    /// The changes to the app's part that made a difference.
+    ops: Vec<Value>,
+    /// The list of windows changed.
+    windows: bool,
+    /// What is on disk is out of date.
+    written: bool,
+}
+
+impl Inner {
+    fn windows(&self) -> Value {
+        json!({ "version": self.version, "list": self.registry.list() })
+    }
+
+    /// A window is known to the app: it is in the list from now on.
+    fn known(&mut self, label: &str) -> News {
+        let added = self.registry.add(label, None);
+        self.version += u64::from(added);
+        News { windows: added, ..News::default() }
+    }
+
+    /// What a window tells the app, all at once: changes to the app's part, what it says of itself, the part of
+    /// the state that is its own. What made a difference is the news.
+    fn sync(&mut self, label: &str, ops: &[Value], placement: Option<Value>, record: Option<Value>) -> News {
+        let mut news = News { ops: ops.iter().filter_map(|op| apply_op(&mut self.doc.shared, op)).collect(), ..News::default() };
+        if !news.ops.is_empty() {
+            self.seq += 1;
+            news.written = true;
+        }
+        if let Some(placement) = placement {
+            if self.registry.report(label, placement) {
+                self.version += 1;
+                news.windows = true;
+            }
+        }
+        if let Some(record) = record.filter(|r| r.is_object() && is_app_window(label)) {
+            let mut record = without_frame(&record);
+            if let Some(frame) = self.doc.windows.get(label).and_then(|r| r.get("frame")) {
+                record["frame"] = frame.clone();
+            }
+            if self.doc.windows.get(label) != Some(&record) {
+                self.doc.windows.insert(label.to_string(), record);
+                news.written = true;
+            }
+        }
+        news
+    }
+
+    /// A window is to be opened: the label it gets (the one asked for if it is free, else the lowest slot there is),
+    /// what it says of itself until it speaks, and the part of the state it starts with.
+    fn opened(&mut self, wanted: Option<&str>, placement: Option<Value>, record: Option<&Value>) -> (String, News) {
+        let taken = self.registry.labels();
+        let label = match wanted {
+            Some(wanted) if is_app_window(wanted) && !taken.contains(&wanted) => wanted.to_string(),
+            _ => free_label(taken),
+        };
+        let added = self.registry.add(&label, placement);
+        self.version += u64::from(added);
+        let mut news = News { windows: added, ..News::default() };
+        if let Some(record) = record.filter(|r| r.is_object()) {
+            let mut record = without_frame(record);
+            if let Some(frame) = self.doc.windows.get(&label).and_then(|r| r.get("frame")) {
+                record["frame"] = frame.clone();
+            }
+            self.doc.windows.insert(label.clone(), record);
+            news.written = true;
+        }
+        (label, news)
+    }
+
+    /// A window that was to open did not: it is not in the list, and what it was to start with is not kept.
+    fn unopened(&mut self, label: &str, started_with_a_record: bool) -> News {
+        let removed = self.registry.remove(label);
+        self.version += u64::from(removed);
+        let mut news = News { windows: removed, ..News::default() };
+        if started_with_a_record && self.doc.windows.remove(label).is_some() {
+            news.written = true;
+        }
+        news
+    }
+
+    /// A window is gone. If others stay open, what only it listed is put away — running, a Go To away, "not
+    /// pushed into another window" — and its record goes with it. The last one going is the app quitting, and
+    /// so is any one going while the app leaves: nothing is put away and the record stays, to be opened again.
+    fn closed(&mut self, label: &str, quitting: bool) -> News {
+        let mut news = News::default();
+        if !quitting && self.registry.others(label) > 0 {
+            for name in self.registry.carried_only_by(label) {
+                let op = json!({ "op": "add", "field": "hidden", "item": name });
+                news.ops.extend(apply_op(&mut self.doc.shared, &op));
+            }
+            if !news.ops.is_empty() {
+                self.seq += 1;
+            }
+            self.doc.windows.remove(label);
+            news.written = true;
+        }
+        if self.registry.remove(label) {
+            self.version += 1;
+            news.windows = true;
+        }
+        news
+    }
+
+    /// What every window is told of this news, if it is news.
+    fn event(&self, from: &str, news: &News) -> Option<Value> {
+        if news.ops.is_empty() && !news.windows {
+            return None;
+        }
+        Some(json!({ "seq": self.seq, "from": from, "ops": news.ops, "windows": news.windows.then(|| self.windows()) }))
+    }
 }
 
 /// What the app knows of its windows, managed by Tauri.
@@ -380,6 +509,22 @@ impl Hub {
         f(&mut inner)
     }
 
+    /// Make a change under the lock; what it says is out of date is written, and — once the lock is let go —
+    /// every window is told.
+    fn change<R>(&self, app: &AppHandle, from: &str, f: impl FnOnce(&mut Inner) -> (R, News)) -> R {
+        let (result, event) = self.with(app, |inner| {
+            let (result, news) = f(inner);
+            if news.written {
+                persist(inner);
+            }
+            (result, inner.event(from, &news))
+        });
+        if let Some(event) = event {
+            let _ = app.emit(EVENT_SYNC, event);
+        }
+        result
+    }
+
     /// The app is leaving: from here on a window that closes is the end of the app, not a window put away.
     pub fn quitting(&self) {
         self.exiting.store(true, Ordering::SeqCst);
@@ -397,17 +542,9 @@ fn persist(inner: &Inner) {
     }
 }
 
-fn tell_windows(app: &AppHandle, list: Value) {
-    let _ = app.emit(EVENT_WINDOWS, list);
-}
-
 /// The app starts: the first window is known before its page asks.
 pub fn start(app: &AppHandle) {
-    let known = hub(app).with(app, |inner| inner.registry.add(MAIN, None));
-    if known {
-        let list = hub(app).with(app, |inner| inner.registry.list());
-        tell_windows(app, list);
-    }
+    hub(app).change(app, MAIN, |inner| ((), inner.known(MAIN)));
 }
 
 /// The app is leaving: what is on disk is written, and the windows closing from here on put nothing away.
@@ -425,10 +562,11 @@ pub struct Boot {
     label: String,
     seq: u64,
     shared: Value,
-    /// This window's own record; none for a window that has never been saved.
+    /// This window's own record; none for a window that has never said anything.
     window: Option<Value>,
     /// The first window's record, for a window with none to start from the furniture it has.
     inherit: Option<Value>,
+    /// The windows that are open: `{version, list}`.
     windows: Value,
     /// The windows of the last run that are not open, to be opened (asked by the first window only).
     saved: Vec<Value>,
@@ -437,8 +575,8 @@ pub struct Boot {
 #[tauri::command]
 pub fn window_boot(app: AppHandle, window: Window) -> Boot {
     let label = window.label().to_string();
-    let (boot, changed) = hub(&app).with(&app, |inner| {
-        let changed = inner.registry.add(&label, None);
+    hub(&app).change(&app, &label, |inner| {
+        let news = if is_app_window(&label) { inner.known(&label) } else { News::default() };
         let live: HashSet<String> = inner.registry.labels().into_iter().map(str::to_string).collect();
         let saved = if label == MAIN {
             inner
@@ -446,7 +584,7 @@ pub fn window_boot(app: AppHandle, window: Window) -> Boot {
                 .windows
                 .iter()
                 .filter(|(l, _)| is_app_window(l) && *l != MAIN && !live.contains(*l))
-                .map(|(l, record)| json!({ "label": l, "window": without_frame(record), "frame": record.get("frame") }))
+                .map(|(l, record)| json!({ "label": l, "window": own_part(record), "frame": record.get("frame") }))
                 .collect()
         } else {
             Vec::new()
@@ -455,69 +593,25 @@ pub fn window_boot(app: AppHandle, window: Window) -> Boot {
             label: label.clone(),
             seq: inner.seq,
             shared: Value::Object(inner.doc.shared.clone()),
-            window: inner.doc.windows.get(&label).filter(|_| is_app_window(&label)).map(without_frame),
-            inherit: inner.doc.windows.get(MAIN).map(without_frame),
-            windows: inner.registry.list(),
+            window: inner.doc.windows.get(&label).filter(|_| is_app_window(&label)).and_then(own_part),
+            inherit: inner.doc.windows.get(MAIN).and_then(own_part),
+            windows: inner.windows(),
             saved,
         };
-        (boot, changed)
-    });
-    if changed {
-        tell_windows(&app, boot.windows.clone());
-    }
-    boot
+        (boot, news)
+    })
 }
 
-/// Change the app's part of the state. Every window hears what made a difference, the sender too; the number
-/// it is told under is the order the changes were made in.
+/// What a window tells the app, all at once: the changes to what the windows share, what the window lists and
+/// shows, the part of the state that is its own. Every window hears what made a difference, the sender too;
+/// the number is the order the changes were made in.
 #[tauri::command]
-pub fn shared_apply(app: AppHandle, window: Window, ops: Vec<Value>) -> u64 {
-    let (seq, done) = hub(&app).with(&app, |inner| {
-        let done: Vec<Value> = ops.iter().filter_map(|op| apply_op(&mut inner.doc.shared, op)).collect();
-        if !done.is_empty() {
-            inner.seq += 1;
-            persist(inner);
-        }
-        (inner.seq, done)
-    });
-    if !done.is_empty() {
-        let _ = app.emit(EVENT_SHARED, json!({ "seq": seq, "from": window.label(), "ops": done }));
-    }
-    seq
-}
-
-/// The part of the state this window keeps for itself.
-#[tauri::command]
-pub fn window_save(app: AppHandle, window: Window, record: Value) {
+pub fn window_sync(app: AppHandle, window: Window, ops: Vec<Value>, placement: Option<Value>, record: Option<Value>) -> u64 {
     let label = window.label().to_string();
-    if !is_app_window(&label) || !record.is_object() {
-        return;
-    }
-    hub(&app).with(&app, |inner| {
-        let mut record = without_frame(&record);
-        if let Some(frame) = inner.doc.windows.get(&label).and_then(|r| r.get("frame")) {
-            record["frame"] = frame.clone();
-        }
-        if inner.doc.windows.get(&label) != Some(&record) {
-            inner.doc.windows.insert(label, record);
-            persist(inner);
-        }
-    });
-}
-
-/// What this window says of itself: the workspaces it lists, the tab in front.
-#[tauri::command]
-pub fn windows_report(app: AppHandle, window: Window, placement: Value) {
-    let label = window.label().to_string();
-    let list = hub(&app).with(&app, |inner| inner.registry.report(&label, placement).then(|| inner.registry.list()));
-    if let Some(list) = list {
-        tell_windows(&app, list);
-    }
-}
-
-#[tauri::command]
-pub fn windows_list(app: AppHandle) -> Value {
-    hub(&app).with(&app, |inner| inner.registry.list())
+    hub(&app).change(&app, &label, |inner| {
+        let news = inner.sync(&label, &ops, placement, record);
+        (inner.seq, news)
+    })
 }
 
 /// What a window to open is asked to be.
@@ -535,41 +629,24 @@ pub struct Open {
     record: Option<Value>,
 }
 
+/// The window that was opened, and where it was put.
+#[derive(Serialize)]
+pub struct Opened {
+    label: String,
+    frame: Option<Frame>,
+}
+
 #[tauri::command]
-pub async fn window_open(app: AppHandle, request: Open) -> Answer<String> {
-    let (label, list) = hub(&app).with(&app, |inner| {
-        let taken = inner.registry.labels();
-        let label = match request.label.as_deref() {
-            Some(wanted) if is_app_window(wanted) && !taken.contains(&wanted) => wanted.to_string(),
-            _ => free_label(taken),
-        };
-        inner.registry.add(&label, request.placement.clone());
-        if let Some(record) = request.record.as_ref().filter(|r| r.is_object()) {
-            let mut record = without_frame(record);
-            if let Some(frame) = inner.doc.windows.get(&label).and_then(|r| r.get("frame")) {
-                record["frame"] = frame.clone();
-            }
-            inner.doc.windows.insert(label.clone(), record);
-            persist(inner);
-        }
-        (label, inner.registry.list())
-    });
-    match build(&app, &label, &request) {
-        Ok(()) => {
-            tell_windows(&app, list);
-            Ok(label)
-        }
+pub async fn window_open(app: AppHandle, request: Open) -> Answer<Opened> {
+    let label = hub(&app).change(&app, "", |inner| inner.opened(request.label.as_deref(), request.placement.clone(), request.record.as_ref()));
+    let had_record = request.record.is_some();
+    let (made, name) = (app.clone(), label.clone());
+    // Off the async threads: placing the window waits for the system a moment.
+    let built = tauri::async_runtime::spawn_blocking(move || build(&made, &name, &request)).await.map_err(|e| e.to_string());
+    match built.and_then(|built| built) {
+        Ok(frame) => Ok(Opened { label, frame }),
         Err(e) => {
-            let list = hub(&app).with(&app, |inner| {
-                inner.registry.remove(&label);
-                // What it was to start with is not kept for a window that never opened.
-                if request.record.is_some() {
-                    inner.doc.windows.remove(&label);
-                    persist(inner);
-                }
-                inner.registry.list()
-            });
-            tell_windows(&app, list);
+            hub(&app).change(&app, "", |inner| ((), inner.unopened(&label, had_record)));
             Err(e)
         }
     }
@@ -586,7 +663,7 @@ fn monitors(app: &AppHandle) -> Vec<Frame> {
 
 /// Make the window: the first one's own configuration (frameless on Windows, the title bar of the macOS build),
 /// the same page, at the size and place it is asked for when that place is on a monitor that is here.
-fn build(app: &AppHandle, label: &str, request: &Open) -> Answer<()> {
+fn build(app: &AppHandle, label: &str, request: &Open) -> Answer<Option<Frame>> {
     let mut config = app.config().app.windows.first().cloned().ok_or("sem janela na configuração")?;
     config.label = label.to_string();
     let window = tauri::WebviewWindowBuilder::from_config(app, &config)
@@ -594,18 +671,49 @@ fn build(app: &AppHandle, label: &str, request: &Open) -> Answer<()> {
         .visible(false)
         .build()
         .map_err(|e| e.to_string())?;
+    let mut wanted = None;
     if let Some(frame) = request.frame {
         let _ = window.set_size(PhysicalSize::new(frame.width, frame.height));
+        wanted = Some(frame);
         if on_a_monitor(&frame, &monitors(app)) {
             let _ = window.set_position(PhysicalPosition::new(frame.x, frame.y));
+        } else {
+            // Not on a monitor that is here: the system decides where it goes.
+            wanted = Some(Frame { x: i32::MIN, ..frame });
         }
     }
     if request.maximized == Some(true) {
         let _ = window.maximize();
     }
+    // Where it was put, as the system has it before the window is shown: what it does with the window after
+    // that — a window manager that tiles or zooms every new window — is its own. Placing is not always done
+    // when the call returns (macOS moves a window a moment later), so what was asked is waited for, a moment.
+    let placed = wait_until_placed(&window, wanted);
     window.show().map_err(|e| e.to_string())?;
     let _ = window.set_focus();
-    Ok(())
+    // Where it came up, for the next run even if it is never moved.
+    note_frame(app, &window.as_ref().window());
+    Ok(placed)
+}
+
+/// Where the window is, as the system has it; after waiting a moment for it to be where it was asked to be.
+fn wait_until_placed(window: &tauri::WebviewWindow, wanted: Option<Frame>) -> Option<Frame> {
+    let now = || match (window.outer_position(), window.inner_size()) {
+        (Ok(at), Ok(size)) => Some(Frame { x: at.x, y: at.y, width: size.width, height: size.height }),
+        _ => None,
+    };
+    for _ in 0..40 {
+        let here = now();
+        let done = match (here, wanted) {
+            (Some(here), Some(wanted)) => here.width == wanted.width && here.height == wanted.height && (wanted.x == i32::MIN || (here.x == wanted.x && here.y == wanted.y)),
+            _ => true,
+        };
+        if done {
+            return here;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    now()
 }
 
 /// The window under a point of the screen, if any, front to back; not `exclude`.
@@ -683,7 +791,8 @@ fn note_frame(app: &AppHandle, window: &Window) {
         return;
     }
     hub(app).with(app, |inner| {
-        let Some(record) = inner.doc.windows.get_mut(label) else { return };
+        // A window that has said nothing yet has a record of its frame alone.
+        let record = inner.doc.windows.entry(label.to_string()).or_insert_with(|| json!({}));
         let was = record.get("frame").cloned();
         // Maximized, the frame it had before is the one to come back to.
         let frame = if maximized {
@@ -715,35 +824,11 @@ fn schedule_flush(app: &AppHandle) {
     });
 }
 
-/// A window is gone. If others stay open, what only it listed is put away — running, a Go To away, "not pushed
-/// into another window" — and its record goes with it. The last one going is the app quitting: it puts
-/// nothing away and its record stays, to be opened again.
+/// A window is gone (`Inner::closed`).
 fn closed(app: &AppHandle, label: &str) {
     let hub = hub(app);
     let quitting = hub.exiting.load(Ordering::SeqCst);
-    let (done, seq, list) = hub.with(app, |inner| {
-        let leaving = !quitting && inner.registry.others(label) > 0;
-        let mut done = Vec::new();
-        if leaving {
-            for name in inner.registry.carried_only_by(label) {
-                let op = json!({ "op": "add", "field": "hidden", "item": name });
-                done.extend(apply_op(&mut inner.doc.shared, &op));
-            }
-            inner.doc.windows.remove(label);
-            if !done.is_empty() {
-                inner.seq += 1;
-            }
-            persist(inner);
-        }
-        let known = inner.registry.remove(label);
-        (done, inner.seq, known.then(|| inner.registry.list()))
-    });
-    if !done.is_empty() {
-        let _ = app.emit(EVENT_SHARED, json!({ "seq": seq, "from": label, "ops": done }));
-    }
-    if let Some(list) = list {
-        tell_windows(app, list);
-    }
+    hub.change(app, label, |inner| ((), inner.closed(label, quitting)));
 }
 
 #[cfg(test)]
@@ -834,6 +919,15 @@ mod tests {
         let record = json!({"order": ["a"], "frame": {"x": 1, "y": 2, "width": 3, "height": 4, "maximized": false}});
         assert_eq!(without_frame(&record), json!({"order": ["a"]}));
         assert_eq!(without_frame(&json!(3)), json!(3));
+    }
+
+    #[test]
+    fn a_record_that_is_only_a_frame_is_no_state_of_the_windows_own() {
+        assert_eq!(own_part(&json!({"frame": {"x": 1}})), None);
+        assert_eq!(own_part(&json!({})), None);
+        assert_eq!(own_part(&json!(3)), None);
+        assert_eq!(own_part(&json!({"order": [], "frame": {"x": 1}})), Some(json!({"order": []})));
+        assert_eq!(own_part(&json!({"verticalTabs": true})), Some(json!({"verticalTabs": true})));
     }
 
     fn shared() -> Map<String, Value> {
@@ -985,6 +1079,186 @@ mod tests {
         assert_eq!(topmost_at(&windows, 100, 100, None).as_deref(), Some("w1"));
         assert_eq!(topmost_at(&windows, 500, 400, None).as_deref(), Some("main"));
         assert_eq!(topmost_at(&windows, -1, 0, None), None);
+    }
+
+    fn two_windows() -> Inner {
+        let mut inner = Inner::default();
+        inner.known("main");
+        inner.known("w1");
+        inner.sync("main", &[], Some(placement(&["a", "b"], Some(("a", 1)))), Some(json!({"order": ["a", "b"], "folded": []})));
+        inner.sync("w1", &[], Some(placement(&["b", "c"], Some(("b", 4)))), Some(json!({"order": ["b", "c"], "folded": []})));
+        inner
+    }
+
+    #[test]
+    fn a_window_tells_what_changed_what_it_shows_and_what_is_its_own_in_one_message() {
+        let mut inner = two_windows();
+        let version = inner.version;
+        let seq = inner.seq;
+        let news = inner.sync(
+            "main",
+            &[json!({"op": "add", "field": "hidden", "item": "a"}), json!({"op": "put", "field": "zoom", "value": 1.5})],
+            Some(placement(&["b"], Some(("b", 2)))),
+            Some(json!({"order": ["a", "b"], "folded": ["a"]})),
+        );
+        assert_eq!(news.ops.len(), 2);
+        assert!(news.windows && news.written);
+        assert_eq!((inner.seq, inner.version), (seq + 1, version + 1), "one change of the app's part, one of the list");
+        assert_eq!(inner.doc.shared["zoom"], json!(1.5));
+        assert_eq!(inner.doc.windows["main"]["folded"], json!(["a"]));
+        // What every window is told, in the one event: the changes and the list as they are at once.
+        let event = inner.event("main", &news).unwrap();
+        assert_eq!(event["seq"], json!(inner.seq));
+        assert_eq!(event["from"], json!("main"));
+        assert_eq!(event["ops"].as_array().unwrap().len(), 2);
+        assert_eq!(event["windows"]["version"], json!(inner.version));
+        assert_eq!(event["windows"]["list"][0]["placement"]["carries"], json!(["b"]));
+    }
+
+    #[test]
+    fn nothing_is_told_when_nothing_changed() {
+        let mut inner = two_windows();
+        let seq = inner.seq;
+        let version = inner.version;
+        let news = inner.sync(
+            "main",
+            &[json!({"op": "add", "field": "hidden", "item": "x"}), json!({"op": "add", "field": "hidden", "item": "x"})],
+            Some(placement(&["a", "b"], Some(("a", 1)))),
+            Some(json!({"order": ["a", "b"], "folded": []})),
+        );
+        assert_eq!(news.ops.len(), 1, "the second is already so");
+        let again = inner.sync(
+            "main",
+            &[json!({"op": "add", "field": "hidden", "item": "x"})],
+            Some(placement(&["a", "b"], Some(("a", 1)))),
+            Some(json!({"order": ["a", "b"], "folded": []})),
+        );
+        assert_eq!(again, News::default());
+        assert_eq!(inner.event("main", &again), None);
+        assert_eq!((inner.seq, inner.version), (seq + 1, version));
+    }
+
+    #[test]
+    fn a_workspace_leaves_the_last_list_and_enters_the_put_away_list_at_one_stroke() {
+        let mut inner = two_windows();
+        // w1 is the last to list c, and puts it away: it leaves its list and enters the put-away list in one message.
+        let news = inner.sync(
+            "w1",
+            &[json!({"op": "add", "field": "hidden", "item": "c"})],
+            Some(placement(&["b"], Some(("b", 4)))),
+            None,
+        );
+        assert!(news.windows && !news.ops.is_empty());
+        let listed: HashSet<String> = inner.registry.list().as_array().unwrap().iter().flat_map(|w| carries(&w["placement"])).collect();
+        assert!(!listed.contains("c"));
+        assert_eq!(inner.doc.shared["hidden"], json!(["c"]));
+    }
+
+    #[test]
+    fn a_window_that_is_not_known_or_not_the_apps_says_nothing_of_itself_and_keeps_no_record() {
+        let mut inner = two_windows();
+        let news = inner.sync("quick", &[], Some(placement(&["x"], None)), Some(json!({"order": ["x"]})));
+        assert_eq!(news, News::default());
+        assert!(!inner.doc.windows.contains_key("quick"));
+        let before = inner.doc.windows.len();
+        inner.sync("w1", &[], None, Some(json!([1, 2])));
+        assert_eq!(inner.doc.windows.len(), before);
+    }
+
+    #[test]
+    fn what_a_window_kept_is_given_back_with_its_frame_left_alone() {
+        let mut inner = two_windows();
+        inner.doc.windows.get_mut("w1").unwrap()["frame"] = json!({"x": 10, "y": 20, "width": 300, "height": 200, "maximized": false});
+        inner.sync("w1", &[], None, Some(json!({"order": ["z"], "frame": {"x": 999}})));
+        let record = &inner.doc.windows["w1"];
+        assert_eq!(record["order"], json!(["z"]));
+        assert_eq!(record["frame"]["x"], json!(10), "the frame is the app's, not the page's");
+    }
+
+    #[test]
+    fn a_window_closing_while_others_stay_puts_away_what_only_it_listed_and_forgets_its_record() {
+        let mut inner = two_windows();
+        let news = inner.closed("w1", false);
+        // b is main's too; c was only w1's.
+        assert_eq!(news.ops, vec![json!({"op": "add", "field": "hidden", "item": "c"})]);
+        assert!(news.windows && news.written);
+        assert_eq!(inner.doc.shared["hidden"], json!(["c"]));
+        assert!(!inner.doc.windows.contains_key("w1"));
+        assert_eq!(inner.registry.labels(), ["main"]);
+        // Told as one: the workspace put away and the window gone.
+        let event = inner.event("w1", &news).unwrap();
+        assert_eq!(event["ops"].as_array().unwrap().len(), 1);
+        assert_eq!(event["windows"]["list"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn the_last_window_closing_is_the_app_quitting_and_puts_nothing_away() {
+        let mut inner = two_windows();
+        inner.closed("w1", false);
+        let before = inner.doc.shared.clone();
+        let news = inner.closed("main", false);
+        assert!(news.ops.is_empty());
+        assert_eq!(inner.doc.shared, before);
+        assert!(inner.doc.windows.contains_key("main"), "its record stays, to be opened again");
+        assert!(inner.registry.labels().is_empty());
+    }
+
+    #[test]
+    fn windows_closing_on_the_way_out_put_nothing_away() {
+        let mut inner = two_windows();
+        let news = inner.closed("w1", true);
+        assert!(news.ops.is_empty() && !news.written);
+        assert!(inner.doc.windows.contains_key("w1"));
+        assert!(inner.doc.shared.get("hidden").is_none());
+        // The list still changes: the window is gone from it.
+        assert!(news.windows);
+    }
+
+    #[test]
+    fn a_window_opened_gets_the_lowest_slot_and_the_state_it_starts_with() {
+        let mut inner = Inner::default();
+        inner.known("main");
+        let record = json!({"order": ["a"], "active": {"workspace": "a", "tab": 2}, "frame": {"x": 5}});
+        let (label, news) = inner.opened(None, Some(placement(&["a"], Some(("a", 2)))), Some(&record));
+        assert_eq!(label, "w1");
+        assert!(news.windows && news.written);
+        assert_eq!(inner.doc.windows["w1"]["order"], json!(["a"]));
+        assert!(inner.doc.windows["w1"].get("frame").is_none(), "no frame of the page's");
+        // A window of the last run asks for its own label, if it is free.
+        let (again, _) = inner.opened(Some("w3"), None, None);
+        assert_eq!(again, "w3");
+        let (taken, _) = inner.opened(Some("w3"), None, None);
+        assert_eq!(taken, "w2", "taken: the lowest free");
+        let (not_ours, _) = inner.opened(Some("quick"), None, None);
+        assert_eq!(not_ours, "w4");
+    }
+
+    #[test]
+    fn a_window_that_did_not_open_is_not_kept() {
+        let mut inner = Inner::default();
+        inner.known("main");
+        let record = json!({"order": ["a"]});
+        let (label, _) = inner.opened(None, None, Some(&record));
+        let news = inner.unopened(&label, true);
+        assert!(news.windows && news.written);
+        assert_eq!(inner.registry.labels(), ["main"]);
+        assert!(!inner.doc.windows.contains_key(&label));
+    }
+
+    #[test]
+    fn the_list_of_windows_has_a_version_that_only_grows() {
+        let mut inner = Inner::default();
+        let v0 = inner.version;
+        inner.known("main");
+        assert_eq!(inner.version, v0 + 1);
+        inner.known("main");
+        assert_eq!(inner.version, v0 + 1, "known already");
+        inner.known("w1");
+        inner.sync("w1", &[], Some(placement(&["a"], None)), None);
+        inner.sync("w1", &[], Some(placement(&["a"], None)), None);
+        assert_eq!(inner.version, v0 + 3);
+        inner.closed("w1", false);
+        assert_eq!(inner.version, v0 + 4);
     }
 
     #[test]

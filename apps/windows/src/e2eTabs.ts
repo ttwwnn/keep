@@ -471,7 +471,9 @@ export async function tabsSteps(step: StepRunner, windows: boolean, home: string
     // From the empty stretch of the row itself, as a person would.
     one<HTMLElement>(".strip").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
     const item = await waitFor(() => document.querySelector<HTMLElement>(".context-menu .menu-item"), 3000, "o menu da fileira");
-    check(menu.value?.items.length === 1, "o menu da fileira tem mais que um item");
+    // The first of the menu's items is the vertical tabs' (the others are the window's: a new one).
+    const first = menu.value?.items[0];
+    check(first && first !== "separator" && first.label === "Abas só na barra lateral", "o primeiro item do menu da fileira não é o das abas verticais");
     item.click();
     await waitFor(() => stripIds().length === 0, 3000, "a fileira sair"); 
     check(rowIds(A).length === idsOf(A).length, "a barra lateral perdeu abas");
