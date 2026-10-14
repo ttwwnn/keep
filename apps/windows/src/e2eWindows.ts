@@ -458,7 +458,7 @@ export async function windowsSteps(step: StepRunner, windows: boolean): Promise<
     const third = await waitFor(() => peers.value.find((p) => p.label !== windowLabel.value && p.label !== second)?.label, 20000, "a janela da aba");
     await awaitWindow(third);
     // The window answers as soon as its page is up, before it has taken the tab it was born with: asked until it has.
-    const start = await seen(third, (s) => s.listed.join() === SPACE && s.tab === tabs[0], "a janela da aba listar o workspace e mostrar a aba").catch(async (e) => {
+    await seen(third, (s) => s.listed.join() === SPACE && s.tab === tabs[0], "a janela da aba listar o workspace e mostrar a aba").catch(async (e) => {
       const now = await ask(third, "snapshot");
       throw new Error(`${e.message}; a janela lista ${now.listed} e mostra ${now.tab}`);
     });
