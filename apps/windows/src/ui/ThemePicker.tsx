@@ -26,6 +26,7 @@ export function ThemePicker() {
   const theme = gui.value.theme;
   return (
     <CatalogPicker
+      kind="theme"
       label="Tema do terminal"
       placeholder="um tema para vestir…"
       names={names.length > 0 ? names : failed ? [] : null}

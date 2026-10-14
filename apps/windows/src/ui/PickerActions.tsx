@@ -8,8 +8,7 @@
 // it opens are visibly the same object.
 
 import { useEffect, useRef, useState } from "preact/hooks";
-import { actionsFor, filterActions, type ActionId } from "../palette/actions";
-import type { PickerItem } from "../palette/items";
+import { filterActions, type ActionEntry, type ActionId } from "../palette/actions";
 import { Glyph } from "./Glyph";
 import { KeyCaps } from "./KeyCaps";
 
@@ -35,12 +34,11 @@ export function Footer(props: { onOpen(): void; onActions(): void }) {
  * so typing narrows the actions instead of the list behind — and gives it back
  * when it goes.
  */
-export function ActionsPanel(props: { item: PickerItem; onRun(action: ActionId): void; onClose(): void }) {
-  const { item } = props;
+export function ActionsPanel(props: { heading: string; entries: readonly ActionEntry[]; onRun(action: ActionId): void; onClose(): void }) {
   const [typed, setTyped] = useState("");
   const [index, setIndex] = useState(0);
   const field = useRef<HTMLInputElement>(null);
-  const shown = filterActions(actionsFor(item), typed);
+  const shown = filterActions(props.entries, typed);
   const selected = Math.min(index, shown.length - 1);
 
   useEffect(() => field.current?.focus(), []);
@@ -73,7 +71,7 @@ export function ActionsPanel(props: { item: PickerItem; onRun(action: ActionId):
 
   return (
     <div class="pk-actions" role="menu" aria-label="Ações">
-      <div class="pk-actions-heading">{item.title.trim() || item.path}</div>
+      <div class="pk-actions-heading">{props.heading}</div>
       <div class="pk-actions-rows">
         {shown.map((entry, i) => (
           <div key={entry.action}>

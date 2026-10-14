@@ -20,6 +20,7 @@ import {
   activeTab,
   activeWorkspace,
   answer,
+  refresh,
   closeWorkspace,
   createWorkspace,
   dialog,
@@ -96,7 +97,7 @@ interface Snapshot {
 interface Ask {
   id: number;
   from: string;
-  what: "ping" | "snapshot" | "go" | "putAway" | "close";
+  what: "ping" | "snapshot" | "go" | "putAway" | "close" | "create";
   workspace?: string;
   tab?: number;
 }
@@ -140,6 +141,9 @@ export async function answerTheScript(): Promise<void> {
         case "putAway":
           putAway(payload.workspace ?? "");
           break;
+        case "create":
+          await createWorkspace(payload.workspace ?? "", null);
+          break;
         case "close":
           // Said before it goes: the answer leaves with the window still there.
           await emitTo(payload.from, ANSWER, { id: payload.id, data: null });
@@ -154,8 +158,9 @@ export async function answerTheScript(): Promise<void> {
       data = { error: String(error) };
     }
     // After the page has drawn what was asked.
-    await sleep(payload.what === "go" || payload.what === "putAway" ? 400 : 0);
-    if (payload.what === "go" || payload.what === "putAway") data = snapshot();
+    const drawn = payload.what === "go" || payload.what === "putAway" || payload.what === "create";
+    await sleep(drawn ? 400 : 0);
+    if (drawn) data = snapshot();
     await emitTo(payload.from, ANSWER, { id: payload.id, data });
   });
 }
@@ -254,6 +259,8 @@ const sidebarRow = (workspace: string, root: number) =>
 // ------------------------------------------------------------------ the steps
 
 const SPACE = "e2e-janelas";
+/** One the second window makes, which the first must not take. */
+const NEW_SPACE = "e2e-janelas-nova";
 
 /** The same size, give or take what a window's edges take. */
 const alike = (a: number, b: number) => Math.abs(a - b) <= 2;
@@ -343,6 +350,39 @@ export async function windowsSteps(step: StepRunner, windows: boolean): Promise<
       return tab && tab.clients >= 2 ? tab.clients : null;
     }, 10000, "dois visualizadores na aba");
     return `${SPACE} na ${second}; a marca, na fileira e na barra lateral daqui e no estado das duas; ${viewers} visualizadores`;
+  });
+
+  await step("janelas: um workspace feito na janela nova fica só nela, sem a mais antiga tomá-lo", async () => {
+    // This window is the oldest, the one that takes what nobody lists. It asks the daemon over and over while the
+    // other makes the workspace, so that it asks in the beat before the other says it lists it: before the
+    // grace (windowModel.ts, ORPHAN_GRACE_MS) it took it then, and the workspace showed in both.
+    let asking = true;
+    let tookIt = false;
+    const watching = (async () => {
+      while (asking) {
+        await refresh().catch(() => {});
+        if (shownWorkspaces.value.some((w) => w.name === NEW_SPACE) || gui.value.order.includes(NEW_SPACE)) tookIt = true;
+        await sleep(40);
+      }
+    })();
+    try {
+      const made = await ask(second, "create", { workspace: NEW_SPACE }, 20000);
+      check(!made.error, `a janela nova não fez o workspace: ${made.error}`);
+      await seen(second, (s) => s.listed.includes(NEW_SPACE), "a janela nova listar o workspace que fez");
+      // Past the grace, and some.
+      await sleep(2500);
+    } finally {
+      asking = false;
+      await watching;
+    }
+    check(!tookIt, `a primeira janela tomou ${NEW_SPACE} também; janelas: ${peersText()}`);
+    check(workspaces.value.some((w) => w.name === NEW_SPACE), "o daemon não tem o workspace novo");
+    const closing = closeWorkspace(NEW_SPACE);
+    await waitFor(() => dialog.value, 5000, "a pergunta de fechar o workspace novo");
+    answer("close");
+    await closing;
+    await waitFor(() => !workspaces.value.some((w) => w.name === NEW_SPACE), 10000, "o workspace novo sumir");
+    return `${NEW_SPACE} só na ${second}, com esta perguntando ao daemon a cada 40 ms durante 2,5 s`;
   });
 
   await step("janelas: o terminal fora de vista numa janela diz ao keepd que não está olhando", async () => {

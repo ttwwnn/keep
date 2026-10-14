@@ -11,6 +11,8 @@ import {
   frameOfTornTab,
   leaderOf,
   orphansOf,
+  settledOrphans,
+  ORPHAN_GRACE_MS,
   pulledOut,
   readPeers,
   readPlacement,
@@ -76,6 +78,29 @@ describe("the workspaces nobody lists", () => {
   });
   it("are none when every window lists what runs", () => {
     expect(orphansOf(["a", "b"], new Set(["a", "b"]), [])).toEqual([]);
+  });
+});
+
+describe("a workspace nobody lists, with other windows open", () => {
+  it("is taken only after the grace: the window that made it says so a beat later", () => {
+    const seen = new Map<string, number>();
+    expect(settledOrphans(["nova"], seen, 1000, ["a", "nova"])).toEqual({ settled: [], wait: ORPHAN_GRACE_MS });
+    expect(settledOrphans(["nova"], seen, 1400, ["a", "nova"])).toEqual({ settled: [], wait: ORPHAN_GRACE_MS - 400 });
+    expect(settledOrphans(["nova"], seen, 1000 + ORPHAN_GRACE_MS, ["a", "nova"])).toEqual({ settled: ["nova"], wait: null });
+  });
+  it("is not taken when its window lists it within the grace, and the clock is not started again by a reader that asks in between", () => {
+    const seen = new Map<string, number>();
+    settledOrphans(["nova"], seen, 1000, ["nova"]);
+    // Listed by the window that made it: no longer an orphan, so nothing to take.
+    expect(settledOrphans([], seen, 1100, ["nova"])).toEqual({ settled: [], wait: null });
+    // Unlisted again later (its window closed): it has waited already.
+    expect(settledOrphans(["nova"], seen, 1000 + ORPHAN_GRACE_MS, ["nova"]).settled).toEqual(["nova"]);
+  });
+  it("forgets a workspace that ended, so one of the same name made later waits", () => {
+    const seen = new Map<string, number>();
+    settledOrphans(["x"], seen, 0, ["x"]);
+    settledOrphans([], seen, 5000, []);
+    expect(settledOrphans(["x"], seen, 6000, ["x"])).toEqual({ settled: [], wait: ORPHAN_GRACE_MS });
   });
 });
 

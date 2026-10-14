@@ -103,6 +103,44 @@ export function orphansOf(running: readonly string[], listed: ReadonlySet<string
   return running.filter((name) => !listed.has(name) && !away.has(name));
 }
 
+/**
+ * How long a workspace goes unlisted, with other windows open, before the
+ * oldest window takes it. The window that made one says it lists it a beat
+ * after making it (its state is kept 200 ms after a change, then told to the
+ * app), and the oldest window, asking the daemon in that beat, saw a
+ * workspace nobody listed and took it too: it showed in both. One seen in the
+ * beat is not an orphan but a workspace on its way to its window. With one
+ * window there is nobody else to list it, and it is taken at once.
+ */
+export const ORPHAN_GRACE_MS = 1000;
+
+/**
+ * The orphans that have been seen unlisted for the grace. `seen` is when each
+ * was first seen unlisted, kept between calls and forgotten only when the
+ * workspace ends (`running`): two readers that ask in a different moment must
+ * not start each other's clock again, and one that comes back unlisted later
+ * — its window closed — has waited already. `wait` is how long until the next
+ * one is due, or null when none is waiting.
+ */
+export function settledOrphans(
+  orphans: readonly string[],
+  seen: Map<string, number>,
+  now: number,
+  running: readonly string[],
+  graceMs = ORPHAN_GRACE_MS,
+): { settled: string[]; wait: number | null } {
+  for (const name of [...seen.keys()]) if (!running.includes(name)) seen.delete(name);
+  const settled: string[] = [];
+  let wait: number | null = null;
+  for (const name of orphans) {
+    if (!seen.has(name)) seen.set(name, now);
+    const left = seen.get(name)! + graceMs - now;
+    if (left <= 0) settled.push(name);
+    else wait = wait === null ? left : Math.min(wait, left);
+  }
+  return { settled, wait };
+}
+
 /** The oldest window: the one that takes what nobody lists and does what the app does once. */
 export const leaderOf = (peers: readonly Peer[]): string | null => peers[0]?.label ?? null;
 
