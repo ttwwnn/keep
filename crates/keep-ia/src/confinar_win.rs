@@ -6,25 +6,27 @@
 //! programa roda com um token RESTRITO (`CreateRestrictedToken`), que faz uma
 //! segunda checagem de acesso: além de permitir ao usuário, o objeto precisa
 //! permitir a um dos SIDs de restrição do token. Os SIDs de restrição são só
-//! os do sistema que qualquer programa e o console usam (Todos, Restrito, os
-//! pacotes de aplicativo, o da sessão de logon) e dois do Keep, que as pastas
-//! permitidas recebem de propósito. O perfil do usuário só dá acesso ao
-//! usuário: não passa na segunda checagem, nem para ler nem para gravar.
+//! os do sistema que qualquer programa e o console usam (Todos, Restrito,
+//! Usuários, o da sessão de logon) e dois do Keep, que as pastas permitidas
+//! recebem de propósito. O perfil do usuário só dá acesso ao usuário: não
+//! passa na segunda checagem, nem para ler nem para gravar.
 //!
-//! Os do sistema vêm em três níveis (`Nivel`): o estrito (o que o Windows dá a
-//! todos e aos pacotes de aplicativo), o compatível (com `Usuários`: a lista
-//! do USER_LIMITED do Chromium) e o amplo (com os grupos de toda sessão
+//! Os do sistema vêm em dois níveis (`Nivel`): o compatível (a lista do
+//! USER_LIMITED do Chromium) e o amplo (com os grupos de toda sessão
 //! interativa). O primeiro que deixa o programa partir vale. Os programas
 //! comuns não partem de um token restrito como o Chromium parte os dele (que
 //! começa a thread inicial com um token folgado e o aperta depois): por isso
-//! os níveis, e por isso a prova abaixo, que vale para os três.
+//! os níveis, e por isso a prova abaixo, que vale para os dois. Não há nível
+//! mais fechado, com os pacotes de aplicativo (`S-1-15-2-1`, que dá leitura
+//! em `C:\Windows` a quem não é o usuário): `CreateRestrictedToken` os recusa
+//! como SID de restrição (erro 87, visto no Windows do CI). Sem eles, o que
+//! deixa um token restrito ler `C:\Windows` é `Usuários`.
 //!
 //! Por que token restrito e não AppContainer. O AppContainer isola a rede:
 //! sem uma isenção que só o administrador concede, o `localhost` some (o
 //! servidor de desenvolvimento que a IA sobe, MCP local, o retorno do login),
 //! o que o sandbox do macOS não faz. Ele também troca o espaço de nomes de
-//! objetos e o registro, de que o Git Bash (MSYS2), que o Claude Code usa
-//! para o Bash, depende. E o console da aba (ConPTY) é herdado por um filho
+//! objetos e o registro. E o console da aba (ConPTY) é herdado por um filho
 //! do mesmo usuário, na mesma sessão, com a mesma integridade, sem mudar mais
 //! nada: é o menor desvio do processo comum.
 //!
@@ -34,11 +36,17 @@
 //!    Claude Code e do Codex, o estado, a área privada do Keep) recebem uma
 //!    permissão para um SID só do Keep. A pasta escolhida tem o SID dela
 //!    (derivado do caminho): trocar de pasta não leva a permissão antiga
-//!    junto. O resto da lista usa um SID base, do usuário.
-//! 2. O token restrito leva esses SIDs, perde os privilégios e os grupos
-//!    administrativos, e ganha uma DACL padrão com o usuário, o sistema e o
-//!    SID da pasta (senão um objeto criado por um processo preso não abre para
-//!    o irmão dele; sem o SID base, o de um workspace não abre para o de outro).
+//!    junto. O resto da lista usa um SID base, do usuário. As pastas no
+//!    caminho até elas (a casa do usuário, as de cima da pasta escolhida)
+//!    recebem do SID base só os atributos, sem listar nem herdar: o `realpath`
+//!    do Node e o `stat` do Git andam por todos os componentes do caminho.
+//! 2. O token restrito leva esses SIDs, perde os privilégios (apagados, não só
+//!    desligados: o token de um administrador tem muitos e um processo religa o
+//!    que está desligado) e os grupos administrativos, passa a ter o usuário
+//!    como dono do que cria (o Git recusa um repositório de outro dono) e ganha
+//!    uma DACL padrão com o usuário, o sistema e o SID da pasta (senão um
+//!    objeto criado por um processo preso não abre para o irmão dele; sem o SID
+//!    base, o de um workspace não abre para o de outro).
 //! 3. O processo nasce suspenso, entra num Job que o mata junto com este
 //!    processo, ganha acesso ao próprio token (quase todo programa pergunta
 //!    ao token quem ele é) e só então anda. O console da aba passa por
@@ -50,14 +58,26 @@
 //! fora tem de ser negado e a pasta tem de funcionar; um sandbox que não
 //! contém não é deixado passar calado.
 //!
+//! O que roda preso (conferido no CI do Windows, com o token elevado do CI e
+//! com o de quem não está elevado): `cmd`, `pwsh` e `powershell`, `git`, `node`
+//! (inclusive o `localhost`), o Claude Code e o console da aba (ConPTY).
+//!
+//! O que NÃO roda preso: o Git Bash (MSYS2). O runtime cria de início um canal
+//! de sinais com nome e uma DACL só do usuário e do sistema, e a segunda
+//! checagem do token não leva nenhum dos dois (o usuário entre os SIDs de
+//! restrição devolveria o perfil inteiro). O Claude Code usa o Git Bash para
+//! a ferramenta Bash; preso, o Keep a nega e liga a ferramenta PowerShell
+//! (`confinar::claude_sem_o_bash`). Os ganchos e a linha de status, que o
+//! Claude roda pelo Git Bash quando ele existe, não foram conferidos presos.
+//!
 //! O que NÃO contém: o que o Windows deixa qualquer um ler (`C:\Windows`,
-//! `Program Files`, o que `Usuários` lê em outras unidades nos níveis que o
-//! levam, `C:\Users\Public`), as pastas de rede (o servidor confere o
-//! usuário, não o token), o registro do sistema, a área de trabalho (o
-//! processo preso divide a do usuário e pode mandar mensagens e teclas às
-//! outras janelas) e o que um serviço faz em nome do usuário (abrir um
-//! programa pelo shell, o WSL), como no macOS o `open`. O perfil do usuário e
-//! o que está nele ficam de fora.
+//! `Program Files`, o que `Usuários` lê em outras unidades, `C:\Users\Public`)
+//! e o que `Usuários` ou `Todos` gravam (`C:\ProgramData`, `C:\Windows\Temp`),
+//! as pastas de rede (o servidor confere o usuário, não o token), o registro
+//! do sistema, a área de trabalho (o processo preso divide a do usuário e
+//! pode mandar mensagens e teclas às outras janelas) e o que um serviço faz em
+//! nome do usuário (abrir um programa pelo shell, o WSL), como no macOS o
+//! `open`. O perfil do usuário e o que está nele ficam de fora.
 //!
 //! Esta parte não chama o Windows: caminhos, SIDs, a lista de permissões, a
 //! linha de comando e o ambiente, para os testes rodarem em qualquer sistema.
@@ -91,21 +111,17 @@ pub const ENCAIXE_POWERSHELL: &str = "& $keep ia confinar -- $claude @args";
 pub const SID_TODOS: &str = "S-1-1-0";
 pub const SID_RESTRITO: &str = "S-1-5-12";
 pub const SID_USUARIOS: &str = "S-1-5-32-545";
-pub const SID_PACOTES: &str = "S-1-15-2-1";
-pub const SID_PACOTES_RESTRITOS: &str = "S-1-15-2-2";
 pub const SID_AUTENTICADOS: &str = "S-1-5-11";
 pub const SID_INTERATIVO: &str = "S-1-5-4";
 pub const SID_LOCAL: &str = "S-1-2-0";
 pub const SID_CONSOLE: &str = "S-1-2-1";
 pub const SID_SISTEMA: &str = "S-1-5-18";
 
-/// A primeira sub-autoridade dos SIDs do Keep (`KEEP` em ASCII): um número
-/// que o Windows não atribui, para o SID nunca coincidir com o de um grupo
-/// ou usuário de verdade e não despertar uma consulta ao domínio.
-const SUB_AUTORIDADE: u32 = 0x4B45_4550;
-
 /// Um SID só do Keep, derivado de `usuario` (o SID do usuário) e de um
-/// rótulo: o mesmo par dá sempre o mesmo SID, outro par dá outro.
+/// rótulo: o mesmo par dá sempre o mesmo SID, outro par dá outro. Na forma do
+/// SID de restrição aleatório do Chromium: autoridade nula (`S-1-0`, que só
+/// tem o `S-1-0-0`) e quatro sub-autoridades de 32 bits. Nunca coincide com
+/// um grupo ou usuário de verdade, nem desperta uma consulta ao domínio.
 pub fn sid_do_keep(usuario: &str, rotulo: &str) -> String {
     let mut h = Sha256::new();
     h.update(b"keep-confine\0");
@@ -114,7 +130,7 @@ pub fn sid_do_keep(usuario: &str, rotulo: &str) -> String {
     h.update(rotulo.as_bytes());
     let d = h.finalize();
     let n = |i: usize| u32::from_le_bytes([d[i * 4], d[i * 4 + 1], d[i * 4 + 2], d[i * 4 + 3]]);
-    format!("S-1-5-{SUB_AUTORIDADE}-{}-{}-{}-{}", n(0), n(1), n(2), n(3))
+    format!("S-1-0-{}-{}-{}-{}", n(0), n(1), n(2), n(3))
 }
 
 /// O SID de uma pasta presa: o mesmo caminho, escrito como for (caixa,
@@ -130,14 +146,12 @@ pub fn sid_base(usuario: &str) -> String {
 
 /// Quanto do sistema o token restrito enxerga além do que o Keep concede. O
 /// primeiro nível que deixa o programa partir é o que vale; a prova do token
-/// vale para os três (o perfil do usuário fica negado em todos).
+/// vale para os dois (o perfil do usuário fica negado em ambos).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Nivel {
-    /// Só o que o Windows concede a todos e aos pacotes de aplicativo: o que
-    /// está em outras unidades e que só `Usuários` lê fica de fora.
-    Estrito,
-    /// O estrito mais `Usuários`: a lista do USER_LIMITED do Chromium (que o
-    /// Firefox e o Chrome usam). Lê o que `Usuários` lê.
+    /// A lista do USER_LIMITED do Chromium (que o Firefox e o Chrome usam):
+    /// `Usuários` lê os arquivos do sistema. Lê também o que `Usuários` lê em
+    /// outras unidades.
     Compativel,
     /// O compatível mais os grupos que todo token de uma sessão interativa
     /// leva (autenticados, interativo, local, console): para o computador em
@@ -147,7 +161,7 @@ pub enum Nivel {
 }
 
 /// Os níveis, do mais fechado ao mais aberto.
-pub const NIVEIS: [Nivel; 3] = [Nivel::Estrito, Nivel::Compativel, Nivel::Amplo];
+pub const NIVEIS: [Nivel; 2] = [Nivel::Compativel, Nivel::Amplo];
 
 /// Os SIDs de restrição do token de um nível: o da pasta, o base, o da sessão
 /// de logon (sem ele o processo não abre a estação de janelas) e os do
@@ -160,12 +174,8 @@ pub fn sids_de_restricao(nivel: Nivel, da_pasta: &str, base: &str, logon: &str) 
         logon.to_string(),
         SID_TODOS.to_string(),
         SID_RESTRITO.to_string(),
-        SID_PACOTES.to_string(),
-        SID_PACOTES_RESTRITOS.to_string(),
+        SID_USUARIOS.to_string(),
     ];
-    if nivel != Nivel::Estrito {
-        v.push(SID_USUARIOS.to_string());
-    }
     if nivel == Nivel::Amplo {
         v.extend([SID_AUTENTICADOS, SID_INTERATIVO, SID_LOCAL, SID_CONSOLE].map(String::from));
     }
@@ -224,6 +234,24 @@ pub fn pasta_de(p: &str) -> Option<String> {
     Some(if pasta.ends_with(':') { format!("{pasta}\\") } else { pasta.to_string() }).filter(|s| !s.is_empty())
 }
 
+/// As pastas que contêm o caminho, da mais perto à mais longe, sem a raiz da
+/// unidade (nem a do compartilhamento de rede): a raiz o Windows já deixa
+/// ver, e não é do usuário para ter a permissão mexida.
+pub fn ancestrais(caminho: &str) -> Vec<String> {
+    let mut v = Vec::new();
+    let mut atual = pasta_de(caminho);
+    while let Some(p) = atual {
+        let componentes = partes(&p);
+        let rede = componentes.first().is_some_and(|s| s.starts_with("\\\\"));
+        if componentes.len() <= if rede { 2 } else { 1 } {
+            break;
+        }
+        atual = pasta_de(&p);
+        v.push(p);
+    }
+    v
+}
+
 /// O nome do arquivo, sem a pasta.
 pub fn nome_de(p: &str) -> &str {
     p.trim_end_matches(['\\', '/']).rsplit(['\\', '/']).next().unwrap_or(p)
@@ -257,6 +285,11 @@ pub enum Acesso {
     Leitura,
     /// Ler, gravar, executar e apagar (o "Modificar" do Explorer).
     Gravacao,
+    /// Só saber que a pasta existe e ler os atributos dela, sem listar o que
+    /// há dentro: o que as pastas no caminho até a pasta presa precisam. O
+    /// `realpath` do Node e o `stat` do Git andam por todos os componentes do
+    /// caminho, e um que nega isso derruba o programa.
+    Atributos,
 }
 
 impl Acesso {
@@ -267,6 +300,8 @@ impl Acesso {
         match self {
             Acesso::Leitura => 0x0012_00A9,
             Acesso::Gravacao => 0x0013_01BF,
+            // READ_CONTROL | SYNCHRONIZE | FILE_READ_ATTRIBUTES | FILE_TRAVERSE.
+            Acesso::Atributos => 0x0012_00A0,
         }
     }
 }
@@ -492,6 +527,28 @@ pub fn plano(amb: &dyn Ambiente, e: &Entrada) -> Plano {
         }
     }
 
+    // Os caminhos até tudo o que se concede, só com os atributos (sem listar):
+    // um programa que confere cada componente do caminho (o `realpath` do
+    // Node, o Git atrás do repositório, o `cd ..`) não passa por uma pasta cujos
+    // atributos ele não pode ler. As de cima da casa (`C:\Users`) e as do
+    // sistema o Windows já deixa ver; as que têm uma permissão maior já valem.
+    let mut pais: Vec<Concessao> = Vec::new();
+    for c in &concessoes {
+        for a in ancestrais(&c.caminho) {
+            if do_sistema(&a) || (dentro_de(&a, &e.casa) && !dentro_de(&e.casa, &a)) {
+                continue;
+            }
+            let ja = concessoes
+                .iter()
+                .chain(pais.iter())
+                .any(|x| partes(&x.caminho) == partes(&a) && (x.heranca || x.acesso == Acesso::Atributos));
+            if !ja {
+                pais.push(Concessao { caminho: a, acesso: Acesso::Atributos, quem: Quem::Base, heranca: false, criar: false, obrigatoria: false });
+            }
+        }
+    }
+    concessoes.extend(pais);
+
     Plano { concessoes, criar, temp: junta(&privada, "tmp") }
 }
 
@@ -689,6 +746,19 @@ pub fn ambiente_preso(
     v
 }
 
+/// O ambiente com as variáveis dadas postas (as que já existiam com o mesmo
+/// nome, em qualquer caixa, saem). É o que o programa preso recebe a mais de
+/// acordo com o que ele é.
+pub fn com_variaveis(atual: Vec<(Vec<u16>, Vec<u16>)>, extras: &[(&str, &str)]) -> Vec<(Vec<u16>, Vec<u16>)> {
+    let largo = |s: &str| -> Vec<u16> { s.encode_utf16().collect() };
+    let mut v: Vec<(Vec<u16>, Vec<u16>)> =
+        atual.into_iter().filter(|(n, _)| !extras.iter().any(|(m, _)| chave_igual(n, m))).collect();
+    for (n, valor) in extras {
+        v.push((largo(n), largo(valor)));
+    }
+    v
+}
+
 fn chave_igual(nome: &[u16], outro: &str) -> bool {
     String::from_utf16_lossy(nome).eq_ignore_ascii_case(outro)
 }
@@ -855,33 +925,32 @@ mod testes {
         assert_ne!(a, sid_da_pasta("S-1-5-21-1-2-3-1001", r"D:\Projetos\Outro"));
         assert_ne!(a, sid_da_pasta("S-1-5-21-1-2-3-1002", r"D:\Projetos\App"));
         assert_ne!(a, sid_base("S-1-5-21-1-2-3-1001"));
+        // A forma do SID aleatório de restrição do Chromium: S-1-0 e quatro de 32 bits.
         let partes: Vec<&str> = a.split('-').collect();
-        assert_eq!(&partes[..3], ["S", "1", "5"]);
-        assert_eq!(partes[3], SUB_AUTORIDADE.to_string());
-        assert_eq!(partes.len(), 8, "{a}");
-        assert!(partes[4..].iter().all(|p| p.parse::<u32>().is_ok()), "{a}");
+        assert_eq!(&partes[..3], ["S", "1", "0"]);
+        assert_eq!(partes.len(), 7, "{a}");
+        assert!(partes[3..].iter().all(|p| p.parse::<u32>().is_ok()), "{a}");
     }
 
     #[test]
-    fn cada_nivel_acrescenta_ao_anterior_e_nenhum_traz_o_usuario() {
-        let e = sids_de_restricao(Nivel::Estrito, "P", "B", "L");
+    fn os_niveis_vao_do_compativel_ao_amplo_e_nenhum_traz_o_usuario() {
         let c = sids_de_restricao(Nivel::Compativel, "P", "B", "L");
         let a = sids_de_restricao(Nivel::Amplo, "P", "B", "L");
-        assert_eq!(&e[..3], ["P", "B", "L"]);
-        assert!(e.contains(&SID_TODOS.to_string()) && e.contains(&SID_PACOTES.to_string()));
-        assert!(!e.contains(&SID_USUARIOS.to_string()));
-        assert_eq!(c.len(), e.len() + 1);
-        assert!(c.contains(&SID_USUARIOS.to_string()));
-        assert!(c.starts_with(&e));
+        for lista in [&c, &a] {
+            assert_eq!(&lista[..6], ["P", "B", "L", SID_TODOS, SID_RESTRITO, SID_USUARIOS]);
+        }
+        // O compatível é a lista do Chromium; o amplo a acrescenta. Os pacotes
+        // de aplicativo (S-1-15-2-*) não entram: o Windows os recusa (erro 87).
+        assert_eq!(c.len(), 6);
         assert!(a.starts_with(&c));
         for s in [SID_AUTENTICADOS, SID_INTERATIVO, SID_LOCAL, SID_CONSOLE] {
             assert!(a.contains(&s.to_string()) && !c.contains(&s.to_string()), "{s}");
         }
-        assert_eq!(NIVEIS, [Nivel::Estrito, Nivel::Compativel, Nivel::Amplo]);
+        assert_eq!(NIVEIS, [Nivel::Compativel, Nivel::Amplo]);
         // O usuário (S-1-5-21-…) e os administradores nunca entram, em nível
         // nenhum: seriam o perfil de volta.
-        for lista in [&e, &c, &a] {
-            assert!(!lista.iter().any(|s| s.starts_with("S-1-5-21-") || s == "S-1-5-32-544"));
+        for lista in [&c, &a] {
+            assert!(!lista.iter().any(|s| s.starts_with("S-1-5-21-") || s == "S-1-5-32-544" || s.starts_with("S-1-15-")));
         }
     }
 
@@ -951,6 +1020,16 @@ mod testes {
             assert!(linha_de_script("cmd.exe", r"C:\x.cmd", &args(&[ruim])).is_err(), "{ruim:?}");
         }
         assert!(linha_de_script("cmd.exe", "C:\\100%\\x.cmd", &[]).is_err());
+    }
+
+    #[test]
+    fn as_variaveis_a_mais_trocam_as_que_ja_existem() {
+        let largo = |t: &str| -> Vec<u16> { t.encode_utf16().collect() };
+        let atual = vec![(largo("Path"), largo("C:\\x")), (largo("claude_code_use_powershell_tool"), largo("0"))];
+        let v = com_variaveis(atual, &[("CLAUDE_CODE_USE_POWERSHELL_TOOL", "1")]);
+        assert_eq!(v.len(), 2);
+        assert!(v.contains(&(largo("CLAUDE_CODE_USE_POWERSHELL_TOOL"), largo("1"))));
+        assert!(v.contains(&(largo("Path"), largo("C:\\x"))));
     }
 
     #[test]
@@ -1040,9 +1119,13 @@ mod testes {
             let c = de(&p, so_le);
             assert_eq!((c.len(), c[0].acesso, c[0].quem), (1, Acesso::Leitura, Quem::Base), "{so_le}");
         }
-        // A casa inteira nunca é concedida.
-        assert!(de(&p, CASA).is_empty());
-        assert!(!p.concessoes.iter().any(|c| dentro_de(CASA, &c.caminho) && partes(&c.caminho).len() <= partes(CASA).len()));
+        // A casa inteira nunca é concedida: só os atributos dela (para o
+        // programa andar pelo caminho), sem herança nem listagem.
+        assert!(de(&p, CASA).iter().all(|c| c.acesso == Acesso::Atributos && !c.heranca));
+        assert!(!p
+            .concessoes
+            .iter()
+            .any(|c| c.acesso != Acesso::Atributos && dentro_de(CASA, &c.caminho) && partes(&c.caminho).len() <= partes(CASA).len()));
     }
 
     #[test]
@@ -1057,7 +1140,8 @@ mod testes {
         assert!(de(&p, r"C:\Users\ana\.claude").is_empty());
         // Outro programa qualquer: só a pasta e a área privada.
         let p = plano(&amb, &entrada(r"C:\Windows\System32\cmd.exe"));
-        let quais: Vec<&str> = p.concessoes.iter().map(|c| c.caminho.as_str()).collect();
+        let quais: Vec<&str> =
+            p.concessoes.iter().filter(|c| c.acesso != Acesso::Atributos).map(|c| c.caminho.as_str()).collect();
         assert_eq!(quais, [r"D:\projetos\app", r"C:\Users\ana\AppData\Local\Keep\confine"]);
     }
 
@@ -1102,15 +1186,69 @@ mod testes {
 
     #[test]
     fn as_mascaras_nao_dao_poder_sobre_a_permissao_dos_outros() {
-        for a in [Acesso::Leitura, Acesso::Gravacao] {
+        for a in [Acesso::Leitura, Acesso::Gravacao, Acesso::Atributos] {
             let m = a.mascara();
             assert_eq!(m & 0x0004_0000, 0, "WRITE_DAC");
             assert_eq!(m & 0x0008_0000, 0, "WRITE_OWNER");
             assert_ne!(m & 0x0010_0000, 0, "SYNCHRONIZE");
-            assert_ne!(m & 0x0000_0001, 0, "FILE_READ_DATA");
         }
+        for a in [Acesso::Leitura, Acesso::Gravacao] {
+            assert_ne!(a.mascara() & 0x0000_0001, 0, "FILE_READ_DATA");
+        }
+        // Os atributos não listam a pasta nem leem nada dela, nem gravam.
+        let atributos = Acesso::Atributos.mascara();
+        assert_eq!(atributos & 0x0000_0001, 0, "FILE_LIST_DIRECTORY");
+        assert_eq!(atributos & 0x0000_0006, 0, "FILE_ADD_FILE e FILE_ADD_SUBDIRECTORY");
+        assert_ne!(atributos & 0x0000_0080, 0, "FILE_READ_ATTRIBUTES");
         assert_ne!(Acesso::Gravacao.mascara() & 0x0001_0000, 0, "DELETE");
         assert_eq!(Acesso::Leitura.mascara() & 0x0001_0000, 0);
+    }
+
+    #[test]
+    fn ancestrais_vao_da_pasta_de_cima_ate_antes_da_raiz() {
+        assert_eq!(
+            ancestrais(r"C:\Users\Ana\Projetos\app"),
+            [r"C:\Users\Ana\Projetos", r"C:\Users\Ana", r"C:\Users"]
+        );
+        assert_eq!(ancestrais(r"D:\projetos"), Vec::<String>::new());
+        assert_eq!(ancestrais(r"D:\"), Vec::<String>::new());
+        assert_eq!(ancestrais(r"\\srv\share\a\b"), [r"\\srv\share\a"]);
+        assert_eq!(ancestrais(r"\\?\C:\x\y"), [r"C:\x"]);
+    }
+
+    #[test]
+    fn o_plano_deixa_ver_os_atributos_dos_caminhos_ate_a_pasta_presa() {
+        let amb = Falso::novo(&[r"C:\Users\ana\.claude", r"C:\Users\ana\.claude.json"]);
+        let mut e = entrada(r"C:\Windows\System32\cmd.exe");
+        e.pasta = r"C:\Users\ana\Projetos\Cliente\app".into();
+        let p = plano(&amb, &e);
+        let atributos: Vec<&Concessao> = p.concessoes.iter().filter(|c| c.acesso == Acesso::Atributos).collect();
+        let caminhos: Vec<String> = atributos.iter().map(|c| partes(&c.caminho).join("\\")).collect();
+        // A casa e as pastas entre ela e a pasta presa; `C:\Users` e o sistema, não.
+        for esperado in [r"C:\Users\ana", r"C:\Users\ana\Projetos", r"C:\Users\ana\Projetos\Cliente", r"C:\Users\ana\AppData\Local\Keep", r"C:\Users\ana\AppData\Local", r"C:\Users\ana\AppData"] {
+            assert!(caminhos.contains(&partes(esperado).join("\\")), "{esperado}: {caminhos:?}");
+        }
+        assert!(!caminhos.contains(&partes(r"C:\Users").join("\\")), "{caminhos:?}");
+        // Sem herança, do SID base, e uma vez só por pasta.
+        assert!(atributos.iter().all(|c| !c.heranca && c.quem == Quem::Base && !c.obrigatoria && !c.criar));
+        let mut unicos = caminhos.clone();
+        unicos.sort();
+        unicos.dedup();
+        assert_eq!(unicos.len(), caminhos.len(), "{caminhos:?}");
+        // A pasta presa e o que tem permissão maior (herdada) não ganham a menor.
+        assert!(!caminhos.contains(&partes(r"C:\Users\ana\Projetos\Cliente\app").join("\\")));
+        assert!(!caminhos.contains(&partes(r"C:\Users\ana\.claude").join("\\")));
+        // Fora da casa também: o que está acima da pasta, menos a raiz da unidade.
+        e.pasta = r"D:\trabalho\2026\app".into();
+        let p = plano(&amb, &e);
+        let fora: Vec<String> = p
+            .concessoes
+            .iter()
+            .filter(|c| c.acesso == Acesso::Atributos && partes(&c.caminho).first().is_some_and(|d| d == "d:"))
+            .map(|c| partes(&c.caminho).join("\\"))
+            .collect();
+        assert_eq!(fora.len(), 2, "{fora:?}");
+        assert!(fora.contains(&r"d:\trabalho".to_string()) && fora.contains(&r"d:\trabalho\2026".to_string()));
     }
 
     #[test]

@@ -66,8 +66,44 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
+      # O teste que sobe programas presos de verdade (a contenção da IA no
+      # Windows) roda sempre; KEEP_CONFINE_PROVA=0 o pula. Só o Windows o tem.
       - name: Testes
+        timeout-minutes: 25
+        env:
+          KEEP_CONFINE_PROVA: "1"
         run: cargo test --workspace --no-fail-fast -- --test-threads=4
+
+      # O mesmo roteiro com o keep.exe de verdade, sempre mostrado (o teste
+      # acima só mostra a saída quando falha): o diagnóstico do token e a prova
+      # da contenção, e o roteiro em PowerShell que o usuário roda à mão.
+      - name: Contenção da IA (keep.exe)
+        if: always() && matrix.name == 'Windows'
+        timeout-minutes: 8
+        run: |
+          target/debug/keep.exe ia confinar --diagnostico
+          target/debug/keep.exe ia confinar --autoteste
+
+      # O Claude Code de verdade, para o roteiro conferir que ele sobe preso.
+      - name: Claude Code (para o roteiro da contenção)
+        if: always() && matrix.name == 'Windows'
+        continue-on-error: true
+        timeout-minutes: 5
+        run: npm install -g @anthropic-ai/claude-code@2.1.296
+
+      - name: Contenção da IA (roteiro em PowerShell)
+        if: always() && matrix.name == 'Windows'
+        timeout-minutes: 10
+        shell: pwsh
+        run: ./tools/confine-test.ps1 -Keep "$PWD/target/debug/keep.exe"
+
+      # O mesmo roteiro com o token de quem não está elevado (o do CI é o de um
+      # administrador, com privilégios e integridade alta; o do usuário, não).
+      - name: Contenção da IA (token sem elevação)
+        if: always() && matrix.name == 'Windows'
+        timeout-minutes: 12
+        shell: pwsh
+        run: target/debug/keep.exe ia confinar --como-comum -- pwsh -NoProfile -NonInteractive -File "$PWD/tools/confine-test-comum.ps1" -Keep "$PWD/target/debug/keep.exe"
 
       - name: Binários
         run: cargo build --release -p keep -p keepd

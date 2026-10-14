@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CONFINEMENT_ENFORCED,
+  HELD_SHELL,
   LABELS,
   LATER_SESSIONS,
   chosen,
@@ -93,8 +94,14 @@ describe("the button", () => {
     expect(LABELS.dialogTitle("projeto")).toBe("Pasta que a IA de projeto pode acessar");
   });
 
-  it("is off until the Windows CI proves the mechanism (KEEP_CONFINE_PROVA)", () => {
-    expect(CONFINEMENT_ENFORCED).toBe(false);
+  it("is on: the held AI is proved by the core before it starts", () => {
+    expect(CONFINEMENT_ENFORCED).toBe(true);
+  });
+
+  it("tells a held AI that the Git Bash does not run held and PowerShell takes its place", () => {
+    expect(confineLook("p", "D:\\work\\app").title.split("\n")).toContain(HELD_SHELL);
+    expect(confineLook("p", null).title).not.toContain(HELD_SHELL);
+    expect(HELD_SHELL).toContain("PowerShell");
   });
 });
 

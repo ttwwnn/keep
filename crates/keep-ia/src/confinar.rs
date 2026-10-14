@@ -149,6 +149,29 @@ fn subcomando(args: &[String]) -> Option<&str> {
     args.iter().map(String::as_str).find(|a| !a.starts_with('-'))
 }
 
+/// O que o Claude Code lê para ficar sem a ferramenta Bash (a regra de
+/// permissão que a nega por inteiro).
+pub const CONFIGURACAO_SEM_BASH: &str = r#"{"permissions":{"deny":["Bash"]}}"#;
+
+/// O nome do arquivo com essa regra: quem lê a linha de um Claude que anda
+/// (para subi-lo de novo na aba) a reconhece por ele e a deixa de fora, senão a
+/// regra iria junto para um Claude que não está preso.
+pub const ARQUIVO_SEM_BASH: &str = "claude-sem-bash.json";
+
+/// A ferramenta de shell do Claude Code no Windows presa a uma pasta. O Git
+/// Bash (MSYS2) não sobe sob o token restrito: ele cria de início um canal de
+/// sinais com nome e uma DACL só do usuário, e a segunda checagem do token
+/// (que não leva o usuário) o recusa (`couldn't create signal pipe`). O Claude
+/// Code tem, no lugar, a ferramenta PowerShell: negada a Bash, e com
+/// `CLAUDE_CODE_USE_POWERSHELL_TOOL=1` (o ambiente do programa preso leva), ele
+/// fica só com ela. A regra vai por um arquivo (`configuracao`), não pela
+/// linha: um argumento com aspas não passa por um atalho `.cmd` do npm.
+pub fn claude_sem_o_bash(args: &[String], configuracao: &str) -> Vec<String> {
+    let mut v = vec!["--settings".to_string(), configuracao.to_string()];
+    v.extend(args.iter().cloned());
+    v
+}
+
 /// Como a linha sobe num workspace restrito: `Err` com o motivo quando o
 /// comando mandaria trabalho para fora do sandbox; o Codex ganha
 /// `--no-daemon` (o servidor dele dentro do processo).
@@ -279,6 +302,12 @@ mod testes {
         assert!(linha_presa("/x/claude", &v(&["agents"])).is_err());
         assert!(linha_presa("claude", &v(&["attach", "abc"])).is_err());
         assert_eq!(linha_presa("claude", &v(&["--effort", "max"])).unwrap(), v(&["--effort", "max"]));
+        // No Windows o Claude fica sem a ferramenta Bash (o Git Bash não sobe preso).
+        assert_eq!(
+            claude_sem_o_bash(&v(&["--effort", "max"]), r"C:\k\sem-bash.json"),
+            v(&["--settings", r"C:\k\sem-bash.json", "--effort", "max"])
+        );
+        assert!(!CONFIGURACAO_SEM_BASH.contains(' '));
         assert!(linha_presa("codex", &v(&["agents"])).is_err());
         assert!(linha_presa("codex", &v(&["queue", "x"])).is_err());
         assert_eq!(linha_presa("/b/codex", &v(&["resume", "id"])).unwrap(), v(&["--no-daemon", "resume", "id"]));
