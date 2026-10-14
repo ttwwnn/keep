@@ -107,6 +107,7 @@ pub fn ia(args: &[String]) -> i32 {
         },
         "uso" => crate::uso::cli(&a),
         "jev" => crate::jev::cli(&a),
+        "automacao" => crate::automacao::cli(&a),
         "abas" => match crate::abas::ler() {
             Ok((r, ia)) => responde(json!({
                 "ok": true,
@@ -124,7 +125,7 @@ pub fn ia(args: &[String]) -> i32 {
         "renovar" => crate::renovar::cli(&a),
         "reconectar-chrome" => responde(json!({ "ok": true, "reconectadas": crate::quente::reconectar_chrome() })),
         _ => uso_errado(
-            "keep ia contas | uso | jev | ordem [mover] | abas | trocar | preparar | entrar | login | sincronizar | renovar | confinar | statusline | confiar",
+            "keep ia contas | uso | jev | automacao | ordem [mover] | abas | trocar | preparar | entrar | login | sincronizar | renovar | confinar | statusline | confiar",
         ),
     }
 }

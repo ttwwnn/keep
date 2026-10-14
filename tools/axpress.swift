@@ -240,8 +240,9 @@ case "frame" where arguments.count >= 4:
     print("\(Int(origin.x.rounded())) \(Int(origin.y.rounded())) \(Int(size.width.rounded())) \(Int(size.height.rounded()))")
 
 case "value" where arguments.count >= 4:
-    guard let target = element(labelled: arguments[3]),
-          let value = attribute(target, "AXValue") as? String else { notFound() }
+    // A text, or a number: a switch or a checkbox says 1 or 0.
+    guard let target = element(labelled: arguments[3]), let value = attribute(target, "AXValue"),
+          value is String || value is NSNumber else { notFound() }
     print(value)
 
 case "title" where arguments.count >= 4:

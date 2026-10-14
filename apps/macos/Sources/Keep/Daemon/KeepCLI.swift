@@ -362,6 +362,20 @@ enum AIHelper {
             }
     }
 
+    /// The footer's switches as the core finds them (`keep ia automacao`), or
+    /// one of them turned on or off first, and the state after it.
+    static func automation(set change: (Automation.Switch, Bool)? = nil) -> Result<Automation, Problem> {
+        var arguments = ["automacao"]
+        if let (which, on) = change { arguments += [which.rawValue, on ? "ligar" : "desligar"] }
+        return askRaw(arguments + ["--json"], within: 20 * timeScale)
+            .flatMap { data in
+                guard let answer = Automation.decode(data) else {
+                    return .failure(Problem(reason: "erro", detail: "O keep ia automacao respondeu algo que não dá para ler."))
+                }
+                return .success(answer)
+            }
+    }
+
     /// Which AI and which account each tab runs on (`keep ia abas`), as
     /// printed: `AITabAccounts` reads it, and checks it is about the daemon
     /// the app is using.

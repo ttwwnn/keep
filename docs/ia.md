@@ -400,6 +400,29 @@ min seguidos (a carência recomeça se a conversa voltar). Registro cuja pasta j
 pode estar desmontado fica). Depois de renomear a pasta dos projetos (mesmo só na caixa), o `indexar`
 refaz as chaves das decisões pelo caminho canônico, e nenhuma decisão se perde.
 
+## Botões do Jev e do Ponytail
+
+Embaixo do "Consumo de IA", um botão de liga e desliga para cada um (14/10/2026, pedido: "Deve ter um botão de
+liga e desliga do Jev e um botão de liga desliga do ponytail no keep"): `keep ia automacao [jev|ponytail
+ligar|desligar]`.
+
+- Jev: os ganchos da skill `jev` nada fazem enquanto existir `~/.claude/jev/desligado` (o mesmo arquivo de
+  `jev auto desligar`). Desligar grava o arquivo; ligar o apaga. Instalado = existe `~/.claude/jev` ou
+  `~/.claude/skills/jev/ganchos.py`.
+- Ponytail: o plugin `ponytail@ponytail` (github.com/DietrichGebert/ponytail) no Claude
+  (`enabledPlugins` do `~/.claude/settings.json`, mudado pelo próprio `claude plugin enable|disable`) e no
+  Codex (a linha `enabled` de `[plugins."ponytail@ponytail"]` no `~/.codex/config.toml`; a seção sem ela
+  vale ligada). O botão muda as duas IAs juntas; mostra ligado o que o Claude tem (ou, sem ele, o Codex).
+  Com o modo padrão `off` do plugin, ele não liga sozinho: entra quando o Jev decide (a cada mensagem, as
+  regras vão como contexto do pedido) ou quando a própria IA chama a skill. Desligado, nenhum dos dois o usa.
+- O que não está instalado vem com `"instalado": false` e não ganha botão. Os apps vigiam esses três arquivos
+  no olhar de 2 s: um botão mudado no terminal aparece em segundos. Recusa (o `claude` que não mudou o
+  arquivo, por exemplo) aparece no rodapé, e o botão volta ao que a IA tem.
+- Resposta: `{"jev": {"instalado", "ligado"}, "ponytail": {"instalado", "ligado", "claude": bool|null,
+  "codex": bool|null}}`.
+- Teste: `cargo test -p keep-ia automacao` (casa falsa, `claude` falso por `KEEP_IA_CLAUDE_BIN`) e
+  `tools/automation-switch-test.sh` (o app, pela acessibilidade).
+
 ## Linha de comando (JSON, sempre `"versao": 1`; saída 0 = ok, 1 = recusado, 2 = uso errado)
 
 ```
@@ -413,6 +436,7 @@ keep ia entrar claude|gpt --ws=<W> --json
 keep ia login claude|gpt [--apelido=<A>] [--depois=<W>:<N>:<chave>]     (interativo, roda na aba)
 keep ia sincronizar --json
 keep ia renovar [--agora] --json
+keep ia automacao [jev|ponytail ligar|desligar] --json
 keep worktrees listar [--prazo SEG] <workspace>:<root>[,<painel>…]…
 keep worktrees preparar <caminho>
 keep worktrees concluir <caminho> <destino>
@@ -482,6 +506,8 @@ Toda resposta é um objeto JSON numa linha, com `"versao": 1` e `"ok"`. Recusa: 
 | a cada 60 s, e ao abrir (mesmo sem o daemon) | `keep ia renovar --json` |
 | a cada 2 min | `keep worktrees indexar --json` e, logo depois, `keep worktrees orfas --json` (com `preparar`/`concluir` ou `esquecer` para o que vier) e `keep worktrees purgar --json` |
 | setas, "+", menu da aba, fechar aba | `ordem mover`, `entrar`, `trocar`, `worktrees listar/preparar/concluir` |
+| ao abrir, e quando o Jev ou os plugins mudam (vigia barato, sem rede) | `keep ia automacao --json` |
+| botões "Jev" e "Ponytail" | `keep ia automacao jev\|ponytail ligar\|desligar --json` |
 | ao abrir, e quando o keepd volta de uma ausência, se ele não tem abas | `keep restauro restaurar --fase=abas` (a janela espera; docs/restauro.md) |
 | logo ao abrir, e a cada 30 s | `keep restauro manter` |
 | a cada 15 s | `keep continuar` |

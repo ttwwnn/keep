@@ -24,11 +24,14 @@ import {
   orderKeyOf,
   programKind,
   provenKey,
+  readAutomation,
   readJev,
   readStoredLines,
   readSwitch,
   refusalText as refusal,
   runsAI,
+  type Automation,
+  type AutomationSwitch,
   type Engine,
   type JevLine,
   type MenuRow,
@@ -72,6 +75,8 @@ export const iaAvailable = computed(() => iaInfo.value?.available === true);
 export const usageLines = signal<UsageLine[]>([]);
 /** What the Jev can still spend on OpenRouter; null when this machine has no key of the Jev's. */
 export const jev = signal<JevLine | null>(readStoredJev());
+/** The Jev's and the Ponytail's switches; null until the core has said. */
+export const automation = signal<Automation | null>(null);
 /** A round somebody asked for is running. */
 export const measuring = signal(false);
 /** What the footer has to say for a moment: a change the core refused. */
@@ -111,6 +116,45 @@ async function askJev(args: string[]): Promise<void> {
   } catch {
     /* asked again at the next round */
   }
+}
+
+/** Switches turned and not yet answered: a look at the files does not put back what they show meanwhile. */
+let turning = 0;
+
+/** The switches as the core finds them; a failure leaves them as they were. */
+async function askAutomation(): Promise<void> {
+  try {
+    const next = readAutomation(await api.iaAsk(["ia", "automacao", "--json"]));
+    if (next && turning === 0 && JSON.stringify(next) !== JSON.stringify(automation.value)) automation.value = next;
+  } catch {
+    /* asked again at the next change of the files */
+  }
+}
+
+/** One switch, turned: shown at once, written by the core behind it. What it refuses is taken back and said. */
+export function toggleAutomation(which: AutomationSwitch): void {
+  const now = automation.value;
+  const on = now?.[which];
+  if (!now || on === null || on === undefined) return;
+  automation.value = { ...now, [which]: !on };
+  turning += 1;
+  noticeTicket += 1;
+  usageNotice.value = null;
+  const name = which === "jev" ? "Jev" : "Ponytail";
+  void (async () => {
+    try {
+      const answer = await api.iaAsk(["ia", "automacao", which, on ? "desligar" : "ligar", "--json"]);
+      if (answer.ok !== true) throw new Error(refusal(answer, `${on ? "desligar" : "ligar"} o ${name}`));
+      const state = readAutomation(answer);
+      if (state && turning === 1) automation.value = state;
+    } catch (error) {
+      sayInFooter(`Não deu para ${on ? "desligar" : "ligar"} o ${name}: ${error instanceof Error ? error.message : String(error)}`);
+      automation.value = now;
+      signature = null;
+    } finally {
+      turning -= 1;
+    }
+  })();
 }
 
 /** The Jev as the core had it: none when there is no key, which takes the line off the footer. */
@@ -246,6 +290,8 @@ async function look(force: boolean, measureFound = true): Promise<void> {
     if (measureFound) for (const line of found) void measure(false, orderKeyOf(line.account));
     // The Jev as the core has it: a connection just made, or a key gone.
     await askJev(["--cache"]);
+    // The switches, from the files the Jev and the AIs read them in.
+    await askAutomation();
   } catch {
     /* asked again in two seconds */
   } finally {

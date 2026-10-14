@@ -36,6 +36,9 @@ final class UsageMonitor: ObservableObject {
     /// What the Jev can still spend, when this Mac has a key of its own for
     /// OpenRouter; nil when it has none, and the footer says nothing of it.
     @Published private(set) var jev: JevLine?
+    /// The Jev's and the Ponytail's switches; nil until the core has said,
+    /// and a member nil when that one is not installed here.
+    @Published private(set) var automation: Automation?
 
     private var timer: Timer?
     private var glance: Timer?
@@ -152,19 +155,26 @@ final class UsageMonitor: ObservableObject {
             // decision it just made — asks only about the Jev.
             let asks = helper && now != known
             let isJev = { (part: String) in part.hasPrefix("jev ") }
-            let accountsChanged = known.map { $0.filter { !isJev($0) } } != now.filter { !isJev($0) }
+            let isAuto = { (part: String) in part.hasPrefix("auto ") }
+            let isAccount = { (part: String) in !isJev(part) && !isAuto(part) }
+            let accountsChanged = known.map { $0.filter(isAccount) } != now.filter(isAccount)
             let jevChanged = known.map { $0.filter(isJev) } != now.filter(isJev)
+            let autoChanged = known.map { $0.filter(isAuto) } != now.filter(isAuto)
             let askedAt = Date()
             let answer = asks && accountsChanged ? try? AIHelper.usage(.cached).get() : nil
             // The Jev as the core has it: a connection just made, a key gone,
             // or what a decision just spent, from the book.
             let credit = asks && jevChanged ? try? AIHelper.jev(.cached).get() : nil
+            // The switches, from the files the Jev and the AIs read them in:
+            // turned in a terminal (`jev auto desligar`, `/plugin`) as well.
+            let automation = asks && autoChanged ? try? AIHelper.automation().get() : nil
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.looking = false
                 if self.helperAvailable != helper { self.helperAvailable = helper }
                 if asks { self.signature = now }
                 if let credit { self.adoptJev(credit.jev) }
+                if let automation, self.switching == 0, automation != self.automation { self.automation = automation }
                 if let answer {
                     let fresh = self.adopt(answer.linhas, askedAt: askedAt)
                     if !thenMeasure, !fresh.isEmpty {
@@ -372,6 +382,36 @@ final class UsageMonitor: ObservableObject {
         }
     }
 
+    /// Switches turned and not yet answered: the look of the files does not
+    /// put back what they show meanwhile.
+    private var switching = 0
+
+    /// One switch of the footer, turned: shown at once, written by the core
+    /// behind it. What the core refuses is taken back and said.
+    func toggle(_ which: Automation.Switch) {
+        guard helperAvailable, var next = automation, let on = next[which] else { return }
+        next[which] = !on
+        automation = next
+        switching += 1
+        quiet()
+        Trace.log("ia", "automacao: \(which.rawValue) \(on ? "desligar" : "ligar")")
+        orderQueue.async { [weak self] in
+            let answer = AIHelper.automation(set: (which, !on))
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.switching -= 1
+                switch answer {
+                case .success(let state):
+                    if self.switching == 0 { self.automation = state }
+                case .failure(let problem):
+                    Trace.log("ia", "automacao: \(which.rawValue) recusado: \(problem.detail)")
+                    self.say("Não deu para \(on ? "desligar" : "ligar") o \(which == .jev ? "Jev" : "Ponytail"): \(problem.detail)")
+                    self.look(force: true)
+                }
+            }
+        }
+    }
+
     /// The Jev's line as the core had it: none when there is no key, which
     /// takes the line off the footer.
     private func adoptJev(_ line: JevLine?) {
@@ -507,6 +547,9 @@ struct UsageFooter: View {
                     } else {
                         jevBlock(jev, now: now)
                     }
+                }
+                if monitor.helperAvailable, let automation = monitor.automation, !automation.isEmpty {
+                    switches(automation)
                 }
             }
             .padding(.horizontal, 17)
@@ -768,6 +811,45 @@ struct UsageFooter: View {
                 .foregroundColor(level == .normal ? UsageInk.inkResting : UsageInk.fill(level))
         }
         return text
+    }
+
+    // MARK: - the switches
+
+    /// "Jev ⏻  Ponytail ⏻": who decides for the AIs, each on or off. The Jev
+    /// chooses each message's model, effort and whether it takes the
+    /// Ponytail's rules, and answers the AIs' questions; the Ponytail is the
+    /// plugin in Claude and Codex, there for the Jev and the AIs to call on.
+    /// Folded or not, the same row: it is what the person turns, not a figure.
+    private func switches(_ automation: Automation) -> some View {
+        HStack(spacing: 12) {
+            if let on = automation.jev {
+                switchButton(.jev, "Jev", on: on, help: on
+                    ? "Jev ligado: escolhe modelo, esforço e Ponytail a cada mensagem do Claude e do Codex, e responde as perguntas de decisão"
+                    : "Jev desligado: as mensagens e as perguntas seguem sem ele")
+            }
+            if let on = automation.ponytail {
+                switchButton(.ponytail, "Ponytail", on: on, help: on
+                    ? "Ponytail ligado no Claude e no Codex: entra quando o Jev decide ou quando a própria IA o chama"
+                    : "Ponytail desligado: nem o Jev nem as IAs o usam")
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.top, folded ? 2 : 0)
+    }
+
+    private func switchButton(_ which: Automation.Switch, _ title: String, on: Bool, help: String) -> some View {
+        Toggle(isOn: Binding(get: { on }, set: { _ in monitor.toggle(which) })) {
+            Text(title)
+                .font(numbers)
+                .foregroundStyle(on ? UsageInk.inkResting : UsageInk.inkFaint)
+        }
+        .toggleStyle(.switch)
+        .controlSize(.mini)
+        .fixedSize()
+        .help(help)
+        .accessibilityLabel(title)
+        .accessibilityValue(on ? "ligado" : "desligado")
+        .accessibilityIdentifier("automation-\(which.rawValue)")
     }
 
     // MARK: - the Jev's credit

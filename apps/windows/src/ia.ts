@@ -657,3 +657,30 @@ export function readJev(value: unknown): JevLine | null {
   if (!credit && !problem) return null;
   return { credit, measuredAt: num(v.measuredAt), problem, pending: num(v.pending) };
 }
+
+// ------------------------------------------------------------------ the switches
+
+/**
+ * The footer's two switches, as `keep ia automacao` answers: the Jev, which
+ * decides each message's model, effort and whether it takes the Ponytail's
+ * rules, and the Ponytail plugin in Claude and Codex. Null is not installed on
+ * this machine, and the footer shows no switch for it. The macOS app's
+ * `Automation`.
+ */
+export interface Automation {
+  jev: boolean | null;
+  ponytail: boolean | null;
+}
+export type AutomationSwitch = keyof Automation;
+
+export function readAutomation(answer: unknown): Automation | null {
+  if (typeof answer !== "object" || answer === null) return null;
+  const a = answer as Record<string, unknown>;
+  if (a.ok !== true) return null;
+  const state = (key: string): boolean | null => {
+    const item = a[key] as Record<string, unknown> | undefined;
+    if (typeof item !== "object" || item === null || item.instalado !== true) return null;
+    return item.ligado === true;
+  };
+  return { jev: state("jev"), ponytail: state("ponytail") };
+}

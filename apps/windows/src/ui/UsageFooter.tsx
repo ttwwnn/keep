@@ -25,12 +25,14 @@ import {
   orderKeyOf,
   percentText,
   untilText,
+  type AutomationSwitch,
   type CreditRow,
   type JevLine,
   type UsageLine,
   type UsageWindow,
 } from "../ia";
 import {
+  automation,
   footerFolded,
   iaAvailable,
   jev,
@@ -38,6 +40,7 @@ import {
   measuring,
   moveOrder,
   selectedAccount,
+  toggleAutomation,
   toggleFooter,
   usageClock,
   usageLines,
@@ -250,6 +253,66 @@ function JevCompact(props: { line: JevLine; nowMs: number }) {
   );
 }
 
+/** One switch: the name, and a track whose knob sits right when it is on. */
+function Switch(props: { which: AutomationSwitch; title: string; on: boolean; help: string }) {
+  const { which, title, on, help } = props;
+  return (
+    <button
+      class={`usage-switch ${on ? "on" : ""}`}
+      role="switch"
+      aria-checked={on}
+      aria-label={title}
+      title={help}
+      data-switch={which}
+      onClick={() => toggleAutomation(which)}
+    >
+      <span class="usage-switch-name">{title}</span>
+      <span class="usage-switch-track">
+        <span class="usage-switch-knob" />
+      </span>
+    </button>
+  );
+}
+
+/**
+ * "Jev ⏻  Ponytail ⏻": who decides for the AIs, each on or off — the macOS
+ * footer's `switches`. The Jev chooses each message's model, effort and
+ * whether it takes the Ponytail's rules, and answers the AIs' questions; the
+ * Ponytail is the plugin in Claude and Codex, there for the Jev and the AIs.
+ */
+function Switches() {
+  const state = automation.value;
+  if (!state || (state.jev === null && state.ponytail === null)) return null;
+  return (
+    <div class="usage-switches">
+      {state.jev !== null && (
+        <Switch
+          which="jev"
+          title="Jev"
+          on={state.jev}
+          help={
+            state.jev
+              ? "Jev ligado: escolhe modelo, esforço e Ponytail a cada mensagem do Claude e do Codex, e responde as perguntas de decisão"
+              : "Jev desligado: as mensagens e as perguntas seguem sem ele"
+          }
+        />
+      )}
+      {state.ponytail !== null && (
+        <Switch
+          which="ponytail"
+          title="Ponytail"
+          on={state.ponytail}
+          help={
+            state.ponytail
+              ? "Ponytail ligado no Claude e no Codex: entra quando o Jev decide ou quando a própria IA o chama"
+              : "Ponytail desligado: nem o Jev nem as IAs o usam"
+          }
+        />
+      )}
+    </div>
+  );
+}
+
 export function UsageFooter() {
   if (!iaAvailable.value) return null;
   const lines = usageLines.value;
@@ -298,6 +361,7 @@ export function UsageFooter() {
         )}
         {jev.value &&
           (folded ? <JevCompact line={jev.value} nowMs={nowMs} /> : <JevBlock line={jev.value} nowMs={nowMs} />)}
+        <Switches />
       </div>
     </section>
   );

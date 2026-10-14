@@ -6,6 +6,7 @@
 //! `keep worktrees …`, em JSON); o do Windows chama as funções direto.
 
 pub mod abas;
+pub mod automacao;
 pub mod caminhos;
 pub mod cli;
 pub mod codex_daemon;

@@ -27,6 +27,7 @@ import {
   programKind,
   provenKey,
   tabAccountLabel,
+  readAutomation,
   readJev,
   readStoredLines,
   readSwitch,
@@ -442,5 +443,24 @@ describe("the Jev's credit", () => {
     expect(jevHelp({ ...line, pending: 0.0002 }, now)).toContain(
       "Inclui < US$ 0,01 de decisões desta máquina que o OpenRouter ainda não contou",
     );
+  });
+});
+
+describe("the footer's switches", () => {
+  it("reads `keep ia automacao`: what is not installed has no switch", () => {
+    const both = {
+      ok: true,
+      versao: 1,
+      jev: { instalado: true, ligado: false },
+      ponytail: { instalado: true, ligado: true, claude: true, codex: null },
+    };
+    expect(readAutomation(both)).toEqual({ jev: false, ponytail: true });
+    expect(readAutomation({ ok: true, jev: { instalado: false, ligado: false }, ponytail: { instalado: false } })).toEqual({
+      jev: null,
+      ponytail: null,
+    });
+    expect(readAutomation({ ok: true, jev: { instalado: true } })).toEqual({ jev: false, ponytail: null });
+    expect(readAutomation({ ok: false, motivo: "automacao", detalhe: "x" })).toBeNull();
+    expect(readAutomation(null)).toBeNull();
   });
 });

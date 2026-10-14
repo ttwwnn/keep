@@ -126,6 +126,11 @@ enum AIAccounts {
         // The book the Jev's skill writes a line in at each decision it pays
         // for: the core adds what OpenRouter has not counted yet.
         parts.append("jev livro " + stamp(home.appendingPathComponent(".claude/jev/chamadas.jsonl")))
+        // The footer's two switches: the Jev's "off" file, and where each AI
+        // keeps its plugins on and off (`keep ia automacao`).
+        for file in [".claude/jev/desligado", ".claude/settings.json", ".codex/config.toml"] {
+            parts.append("auto \(file) " + stamp(home.appendingPathComponent(file)))
+        }
         let extras = home.appendingPathComponent(".codex-contas")
         for name in ((try? files.contentsOfDirectory(atPath: extras.path)) ?? []).sorted()
         where !name.hasPrefix(".") {
@@ -315,6 +320,36 @@ struct JevAnswer: Decodable {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .secondsSince1970
         return try? decoder.decode(JevAnswer.self, from: data)
+    }
+}
+
+/// The footer's two switches, as `keep ia automacao` answers: the Jev, which
+/// decides each message's model, effort and whether it takes the Ponytail's
+/// rules, and the Ponytail plugin in Claude and Codex. Nil is not installed on
+/// this Mac, and the footer shows no switch for it.
+struct Automation: Equatable {
+    var jev: Bool?
+    var ponytail: Bool?
+
+    enum Switch: String {
+        case jev
+        case ponytail
+    }
+
+    static func decode(_ data: Data) -> Automation? {
+        guard let answer = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        func state(_ key: String) -> Bool? {
+            guard let item = answer[key] as? [String: Any], item["instalado"] as? Bool == true else { return nil }
+            return item["ligado"] as? Bool ?? false
+        }
+        return Automation(jev: state("jev"), ponytail: state("ponytail"))
+    }
+
+    var isEmpty: Bool { jev == nil && ponytail == nil }
+
+    subscript(_ which: Switch) -> Bool? {
+        get { which == .jev ? jev : ponytail }
+        set { if which == .jev { jev = newValue } else { ponytail = newValue } }
     }
 }
 

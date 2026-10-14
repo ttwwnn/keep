@@ -97,6 +97,8 @@ pub fn deadline(args: &[String]) -> Option<Duration> {
         ("ia", "contas") => 30.0,
         ("ia", "uso") => 30.0,
         ("ia", "jev") => 30.0,
+        // The footer's two switches, the Jev and the Ponytail: turning the plugin runs Claude Code once.
+        ("ia", "automacao") => 20.0,
         ("ia", "ordem") if word(2) == "mover" => 10.0,
         ("ia", "ordem") => 5.0,
         ("ia", "abas") => 5.0,
@@ -277,6 +279,11 @@ pub fn signature() -> String {
     // the core adds what OpenRouter has not counted yet, so a decision shows
     // in two seconds rather than when OpenRouter catches up.
     files.push(claude.join("jev").join("chamadas.jsonl"));
+    // The footer's switches, where the Jev and each AI read them: turned in a
+    // terminal (`jev auto desligar`, `/plugin`) they show as well.
+    files.push(claude.join("jev").join("desligado"));
+    files.push(claude.join("settings.json"));
+    files.push(home.join(".codex").join("config.toml"));
     let mut out = String::new();
     for file in files {
         if let Ok(meta) = std::fs::metadata(&file) {
@@ -785,6 +792,7 @@ mod tests {
         assert_eq!(deadline(&args("ia trocar --ws=a --aba=1 --para=gpt:x --json")), Some(Duration::from_secs(40)));
         assert_eq!(deadline(&args("ia ordem mover gpt:x cima --json")), Some(Duration::from_secs(10)));
         assert_eq!(deadline(&args("ia jev --agora --json")), Some(Duration::from_secs(30)));
+        assert_eq!(deadline(&args("ia automacao ponytail desligar --json")), Some(Duration::from_secs(20)));
         assert_eq!(deadline(&args("ia entrar openrouter --ws=a --json")), Some(Duration::from_secs(20)));
         assert_eq!(deadline(&args("ia login openrouter")), None);
         assert_eq!(deadline(&args("worktrees listar --prazo 3.0 a:1")), Some(Duration::from_secs_f64(4.5)));
