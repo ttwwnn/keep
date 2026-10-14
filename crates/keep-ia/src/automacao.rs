@@ -205,17 +205,15 @@ mod testes {
 
     const CONFIG: &str = "model = \"gpt-6-astra\"\n\n[plugins.\"ponytail@ponytail\"]\nenabled = true\n\n[projects.\"/x\"]\ntrust_level = \"trusted\"\n";
 
-    /// Um `claude` falso que faz o que o de verdade faz com o plugin: muda
-    /// `enabledPlugins` e deixa o resto do arquivo.
-    fn claude_falso(c: &crate::contas::testes::Casa) {
-        let bin = c.raiz.join("claude");
-        std::fs::write(
-            &bin,
-            "#!/bin/sh\necho \"$@\" >> \"$KEEP_IA_HOME/claude.log\"\nF=\"$KEEP_IA_HOME/.claude/settings.json\"\n\
-             [ \"$2\" = enable ] && V=true || V=false\n\
-             sed -i.bak \"s/\\\"ponytail@ponytail\\\": *[a-z]*/\\\"ponytail@ponytail\\\": $V/\" \"$F\"\n",
-        )
-        .unwrap();
+    /// Um programa falso: um script do sh, ou um `.cmd` no Windows (o `claude`
+    /// do npm também é um `.cmd`).
+    fn programa(c: &crate::contas::testes::Casa, sh: &str, cmd: &str) -> std::path::PathBuf {
+        let (bin, texto) = if cfg!(windows) {
+            (c.raiz.join("claude.cmd"), cmd.replace('\n', "\r\n"))
+        } else {
+            (c.raiz.join("claude"), sh.to_string())
+        };
+        std::fs::write(&bin, texto).unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -223,6 +221,21 @@ mod testes {
         }
         // SAFETY: a casa (e a trava) de pé.
         unsafe { std::env::set_var("KEEP_IA_CLAUDE_BIN", &bin) };
+        bin
+    }
+
+    /// Um `claude` falso que faz o que o de verdade faz com o plugin: muda
+    /// `enabledPlugins` e deixa o resto do arquivo.
+    fn claude_falso(c: &crate::contas::testes::Casa) {
+        programa(
+            c,
+            "#!/bin/sh\necho \"$@\" >> \"$KEEP_IA_HOME/claude.log\"\nF=\"$KEEP_IA_HOME/.claude/settings.json\"\n\
+             [ \"$2\" = enable ] && V=true || V=false\n\
+             sed -i.bak \"s/\\\"ponytail@ponytail\\\": *[a-z]*/\\\"ponytail@ponytail\\\": $V/\" \"$F\"\n",
+            "@echo off\n>>\"%KEEP_IA_HOME%\\claude.log\" echo %*\n\
+             if \"%2\"==\"enable\" (set V=true) else (set V=false)\n\
+             >\"%KEEP_IA_HOME%\\.claude\\settings.json\" echo {\"model\": \"opus[1m]\", \"enabledPlugins\": {\"ponytail@ponytail\": %V%}}\n",
+        );
     }
 
     fn com_ponytail(c: &crate::contas::testes::Casa) {
@@ -270,7 +283,7 @@ mod testes {
         let toml = std::fs::read_to_string(c.raiz.join(".codex/config.toml")).unwrap();
         assert_eq!(toml, CONFIG.replace("enabled = true", "enabled = false"), "só a linha do plugin muda");
         let log = std::fs::read_to_string(c.raiz.join("claude.log")).unwrap();
-        assert_eq!(log, "plugin disable ponytail@ponytail\n");
+        assert_eq!(log.trim_end(), "plugin disable ponytail@ponytail");
         ligar_ponytail(false).unwrap();
         assert_eq!(std::fs::read_to_string(c.raiz.join("claude.log")).unwrap(), log, "já desligado: nada roda");
         ligar_ponytail(true).unwrap();
@@ -296,7 +309,7 @@ mod testes {
     fn claude_que_nao_muda_o_arquivo_e_erro() {
         let c = casa("automacao-claude-falha");
         com_ponytail(&c);
-        std::fs::write(c.raiz.join("claude"), "#!/bin/sh\necho falhou >&2\nexit 1\n").unwrap();
+        programa(&c, "#!/bin/sh\necho falhou >&2\nexit 1\n", "@echo off\necho falhou 1>&2\nexit /b 1\n");
         let e = ligar_ponytail(false).unwrap_err();
         assert!(e.contains("falhou"), "{e}");
         assert_eq!(estado()["ponytail"]["claude"], true);
