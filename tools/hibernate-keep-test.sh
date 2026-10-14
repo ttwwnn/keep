@@ -321,7 +321,7 @@ launch() {  # launch [KEY=VALUE...]
     FRONT=$(osascript -e 'tell application "System Events" to get bundle identifier of first application process whose frontmost is true' 2>/dev/null)
     : >"$WORK/app.log"
     cat >"$KEEP_STATE_DIR/windows.json" <<JSON
-{"0":{"x":360,"y":160,"width":1100,"height":700,"workspaces":["$WS"],"tab":{"workspace":"$WS","root":1}}}
+{"0":{"x":40,"y":160,"width":1100,"height":700,"workspaces":["$WS"],"tab":{"workspace":"$WS","root":1}}}
 JSON
     env "$@" KEEP_TRACE=1 "$BIN" >"$WORK/app.log" 2>&1 &
     APP_PID=$!

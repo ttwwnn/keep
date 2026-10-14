@@ -94,7 +94,9 @@ def status():
         with open(os.path.join(os.environ["KEEP_STATUS_DIR"], "%d.json" % pid), "w") as f:
             json.dump({"model": {"id": model[0], "display_name": model[1]}, "effort": {"level": effort}}, f)
 def draw():
-    rule = "─" * 100
+    # As wide as the terminal, as Claude Code draws it: a fixed width wraps
+    # in a narrower pane, and the box is not found.
+    rule = "─" * os.get_terminal_size(0).columns
     out.write("\x1b]2;✳ teste\x07\x1b[2J\x1b[H")
     if screen == "models":
         out.write("   Select model\r\n")
@@ -181,7 +183,7 @@ DAEMON_PID=$!
 sleep 1
 ./target/release/keep new link >/dev/null 2>&1 || { say "could not make a workspace"; exit 1; }
 cat >"$KEEP_STATE_DIR/windows.json" <<'JSON'
-{"0":{"x":360,"y":160,"width":1100,"height":700,"workspaces":["link"],"tab":{"workspace":"link","root":1}}}
+{"0":{"x":40,"y":160,"width":1100,"height":700,"workspaces":["link"],"tab":{"workspace":"link","root":1}}}
 JSON
 
 stop_app

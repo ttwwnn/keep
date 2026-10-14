@@ -83,6 +83,11 @@ def save(name, text):
     with open(os.path.join(WORK, name), "w") as f:
         f.write(text)
 def draw():
+    # On the row the test aims at, once it has said which (see "row" below).
+    try:
+        out.write("\x1b[%d;1H" % (int(open(os.path.join(WORK, "row")).read()) + 1))
+    except (OSError, ValueError):
+        pass
     out.write("\r\x1b[K❯ " + line + ("\x1b[%dG" % (3 + pos)) + os.environ.get("MARK",""))
     out.flush()
     save("line", line)
@@ -124,7 +129,7 @@ DAEMON_PID=$!
 sleep 1
 ./target/release/keep new link >/dev/null 2>&1 || { say "could not make a workspace"; exit 1; }
 cat >"$KEEP_STATE_DIR/windows.json" <<'JSON'
-{"0":{"x":360,"y":160,"width":1100,"height":700,"workspaces":["link"],"tab":{"workspace":"link","root":1}}}
+{"0":{"x":40,"y":160,"width":1100,"height":700,"workspaces":["link"],"tab":{"workspace":"link","root":1}}}
 JSON
 
 stop_app
@@ -161,6 +166,17 @@ sleep 1
 : >"$KEEP_LINK_LOG"
 SAVED_CLIP=$(pbpaste)
 
+# The row under the aim, as the app counts it: a plain click there on blank
+# says "plain click on nothing: row N". The program draws its line on that
+# row, so the aim holds whatever the text's size (it is 25% larger since
+# b9e3d21, and a fixed 120 points below the window's top fell on the row
+# above the line).
+BEFORE_AIM=$(grep -c 'plain click on nothing' "$WORK/app.log")
+"$MOUSE" click "$TX" "$TY"
+sleep 1.5
+AIM_ROW=$(grep -a 'plain click on nothing: row' "$WORK/app.log" | tail -n +"$((BEFORE_AIM + 1))" \
+    | sed -nE 's/.*row ([0-9]+),.*/\1/p' | tail -1)
+[ -n "$AIM_ROW" ] && printf %s "$AIM_ROW" >"$WORK/row"
 touch "$WORK/redraw"   # the program draws its line again, now the window is settled
 sleep 1
 SENDKEY=$WORK/sendkey

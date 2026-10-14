@@ -163,7 +163,7 @@ DAEMON_PID=$!
 sleep 1
 ./target/release/keep new link >/dev/null 2>&1 || { say "could not make a workspace"; exit 1; }
 cat >"$KEEP_STATE_DIR/windows.json" <<'JSON'
-{"0":{"x":360,"y":160,"width":1100,"height":700,"workspaces":["link"],"tab":{"workspace":"link","root":1}}}
+{"0":{"x":40,"y":160,"width":1100,"height":700,"workspaces":["link"],"tab":{"workspace":"link","root":1}}}
 JSON
 
 stop_app
