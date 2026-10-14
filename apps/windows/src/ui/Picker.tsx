@@ -21,7 +21,7 @@ import type { ComponentType } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import * as api from "../api";
 import { commandSpec, type CatalogId } from "../commands";
-import { chordAction } from "../palette/actions";
+import { actionsFor, chordAction } from "../palette/actions";
 import {
   commandItems,
   createItem,
@@ -491,7 +491,8 @@ export function Picker(props: { mode: PickerMode }) {
       {selected && <Footer onOpen={() => open()} onActions={() => (acting ? closeActions() : setActing(true))} />}
       {acting && selected && (
         <ActionsPanel
-          item={selected}
+          heading={selected.title.trim() || selected.path}
+          entries={actionsFor(selected)}
           onClose={closeActions}
           onRun={(action) => {
             setActing(false);

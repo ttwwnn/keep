@@ -85,6 +85,20 @@ export function actionsFor(item: PickerItem): ActionEntry[] {
   }
 }
 
+/**
+ * What can be done to a row of the lists of themes and of faces (the macOS
+ * picker's `.theme` and `.fontFamily` rows): wear it, which Enter does, or copy
+ * its name, which Ctrl+Shift+C does too.
+ */
+export function catalogActions(kind: "theme" | "font"): ActionEntry[] {
+  return [
+    kind === "theme"
+      ? { action: "open", title: "Vestir este tema", icon: "theme", keys: OPEN }
+      : { action: "open", title: "Usar esta fonte no terminal", icon: "font", keys: OPEN },
+    { action: "copyText", title: "Copiar o nome", icon: "copy", keys: COPY, startsGroup: true },
+  ];
+}
+
 /** The entries whose titles hold what was typed, accents or not. */
 export function filterActions(entries: readonly ActionEntry[], typed: string): ActionEntry[] {
   const needle = plainLetters(typed.trim()).toLowerCase();

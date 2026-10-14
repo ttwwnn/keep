@@ -3,10 +3,11 @@
 // theme carried all the way from the choice to the terminal and the window.
 
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import * as api from "./api";
 import { applyTheme, clearTheme } from "./appearance";
 import { listMonospaceFonts } from "./fonts";
-import { gui, select, tabLabel, tabsByWorkspace, terminals, workspaceLabel } from "./store";
+import { gui, isMac, overlay, select, tabLabel, tabsByWorkspace, terminals, workspaceLabel } from "./store";
 import { loadThemes, themeColors } from "./themes";
 import { windowTitle } from "./windowTitle";
 
@@ -57,6 +58,34 @@ export async function appearanceSteps(step: Step, workspace: string): Promise<vo
     if (chosen() !== "") throw new Error("o tema não saiu do estado");
     if (!["#282c34", "#ffffff"].includes(ground())) throw new Error(`o Keep não voltou: ${ground()}`);
     return `Dracula ${dracula.background} no terminal e na janela; depois ${ground()}`;
+  });
+
+  await step("aparência: Ctrl+K numa linha da lista de temas abre Vestir e Copiar o nome", async () => {
+    await loadThemes();
+    overlay.value = "themes";
+    try {
+      const field = await until(async () => document.querySelector<HTMLInputElement>(".catalog .catalog-input"), 3000);
+      field.value = "Dracula";
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+      await until(async () => document.querySelector(".catalog .catalog-row.selected"), 3000);
+      const mod = isMac.value ? { metaKey: true } : { ctrlKey: true };
+      const press = (target: HTMLElement, key: string, code: string, extra: KeyboardEventInit = {}) =>
+        target.dispatchEvent(new KeyboardEvent("keydown", { key, code, bubbles: true, cancelable: true, ...extra }));
+      press(field, "k", "KeyK", mod);
+      const panel = await until(async () => document.querySelector<HTMLElement>(".catalog .pk-actions"), 3000);
+      const titles = [...panel.querySelectorAll(".pk-action-label")].map((e) => e.textContent).join(" | ");
+      if (titles !== "Vestir este tema | Copiar o nome") throw new Error(`o painel diz ${titles}`);
+      const name = panel.querySelector(".pk-actions-heading")?.textContent ?? "";
+      if (!name.includes("Dracula")) throw new Error(`o painel é de "${name}"`);
+      press(panel.querySelector<HTMLInputElement>("input")!, "Escape", "Escape");
+      await until(async () => (document.querySelector(".catalog .pk-actions") ? null : true), 3000);
+      if (!document.querySelector(".catalog")) throw new Error("Esc no painel fechou a lista também");
+      press(field, "C", "KeyC", { ...mod, shiftKey: true });
+      const copied = await until(async () => ((await readText().catch(() => "")) === name ? name : null), 3000);
+      return `painel de "${name}": ${titles}; Esc fecha só o painel; Ctrl+Shift+C copiou "${copied}"`;
+    } finally {
+      overlay.value = null;
+    }
   });
 
   await step("aparência: o título da janela é o da aba em frente", async () => {
