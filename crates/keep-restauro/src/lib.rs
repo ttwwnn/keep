@@ -21,6 +21,7 @@ pub mod continuar;
 pub mod daemon;
 pub mod deeplink;
 pub mod links;
+pub mod membro_json;
 pub mod nova;
 pub mod restaurar;
 pub mod retrato;
