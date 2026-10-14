@@ -24,7 +24,7 @@ import { applyPalette, onSystemAppearanceChange } from "../theme";
 import { loadThemes } from "../themes";
 import { ContextMenu } from "../ui/common";
 import { Overlays } from "../ui/Overlays";
-import { quickLook, quickReady } from "./api";
+import { quickLook, quickReady, quickStatus } from "./api";
 import { installQuickInput, openQuickMenu, quickKey } from "./keys";
 import { wearTheState } from "./look";
 import { guessGrid, nextShell, quickTabIn, type Shell } from "./tab";
@@ -209,6 +209,11 @@ export async function bootQuick(): Promise<void> {
     await listen("quick-hidden", () => {
       shown.value = false;
     });
+    // Brought in before this page was ready to hear of it (the first showing waits only so long): it is in view.
+    if ((await quickStatus().catch(() => null))?.visible) {
+      shown.value = true;
+      focusTerminal();
+    }
     await api.ensureDaemon().catch(() => {});
     await settle();
     // While it is in view the daemon is asked once a second, as the main window's is: a shell ended from the outside

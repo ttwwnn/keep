@@ -910,13 +910,14 @@ fn show_now(app: &AppHandle) -> Result<(), String> {
     let id = quick.slide.fetch_add(1, Ordering::SeqCst) + 1;
     // Before the window can be heard from: the focus it is about to be given is not yet a click away.
     quick.focused.store(false, Ordering::SeqCst);
-    quick.visible.store(true, Ordering::SeqCst);
     if let Ok(mut last) = quick.rest.lock() {
         *last = Some(rest);
     }
     place(&window, rest.x, from, rest)?;
     follow_the_desktop(&window);
     window.show().map_err(|e| e.to_string())?;
+    // In view only once it is: a showing that failed leaves the next press to try again, not to put away what is not there.
+    quick.visible.store(true, Ordering::SeqCst);
     // Again after showing: a window shown again can come back on the taskbar, or off the top.
     let _ = window.set_skip_taskbar(true);
     let _ = window.set_always_on_top(true);
