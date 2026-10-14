@@ -60,19 +60,23 @@ export function quickKey(view: TermView, event: KeyboardEvent): boolean {
   return terminalKey(view, event);
 }
 
-/** The terminal's menu, opened where the pointer is. */
+/** The terminal's menu, opened where the pointer is. What it does, the keyboard goes back to the terminal after. */
 export function openQuickMenu(event: MouseEvent, view: TermView | undefined): void {
   if (!view) return;
+  const then = (run: () => void) => () => {
+    run();
+    requestAnimationFrame(() => view.focus());
+  };
   openMenu(event, [
-    { label: "Copiar", hint: "Ctrl+C", disabled: !view.term.hasSelection(), action: () => void copy(view) },
+    { label: "Copiar", hint: "Ctrl+C", disabled: !view.term.hasSelection(), action: then(() => void copy(view)) },
     {
       label: "Colar",
       hint: "Ctrl+V",
-      action: () => void readText().then((text) => text && view.paste(text)).catch(() => {}),
+      action: then(() => void readText().then((text) => text && view.paste(text)).catch(() => {})),
     },
     "separator",
-    { label: "Selecionar tudo", hint: "Ctrl+Shift+A", action: () => view.term.selectAll() },
-    { label: "Limpar a tela", hint: "Ctrl+Shift+L", action: () => void view.type("\x0c").catch(() => {}) },
+    { label: "Selecionar tudo", hint: "Ctrl+Shift+A", action: then(() => view.term.selectAll()) },
+    { label: "Limpar a tela", hint: "Ctrl+Shift+L", action: then(() => void view.type("\x0c").catch(() => {})) },
   ]);
 }
 

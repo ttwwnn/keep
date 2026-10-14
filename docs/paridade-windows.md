@@ -357,7 +357,10 @@ dá-lo).
   da janela principal, lidos do `state.json` a cada entrada por `quick_look`, que só lê (não faz as recuperações,
   os avisos nem o travamento do `load_state`) e que nada grava: o estado é da janela principal. Teclado (a tecla
   que não é da janela é de `terminalKey`: Kitty, Ctrl+C numa seleção, Ctrl+X, Shift+Enter), menu de contexto,
-  arquivos soltos e a pergunta da colagem de várias linhas são os de uma aba.
+  arquivos soltos e a pergunta da colagem de várias linhas são os de uma aba. Vistos no painel: as teclas da
+  janela engolidas sem deixar caractere no shell, Ctrl+Shift+L, o menu de contexto (Limpar a tela, e o teclado
+  volta ao terminal). Não exercitados nele: copiar e colar (a área de transferência é da pessoa), soltar
+  arquivos e a pergunta da colagem de várias linhas; são o código das abas, ligado à página do painel.
 - [x] "Janela rápida" na paleta, com o atalho em uso desenhado, ligada por `registerCommand` (`quick/main.ts`).
 - [x] Ciclo de vida: a janela é do mesmo processo (o single-instance não vê um segundo app); fechar a janela
   principal sai do app, como no Mac, e leva a rápida junto; sem isso a rápida escondida contaria ao Tauri como
