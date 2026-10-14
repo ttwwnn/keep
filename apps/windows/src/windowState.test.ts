@@ -12,7 +12,7 @@ import {
   readOps,
   sharedOf,
   windowOf,
-  withShared,
+  takeShared,
   type Op,
   type Shared,
 } from "./windowState";
@@ -239,11 +239,27 @@ describe("hearing what changed", () => {
   });
   it("puts the app's part into a window's state, made sound", () => {
     const own = state({ order: ["a"], active: { workspace: "a", tab: 2 }, zoom: 1 });
-    const next = withShared(own, { ...sharedOf(own), zoom: 1.5, hidden: ["b"] });
+    const next = takeShared(own, sharedOf(own), { ...sharedOf(own), zoom: 1.5, hidden: ["b"] });
     expect(next.zoom).toBe(1.5);
     expect(next.hidden).toEqual(["b"]);
     expect(next.order).toEqual(["a"]);
     expect(next.active).toEqual({ workspace: "a", tab: 2 });
+  });
+  it("forgets the place of a workspace another window went to after it was put away", () => {
+    // This window put "b" away and kept its place; another window went to it, so it leaves the put-away list.
+    const own = state({ order: ["a", "b", "c"], hidden: ["b"] });
+    const next = takeShared(own, sharedOf(own), { ...sharedOf(own), hidden: [] });
+    expect(next.order).toEqual(["a", "c"]);
+    expect(next.hidden).toEqual([]);
+  });
+  it("keeps the places of workspaces that were put away and still are, or newly put away", () => {
+    const own = state({ order: ["a", "b", "c"], hidden: ["b"] });
+    expect(takeShared(own, sharedOf(own), { ...sharedOf(own), hidden: ["b", "c"] }).order).toEqual(["a", "b", "c"]);
+  });
+  it("forgets the tab in front when the app's daemon is another, and only then", () => {
+    const own = state({ active: { workspace: "a", tab: 3 }, daemon: "10-1000" });
+    expect(takeShared(own, sharedOf(own), { ...sharedOf(own), daemon: "20-2000" }).active).toBeNull();
+    expect(takeShared(own, sharedOf(own), { ...sharedOf(own), zoom: 2 }).active).toEqual({ workspace: "a", tab: 3 });
   });
 });
 

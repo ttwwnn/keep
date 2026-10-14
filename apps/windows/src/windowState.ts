@@ -16,6 +16,7 @@
 // (windows.rs) keeps the copy and writes it to state.json.
 
 import { normalizeState, type GuiState } from "./state";
+import { forgetTaken } from "./windowModel";
 
 /** How each field the windows share is changed: a value replaced, a map changed by key, a set changed by member. */
 const KINDS = {
@@ -204,7 +205,15 @@ export function readOps(raw: unknown): Op[] {
   return ops;
 }
 
-/** The state of a window with the app's part replaced by `shared`, made sound. */
-export function withShared(state: GuiState, shared: Shared): GuiState {
-  return normalizeState({ ...state, ...shared });
+/**
+ * The state of a window with the app's part as another window left it (`next`, after `before`), made sound. The
+ * workspaces this window had put away and another went to are no longer ours to remember — they are listed
+ * there —, and the tab in front of a daemon of another time is not a tab.
+ */
+export function takeShared(state: GuiState, before: Shared, next: Shared): GuiState {
+  let merged = normalizeState({ ...state, ...next });
+  const order = forgetTaken(merged.order, before.hidden, next.hidden);
+  if (order.length !== merged.order.length) merged = { ...merged, order };
+  if (next.daemon !== before.daemon) merged = { ...merged, active: null };
+  return merged;
 }

@@ -32,7 +32,6 @@ import {
   carriedOf,
   cascaded,
   emptyPlacement,
-  forgetTaken,
   frameOfTornTab,
   readPeers,
   type Placement,
@@ -44,8 +43,8 @@ import {
   joinState,
   readOps,
   sharedOf,
+  takeShared,
   windowOf,
-  withShared,
   type Shared,
 } from "./windowState";
 
@@ -125,19 +124,6 @@ function scheduleKeep(): void {
 export function keepNow(): Promise<unknown> {
   clearTimeout(keepTimer);
   return inOrder(keep);
-}
-
-/**
- * The state with the app's part as another window left it. The workspaces this
- * window had put away and another went to are no longer ours to remember —
- * they are listed there —, and tabs of a daemon of another time are not tabs.
- */
-function takeShared(state: GuiState, before: Shared, next: Shared): GuiState {
-  let merged = withShared(state, next);
-  const order = forgetTaken(merged.order, before.hidden, next.hidden);
-  if (order.length !== merged.order.length) merged = { ...merged, order };
-  if (next.daemon !== before.daemon) merged = { ...merged, active: null };
-  return merged;
 }
 
 /** Changes another window made (or this one did, told back): made here too. */

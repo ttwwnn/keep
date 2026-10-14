@@ -25,7 +25,6 @@ import { daemonError, gui, loaded, log, renameTab } from "./store";
 import { isLeader } from "./windowPeers";
 
 const daemonUp = () => loaded.value && daemonError.value === null;
-// With several windows open the rounds that change something are the oldest window's alone (windowPeers.ts).
 
 /** Whether the core is here to be asked (a window without it has no AI layer, and nothing to restore with). */
 async function coreHere(): Promise<boolean> {
@@ -138,7 +137,10 @@ export async function syncNames(): Promise<void> {
 
 let started = false;
 
-/** Start the clocks; the first round of the picture is now, so that a restart's conversations come back at once. */
+/**
+ * Start the clocks; the first round of the picture is now, so that a restart's conversations come back at once.
+ * With several windows open the rounds that change something are the oldest window's alone (windowPeers.ts).
+ */
 export function startChores(): void {
   if (started) return;
   started = true;

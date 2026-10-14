@@ -464,5 +464,15 @@ e à mão (abrir, ir para, fechar, sair e reabrir com duas janelas). O que só o
 - [x] Capabilities: `windows: ["main", "w*"]` (o Tauri aceita padrão); as janelas se criam em código a partir da
   configuração da primeira (sem moldura no Windows, a barra de título do Mac), com o filtro do plugin de estado de
   janela só para `main`.
+- [ ] Conhecido e não resolvido: um workspace feito numa janela que não é a mais antiga (Ctrl+Shift+N, "abrir em") pode
+  ser tomado também pela mais antiga se ela perguntar ao daemon antes de a janela que o fez dizer ao app que o lista
+  (um pulso de 200 ms): ele aparece nas duas. Um workspace feito antes de listá-lo (`createWorkspace` pondo o nome na
+  lista e avisando o app antes de pedir a aba ao keepd) foi tentado e tirado: mexia na ordem dos passos de uma janela
+  só e o roteiro falhou em passos antigos que não consegui explicar a tempo. Com uma janela só o risco não existe.
+- [ ] Não testado: o Windows real (nada disto rodou lá; o CI do ramo ainda não viu estas mudanças), o ponteiro de verdade
+  fora da janela no WebView2, vários monitores, a janela mais antiga fechando e passando a vez (só raciocinado e coberto
+  pelos testes do Rust), a janela rápida com várias janelas abertas. No Mac de desenvolvimento um gerenciador de janelas
+  maximiza toda janela nova, e o roteiro das janelas só olha onde o app as pôs. Passos de outras fatias (janela rápida:
+  atalho global) falharam de vez em quando neste Mac com outras sessões usando a tela e o atalho.
 - [ ] Tela cheia por janela no estado: o Mac também só guarda o quadro; a janela volta no quadro, não em tela cheia.
 - [~] Janela rápida global (Ctrl+`), com o workspace `quick` oculto: feita na fatia `quick`, acima.
