@@ -42,6 +42,13 @@ describe("the state a window works with", () => {
     });
     expect(joinState(sharedOf(s), windowOf(s))).toEqual(s);
   });
+  it("keeps the translucent ground for the app and reads a state from before it as the opaque window", () => {
+    const s = state({ glass: { opacity: 0.7, blur: "mica" } });
+    expect(sharedOf(s).glass).toEqual({ opacity: 0.7, blur: "mica" });
+    expect(windowOf(s)).not.toHaveProperty("glass");
+    expect(joinState({ zoom: 1.25, theme: "Nord" }, { order: ["a"] }).glass).toEqual({ opacity: 1, blur: "none" });
+    expect(joinState({ glass: { opacity: "metade", blur: 3 } }, null).glass).toEqual({ opacity: 1, blur: "none" });
+  });
   it("keeps the order, what is folded and the tab in front to the window, and the names, zoom and what is put away to the app", () => {
     const s = state({ order: ["a"], folded: ["a"], active: { workspace: "a", tab: 1 }, hidden: ["b"], zoom: 2, tabNames: { [key("a", 1)]: "x" } });
     expect(Object.keys(windowOf(s)).sort()).toEqual([...WINDOW_FIELDS].sort());

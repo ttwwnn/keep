@@ -1,0 +1,98 @@
+/* The translucent ground (glass.ts, glassStore.ts), on only while the page wears it: the class `glass` is on the
+   document at an alpha under the whole, and off, none of this applies and the window is what it always was.
+
+   The window is transparent behind the page, so the surfaces that were painted with the ground paint it at the alpha
+   (--ground-glass, --recessed-glass), and the terminal paints its own background at the same alpha (the xterm theme,
+   with allowTransparency). Nothing is painted twice where the terminal is: a ground under it would show twice
+   over, and the terminal would look more opaque than the chrome. The text is never translucent, and the cards
+   (--overlay) and the fields keep the whole colours they have. */
+
+html.glass,
+html.glass body,
+html.glass #app {
+  background: transparent !important;
+}
+
+html.glass .sidebar {
+  background: var(--recessed-glass);
+}
+
+html.glass .titlebar,
+html.glass .ai-status-bar,
+html.glass .empty {
+  background: var(--ground-glass);
+}
+
+/* The terminal paints the ground itself, so what is under it is left clear. */
+html.glass .terminal-area {
+  background: transparent;
+}
+
+/* What the terminal does not cover (the two pixels either side, the part of a cell that is left over at the edges)
+   is painted by a shadow that reaches out from the screen: a shadow is drawn only outside its box, so the
+   terminal's own background is not painted twice. The pane clips it. */
+html.glass .term-root {
+  overflow: hidden;
+}
+
+html.glass .term-root .xterm-screen {
+  box-shadow: 0 0 0 4000px var(--ground-glass);
+}
+
+html.glass .split .pane::after {
+  background: var(--ground-glass);
+}
+
+/* ------------------------------------------------------------ the settings */
+
+.glass-settings .glass-percent {
+  min-width: 36px;
+  text-align: right;
+}
+
+.card .field-row input.glass-slider {
+  flex: 1;
+  min-width: 120px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: none;
+  accent-color: var(--ink-resting);
+  cursor: pointer;
+}
+
+.glass-restart {
+  align-items: flex-start;
+  margin-top: 6px;
+}
+
+.glass-restart .hint {
+  flex: 1;
+  margin: 0;
+}
+
+/* ------------------------------------------------------------ the drop-down panel */
+
+/* The panel's window is transparent (glass.rs) for its bottom corners: the Mac's, 10 points, the top edge flush
+   with the screen (QuickTerminal.swift). The page paints the rounded shape and nothing round it. The system's
+   own rounding stays off (quick.rs): it rounds the four corners, and the top ones would leave a gap at the edge
+   of the screen. */
+html.quick-round,
+html.quick-round body,
+html.quick-round #app {
+  background: transparent !important;
+}
+
+html.quick-round .quick-shell {
+  border-radius: 0 0 10px 10px;
+}
+
+/* A translucent panel: the shell paints nothing and the shadow of the screen paints its margins, as in the
+   main window; the shell clips both. */
+html.glass .quick-shell {
+  background: transparent;
+}
+
+html.glass .quick-shell .term-root {
+  overflow: visible;
+}

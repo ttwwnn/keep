@@ -10,6 +10,7 @@ mod confinement;
 mod daemon;
 mod deeplink;
 mod fonts;
+mod glass;
 mod ia;
 mod links;
 mod memory;
@@ -57,10 +58,12 @@ struct Startup {
     /// Set by tests: the scripted check covers the AI layer too, against a
     /// stand-in core ("falso") or the real one ("real").
     e2e_ia: Option<String>,
+    /// Whether this window was made transparent: the translucent ground (glass.rs) only shows in one that was.
+    window_transparent: bool,
 }
 
 #[tauri::command]
-fn startup() -> Startup {
+fn startup(app: AppHandle, window: tauri::Window) -> Startup {
     Startup {
         platform: std::env::consts::OS,
         windows_build: settings::windows_build(),
@@ -72,6 +75,7 @@ fn startup() -> Startup {
         version: env!("CARGO_PKG_VERSION"),
         e2e_report: std::env::var("KEEP_E2E_REPORT").ok(),
         e2e_ia: std::env::var("KEEP_E2E_IA").ok().filter(|v| !v.is_empty()),
+        window_transparent: app.state::<glass::Glass>().is_transparent(window.label()),
     }
 }
 
@@ -533,6 +537,8 @@ fn e2e_report(report: String) -> Answer<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // An app opened again waits for the one it replaces, before the single-instance guard looks for it.
+    glass::wait_for_predecessor();
     let sessions = Arc::new(Sessions::default());
     let on_exit = Arc::clone(&sessions);
     tauri::Builder::default()
@@ -565,9 +571,12 @@ pub fn run() {
         .manage(sessions)
         .manage(windows::Hub::default())
         .manage(quick::Quick::default())
+        .manage(glass::Glass::default())
         .setup(|app| {
             windows::start(app.handle());
             quick::setup(app.handle());
+            // The first window is made here and not by the configuration: whether it is transparent depends on the state.
+            glass::open_main(app.handle())?;
             // A link that started the app: its tab is asked for as soon as the app is up.
             let launch: Vec<String> = std::env::args().collect();
             if let Some(link) = deeplink::link_in(&launch) {
@@ -632,6 +641,9 @@ pub fn run() {
             quick::quick_set_shortcut,
             quick::quick_ready,
             quick::quick_look,
+            glass::glass_apply,
+            glass::glass_status,
+            glass::restart_app,
             path_exists,
             find_paths,
             clipboard::clipboard_files,

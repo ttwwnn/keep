@@ -381,11 +381,15 @@ fn window(app: &AppHandle) -> Result<WebviewWindow, String> {
         // On every desktop it is summoned from (the Mac's `canJoinAllSpaces`) where the system has such a thing.
         .visible_on_all_workspaces(true)
         .background_color(GROUND)
+        // Transparent on Windows for the bottom corners the page rounds (glass::made_transparent_for_corners).
+        .transparent(crate::glass::made_transparent_for_corners(app, LABEL))
         .visible(false)
         .focused(false)
         .build()
         .map_err(|e| format!("não deu para criar a janela rápida: {e}"))?;
     soften_the_frame(&window);
+    // The material the other windows wear, if the page has said one.
+    crate::glass::wear(app, &window);
     Ok(window)
 }
 
@@ -428,7 +432,10 @@ fn pointer_screen(app: &AppHandle) -> Result<Screen, String> {
 /// The system's frame around a borderless window with a shadow (which is how the panel gets its edge, as on the
 /// Mac): Windows 11 rounds its corners and draws a hairline round it. The Mac's panel is flush with the top of the
 /// screen, which a rounded top corner would leave a gap at, and the shadow is edge enough: no rounding, no hairline.
-/// Where the system does not know these (before Windows 11) it says no, which is no matter.
+/// The system cannot round only the bottom two, so the Mac's 10 points are the page's (the window is transparent
+/// for it: glass.rs, styles-glass.css), the same on Windows 10 and 11. The shadow stays the window's rectangle, which
+/// the rounded corners leave a little square at; where the system does not know these (before Windows 11) it says
+/// no, which is no matter.
 #[cfg(windows)]
 fn soften_the_frame(window: &WebviewWindow) {
     use windows_sys::Win32::Graphics::Dwm::{

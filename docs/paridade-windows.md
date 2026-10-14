@@ -105,12 +105,37 @@ não foram vistos no Windows de verdade.
   Windows mostra.
 - [x] Cores da busca da aba (FindBar) derivadas do tema, legíveis no claro e no
   escuro (`Palette.search`, a fatia `palette` pode usar nas outras buscas).
-- [ ] Opacidade e desfoque de fundo (Mica/Acrylic): os efeitos exigem janela
-  `transparent: true` na criação (todo lançamento, também sem a opção ligada),
-  mexem na sombra e nos cantos da janela sem moldura, Mica só existe no
-  Windows 11 e Acrylic/Blur travam ao arrastar e redimensionar no Windows 10
-  1903+ e no 11; nada disso pode ser provado aqui, e o Mac só lê
-  `background-opacity` do Ghostty do usuário (não há opção na tela).
+- [~] Opacidade e desfoque de fundo (fatia `glass`; opt-in, desligado por padrão). Configurações > Fundo
+  translúcido (só no Windows; o Mac lê o `background-opacity` do Ghostty do usuário): opacidade de 50 a 100% (100% é
+  o app de sempre) e desfoque Nenhum/Mica/Acrílico, só o que o build oferece (Mica a partir do 22621, Acrílico a
+  partir do 17763; o texto do pedido dizia 1803, mas o window-vibrancy só aplica a partir do 1809). Guardado no
+  estado (`glass`, compartilhado por todas as janelas pelo mesmo canal dos outros campos; estado antigo sem o campo
+  lê como opaco). Decisões:
+  - `transparent` só vale na criação da janela. Fixá-lo sempre em `true` mudaria a janela de quem nunca ligou a
+    opção (o tao passa a usar o blur-behind do DWM e uma superfície própria) sem que eu possa ver o resultado; então
+    a janela principal é criada em `glass::open_main` (a configuração tem `create: false`) e só sai transparente se o
+    estado pede opacidade menor que 100% (`wants_translucency`, testado). Ligar a opção num app em andamento mostra
+    "Reiniciar o Keep" (`restart_app`: o app novo espera o PID do antigo sair antes de montar o
+    single-instance; o keepd e as abas não são do app e continuam). As janelas seguintes (`windows::build`) saem
+    como a primeira.
+  - O material (Mica, Acrílico) é aplicado em tempo de execução com `set_effects` nas janelas transparentes
+    (`glass_apply`; limpa o anterior antes; MicaDark/MicaLight pela cor do fundo, sem `set_theme`, que mexeria no
+    `prefers-color-scheme`). Quem nunca pediu material não chama nada do DWM.
+  - Na página (`html.glass`, `styles-glass.css`, só com alfa < 1): o corpo e o `#app` ficam transparentes, a barra
+    lateral, a barra de título, a barra de IA e o estado vazio pintam `--recessed-glass`/`--ground-glass` (o
+    `--ground` de sempre com o alfa), o xterm ganha `allowTransparency` e o tema com `background` em rgba (só o
+    fundo padrão; as células que um programa pinta ficam sólidas, como no Ghostty) e o que o terminal não cobre
+    (2 px de cada lado, sobra de célula) é pintado por uma `box-shadow` do `.xterm-screen`, para o fundo nunca ser
+    pintado duas vezes. Texto, cartões (`--overlay`) e campos não ficam translúcidos. Com um seletor, a paleta, o
+    seletor de tema ou de fonte abertos a janela fica opaca (o `holdOpaque` do Mac); as Configurações não seguram,
+    para ver a barra mexer o fundo.
+  - Acrílico no Windows 10 pode travar ao arrastar ou redimensionar: a opção avisa.
+  Provado aqui: vitest (`glass.test.ts`: normalização e migração, material por build, alfa, rgba do tema e das
+  superfícies), `cargo test` (`glass::tests`), `cargo check` e `cargo check --target x86_64-pc-windows-msvc`.
+  Só o CI do Windows prova: o roteiro (`e2eGlass.ts`) confere o padrão opaco, o pedido numa janela opaca, a classe e as
+  cores no webview, a janela rápida transparente e os materiais pedidos e retirados sem erro. Não visto por nenhum
+  olho: o desfoque real, a sombra e os cantos de uma janela transparente sem moldura, o redimensionar e o arrastar
+  com Acrílico, o botão "Reiniciar o Keep" de ponta a ponta no Windows.
 
 ## Fatia `tabs`
 
@@ -421,9 +446,18 @@ dá-lo).
   o que se posiciona é a parte desenhada (`Margins`, medida na própria janela pela diferença entre a posição interna
   e a externa) e o roteiro compara essa parte com o lugar pedido. Só compilado. O foco é pedido de novo até quatro vezes
   se o sistema demora a dá-lo (o Windows só dá o teclado a quem recebeu a última entrada).
-- [ ] Os cantos de baixo arredondados em 10 pt e o fundo translúcido do painel do Mac: a janela é opaca, porque
-  `transparent` pede API privada no Mac e, no Windows, uma janela transparente deixa a faixa transparente pegar o
-  mouse e perde a sombra do sistema. O contorno é o do DWM do Windows.
+- [~] Os cantos de baixo arredondados em 10 px e o fundo translúcido do painel do Mac (fatia `glass`). A janela
+  rápida é sempre transparente no Windows (`glass::made_transparent_for_corners`; no Mac `transparent` pede API
+  privada, e lá o painel segue como estava) e a página redonda só os dois cantos de baixo
+  (`html.quick-round .quick-shell`, `styles-glass.css`), o de cima rente à tela como o painel do Mac. Escolha:
+  o DWM do Windows 11 só arredonda os quatro cantos (`DWMWCP_ROUND`), e os de cima deixariam um vão na borda da
+  tela; esconder esses dois pondo a janela para fora da tela mudaria a geometria que a fatia `quick` provou no CI
+  (largura do monitor, 42% da altura, deslize de 0,18 s); então o arredondamento do sistema continua desligado
+  (`soften_the_frame`) e vale o CSS no 10 e no 11, igual. Preço: a sombra é a do retângulo da janela e deixa um
+  quadradinho nos cantos redondos. O fundo translúcido do painel segue a opção da janela principal (mesmo alfa, mesmo
+  material, lidos do estado a cada entrada); desligada, o painel é opaco, só com os cantos. Compilado no Windows pelo
+  CI e pelo roteiro (`e2eGlass.ts` confere que a janela rápida é transparente; o passo de geometria da fatia
+  `quick` continua exigindo o painel no lugar certo); a aparência dos cantos e da sombra não foi vista.
 - [x] A página `?quick=1` (a mesma página, `main.tsx`) mostra só o primeiro terminal vivo do workspace, sem barra
   lateral nem fileira de abas, nas margens do painel do Mac (8 nos lados, 6 em cima, 8 embaixo). Se o shell
   acaba, abre outra aba, inclusive quando o keepd devolve o número da que morreu. Tema, fonte, zoom e cursor são os

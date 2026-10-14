@@ -456,8 +456,12 @@ export async function windowsSteps(step: StepRunner, windows: boolean): Promise<
     }
     check(hung, "a aba não saiu da fileira: sem a cópia pendurada no ponteiro");
     const third = await waitFor(() => peers.value.find((p) => p.label !== windowLabel.value && p.label !== second)?.label, 20000, "a janela da aba");
-    const start = await awaitWindow(third);
-    check(start.listed.join() === SPACE && start.tab === tabs[0], `a janela da aba lista ${start.listed} e mostra ${start.tab}`);
+    await awaitWindow(third);
+    // The window answers as soon as its page is up, before it has taken the tab it was born with: asked until it has.
+    await seen(third, (s) => s.listed.join() === SPACE && s.tab === tabs[0], "a janela da aba listar o workspace e mostrar a aba").catch(async (e) => {
+      const now = await ask(third, "snapshot");
+      throw new Error(`${e.message}; a janela lista ${now.listed} e mostra ${now.tab}`);
+    });
     // This one went on to the tab beside it, and the torn one wears the mark.
     await waitFor(() => activeTab.value?.root.id === tabs[1], 5000, "a janela de origem seguir para a aba vizinha");
     await waitFor(() => shownElsewhere(peers.value, windowLabel.value, SPACE, tabs[0]), 10000, "esta janela saber que a aba arrancada está em outra");

@@ -30,7 +30,7 @@ describe("what the panel wears", () => {
     expect(sameLook(state(), other)).toBe(true);
   });
 
-  it("changes with the theme, the appearance, the zoom, the face and its size, the cursor and the history", () => {
+  it("changes with the theme, the appearance, the zoom, the face and its size, the cursor, the history and the translucent ground", () => {
     const changes: [string, (s: GuiState) => void][] = [
       ["theme", (s) => void (s.theme = "Dracula")],
       ["appearance", (s) => void (s.appearance = "light")],
@@ -40,6 +40,7 @@ describe("what the panel wears", () => {
       ["cursor", (s) => void (s.terminal = { ...s.terminal, cursor: "block" })],
       ["blink", (s) => void (s.terminal = { ...s.terminal, blink: false })],
       ["history", (s) => void (s.terminal = { ...s.terminal, scrollback: 500 })],
+      ["glass", (s) => void (s.glass = { opacity: 0.8, blur: "acrylic" })],
     ];
     for (const [name, change] of changes) expect(sameLook(state(), state(change)), name).toBe(false);
   });

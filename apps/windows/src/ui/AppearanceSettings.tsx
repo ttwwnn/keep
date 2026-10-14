@@ -10,6 +10,7 @@ import { SCROLLBACK_MAX, type CursorShape } from "../state";
 import { fontFamily, gui, info, overlay, palette, setAppearance, setFont } from "../store";
 import { isSingleTheme } from "../themes";
 import { DEFAULT_FONT_SIZE, defaultFontFamily } from "../theme";
+import { GlassSettings } from "./GlassSettings";
 import { Swatch } from "./ThemePicker";
 
 const SHAPES: [CursorShape, string][] = [
@@ -87,6 +88,7 @@ export function AppearanceSettings() {
         </div>
         <p class="hint">Muda também as cores da janela em volta do terminal.</p>
       </fieldset>
+      <GlassSettings />
       <fieldset>
         <legend>Fonte</legend>
         <div class="choice">
