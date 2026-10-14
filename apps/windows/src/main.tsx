@@ -6,6 +6,7 @@ import "./styles.css";
 import "./styles-appearance.css";
 import "./styles-confine.css";
 import "./styles-palette.css";
+import "./styles-quick.css";
 import "./styles-tabs.css";
 import "./styles-terminal.css";
 import { render } from "preact";
@@ -15,6 +16,8 @@ import { installInput, terminalKey } from "./input";
 import { restoreTabs } from "./iaChores";
 import { startIA } from "./iaStore";
 import { bindCommands } from "./palette/bindings";
+import { bootQuick } from "./quick/boot";
+import { bindQuick } from "./quick/main";
 import { watchSleep } from "./sleepWatch";
 import { connect, info, start } from "./store";
 import { App } from "./ui/App";
@@ -23,6 +26,7 @@ async function boot() {
   installInput();
   bindCommands();
   await start({ onKey: terminalKey });
+  bindQuick();
   startAppearance();
   render(<App />, document.getElementById("app")!);
   watchSleep();
@@ -37,7 +41,9 @@ async function boot() {
   }
 }
 
-boot().catch((error) => {
+// The drop-down terminal's window shows this same page in its quick mode (src-tauri/src/quick.rs).
+const quick = new URLSearchParams(location.search).has("quick");
+(quick ? bootQuick() : boot()).catch((error) => {
   // Nothing drawn yet: say why where the window would have been.
   const root = document.getElementById("app");
   if (root) {
