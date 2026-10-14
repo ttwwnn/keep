@@ -504,7 +504,10 @@ impl Quick {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Placement {
+    /// The panel as it is drawn: the part of the window that has content.
     pub frame: Rect,
+    /// The window itself, which on Windows is larger than what it draws (see `Margins`).
+    pub outer: Rect,
     /// Where it was last sent to rest: the frame, once it has got there.
     pub rest: Option<Rect>,
     pub always_on_top: bool,
@@ -542,15 +545,15 @@ pub fn status(app: &AppHandle) -> Status {
         Err(_) => (DEFAULT_SHORTCUT.to_string(), false, None, None),
     };
     let window = app.get_webview_window(LABEL).and_then(|w| {
-        let position = w.outer_position().ok()?;
-        let size = w.outer_size().ok()?;
+        let rect = |at: PhysicalPosition<i32>, size: PhysicalSize<u32>| Rect {
+            x: at.x,
+            y: at.y,
+            width: size.width,
+            height: size.height,
+        };
         Some(Placement {
-            frame: Rect {
-                x: position.x,
-                y: position.y,
-                width: size.width,
-                height: size.height,
-            },
+            frame: rect(w.inner_position().ok()?, w.inner_size().ok()?),
+            outer: rect(w.outer_position().ok()?, w.outer_size().ok()?),
             rest: quick.rest.lock().ok().and_then(|rest| *rest),
             always_on_top: w.is_always_on_top().unwrap_or(false),
             focused: w.is_focused().unwrap_or(false),
@@ -827,26 +830,60 @@ fn follow_the_desktop(window: &WebviewWindow) {
 #[cfg(not(windows))]
 fn follow_the_desktop(_window: &WebviewWindow) {}
 
-/// Put the panel at a place and a size, in that order. A window moved to a screen of another pixel density is
-/// resized by the system to keep its logical size, and it is the physical size asked for that has to stay.
-fn place(window: &WebviewWindow, x: i32, y: i32, size: Rect) -> Result<(), String> {
-    window
-        .set_position(PhysicalPosition::new(x, y))
-        .map_err(|e| e.to_string())?;
-    window
-        .set_size(PhysicalSize::new(size.width, size.height))
-        .map_err(|e| e.to_string())
+/// How far the window reaches beyond what it draws, at the left and the top. A borderless window with a shadow is, on
+/// Windows, inset in the window the system gives it: the client area is smaller than the window by the thickness
+/// of the frame (the invisible border every window has, which the shadow is drawn from), so the window is wider
+/// than the panel and a window put at the screen's edge draws a gap of that thickness. What is placed is therefore
+/// what is drawn, and the window is put where that lands it. Measured on the window, which knows it for the
+/// screen it is on (the thickness follows the pixel density); nothing on the Mac, where the two are one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+struct Margins {
+    left: i32,
+    top: i32,
 }
 
-/// A move of the panel's top edge from `from` to `to`, at the column `x`.
+impl Margins {
+    fn of(window: &WebviewWindow) -> Margins {
+        match (window.inner_position(), window.outer_position()) {
+            (Ok(inner), Ok(outer)) => Margins {
+                left: inner.x - outer.x,
+                top: inner.y - outer.y,
+            },
+            _ => Margins::default(),
+        }
+    }
+
+    /// Where the window goes to have its drawn part at `(x, y)`.
+    fn window_at(self, x: i32, y: i32) -> (i32, i32) {
+        (x - self.left, y - self.top)
+    }
+}
+
+/// Put the panel's drawn part at a place and a size, and say how the window sits round it. The window goes to the
+/// place first, to be on the screen whose pixel density the size is made at (a window moved to another density is
+/// resized by the system to keep its logical size, and it is the physical size asked for that has to stay); then
+/// the size, whose inner part is the panel; then the window is moved by what is found of its margins.
+fn place(window: &WebviewWindow, x: i32, y: i32, size: Rect) -> Result<Margins, String> {
+    let fail = |e: tauri::Error| e.to_string();
+    window.set_position(PhysicalPosition::new(x, y)).map_err(fail)?;
+    window
+        .set_size(PhysicalSize::new(size.width, size.height))
+        .map_err(fail)?;
+    let margins = Margins::of(window);
+    let (wx, wy) = margins.window_at(x, y);
+    window.set_position(PhysicalPosition::new(wx, wy)).map_err(fail)?;
+    Ok(margins)
+}
+
+/// A move of the window's top edge from `from` to `to`, at the column `x` (the window's own coordinates).
 struct Motion {
     x: i32,
     from: i32,
     to: i32,
     duration: Duration,
     curve: Curve,
-    /// Where the panel is to be once it has got there, size included: a screen of another density on the way
-    /// may have changed it.
+    /// Where the panel's drawn part is to be once it has got there, size included: a screen of another density on
+    /// the way may have changed it.
     rest: Option<Rect>,
     /// A panel that goes out ends with its window hidden.
     then_hide: bool,
@@ -871,12 +908,10 @@ fn slide(app: AppHandle, window: WebviewWindow, id: u64, motion: Motion) {
         if !current() {
             return;
         }
-        let _ = match motion.rest {
-            Some(rest) => place(&window, rest.x, rest.y, rest),
-            None => window
-                .set_position(PhysicalPosition::new(motion.x, motion.to))
-                .map_err(|e| e.to_string()),
-        };
+        match motion.rest {
+            Some(rest) => drop(place(&window, rest.x, rest.y, rest)),
+            None => drop(window.set_position(PhysicalPosition::new(motion.x, motion.to))),
+        }
         if motion.then_hide {
             let _ = window.hide();
             let _ = window.emit_to(LABEL, "quick-hidden", ());
@@ -903,8 +938,9 @@ fn show_now(app: &AppHandle) -> Result<(), String> {
         rest = resting(&pointer_screen(app)?);
     }
     // A panel still on its way out turns round where it is, if it is on the same screen.
+    let current = Margins::of(&window);
     let from = match window.outer_position() {
-        Ok(at) if window.is_visible().unwrap_or(false) && at.x == rest.x => at.y,
+        Ok(at) if window.is_visible().unwrap_or(false) && at.x + current.left == rest.x => at.y + current.top,
         _ => above(rest),
     };
     let id = quick.slide.fetch_add(1, Ordering::SeqCst) + 1;
@@ -913,12 +949,13 @@ fn show_now(app: &AppHandle) -> Result<(), String> {
     if let Ok(mut last) = quick.rest.lock() {
         *last = Some(rest);
     }
-    place(&window, rest.x, from, rest)?;
+    let margins = place(&window, rest.x, from, rest)?;
     follow_the_desktop(&window);
+    // Off the taskbar before it is shown, and again after: Windows puts the button back when a window is shown.
+    let _ = window.set_skip_taskbar(true);
     window.show().map_err(|e| e.to_string())?;
     // In view only once it is: a showing that failed leaves the next press to try again, not to put away what is not there.
     quick.visible.store(true, Ordering::SeqCst);
-    // Again after showing: a window shown again can come back on the taskbar, or off the top.
     let _ = window.set_skip_taskbar(true);
     let _ = window.set_always_on_top(true);
     let _ = window.set_focus();
@@ -928,10 +965,11 @@ fn show_now(app: &AppHandle) -> Result<(), String> {
     ));
     let _ = window.emit_to(LABEL, "quick-shown", ());
     ask_again_for_focus(app.clone(), window.clone(), id);
+    let (x, from) = margins.window_at(rest.x, from);
     let motion = Motion {
-        x: rest.x,
+        x,
         from,
-        to: rest.y,
+        to: rest.y - margins.top,
         duration: SLIDE_IN,
         curve: Curve::EASE_OUT,
         rest: Some(rest),
@@ -1465,6 +1503,16 @@ mod tests {
     }
 
     #[test]
+    fn the_window_goes_where_the_drawn_part_is_to_land() {
+        // Windows 11 at 100%: the frame is 8 pixels at the sides and below, and 1 above.
+        let margins = Margins { left: 8, top: 1 };
+        assert_eq!(margins.window_at(0, 0), (-8, -1));
+        assert_eq!(margins.window_at(-1280, -433), (-1288, -434));
+        // Nothing round it, as on the Mac: the window is the panel.
+        assert_eq!(Margins::default().window_at(40, 50), (40, 50));
+    }
+
+    #[test]
     fn the_state_is_read_as_it_is_and_never_touched() {
         let dir = std::env::temp_dir().join(format!("keep-quick-look-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1498,6 +1546,7 @@ mod tests {
             visible: false,
             window: Some(Placement {
                 frame: rect(0, 0, 10, 4),
+                outer: rect(-8, -1, 26, 13),
                 rest: Some(rect(0, 0, 10, 6)),
                 always_on_top: true,
                 focused: false,
@@ -1508,6 +1557,7 @@ mod tests {
         assert_eq!(json["window"]["alwaysOnTop"], true);
         assert_eq!(json["window"]["frame"]["width"], 10);
         assert_eq!(json["window"]["rest"]["height"], 6);
+        assert_eq!(json["window"]["outer"]["x"], -8);
         assert_eq!(json["problem"], "x");
         assert!(json["suggestion"].is_null());
     }

@@ -342,7 +342,10 @@ dá-lo).
   programa, como no Mac. A primeira vez espera a página desenhar (até 3 s) para não entrar em branco.
 - [~] No Windows: a sombra do sistema como borda (`shadow`), sem o arredondamento nem o filete do DWM
   (`DWMWA_WINDOW_CORNER_PREFERENCE`, `DWMWA_BORDER_COLOR`), e a janela vai para a área de trabalho virtual em uso
-  (`IVirtualDesktopManager`, o `canJoinAllSpaces` do Mac). Só compilado. O foco é pedido de novo até quatro vezes
+  (`IVirtualDesktopManager`, o `canJoinAllSpaces` do Mac). A janela sem moldura com sombra é, no Windows, maior que
+  o painel (a borda invisível do quadro: 8 px nos lados e embaixo, 1 em cima no Windows 11, a escala do monitor), então
+  o que se posiciona é a parte desenhada (`Margins`, medida na própria janela pela diferença entre a posição interna
+  e a externa) e o roteiro compara essa parte com o lugar pedido. Só compilado. O foco é pedido de novo até quatro vezes
   se o sistema demora a dá-lo (o Windows só dá o teclado a quem recebeu a última entrada).
 - [ ] Os cantos de baixo arredondados em 10 pt e o fundo translúcido do painel do Mac: a janela é opaca, porque
   `transparent` pede API privada no Mac e, no Windows, uma janela transparente deixa a faixa transparente pegar o

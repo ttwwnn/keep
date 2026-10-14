@@ -44,6 +44,14 @@ export async function quickSteps(step: StepRunner, { waitForAsync }: Helpers): P
     return status.visible && w?.shown === true && w.rest !== null && near(w.frame.y, w.rest.y) ? w : null;
   };
   const rest = () => waitForAsync(async () => rested(await quickStatus()), 15000, 250);
+  /**
+   * The panel in view and at rest, brought in if it is not: it goes away of itself when something else takes the
+   * keyboard, which on a machine somebody is using — or a runner with a notification — can happen between two steps.
+   */
+  const inView = async () => {
+    if (!(await quickStatus()).visible) await quickToggle();
+    return rest();
+  };
   /** The panel put away: its window hidden once it has slid out. */
   const away = () =>
     waitForAsync(async () => {
@@ -60,13 +68,12 @@ export async function quickSteps(step: StepRunner, { waitForAsync }: Helpers): P
   });
 
   await step("janela rápida: vem para a frente, no topo da tela, na largura dela e com 42% da altura útil", async () => {
-    const shown = await quickToggle();
-    if (!shown) throw new Error("o comando disse que a janela ficou fora de vista");
-    const window = await rest();
+    const window = await inView();
     if (!window.alwaysOnTop) throw new Error("a janela não ficou sempre no topo");
     if (window.rest === null) throw new Error("sem o lugar de repouso");
+    // The drawn part, which is what a person sees: the window itself may reach past it (the frame's invisible border).
     if (!sameFrame(window.frame, window.rest)) {
-      throw new Error(`a janela está em ${text(window.frame)} e devia estar em ${text(window.rest)}`);
+      throw new Error(`o painel está em ${text(window.frame)} e devia estar em ${text(window.rest)} (a janela: ${text(window.outer)})`);
     }
     // Which screen the pointer is on is the system's to say; with one screen it is this one.
     const monitors = await availableMonitors();
@@ -82,7 +89,7 @@ export async function quickSteps(step: StepRunner, { waitForAsync }: Helpers): P
       if (!sameFrame(window.rest, wanted)) throw new Error(`devia ocupar ${text(wanted)} e ocupa ${text(window.rest)}`);
       where = `; a tela tem ${m.size.width}x${m.size.height}, a área útil ${m.workArea.size.height}`;
     }
-    return `${text(window.frame)}, sempre no topo${where}`;
+    return `${text(window.frame)} (a janela: ${text(window.outer)}), sempre no topo${where}`;
   });
 
   await step("janela rápida: o workspace quick é do keepd e a janela não o lista", async () => {
@@ -104,6 +111,7 @@ export async function quickSteps(step: StepRunner, { waitForAsync }: Helpers): P
       return ready ? shown : null;
     }, 30000, 500);
     // The photograph once the prompt is on the glass: the page has the shell's repaint, and has drawn it.
+    await inView();
     await new Promise((resolve) => setTimeout(resolve, 600));
     await api.e2eShot("janela-rapida");
     return screen.split("\n").filter((l) => l.trim()).slice(-1)[0] ?? "";
@@ -111,6 +119,7 @@ export async function quickSteps(step: StepRunner, { waitForAsync }: Helpers): P
 
   await step("janela rápida: o mesmo atalho a põe de volta, e o shell continua onde estava", async () => {
     const id = await waitForAsync(quickTab, 5000, 250);
+    await inView();
     if (await quickToggle()) throw new Error("o comando disse que a janela seguia à vista");
     await away();
     if ((await quickTab()) !== id) throw new Error("o shell da janela rápida mudou ao sair");

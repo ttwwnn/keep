@@ -17,7 +17,10 @@ export interface QuickStatus {
   visible: boolean;
   /** The window as it stands; null until it is first asked for. */
   window: {
+    /** The panel as drawn: the part of the window with content. */
     frame: { x: number; y: number; width: number; height: number };
+    /** The window itself, which on Windows reaches beyond what it draws (the frame's invisible border). */
+    outer: { x: number; y: number; width: number; height: number };
     /** Where it was last sent to rest: the frame, once it has got there. */
     rest: { x: number; y: number; width: number; height: number } | null;
     alwaysOnTop: boolean;
