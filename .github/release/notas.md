@@ -7,8 +7,9 @@ O instalador não é assinado: o Windows pode mostrar "O Windows protegeu o comp
 clique em **Mais informações** e **Executar assim mesmo**.
 
 **macOS (Apple Silicon):** `Keep-macOS-arm64.zip`, assinado ad hoc. Depois de descompactar e
-mover para Aplicativos: `xattr -dr com.apple.quarantine /Applications/Keep.app`. No Mac do autor
-o app é instalado pelo kit, compilado do ramo `main` e assinado com a identidade local.
+mover para Aplicativos: `xattr -dr com.apple.quarantine /Applications/Keep.app`. O kit-mac instala
+esta release num Mac sem Xcode (e a assina com a identidade local, para o Acesso Total ao Disco
+sobreviver às atualizações); com o Xcode, compila o ramo `main`.
 
 Fechar a janela não fecha nada: os terminais continuam no daemon e voltam como estavam.
 

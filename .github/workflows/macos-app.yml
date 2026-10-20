@@ -57,8 +57,15 @@ jobs:
       - name: Compilar o app
         working-directory: apps/macos
         run: |
+          # A versão vai para o Info.plist (CFBundleShortVersionString e CFBundleVersion): a da tag
+          # (v0.3.1 -> 0.3.1) ou, num push sem tag, 0.0.0 com o commit curto em CFBundleVersion.
+          case "$GITHUB_REF_NAME" in
+            v*) versao="${GITHUB_REF_NAME#v}"; build="$versao" ;;
+            *) versao="0.0.0"; build="0.0.0.${GITHUB_SHA::7}" ;;
+          esac
           xcodebuild -project Keep.xcodeproj -scheme Keep -configuration Release \
-            -derivedDataPath build build | tail -20
+            -derivedDataPath build MARKETING_VERSION="$versao" CURRENT_PROJECT_VERSION="$build" build | tail -20
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" build/Build/Products/Release/Keep.app/Contents/Info.plist
           app=build/Build/Products/Release/Keep.app
           # The app has no resources of its own; the daemon and the client
           # are what goes there (the app runs Resources/keep in every tab).
