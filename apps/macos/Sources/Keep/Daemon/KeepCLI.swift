@@ -521,6 +521,25 @@ enum TabRestore {
         }
     }
 
+    /// The status line and the account hook in Claude Code's settings
+    /// (`keep ia ajustar-claude`), put in where they are missing, as the
+    /// Windows app does on opening: the bar learns a conversation's model and
+    /// effort only from the status line, and a tab switched hot names its
+    /// account only through the hook. Once per launch. Blocking.
+    static func claudeSettings() {
+        // Only the person's app: a test build (KeepDev) must not put its own
+        // `keep` in their Claude Code.
+        guard Bundle.main.bundleIdentifier == "dev.luhw.keep", let helper else { return }
+        switch KeepCLI.run(helper, ["ia", "ajustar-claude"], within: 30, name: "keep ia ajustar-claude") {
+        case .success(let output):
+            let text = String(decoding: output.data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            // Quiet on the launches that find both in place.
+            if text.components(separatedBy: "\"ja-e-do-keep\"").count != 3 { Trace.log("claude-settings", text) }
+        case .failure(let problem):
+            Trace.log("claude-settings", problem.description)
+        }
+    }
+
     private static func log(_ answer: Result<KeepCLI.Output, KeepCLI.Failure>) {
         switch answer {
         case .success(let output):

@@ -230,20 +230,32 @@ e o Claude fica de fora da renovação do armazém.
 
 ### O gancho da conta da aba
 
-`keep ia conta-da-aba --gancho` (acima, em "Respostas") é um `UserPromptSubmit` do Claude Code. No Mac o
-autor o pôs à mão no `~/.claude/settings.json`. No Windows o app o acrescenta ao abrir (`claudeHooks.ts`,
-`iaHooks.ts`), depois da statusLine, que escreve o mesmo arquivo:
+`keep ia conta-da-aba --gancho` (acima, em "Respostas") é um `UserPromptSubmit` do Claude Code. No Windows
+o app o acrescenta ao abrir (`claudeHooks.ts`, `iaHooks.ts`), depois da statusLine, que escreve o mesmo
+arquivo. No Mac, desde a 0.3.2, o app roda `keep ia ajustar-claude` uma vez por abertura (só o app da
+pessoa, `dev.luhw.keep`: o KeepDev não), que faz o mesmo com o `keep` de dentro dele: a statusLine
+`<keep> ia statusline` e o gancho `<keep> ia conta-da-aba --gancho`, o caminho como está ou entre aspas
+simples quando tem espaço ou acento (um caminho com aspas simples não é gravado). Antes disso o autor os
+tinha à mão, e um Mac novo ficava sem a barra do Claude e sem o gancho (20/10/2026). As regras são as
+mesmas nos dois sistemas (`crates/keep-ia/src/ajustar_claude.rs` no Mac):
 
 - `"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "\"C:/…/keep.exe\" ia
-  conta-da-aba --gancho", "timeout": 10}]}]}`, com o caminho entre aspas e em barras normais, como a
-  statusLine: o Claude Code roda o comando pelo Git Bash, ou pelo cmd na falta dele;
+  conta-da-aba --gancho", "timeout": 10}]}]}`, no Windows com o caminho entre aspas e em barras normais,
+  como a statusLine: o Claude Code roda o comando pelo Git Bash, ou pelo cmd na falta dele;
+- uma statusLine que já roda este `keep` fica; outra é da pessoa e não é tocada;
+- no Mac, a statusLine ou o gancho de um Keep que mudou de lugar (o `keep` de dentro de um `.app` que não
+  existe mais) passa para o caminho de agora, e nada é gravado quando o app roda de uma cópia temporária do
+  macOS (App Translocation: o Keep aberto direto da pasta de downloads), cujo caminho some quando ele fecha;
 - os ganchos que a pessoa já tem ficam como estão, byte a byte: o grupo novo entra depois do último, no
   recuo e nas quebras de linha do arquivo, e o resultado é conferido (o arquivo relido tem de ser o
   mesmo mais o gancho; senão nada é gravado). O mesmo comando é "já é o do Keep"; um gancho com
   `ia conta-da-aba --gancho` de outro lugar é da pessoa e não é tocado; arquivo que não é JSON, ou
   `hooks` de outro formato, também não;
 - só onde a pasta do Claude Code existe (ele ainda não rodou aqui: nada é criado), e gravado só por cima
-  do texto que foi lido (compare-and-swap, como a statusLine);
+  do texto que foi lido (compare-and-swap, como a statusLine), com a permissão que o arquivo tinha;
+- a resposta do Mac: `{"ok": true, "statusLine": {"feito": …}, "gancho": {"feito": …}}`, com `gravada`/`gravado`,
+  `ja-e-do-keep`, `outra`/`outro` (e o `comando` que está lá), `sem-pasta`, `mudou` (fica para a próxima
+  abertura) ou `nao-tocado` (e o `porque`); o app só registra no rastro quando algo foi feito ou recusado;
 - o Codex não ganha gancho do Keep: o Mac também não instala nenhum no `hooks.json` dele (o que há ali é
   do Jev), e a conta de uma aba do Codex não muda enquanto ele roda (não há troca a quente).
 
@@ -437,6 +449,7 @@ keep ia login claude|gpt [--apelido=<A>] [--depois=<W>:<N>:<chave>]     (interat
 keep ia sincronizar --json
 keep ia renovar [--agora] --json
 keep ia automacao [jev|ponytail ligar|desligar] --json
+keep ia ajustar-claude [--keep=<caminho>]      (Mac; o caminho padrão é o deste keep)
 keep worktrees listar [--prazo SEG] <workspace>:<root>[,<painel>…]…
 keep worktrees preparar <caminho>
 keep worktrees concluir <caminho> <destino>
@@ -510,6 +523,7 @@ Toda resposta é um objeto JSON numa linha, com `"versao": 1` e `"ok"`. Recusa: 
 | botões "Jev" e "Ponytail" | `keep ia automacao jev\|ponytail ligar\|desligar --json` |
 | ao abrir, e quando o keepd volta de uma ausência, se ele não tem abas | `keep restauro restaurar --fase=abas` (a janela espera; docs/restauro.md) |
 | logo ao abrir, e a cada 30 s | `keep restauro manter` |
+| uma vez por abertura (Mac, só o app da pessoa) | `keep links instalar` e `keep ia ajustar-claude` |
 | a cada 15 s | `keep continuar` |
 
 O app passa `KEEP_SOCKET` (o daemon dele). Um app de teste que lê uma casa falsa passa
