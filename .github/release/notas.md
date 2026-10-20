@@ -95,4 +95,18 @@ no Mac e no Windows (`keep ia automacao jev|ponytail ligar|desligar`).
 - o que não está instalado não ganha botão; um botão mudado no terminal aparece em segundos, e uma recusa
   aparece no rodapé, com o botão de volta ao que a IA tem.
 
+**Barra do Claude e gancho da conta da aba em qualquer Mac (0.3.2):** ao abrir, o app do Mac grava no
+`~/.claude/settings.json` a statusLine do Keep (`keep ia statusline`, de onde a barra tira o modelo, o esforço
+e os agentes de cada conversa) e o gancho `keep ia conta-da-aba --gancho` (o Claude de uma aba trocada a quente
+diz a conta certa), como o Windows já fazia (`keep ia ajustar-claude`). Antes eles só existiam à mão no Mac do
+autor, e um Mac novo ficava sem a barra.
+- o resto do arquivo fica como estava, byte a byte, e a permissão também; uma statusLine ou um gancho que já
+  existam de outro lugar não são tocados; sem a pasta do Claude Code nada é criado.
+
+**Tema do Keep em qualquer Mac (0.3.2):** o app escreve os temas "Keep Escuro" (o escuro padrão do Ghostty) e
+"Keep Claro" (fundo branco, para o tema claro do Claude Code) em `~/.config/ghostty/themes` quando faltam, nunca
+por cima de um arquivo com o mesmo nome, e os usa como padrão (`dark:Keep Escuro,light:Keep Claro`, seguindo o
+claro e o escuro do macOS) quando nem a configuração do Ghostty nem o Keep escolheram um tema. Antes só o kit-mac
+os instalava.
+
 Detalhes em `docs/ia.md`.
