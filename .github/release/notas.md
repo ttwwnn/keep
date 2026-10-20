@@ -86,4 +86,12 @@ Fechar a janela não fecha nada: os terminais continuam no daemon e voltam como 
 
 No Mac: cursor em barra, ícones e textos 25% maiores, "(IA·n)" e o quadro de RAM no tamanho certo.
 
+**Botões do Jev e do Ponytail (0.3.1):** embaixo do "Consumo de IA", um botão de liga e desliga para cada um,
+no Mac e no Windows (`keep ia automacao jev|ponytail ligar|desligar`).
+- **Jev:** desligado, os ganchos da skill `jev` não fazem nada (`~/.claude/jev/desligado`); ligar apaga o arquivo;
+- **Ponytail:** o plugin `ponytail@ponytail` ligado ou desligado no Claude Code (`claude plugin enable|disable`) e
+  no Codex (`[plugins."ponytail@ponytail"]` do `config.toml`), os dois juntos; o botão mostra o que o Claude tem;
+- o que não está instalado não ganha botão; um botão mudado no terminal aparece em segundos, e uma recusa
+  aparece no rodapé, com o botão de volta ao que a IA tem.
+
 Detalhes em `docs/ia.md`.
