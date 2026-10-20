@@ -589,6 +589,10 @@ final class GhosttyApp {
                 setenv("GHOSTTY_RESOURCES_DIR", ghosttyResources, 1)
             }
         }
+        // Keep's own theme files, where the person's themes live, before the
+        // first config reads them. Only the person's app: a test build must
+        // not write into their home.
+        if Self.isPersonsApp { KeepThemes.install() }
 
         // libghostty wants the process argv before anything else.
         var argv: [UnsafeMutablePointer<CChar>?] = CommandLine.unsafeArgv[0].map { [$0] } ?? []
@@ -931,6 +935,12 @@ final class GhosttyApp {
     /// how the theme gets resolved for the scheme now in effect.
     private static func makeConfig() -> ghostty_config_t? {
         guard let config = ghostty_config_new() else { return nil }
+        // Keep's own theme under everything else (KeepThemes): a theme in
+        // the person's config, read next, or one chosen here, in the
+        // override at the end, wins. A test build wears Ghostty's own.
+        if isPersonsApp, let defaults = writeDefaults() {
+            defaults.withCString { ghostty_config_load_file(config, $0) }
+        }
         // Honour the user's own Ghostty config: same fonts and theme they
         // already tuned, with no separate settings file to maintain.
         ghostty_config_load_default_files(config)
@@ -960,6 +970,25 @@ final class GhosttyApp {
     fileprivate func reloadConfig() {
         guard let app, let config = Self.makeConfig() else { return }
         ghostty_app_update_config(app, config)
+    }
+
+    /// The person's own app, not a test build (KeepDev, `dev.luhw.keep.dev`).
+    private static var isPersonsApp: Bool { Bundle.main.bundleIdentifier == "dev.luhw.keep" }
+
+    /// A config of Keep's defaults, read before the person's: its theme,
+    /// when both halves are there. Nil when there is nothing to say.
+    private static func writeDefaults() -> String? {
+        guard let line = KeepThemes.defaultLine() else { return nil }
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("keep-app", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("defaults.conf")
+        do {
+            try "\(line)\n".write(to: file, atomically: true, encoding: .utf8)
+            return file.path
+        } catch {
+            return nil
+        }
     }
 
     /// A tiny Ghostty config that points `command` at our client.

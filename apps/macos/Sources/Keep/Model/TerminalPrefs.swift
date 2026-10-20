@@ -10,7 +10,9 @@ import Foundation
 /// program's back is a terminal you cannot keep two of.
 ///
 /// Empty by default, which is the whole design — a fresh Keep looks exactly
-/// like their Ghostty, and only what they change here stops matching it.
+/// like their Ghostty, and only what they change here stops matching it. The
+/// one thing a fresh Keep brings of its own is a theme for a Ghostty config
+/// that names none (`KeepThemes`), worn under theirs.
 struct TerminalPrefs: Codable, Equatable {
     /// A Ghostty theme name, as it appears in the themes directory.
     var theme: String?
@@ -206,6 +208,80 @@ enum ThemeCatalog {
         return NSColor(
             srgbRed: CGFloat(r) / 255, green: CGFloat(g) / 255, blue: CGFloat(b) / 255,
             alpha: 1)
+    }
+}
+
+/// Keep's own theme, the one a fresh Keep wears: "Keep Escuro" is Ghostty's
+/// own default ground and ink, and "Keep Claro" a white ground with GitHub
+/// Light's palette, for Claude Code's light theme — each the half of the
+/// system's appearance it is named for, as `dark:…,light:…`. The Windows app
+/// has the two built in (apps/windows/src/theme.ts); here they are theme
+/// files, written where the person's own themes live when they are not there,
+/// and never over a file of the same name. Until 0.3.2 only kit-mac put them
+/// there, and a Mac without the kit had no light half (20/10/2026).
+///
+/// Worn under everything else: a theme in the person's Ghostty config, or one
+/// chosen here, still wins (`GhosttyApp.makeConfig`).
+enum KeepThemes {
+    static let pair = "dark:Keep Escuro,light:Keep Claro"
+
+    static let files: [(name: String, text: String)] = [
+        ("Keep Escuro", """
+            # Keep Escuro — o escuro de sempre: o fundo e a letra padrão do Ghostty,
+            # com a paleta dele. Metade escura do tema do Keep (terminal.json).
+            background = #282c34
+            foreground = #ffffff
+
+            """),
+        ("Keep Claro", """
+            # Keep Claro — fundo branco, como o tema claro do Claude Code pressupõe, e a
+            # paleta do GitHub Light, feita para ler em branco (o "amarelo" é um marrom
+            # escuro de propósito). Metade clara do tema do Keep (terminal.json).
+            background = #ffffff
+            foreground = #1f2328
+            selection-background = #b4d5ff
+            selection-foreground = #1f2328
+            palette = 0=#24292f
+            palette = 1=#cf222e
+            palette = 2=#116329
+            palette = 3=#4d2d00
+            palette = 4=#0969da
+            palette = 5=#8250df
+            palette = 6=#1b7c83
+            palette = 7=#6e7781
+            palette = 8=#57606a
+            palette = 9=#a40e26
+            palette = 10=#1a7f37
+            palette = 11=#633c01
+            palette = 12=#218bff
+            palette = 13=#a475f9
+            palette = 14=#3192aa
+            palette = 15=#8c959f
+
+            """),
+    ]
+
+    /// Where they go: the first of the theme directories, the person's own,
+    /// which libghostty also reads.
+    static var directory: String { ThemeCatalog.directories[0] }
+
+    /// The two files, written where missing.
+    static func install(into directory: String = KeepThemes.directory) {
+        let fm = FileManager.default
+        for (name, text) in files {
+            let path = (directory as NSString).appendingPathComponent(name)
+            guard !fm.fileExists(atPath: path) else { continue }
+            try? fm.createDirectory(atPath: directory, withIntermediateDirectories: true)
+            try? text.write(toFile: path, atomically: true, encoding: .utf8)
+        }
+    }
+
+    /// The config line that makes the pair the default, when both halves are
+    /// there to be found; nil when one is not, which leaves Ghostty's own.
+    static func defaultLine(in directory: String = KeepThemes.directory) -> String? {
+        let fm = FileManager.default
+        let found = files.allSatisfy { fm.fileExists(atPath: (directory as NSString).appendingPathComponent($0.name)) }
+        return found ? "theme = \(pair)" : nil
     }
 }
 
