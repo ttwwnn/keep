@@ -492,10 +492,11 @@ enum TabRestore {
 
     /// The conversations left alone for twelve hours out of sight leave
     /// memory, each tab kept with its shell (`keep restauro adormecer`): never
-    /// one of `visible`, the tabs on screen. Blocking.
-    static func sleep(sparing visible: Set<TabID>) {
+    /// one of `visible`, the tabs on screen, each as workspace and number.
+    /// Blocking.
+    static func sleep(sparing visible: [(workspace: String, tab: UInt32)]) {
         guard let helper else { return }
-        let args = ["restauro", "adormecer"] + visible.flatMap { ["--vista", "\($0.workspace)/\($0.root)"] }
+        let args = ["restauro", "adormecer"] + visible.flatMap { ["--vista", "\($0.workspace)/\($0.tab)"] }
         let answer = KeepCLI.run(helper, args, within: 300, name: "keep restauro")
         if case .success(let output) = answer,
            String(decoding: output.data, as: UTF8.self).contains("\"adormecidas\":0") { return }
@@ -507,11 +508,11 @@ enum TabRestore {
 
     /// The conversation of a tab put to sleep comes back in it as the tab is
     /// shown (`keep restauro acordar`); nothing for any other tab.
-    static func wake(_ tab: TabID) {
+    static func wake(workspace: String, tab: UInt32) {
         waking.async {
             guard let helper else { return }
             let answer = KeepCLI.run(
-                helper, ["restauro", "acordar", "--workspace", tab.workspace, "--aba", String(tab.root)],
+                helper, ["restauro", "acordar", "--workspace", workspace, "--aba", String(tab)],
                 within: 120, name: "keep restauro")
             if case .success(let output) = answer {
                 let text = String(decoding: output.data, as: UTF8.self)

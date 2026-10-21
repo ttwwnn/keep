@@ -191,7 +191,7 @@ final class TabContentContainer: NSView {
         visibleTab = id
         shownAt[id] = Hibernation.shared.tick()
         Hibernation.shared.shown()
-        TabRestore.wake(id)
+        TabRestore.wake(workspace: id.workspace, tab: id.root)
     }
 
     /// Let go of a hidden tab's surfaces, keeping the host where it is.

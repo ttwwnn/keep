@@ -15,7 +15,7 @@
 #
 #   tools/adormecer-test.sh
 #
-# To see it fail: take `TabRestore.wake(id)` out of
+# To see it fail: take `TabRestore.wake(...)` out of
 # TabContentContainer.markVisible, and the last two checks fail.
 #
 # Your app, your daemon and your conversations are never touched: a scratch

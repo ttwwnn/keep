@@ -223,10 +223,12 @@ final class AIChores {
         sleeping = true
         let visible = Hibernation.shared.onScreen()
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            TabRestore.sleep(sparing: visible)
+            TabRestore.sleep(sparing: visible.map { ($0.workspace, $0.root) })
             DispatchQueue.main.async {
                 self?.sleeping = false
-                for tab in Hibernation.shared.onScreen().subtracting(visible) { TabRestore.wake(tab) }
+                for tab in Hibernation.shared.onScreen().subtracting(visible) {
+                    TabRestore.wake(workspace: tab.workspace, tab: tab.root)
+                }
             }
         }
     }
