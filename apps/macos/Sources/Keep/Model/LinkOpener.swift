@@ -203,6 +203,52 @@ enum LinkOpener {
         return url
     }
 
+    /// The numbers of the `[Image #N]` on the screen.
+    static func imageNumbers(in lines: [String]) -> Set<Int> {
+        var found = Set<Int>()
+        for line in lines {
+            for match in line.matches(of: #/\[Image #(\d+)\]/#) {
+                if let n = Int(match.1) { found.insert(n) }
+            }
+        }
+        return found
+    }
+
+    /// The N of the `[Image #N]` a column of a row falls on, or nil.
+    static func imageNumber(in row: String, at column: Int) -> Int? {
+        let chars = Array(row)
+        guard chars.indices.contains(column) else { return nil }
+        let text = String(chars)
+        for match in text.matches(of: #/\[Image #(\d+)\]/#) {
+            let start = text.distance(from: text.startIndex, to: match.range.lowerBound)
+            let end = text.distance(from: text.startIndex, to: match.range.upperBound)
+            if (start..<end).contains(column) { return Int(match.1) }
+        }
+        return nil
+    }
+
+    /// A copy of the clipboard's image, written where it can be opened, or
+    /// nil when the clipboard holds none. Claude Code writes its own only
+    /// when the message is sent: until then the `[Image #N]` in the box
+    /// being typed has no file behind it.
+    static func savePastedImage(from pasteboard: NSPasteboard) -> URL? {
+        let data = pasteboard.data(forType: .png)
+            ?? pasteboard.data(forType: .tiff).flatMap {
+                NSBitmapImageRep(data: $0)?.representation(using: .png, properties: [:])
+            }
+        guard let data else { return nil }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("keep-coladas")
+        let url = folder.appendingPathComponent(UUID().uuidString + ".png")
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try data.write(to: url)
+        } catch {
+            Trace.log("link", "could not keep the pasted picture: \(error)")
+            return nil
+        }
+        return url
+    }
+
     /// Opens a file already found, the same way a click does.
     @discardableResult
     static func open(_ url: URL) -> Bool { hand(url) }

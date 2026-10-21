@@ -979,6 +979,7 @@ final class TerminalSurfaceView: NSView {
             let text = pending && !Self.text(of: event).isEmpty
                 ? event.characters(byApplyingModifiers: event.modifierFlags.subtracting(.option)) ?? ""
                 : nil
+            if Self.isControlChord(event), event.charactersIgnoringModifiers == "v" { notePastedImage() }
             send(event, action: GHOSTTY_ACTION_PRESS, text: text)
             return
         }
@@ -1457,12 +1458,46 @@ final class TerminalSurfaceView: NSView {
     /// The picture behind the link under a press with no modifier, in a pane
     /// that already had the keyboard, while the program has the mouse. With
     /// the mouse left alone the plain click opens it as any file link.
+    ///
+    /// A picture still in the box being typed has no link: it is the copy
+    /// this pane kept when it was pasted, found by its number.
     private func imageUnderPlainPress(_ event: NSEvent) -> URL? {
-        guard let pressed, pressed.focused, let surface, ghostty_surface_mouse_captured(surface),
-            event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
-            let link = linkUnder(convert(event.locationInWindow, from: nil))
+        guard let pressed, pressed.focused, let surface,
+            event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
         else { return nil }
-        return LinkOpener.image(behind: link)
+        let point = convert(event.locationInWindow, from: nil)
+        if ghostty_surface_mouse_captured(surface), let link = linkUnder(point),
+            let image = LinkOpener.image(behind: link)
+        {
+            return image
+        }
+        guard !pastedImages.isEmpty, let cell = cell(at: point), let row = rowText(cell.row),
+            let number = LinkOpener.imageNumber(in: row, at: cell.column),
+            let image = pastedImages[number], FileManager.default.fileExists(atPath: image.path)
+        else { return nil }
+        return image
+    }
+
+    /// The pictures pasted into this pane, by the number Claude Code gave
+    /// each: copies of the clipboard taken at the paste.
+    private var pastedImages: [Int: URL] = [:]
+
+    /// A paste that may bring the clipboard's image in: a copy is kept, and
+    /// the `[Image #N]` that shows up afterwards names it. The newest picture
+    /// has the highest number, so it is the highest that was not there yet.
+    private func notePastedImage() {
+        guard let image = LinkOpener.savePastedImage(from: NSPasteboard.general) else { return }
+        let before = LinkOpener.imageNumbers(in: visibleText().lines)
+        for delay in [0.5, 1.5] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self,
+                    let number = LinkOpener.imageNumbers(in: self.visibleText().lines)
+                        .subtracting(before).max()
+                else { return }
+                self.pastedImages[number] = image
+                Trace.log("link", "pasted picture #\(number): \(image.path)")
+            }
+        }
     }
 
     /// When a ⌘-click last made the runtime hand over a link.
@@ -1626,23 +1661,28 @@ final class TerminalSurfaceView: NSView {
     /// comes back with a row the terminal wrapped joined to the next, so its
     /// lines are not the rows the pointer is counted in.
     private func word(at cell: (row: Int, column: Int)) -> String? {
-        guard let surface, cell.row >= 0, cell.column >= 0 else { return nil }
+        guard cell.column >= 0, let row = rowText(cell.row) else { return nil }
+        return LinkOpener.wordAt([row], row: 0, column: cell.column)
+    }
+
+    /// One row of the screen, read off that row alone.
+    private func rowText(_ row: Int) -> String? {
+        guard let surface, row >= 0 else { return nil }
         let size = ghostty_surface_size(surface)
-        guard cell.row < Int(size.rows), cell.column < Int(size.columns) else { return nil }
+        guard row < Int(size.rows) else { return nil }
         let selection = ghostty_selection_s(
             top_left: ghostty_point_s(
                 tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT,
-                x: 0, y: UInt32(cell.row)),
+                x: 0, y: UInt32(row)),
             bottom_right: ghostty_point_s(
                 tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT,
-                x: UInt32(size.columns) - 1, y: UInt32(cell.row)),
+                x: UInt32(size.columns) - 1, y: UInt32(row)),
             rectangle: false)
         var text = ghostty_text_s()
         guard ghostty_surface_read_text(surface, selection, &text) else { return nil }
         defer { ghostty_surface_free_text(surface, &text) }
         guard let raw = text.text else { return nil }
-        let row = String(cString: raw).components(separatedBy: "\n").first ?? ""
-        return LinkOpener.wordAt([row], row: 0, column: cell.column)
+        return String(cString: raw).components(separatedBy: "\n").first ?? ""
     }
 
     /// The cell of the screen under a point of this view, worked out from
@@ -1956,6 +1996,8 @@ final class TerminalSurfaceView: NSView {
         // ⌘V is the menu's, so keyDown never sees it: a quote left waiting
         // would otherwise land after the pasted text instead of before it.
         commitComposition()
+        // Text pastes as text; an image alone Claude Code reads itself.
+        if NSPasteboard.general.string(forType: .string) == nil { notePastedImage() }
         perform("paste_from_clipboard")
     }
     @objc override func selectAll(_ sender: Any?) { perform("select_all") }
@@ -1964,6 +2006,7 @@ final class TerminalSurfaceView: NSView {
     /// Code does so on Ctrl+V, which is the byte ^V, not a paste.
     @objc func pasteImage(_ sender: Any?) {
         commitComposition()
+        notePastedImage()
         perform("text:\\x16")
     }
 

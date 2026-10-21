@@ -31,7 +31,10 @@
 #     the file behind it (OSC 8). A plain click opens the picture, also with
 #     the mouse taken, and then the program never sees the press (Claude Code
 #     would only show the file in the Finder); a double click opens nothing;
-#     a drag across it reaches the program, so selecting still works.
+#     a drag across it reaches the program, so selecting still works;
+#   - a picture still in the box being typed (PRINT=pasted): Claude Code has
+#     not written it yet and puts no link behind its `[Image #N]`, so the app
+#     keeps a copy of the clipboard at ⌘⇧V and a plain click opens that.
 #
 # It takes the pointer for a few seconds. Your app and your daemon are never
 # touched.
@@ -59,6 +62,8 @@ if [ -z "${MOUSE_MODE:-}" ]; then
     for mode in 0 1; do
         echo "== a pasted picture, the program takes the mouse: $([ "$mode" = 1 ] && echo yes || echo no)"
         MOUSE_MODE=$mode PRINT=image "$0" || status=1
+        echo "== a picture in the box being typed, the program takes the mouse: $([ "$mode" = 1 ] && echo yes || echo no)"
+        MOUSE_MODE=$mode PRINT=pasted "$0" || status=1
     done
     exit $status
 fi
@@ -131,6 +136,28 @@ cat >"$WORK/printer" <<PY
 import sys, time
 if "$MOUSE_MODE" == "1":
     sys.stdout.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h")
+if "$PRINT" == "pasted":
+    # Claude Code's box after Ctrl+V (^V, which ⌘⇧V sends): the chip, with
+    # no link and no file behind it yet.
+    import os, signal, threading, tty
+    if "$MOUSE_MODE" == "1":
+        sys.stdout.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h")
+    tty.setraw(sys.stdin.fileno())
+    pasted = []
+    def draw(*_):
+        if not pasted:
+            return
+        cols, rows = os.get_terminal_size()
+        line = "  " + "[Image #3] " * max(1, (cols - 4) // 11)
+        sys.stdout.write("\x1b[H\x1b[2J" + "\r\n".join([line] * (rows - 1)))
+        sys.stdout.flush()
+    def listen():
+        while True:
+            if b"\x16" in os.read(sys.stdin.fileno(), 1024):
+                pasted.append(1)
+                draw()
+    signal.signal(signal.SIGWINCH, draw)
+    threading.Thread(target=listen, daemon=True).start()
 if "$MOUSE_MODE" == "1" and "$PRINT" == "image":
     # What reaches the program: a press arrives as ESC [ < 0 ; x ; y M.
     import os, threading, tty
@@ -147,6 +174,8 @@ if "$PRINT" == "wrapped":
     for _ in range(20):
         print("  " + "$LONG"[:-44])
         print("  " + "$LONG"[-44:] + ":12")
+elif "$PRINT" == "pasted":
+    pass  # drawn on ^V, above
 elif "$PRINT" == "image":
     import os, signal
     def draw(*_):
@@ -306,6 +335,39 @@ if [ "$PRINT" = image ]; then
     if [ "$MOUSE_MODE" = 1 ]; then
         check "and its press reaches the program" "yes" "$([ "$(presses)" -gt "$before" ] && echo yes || echo no)"
     fi
+    stop_app
+    say ""
+    say "passed $PASSED, failed $FAILED"
+    [ "$FAILED" -eq 0 ]
+    exit
+fi
+
+if [ "$PRINT" = pasted ]; then
+    say ""
+    say "a picture in the box being typed"
+    SENDKEY=$WORK/sendkey
+    swiftc -O tools/sendkey.swift -o "$SENDKEY" 2>/dev/null || { say "could not build sendkey"; exit 1; }
+    SAVED_CLIP=$(pbpaste)
+    python3 -c 'import zlib,struct,sys
+def c(t,d): return struct.pack(">I",len(d))+t+d+struct.pack(">I",zlib.crc32(t+d))
+sys.stdout.buffer.write(b"\x89PNG\r\n\x1a\n"+c(b"IHDR",struct.pack(">IIBBBBB",1,1,8,2,0,0,0))+c(b"IDAT",zlib.compress(b"\0\xff\0\0"))+c(b"IEND",b""))' >"$WORK/colada.png"
+    osascript -e "set the clipboard to (read (POSIX file \"$WORK/colada.png\") as «class PNGf»)" >/dev/null
+    "$SENDKEY" "$APP_PID" key 9 cmd shift
+    sleep 2.5
+    printf %s "$SAVED_CLIP" | pbcopy
+    for _ in 1 2 3; do
+        "$MOUSE" click "$TX" "$TY"
+        sleep 2
+        [ -s "$KEEP_LINK_LOG" ] && break
+        TX=$((TX + 24))
+    done
+    OPENED=$(cat "$KEEP_LINK_LOG")
+    check "a plain click opens the copy kept at the paste" "yes" \
+        "$(case "$OPENED" in */keep-coladas/*.png) [ -f "$OPENED" ] && echo yes || echo "no: $OPENED";; *) echo "no: $OPENED";; esac)"
+    : >"$KEEP_LINK_LOG"
+    "$MOUSE" dblclick "$TX" "$((TY + 40))"
+    sleep 2
+    check "a double click opens nothing" "" "$(cat "$KEEP_LINK_LOG")"
     stop_app
     say ""
     say "passed $PASSED, failed $FAILED"

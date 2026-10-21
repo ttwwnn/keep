@@ -203,7 +203,8 @@ caixa da linha, rolagem da lista, estado do movimento, fim do arrasto por `point
   terminal se diz `TERM_PROGRAM=keep`, então o clique simples continua abrindo. Não visto com o Claude Code no
   Windows.
 - [ ] Imagem colada (`[Image #N]`, OSC 8 para o arquivo): no Mac (0.3.5) o clique simples a abre mesmo com o
-  mouse tomado, retendo o clique do programa (o Claude Code só a mostraria no Finder). Não visto no Windows.
+  mouse tomado, retendo o clique do programa (o Claude Code só a mostraria no Finder); na caixa de texto, antes do envio,
+  abre a cópia que o Keep guardou ao colar (0.3.6). Não visto no Windows.
 - [x] OSC 52 (`osc52.ts`): escrita permitida só no `c` (`s` e `p` descartados); leitura pergunta primeiro
   ("Permitir a leitura da área de transferência?", com prévia) e responde `ESC ] 52 ; c ; base64 ESC \`. 12
   testes; visto no app.

@@ -149,5 +149,13 @@ check("a picture behind a link", LinkOpener.image(behind: png)?.path, root + "/1
 check("not a picture", LinkOpener.image(behind: URL(fileURLWithPath: root + "/a.txt").absoluteString)?.path, nil)
 check("a picture no longer there", LinkOpener.image(behind: URL(fileURLWithPath: root + "/2.png").absoluteString)?.path, nil)
 check("a web address", LinkOpener.image(behind: "https://example.com/1.png")?.path, nil)
+
+// The `[Image #N]` still in the box being typed: no link, only its number.
+let chip = "❯ olha [Image #2] e [Image #10]"
+check("the chips on the screen", LinkOpener.imageNumbers(in: ["x", chip]).sorted().map(String.init).joined(separator: ","), "2,10")
+check("a click on the first chip", LinkOpener.imageNumber(in: chip, at: 7).map(String.init), "2")
+check("a click on its last bracket", LinkOpener.imageNumber(in: chip, at: 16).map(String.init), "2")
+check("a click beside it", LinkOpener.imageNumber(in: chip, at: 17).map(String.init), nil)
+check("a click on the second chip", LinkOpener.imageNumber(in: chip, at: 22).map(String.init), "10")
 _ = real
 exit(failures == 0 ? 0 : 1)
