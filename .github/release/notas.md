@@ -114,3 +114,7 @@ kit-mac quando o agente de renovação dele (`br.ttwwnn.kit.claude-conectado`) e
 os scripts do kit; num Mac com o kit instalado pela metade ninguém renovava, e o Claude caía na tela de login.
 
 Detalhes em `docs/ia.md`.
+
+**Modelo e esforço na conversa nova (0.3.4):** na barra sob a conversa do Claude, os itens de modelo e esforço
+ficavam desativados numa conversa nova, porque a sugestão cinza da caixa vazia (`❯ Try "…"`) parecia texto
+digitado. Agora o texto esmaecido não conta, e a barra troca o modelo e o esforço assim que a caixa está vazia.
