@@ -1,6 +1,7 @@
 //! O adormecer de verdade, num daemon do próprio teste, com a IA falsa do keep-ia (`cargo build -p keep-ia
 //! --examples`) como `claude` em quatro abas: só a parada, livre e fora de vista sai da memória; a aba fica
-//! no shell, o retrato a leva com a conversa, e o acordar a retoma com as mesmas opções. Depois de um
+//! no shell, o retrato a leva com a conversa, e o acordar a retoma com as mesmas opções, respondendo a
+//! pergunta de confiança na pasta que a conversa retomada faz. Depois de um
 //! reinício (outro daemon) ela volta adormecida e acorda do mesmo jeito.
 #![cfg(unix)]
 
@@ -87,6 +88,8 @@ fn so_a_aba_parada_e_livre_fora_de_vista_adormece_e_volta_ao_ser_mostrada() {
         std::env::set_var("KEEP_STATE_DIR", &app);
         std::env::set_var("KEEP_IA_CLAUDE_BIN", bin.join("claude"));
         std::env::set_var("KEEP_ADORMECER_PARADA_S", "3600");
+        // A conversa retomada pergunta se confia na pasta, como o Claude 2.1.30x numa pasta nova.
+        std::env::set_var("FALSA_CONFIANCA", "1");
         std::env::set_var("SHELL", "/bin/sh");
         for v in ["CLAUDE_SECURESTORAGE_CONFIG_DIR", "CLAUDE_CONFIG_DIR", "KEEP_IA_ESCOLHA", "CLAUDE_KIT_CONTA", "CODEX_HOME"] {
             std::env::remove_var(v);

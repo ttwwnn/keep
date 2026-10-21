@@ -358,33 +358,22 @@ pub(crate) fn espera_shell(ws: &str, tab: u32) -> Option<String> {
     })
 }
 
-/// Espera a IA da aba subir, respondendo a pergunta de confiança na pasta que
-/// o Claude faz ao abrir numa pasta nova (como faria a pessoa que a abriu).
+/// Espera a IA da aba subir e, no Claude, responde por ela a pergunta de confiança na pasta que ele faz ao
+/// abrir numa pasta nova (como faria a pessoa que a abriu). A pergunta vem depois de o Claude já estar na frente:
+/// quem a responde é o mesmo do app (`keep ia confiar`), que espera vê-la e para quando o prompt aparece.
 fn espera_subir(ws: &str, tab: u32, agente: &str) {
     let contas = keep_ia::contas::listar(false);
-    let mut respostas = 0;
-    let _ = daemon::espera(ESPERA_IA, Duration::from_millis(500), || {
-        let tela = daemon::tela(ws, tab).unwrap_or_default();
-        if let Some(tecla) = resposta_de_confianca(&tela) {
-            if respostas < 4 {
-                respostas += 1;
-                std::thread::sleep(Duration::from_millis(1200));
-                let _ = keep_ia::trocar::tecla(ws, tab, tecla);
-            }
-            return None;
-        }
+    let subiu = daemon::espera(ESPERA_IA, Duration::from_millis(500), || {
         let l = daemon::listar().ok()?;
         keep_ia::abas::das_abas(&l, &contas).into_iter().find(|i| i.workspace == ws && i.aba == tab && i.agente == agente)
     });
-}
-
-/// A pergunta "confiar nesta pasta?" na tela: Enter com o ponteiro no sim, seta para cima com ele no não.
-pub fn resposta_de_confianca(tela: &str) -> Option<&'static [u8]> {
-    if !tela.contains("Yes, I trust this folder") || !tela.contains("No, exit") {
-        return None;
+    if agente != "claude" || subiu.is_none() {
+        return;
     }
-    let sim = tela.lines().find(|l| l.contains("Yes, I trust this folder"))?;
-    Some(if sim.contains('❯') { b"\r" } else { b"\x1b[A" })
+    let shell = daemon::listar().ok().and_then(|l| l.aba(ws, tab).map(|a| a.info.shell_pid)).filter(|p| *p != 0);
+    if let Some(shell) = shell {
+        keep_ia::confiar::cli(&[shell.to_string()]);
+    }
 }
 
 #[cfg(test)]
@@ -422,15 +411,6 @@ mod testes {
         assert_eq!(escolher_origem(&atual, vec![vazio, velho.clone(), do_atual]).map(|r| r.gravado_ms), Some(1));
         let novo = retrato(2, vec![aba("A", 1, 0)]);
         assert_eq!(escolher_origem(&atual, vec![velho, novo]).map(|r| r.gravado_ms), Some(2));
-    }
-
-    #[test]
-    fn confianca_na_pasta() {
-        let no_sim = "Do you trust the files in this folder?\n ❯ 1. Yes, I trust this folder\n   2. No, exit\n";
-        let no_nao = "Do you trust the files in this folder?\n   1. Yes, I trust this folder\n ❯ 2. No, exit\n";
-        assert_eq!(resposta_de_confianca(no_sim), Some(&b"\r"[..]));
-        assert_eq!(resposta_de_confianca(no_nao), Some(&b"\x1b[A"[..]));
-        assert_eq!(resposta_de_confianca("❯ "), None);
     }
 
     #[test]

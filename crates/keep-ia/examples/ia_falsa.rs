@@ -6,6 +6,11 @@
 //! conversa como eles imprimem. `/trabalhar` finge um turno em andamento;
 //! um Esc o interrompe.
 //!
+//! Com `FALSA_CONFIANCA=1`, o Claude falso retomado (`--resume`) pergunta
+//! antes se confia na pasta, como o 2.1.30x pergunta numa pasta nova: o
+//! ponteiro em "No, exit", em cima; a seta para baixo leva ao sim, o Enter
+//! confirma, e o Enter no não (ou um Esc) sai.
+//!
 //! O Claude falso relê o armazém de login a cada pedido, como o de verdade
 //! (que guarda o que leu por 30 s), e diz o token de acesso que achou
 //! (`conta=<token>`): é como os testes veem a troca de conta a quente. Só
@@ -90,6 +95,40 @@ mod falsa {
         }
     }
 
+    /// A pergunta de confiança na pasta, desenhada depois de o processo subir
+    /// (como a do de verdade): `true` se a resposta foi o sim.
+    fn confia(out: &mut std::io::Stdout) -> bool {
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let desenha = |out: &mut std::io::Stdout, no_sim: bool| {
+            let (nao, sim) = if no_sim { ("  ", "❯ ") } else { ("❯ ", "  ") };
+            let _ = write!(
+                out,
+                "\x1b[2J\x1b[H Quick safety check: Is this a project you created or one you trust?\r\n\r\n {nao}No, exit\r\n {sim}Yes, I trust this folder\r\n\r\n Enter to confirm · Esc to cancel\r\n"
+            );
+            let _ = out.flush();
+        };
+        let mut no_sim = false;
+        desenha(out, no_sim);
+        let mut byte = [0u8; 1];
+        let mut seq: Vec<u8> = Vec::new();
+        while std::io::stdin().read(&mut byte).unwrap_or(0) == 1 {
+            seq.push(byte[0]);
+            match seq.as_slice() {
+                [0x1b] | [0x1b, b'['] => continue,
+                [0x1b, b'[', b'B'] | [0x1b, b'[', b'A'] => no_sim = seq[2] == b'B',
+                [b'\r'] | [b'\n'] => {
+                    let _ = write!(out, "\x1b[2J\x1b[H");
+                    return no_sim;
+                }
+                [0x1b, ..] if seq.len() >= 2 => return false,
+                _ => {}
+            }
+            seq.clear();
+            desenha(out, no_sim);
+        }
+        false
+    }
+
     pub fn main() {
         let argv: Vec<String> = std::env::args().collect();
         let papel = PathBuf::from(&argv[0]).file_name().unwrap().to_string_lossy().into_owned();
@@ -145,6 +184,10 @@ mod falsa {
         }
         let _bruto = Bruto::liga();
         let mut out = std::io::stdout();
+        if !codex && retomada.is_some() && var("FALSA_CONFIANCA") == "1" && !confia(&mut out) {
+            let _ = std::fs::remove_file(&sessao);
+            return;
+        }
         let resto: Vec<&String> = argv.iter().skip(1).collect();
         let conta = if codex { String::new() } else { format!(" conta={}", conta_no_armazem()) };
         let _ = write!(
