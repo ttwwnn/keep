@@ -256,7 +256,7 @@ fn retoma_conversas(origem: &Retrato, reg: &mut Registro, falhas: &mut Vec<Strin
         grava_registro(reg);
         if a.adormecida {
             // Saiu da memória antes do reinício: segue assim até a aba ser mostrada.
-            crate::adormecer::registrar(&reg.keepd, &c.workspace, c.aba, ia.clone());
+            crate::adormecer::registrar(&reg.keepd, &c.workspace, c.aba, ia.clone(), a.nome_posto.clone());
             continue;
         }
         match retoma(&c.workspace, c.aba, ia, &contas) {
@@ -394,7 +394,7 @@ mod testes {
     fn aba(ws: &str, n: u32, mae: u32) -> AbaGuardada {
         AbaGuardada {
             workspace: ws.into(), aba: n, cwd: "/".into(), split_of: mae, split_dir: if mae != 0 { 1 } else { 0 },
-            cols: 80, rows: 24, nome: None, ia: None, adormecida: false,
+            cols: 80, rows: 24, nome: None, ia: None, adormecida: false, nome_posto: None,
         }
     }
 

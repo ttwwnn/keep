@@ -98,10 +98,12 @@ fn so_a_aba_parada_e_livre_fora_de_vista_adormece_e_volta_ao_ser_mostrada() {
     unsafe { std::env::set_var("KEEP_SOCKET", &sock1) };
 
     let claude = format!("{} --effort max", bin.join("claude").display());
+    // O título que o Claude dá à aba (OSC 0), posto pelo shell antes da IA falsa, que não diz nenhum.
     let abre = || {
         let aba = daemon::nova_aba("A", Some(&raiz.to_string_lossy()), 120, 30).unwrap();
         assert!(tela_tem("A", aba, "$", 15), "o prompt");
-        assert!(keep_ia::trocar::digita("A", aba, &claude, true).unwrap());
+        let linha = format!(r"printf '\033]0;✳ Conversa {aba}\007'; {claude}");
+        assert!(keep_ia::trocar::digita("A", aba, &linha, true).unwrap());
         assert!(tela_tem("A", aba, "FALSO claude", 15));
         assert!(tela_tem("A", aba, "Pronto.", 15));
         (aba, conversa_da_aba(aba))
@@ -116,6 +118,10 @@ fn so_a_aba_parada_e_livre_fora_de_vista_adormece_e_volta_ao_ser_mostrada() {
     assert!(keep_ia::trocar::digita("A", ocupada, "/trabalhar", true).unwrap());
     assert!(tela_tem("A", ocupada, "esc to interrupt", 10));
     let vistas: HashSet<(String, u32)> = [("A".to_string(), vista)].into();
+    let nome_no_app = |aba: u32| -> Option<String> {
+        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(app.join("names.json")).ok()?).ok()?;
+        v["tabs"][format!("A\u{1f}{aba}")].as_str().map(str::to_string)
+    };
 
     // ---- no seco, só diz
     let seco = adormecer::adormecer(&vistas, true).unwrap();
@@ -136,6 +142,9 @@ fn so_a_aba_parada_e_livre_fora_de_vista_adormece_e_volta_ao_ser_mostrada() {
     assert_eq!(guardadas.len(), 1, "{guardadas:?}");
     assert_eq!((guardadas[0].aba, guardadas[0].ia.conversa.as_str()), (parada, id.as_str()));
     assert_eq!(guardadas[0].ia.parametros, vec!["--effort", "max"]);
+    // Sem o Claude a aba perde o título: fica com o da conversa como nome.
+    assert_eq!(guardadas[0].nome_posto.as_deref(), Some(format!("Conversa {parada}").as_str()));
+    assert_eq!(nome_no_app(parada), Some(format!("Conversa {parada}")));
 
     // ---- o retrato leva a conversa da adormecida
     let foto = retrato::fotografar().unwrap();
@@ -153,6 +162,7 @@ fn so_a_aba_parada_e_livre_fora_de_vista_adormece_e_volta_ao_ser_mostrada() {
     assert_eq!(r["acordadas"], 1, "{r:#}");
     assert!(tela_tem("A", parada, &format!(r#""--effort", "max", "--resume", "{id}""#), 15));
     assert!(adormecer::do_keepd(&k1).is_empty());
+    assert_eq!(nome_no_app(parada), None, "o nome posto sai: o Claude diz o título de novo");
     assert_eq!(adormecer::acordar("A", parada).unwrap()["acordadas"], 0, "nada em dobro");
 
     // ---- adormece de novo e o computador reinicia
@@ -160,9 +170,18 @@ fn so_a_aba_parada_e_livre_fora_de_vista_adormece_e_volta_ao_ser_mostrada() {
     for t in [vista, recente, ocupada] {
         daemon::fecha_aba("A", t).unwrap();
     }
+    // O nome que a pessoa deu fica, e não é trocado pelo título.
+    let nasceu = std::fs::metadata(&sock1).unwrap().created().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64();
+    std::fs::write(
+        app.join("names.json"),
+        format!(r#"{{"daemonStart":{nasceu},"tabs":{{"A\u001f{parada}":"Meu nome"}},"workspaces":{{}}}}"#),
+    )
+    .unwrap();
     let r = adormecer::adormecer(&HashSet::new(), false).unwrap();
     assert_eq!(r["adormecidas"], 1, "{r:#}");
     assert!(tela_tem("A", parada, "Resume this session", 10));
+    assert_eq!(nome_no_app(parada).as_deref(), Some("Meu nome"));
+    assert_eq!(adormecer::do_keepd(&k1)[0].nome_posto, None);
     retrato::gravar().unwrap();
     let sock2 = raiz.join("k2.sock");
     sobe_daemon(&sock2);
@@ -174,7 +193,9 @@ fn so_a_aba_parada_e_livre_fora_de_vista_adormece_e_volta_ao_ser_mostrada() {
     let nova = f1.criadas[0].aba;
     assert!(tela_tem("A", nova, "$", 15));
     assert!(!tela_tem("A", nova, "FALSO claude", 2), "não subiu sozinha");
+    assert_eq!(nome_no_app(nova).as_deref(), Some("Meu nome"), "o nome volta com a aba");
     let r = adormecer::acordar("A", nova).unwrap();
     assert_eq!(r["acordadas"], 1, "{r:#}");
     assert!(tela_tem("A", nova, &format!(r#""--effort", "max", "--resume", "{id}""#), 15));
+    assert_eq!(nome_no_app(nova).as_deref(), Some("Meu nome"), "o nome dado pela pessoa fica ao acordar");
 }

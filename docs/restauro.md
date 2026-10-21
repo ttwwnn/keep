@@ -251,6 +251,9 @@ a conversa volta quando a aba é mostrada.
 - **Antes de sair**, a conversa, a conta e as opções vão para
   `adormecidas.json` (por keepd, na pasta do restauro). Se a saída falha, a
   aba sai da lista e segue como estava.
+- **O nome**: sem o Claude a aba perderia o título da conversa. A que não tem
+  nome dado pela pessoa recebe o título como nome (`names.json`), e o nome sai
+  quando ela acorda, se ninguém o trocou. O nome que a pessoa deu nunca muda.
 - **Acordar** (`keep restauro acordar --workspace W --aba N`, o app ao mostrar
   a aba): a conversa volta na mesma aba, como a restauração a retoma (os
   parâmetros, a conta, a pasta presa). Não volta se a conversa já roda em

@@ -73,6 +73,9 @@ pub struct AbaGuardada {
     /// A conversa da aba tinha saído da memória (`adormecer`): volta adormecida.
     #[serde(default)]
     pub adormecida: bool,
+    /// O nome que o adormecer pôs na aba (o título da conversa), que sai quando ela acorda.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nome_posto: Option<String>,
 }
 
 /// De que keepd é um retrato: o pid e o nascimento (List3), e o nascimento do
@@ -169,6 +172,22 @@ pub fn nomear_no_app(amb: &keep_ia::worktrees::ambiente::Ambiente, nasceu: Optio
         }
     }
     let _ = gravar(&caminho, &v);
+}
+
+/// Tira o nome da aba no app, se ainda for `se_for` (o que outro pôs; o que a pessoa deu depois fica).
+pub fn tirar_nome_no_app(amb: &keep_ia::worktrees::ambiente::Ambiente, nasceu: Option<f64>, ws: &str, aba: u32, se_for: &str) {
+    let (Some(app), Some(nasceu)) = (&amb.app, nasceu) else { return };
+    let _trava = trava_do_app(app);
+    let caminho = app.join("names.json");
+    let Some(mut v) = ler::<serde_json::Value>(&caminho) else { return };
+    if v.get("daemonStart").and_then(|d| d.as_f64()).is_none_or(|d| (d - nasceu).abs() >= 0.01) {
+        return;
+    }
+    let k = format!("{ws}\u{1f}{aba}");
+    if v["tabs"].get(&k).and_then(|n| n.as_str()) == Some(se_for) {
+        v["tabs"].as_object_mut().map(|t| t.remove(&k));
+        let _ = gravar(&caminho, &v);
+    }
 }
 
 /// A mesma trava com que o app grava o estado dele (`.state.lock`): esperada até ser dada, e solta ao largar o arquivo.

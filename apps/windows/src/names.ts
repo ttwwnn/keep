@@ -127,6 +127,16 @@ export function foreignNames(file: NamesFile, known: NamesFile | null): TabName[
   return news;
 }
 
+/**
+ * Names the window last knew in the file that are gone from it: another program took them off (the core, when a
+ * conversation put to sleep wakes up and says its own title again).
+ */
+export function droppedNames(file: NamesFile, known: NamesFile | null): TabName[] {
+  if (!known) return [];
+  const gone = Object.fromEntries(Object.entries(known.tabs).filter(([key]) => !(key in file.tabs)));
+  return foreignNames({ ...known, tabs: gone }, null);
+}
+
 /** What the window knew of the file, kept only if it was of this daemon: another's is no news to compare with. */
 export const knownFor = (known: NamesFile | null, daemonStart: number) =>
   known !== null && sameStart(known.daemonStart, daemonStart) ? known : null;
@@ -145,6 +155,8 @@ export interface NamesRound {
 export interface NamesPlan {
   /** Names the core put on tabs, to become the window's. */
   adopt: TabName[];
+  /** Names the core took off tabs, to go from the window too: only where the window still has them as they were. */
+  drop: TabName[];
   /** The file to write, when what the window has is not what is in it. */
   write: NamesFile | null;
   /** What the window knows of the file after this. */
@@ -160,13 +172,16 @@ export interface NamesPlan {
 export function planNames({ state, daemonStart, text, known }: NamesRound): NamesPlan {
   let knew = knownFor(known, daemonStart);
   const adopt: TabName[] = [];
+  const drop: TabName[] = [];
   const file = readNamesFile(text);
   if (file && sameStart(file.daemonStart, daemonStart)) {
     adopt.push(...foreignNames(file, knew).filter((n) => state.tabNames[tabKey(n.workspace, n.tab)] !== n.name));
+    drop.push(...droppedNames(file, knew).filter((n) => state.tabNames[tabKey(n.workspace, n.tab)] === n.name));
     knew = file;
   }
   const tabNames = { ...state.tabNames };
   for (const n of adopt) tabNames[tabKey(n.workspace, n.tab)] = n.name;
+  for (const n of drop) delete tabNames[tabKey(n.workspace, n.tab)];
   const mine = namesFileOf({ tabNames, workspaceNames: state.workspaceNames }, daemonStart);
-  return { adopt, write: sameNames(mine, knew) ? null : mine, known: knew };
+  return { adopt, drop, write: sameNames(mine, knew) ? null : mine, known: knew };
 }

@@ -175,6 +175,14 @@ describe("a round of names", () => {
     expect(plan.write).toEqual(file({ "ws\u001f2": "Dois (nome novo)" }, START));
   });
 
+  it("a name the core took off goes from the window too, unless the window changed it meanwhile", () => {
+    const known = file({ "ws\u001f1": "Conversa parada", "ws\u001f2": "Outra" }, START);
+    const arrived = file({}, START);
+    const plan = planNames({ state: state({ "ws\u00001": "Conversa parada", "ws\u00002": "Renomeada" }), daemonStart: START, text: text(arrived), known });
+    expect(plan.drop).toEqual([{ workspace: "ws", tab: 1, name: "Conversa parada" }]);
+    expect(plan.write).toEqual(file({ "ws\u001f2": "Renomeada" }, START));
+  });
+
   it("a file of another daemon is not taken, and is written over", () => {
     const old = file({ "ws\u001f1": "De outro" }, 1791000000);
     const plan = planNames({ state: state({ "ws\u00001": "Meu" }), daemonStart: START, text: text(old), known: null });

@@ -190,6 +190,7 @@ export async function syncNames(): Promise<void> {
     if (read.text !== null) seen = read.stamp;
     const plan = planNames({ state: gui.value, daemonStart: start, text: read.text, known });
     for (const named of plan.adopt) renameTab(named.workspace, named.tab, named.name);
+    for (const named of plan.drop) renameTab(named.workspace, named.tab, "");
     known = plan.known;
     if (plan.write) {
       seen = await api.namesWrite(JSON.stringify(plan.write));

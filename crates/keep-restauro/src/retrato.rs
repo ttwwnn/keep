@@ -53,12 +53,13 @@ pub fn fotografar() -> Result<Retrato, String> {
         let ia = ias.get(&(a.ws.clone(), a.info.id)).and_then(|i| ia_da_aba(i, &amb));
         // A aba sem IA cuja conversa adormeceu leva a conversa: depois de um reinício ela volta adormecida.
         let dormindo = if ia.is_none() && lista.exato {
-            adormecidas.iter().find(|d| d.workspace == a.ws && d.aba == a.info.id).map(|d| d.ia.clone())
+            adormecidas.iter().find(|d| d.workspace == a.ws && d.aba == a.info.id)
         } else {
             None
         };
         let adormecida = dormindo.is_some();
-        let ia = ia.or(dormindo);
+        let nome_posto = dormindo.and_then(|d| d.nome_posto.clone());
+        let ia = ia.or(dormindo.map(|d| d.ia.clone()));
         abas.push(AbaGuardada {
             workspace: a.ws.clone(),
             aba: a.info.id,
@@ -70,6 +71,7 @@ pub fn fotografar() -> Result<Retrato, String> {
             nome: nomes.get(&(a.ws.clone(), a.info.id)).cloned(),
             ia,
             adormecida,
+            nome_posto,
         });
     }
     Ok(Retrato { versao: crate::VERSAO, gravado_ms: crate::agora_ms(), keepd, workspaces, abas })
@@ -147,7 +149,7 @@ mod testes {
     fn r(pid: u32, inicio: u64, n: usize) -> Retrato {
         let aba = |i: usize| AbaGuardada {
             workspace: "W".into(), aba: i as u32 + 1, cwd: "/".into(), split_of: 0, split_dir: 0, cols: 80, rows: 24,
-            nome: None, ia: None, adormecida: false,
+            nome: None, ia: None, adormecida: false, nome_posto: None,
         };
         Retrato {
             versao: 1, gravado_ms: inicio, keepd: Keepd { pid, inicio_ms: inicio, socket_nasceu: None },

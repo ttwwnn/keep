@@ -299,7 +299,8 @@ caixa da linha, rolagem da lista, estado do movimento, fim do arrasto por `point
 - [~] `keep continuar` a cada 15 s, com o ocioso do sistema pelo `GetLastInputInfo`.
 - [~] A conversa parada há 12 h fora de vista sai da memória e volta ao mostrar a aba (`keep restauro adormecer`
   a cada 5 min pela janela mais antiga, poupando a aba em frente de cada janela; `acordar` quando a aba em frente
-  muda; `iaChores.ts`): testado no vitest e no núcleo; não visto no Windows de verdade.
+  muda; `iaChores.ts`). O nome que o núcleo tira do `names.json` ao acordar sai também da janela
+  (`droppedNames`), se ela o tem como estava. Testado no vitest e no núcleo; não visto no Windows de verdade.
 - [~] Responder "confiar nesta pasta?" sozinho: feito na fatia `terminal` (`trust.ts`; ver lá).
 - [~] Gancho da conta da aba no Claude (`UserPromptSubmit` -> `keep ia conta-da-aba --gancho` no
   `settings.json`, acrescentado depois dos ganchos da pessoa, sem mexer em mais nada, sem repetir): o plano

@@ -39,6 +39,9 @@ pub struct Adormecida {
     pub aba: u32,
     pub ia: Ia,
     pub desde_ms: u64,
+    /// O nome posto na aba ao adormecer (o título da conversa, numa aba sem nome dado): sai ao acordar.
+    #[serde(default)]
+    pub nome_posto: Option<String>,
 }
 
 /// As adormecidas de um keepd (os números das abas valem só nele).
@@ -74,11 +77,17 @@ fn mudar<T>(k: &Keepd, f: impl FnOnce(&mut Vec<Adormecida>) -> T) -> T {
 }
 
 /// Põe uma aba entre as adormecidas (a restauração, para a que voltou de um reinício ainda adormecida).
-pub fn registrar(k: &Keepd, ws: &str, aba: u32, ia: Ia) {
+pub fn registrar(k: &Keepd, ws: &str, aba: u32, ia: Ia, nome_posto: Option<String>) {
     mudar(k, |abas| {
         abas.retain(|a| !(a.workspace == ws && a.aba == aba));
-        abas.push(Adormecida { workspace: ws.into(), aba, ia, desde_ms: crate::agora_ms() });
+        abas.push(Adormecida { workspace: ws.into(), aba, ia, desde_ms: crate::agora_ms(), nome_posto });
     });
+}
+
+/// O título que o Claude deu à aba, sem a marca de estado da frente (`✳`, o pião).
+fn titulo(aba: &daemon::Aba) -> Option<String> {
+    let t = aba.info.title.trim_start_matches(|c: char| !c.is_alphanumeric()).trim();
+    (!t.is_empty()).then(|| t.to_string())
 }
 
 /// A aba de que `tab` é painel, subindo até a solta: é o número com que o app conhece a aba inteira.
@@ -152,6 +161,7 @@ pub fn adormecer(vistas: &HashSet<(String, u32)>, seco: bool) -> Result<Value, S
     let keepd = crate::retrato::keepd_da_lista(&lista, &amb);
     let contas = keep_ia::contas::listar(false);
     let ias = keep_ia::abas::das_abas(&lista, &contas);
+    let nomes = keep_ia::worktrees::abas::nomes_do_app(&amb, keepd.socket_nasceu);
     // A que fechou, ou em que a IA voltou por outro caminho, sai da lista.
     if !seco {
         mudar(&keepd, |abas| {
@@ -198,13 +208,18 @@ pub fn adormecer(vistas: &HashSet<(String, u32)>, seco: bool) -> Result<Value, S
             diz(format!("adormeceria (parada há {} h)", parada_ha / 3_600_000));
             continue;
         }
+        // Sem o Claude o título some da aba: a que não tem nome dado fica com o da conversa.
+        let nome = titulo(aba).filter(|_| !nomes.contains_key(&(i.workspace.clone(), i.aba)));
         // Guardada antes de sair: o que cair no meio não perde a conversa da aba.
-        registrar(&keepd, &i.workspace, i.aba, ia);
+        registrar(&keepd, &i.workspace, i.aba, ia, nome.clone());
         let vinculo = keep_ia::vinculo::vincular(&lista).get(&(i.workspace.clone(), i.aba)).map(|v| v.shell);
         let sintaxe = keep_ia::trocar::sintaxe_da_aba(aba, vinculo);
         match keep_ia::trocar::sai_do_claude(&i.workspace, i.aba, false, sintaxe) {
             Ok(()) => {
                 feitas += 1;
+                if let Some(n) = nome {
+                    crate::nomear_no_app(&amb, keepd.socket_nasceu, &[(i.workspace.clone(), i.aba, n)], false);
+                }
                 diz(format!("adormecida (parada há {} h)", parada_ha / 3_600_000));
             }
             Err(r) => {
@@ -250,10 +265,16 @@ pub fn acordar(ws: &str, tab: u32) -> Result<Value, String> {
             continue;
         }
         match crate::restaurar::retoma(&a.workspace, a.aba, &a.ia, &contas) {
-            Ok(()) => feitas += 1,
+            Ok(()) => {
+                feitas += 1;
+                // O Claude de volta diz o título de novo.
+                if let Some(n) = &a.nome_posto {
+                    crate::tirar_nome_no_app(&amb, keepd.socket_nasceu, &a.workspace, a.aba, n);
+                }
+            }
             Err(e) => {
                 // Segue adormecida: a próxima vez que a aba for mostrada tenta de novo.
-                registrar(&keepd, &a.workspace, a.aba, a.ia.clone());
+                registrar(&keepd, &a.workspace, a.aba, a.ia.clone(), a.nome_posto.clone());
                 falhas.push(format!("{rotulo}: {e}"));
             }
         }
