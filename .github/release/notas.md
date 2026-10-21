@@ -109,4 +109,8 @@ por cima de um arquivo com o mesmo nome, e os usa como padrão (`dark:Keep Escur
 claro e o escuro do macOS) quando nem a configuração do Ghostty nem o Keep escolheram um tema. Antes só o kit-mac
 os instalava.
 
+**Login do Claude sem queda com o kit pela metade (0.3.3):** o Keep só deixa a renovação do login global para o
+kit-mac quando o agente de renovação dele (`br.ttwwnn.kit.claude-conectado`) está ligado. Antes bastavam o cofre e
+os scripts do kit; num Mac com o kit instalado pela metade ninguém renovava, e o Claude caía na tela de login.
+
 Detalhes em `docs/ia.md`.
