@@ -407,7 +407,11 @@ final class ClaudeModeWatcher {
                     statuses[id] = ClaudeStatus(
                         modelID: file.modelID, modelName: file.modelName, effort: file.effort,
                         agents: ClaudeStatusReader.agents(onScreen: screen),
-                        canType: activity == .done && ClaudeStatusReader.promptIsEmpty(onScreen: screen))
+                        // The coloured screen only when the plain one shows text:
+                        // it may be the dim suggestion of an empty box.
+                        canType: activity == .done && (ClaudeStatusReader.promptIsEmpty(onScreen: screen)
+                            || ((try? Daemon.colouredPreview(workspace: id.workspace, tab: id.root))
+                                .map(ClaudeStatusReader.promptIsEmpty(onColouredScreen:)) ?? false)))
                 }
             }
             DispatchQueue.main.async {

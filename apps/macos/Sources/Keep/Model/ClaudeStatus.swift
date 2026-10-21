@@ -89,6 +89,74 @@ enum ClaudeStatusReader {
         return line == "❯" || line == ">"
     }
 
+    /// The same, read from the coloured screen (`Daemon.colouredPreview`): the
+    /// grey suggestion Claude Code puts in an empty box (`❯ Try "fix lint
+    /// errors"`) reads as a draft once the colours are gone, so what is drawn
+    /// dim is dropped first.
+    static func promptIsEmpty(onColouredScreen vt: String) -> Bool {
+        promptIsEmpty(onScreen: withoutDim(vt))
+    }
+
+    /// A snapshot's text with its escapes read past and its dim text (SGR 2)
+    /// left out; the lines stay where they were.
+    static func withoutDim(_ vt: String) -> String {
+        var out = ""
+        var dim = false
+        // "\r\n" is one Character in Swift: seen whole, it is neither.
+        var rest = Substring(vt.replacingOccurrences(of: "\r\n", with: "\n"))
+        while let c = rest.first {
+            rest = rest.dropFirst()
+            guard c == "\u{1b}" else {
+                if c == "\n" || (!dim && c != "\r") { out.append(c) }
+                continue
+            }
+            switch rest.first {
+            case "[":
+                rest = rest.dropFirst()
+                var body = ""
+                var final: Character = " "
+                while let d = rest.first {
+                    rest = rest.dropFirst()
+                    if ("\u{40}"..."\u{7e}").contains(d) { final = d; break }
+                    body.append(d)
+                }
+                // `\e[>4m` and the like are not SGR.
+                guard final == "m", !body.contains(where: { "<=>?".contains($0) }) else { continue }
+                // `38:2::r:g:b` is one colour, not codes; `38;5;n` and
+                // `38;2;r;g;b` carry numbers that are not codes either.
+                let codes = body.split(separator: ";", omittingEmptySubsequences: false)
+                var i = 0
+                while i < codes.count {
+                    if !codes[i].contains(":") {
+                        switch Int(codes[i]) ?? 0 {
+                        case 0, 22: dim = false
+                        case 2: dim = true
+                        case 38, 48, 58: i += (i + 1 < codes.count && codes[i + 1] == "5") ? 2 : 4
+                        default: break
+                        }
+                    }
+                    i += 1
+                }
+            case "]", "P", "_", "^":
+                // OSC, DCS, APC, PM: up to the bell or the string terminator.
+                rest = rest.dropFirst()
+                while let d = rest.first {
+                    rest = rest.dropFirst()
+                    if d == "\u{07}" { break }
+                    if d == "\u{1b}" {
+                        if rest.first == "\\" { rest = rest.dropFirst() }
+                        break
+                    }
+                }
+            case "(", ")", "*", "+":
+                rest = rest.dropFirst(2)
+            default:
+                rest = rest.dropFirst()
+            }
+        }
+        return out
+    }
+
     private static func isRule(_ line: Substring) -> Bool {
         line.trimmingCharacters(in: .whitespaces).hasPrefix(String(repeating: "─", count: 12))
     }

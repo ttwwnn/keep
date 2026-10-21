@@ -52,3 +52,9 @@ sed 's/private static let effortPattern = "minimal|low|medium|high|xhigh|max|ult
 grep -q 'effortPattern = "none"' "$WORK/Sabotaged.swift" || { echo "sabotage did not apply"; exit 1; }
 build "$WORK/Sabotaged.swift" || exit 1
 if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
+echo "sabotage: dim text is kept on the coloured screen"
+sed 's/case 2: dim = true/case 2: dim = false/' "$SOURCE" > "$WORK/Sabotaged.swift"
+grep -q 'case 2: dim = false' "$WORK/Sabotaged.swift" || { echo "sabotage did not apply"; exit 1; }
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi

@@ -34,6 +34,24 @@ check("empty prompt", ClaudeStatusReader.promptIsEmpty(onScreen: screen()), true
 check("a draft", ClaudeStatusReader.promptIsEmpty(onScreen: screen(prompt: "❯ escrevendo")), false)
 check("no box", ClaudeStatusReader.promptIsEmpty(onScreen: "só texto"), false)
 
+// The coloured screen, as the daemon sends it (`\r\n` lines). The box of a new
+// conversation, read off Claude Code 2.1.305 on 20/10/2026.
+func coloured(_ prompt: String) -> String {
+    ["\u{1b}[38;2;215;119;87malgum texto\u{1b}[0m", rule, prompt, rule, "  ⏵⏵ bypass permissions on"]
+        .joined(separator: "\r\n")
+}
+let suggestion = "❯\u{a0}\u{1b}[0m\u{1b}[2mTry \"fix lint errors\"\u{1b}[0m"
+check("the plain screen takes the dim suggestion for a draft",
+      ClaudeStatusReader.promptIsEmpty(onScreen: screen(prompt: "❯\u{a0}Try \"fix lint errors\"")), false)
+check("a dim suggestion is an empty prompt",
+      ClaudeStatusReader.promptIsEmpty(onColouredScreen: coloured(suggestion)), true)
+check("a coloured draft is not",
+      ClaudeStatusReader.promptIsEmpty(onColouredScreen: coloured("❯\u{a0}\u{1b}[38;2;2;2;2mescrevendo\u{1b}[0m")), false)
+check("dim ended by 22 shows what follows",
+      ClaudeStatusReader.promptIsEmpty(onColouredScreen: coloured("❯\u{a0}\u{1b}[2mTry\u{1b}[22mx")), false)
+check("an empty coloured box",
+      ClaudeStatusReader.promptIsEmpty(onColouredScreen: coloured("❯\u{a0}\u{1b}[0m")), true)
+
 let trust = """
  Accessing workspace:
 
