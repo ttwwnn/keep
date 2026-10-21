@@ -127,3 +127,6 @@ não abre nada, e arrastar continua selecionando.
 **Imagem colada abre também na caixa de texto (0.3.6, Mac):** antes do envio, o Claude Code ainda não gravou a
 imagem nem pôs link no `[Image #N]`. O Keep guarda uma cópia da área de transferência ao colar (⌘V só com
 imagem, ⌘⇧V ou Ctrl+V) e associa a ela o número que aparece; o clique no `[Image #N]` da caixa abre essa cópia.
+
+**Ícone de robô (0.3.7):** o Keep ganhou ícone próprio, um robô com um terminal por rosto, no Mac (antes aparecia o
+ícone genérico de app) e no Windows.
