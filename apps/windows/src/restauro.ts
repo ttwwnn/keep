@@ -110,6 +110,34 @@ export function resumeLine(round: ResumeRound): string {
   return `continuar: ${round.sent} conversa(s) mandada(s) continuar, ${round.confirmed} confirmada(s)`;
 }
 
+// ------------------------------------------------------------------ the conversations left alone
+
+/** A tab on screen in some window. */
+export interface Shown {
+  workspace: string;
+  tab: number;
+}
+
+/** `keep restauro adormecer`, sparing the tabs on screen in every window. */
+export function sleepArgs(shown: readonly Shown[]): string[] {
+  return ["restauro", "adormecer", ...shown.flatMap((s) => ["--vista", `${s.workspace}/${s.tab}`])];
+}
+
+/** What a round of putting conversations to sleep (or of waking one) did, worth a line in the log, or null. */
+export function dormancyLine(answer: CoreAnswer): string | null {
+  if (typeof answer.erro === "string") return `adormecer: ${answer.erro}`;
+  if (answer._saida === 2) return null; // an older core does not know the question
+  const slept = count(answer.adormecidas);
+  const woke = count(answer.acordadas);
+  const failures = texts(answer.falhas);
+  if (slept === 0 && woke === 0 && failures.length === 0) return null;
+  const parts: string[] = [];
+  if (slept > 0) parts.push(`${slept} conversa(s) parada(s) fora da memória`);
+  if (woke > 0) parts.push(`${woke} conversa(s) de volta`);
+  if (failures.length > 0) parts.push(`falhas: ${failures.join("; ")}`);
+  return `adormecer: ${parts.join(", ")}`;
+}
+
 // ------------------------------------------------------------------ what the window keeps by tab number
 
 /**

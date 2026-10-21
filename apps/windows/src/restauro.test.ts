@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { CoreAnswer } from "./api";
 import {
+  dormancyLine,
   isQuietResume,
   isQuietRestore,
   noTabNumbers,
@@ -10,6 +11,7 @@ import {
   remapTabNumbers,
   restoreLine,
   resumeLine,
+  sleepArgs,
 } from "./restauro";
 
 const answer = (body: Record<string, unknown>, exit = 0): CoreAnswer => ({ versao: 1, _saida: exit, ...body });
@@ -132,5 +134,25 @@ describe("the tabs the restore made", () => {
     expect(remapTabNumbers(was, made)).toEqual({ tabOrder: { alfa: [1, 2] }, lastTab: {}, active: null });
     expect(remapTabNumbers({ tabOrder: {}, lastTab: {}, active: null }, made)).toEqual(noTabNumbers());
     expect(remapTabNumbers({ tabOrder: { alfa: [2] }, lastTab: {}, active: null }, [])).toEqual(noTabNumbers());
+  });
+});
+
+describe("the conversations left alone", () => {
+  it("spares the tab on screen in every window", () => {
+    expect(sleepArgs([{ workspace: "Clinica", tab: 8 }, { workspace: "a/b", tab: 2 }])).toEqual([
+      "restauro", "adormecer", "--vista", "Clinica/8", "--vista", "a/b/2",
+    ]);
+    expect(sleepArgs([])).toEqual(["restauro", "adormecer"]);
+  });
+
+  it("says only what happened", () => {
+    expect(dormancyLine(answer({ adormecidas: 0, abas: [] }))).toBeNull();
+    expect(dormancyLine(answer({ acordadas: 0 }))).toBeNull();
+    expect(dormancyLine(answer({}, 2)), "a core that does not know the question").toBeNull();
+    expect(dormancyLine(answer({ adormecidas: 2, abas: [] }))).toBe("adormecer: 2 conversa(s) parada(s) fora da memória");
+    expect(dormancyLine(answer({ acordadas: 1, falhas: ["A#2: a aba roda vim"] }))).toBe(
+      "adormecer: 1 conversa(s) de volta, falhas: A#2: a aba roda vim",
+    );
+    expect(dormancyLine(answer({ erro: "o Keep não respondeu" }))).toBe("adormecer: o Keep não respondeu");
   });
 });

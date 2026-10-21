@@ -40,6 +40,7 @@ pub fn fotografar() -> Result<Retrato, String> {
         HashMap::new()
     };
     let nomes = keep_ia::worktrees::abas::nomes_do_app(&amb, keepd.socket_nasceu);
+    let adormecidas = crate::adormecer::do_keepd(&keepd);
     let mut workspaces: Vec<String> = Vec::new();
     let mut abas = Vec::new();
     for a in &lista.abas {
@@ -50,6 +51,14 @@ pub fn fotografar() -> Result<Retrato, String> {
             workspaces.push(a.ws.clone());
         }
         let ia = ias.get(&(a.ws.clone(), a.info.id)).and_then(|i| ia_da_aba(i, &amb));
+        // A aba sem IA cuja conversa adormeceu leva a conversa: depois de um reinício ela volta adormecida.
+        let dormindo = if ia.is_none() && lista.exato {
+            adormecidas.iter().find(|d| d.workspace == a.ws && d.aba == a.info.id).map(|d| d.ia.clone())
+        } else {
+            None
+        };
+        let adormecida = dormindo.is_some();
+        let ia = ia.or(dormindo);
         abas.push(AbaGuardada {
             workspace: a.ws.clone(),
             aba: a.info.id,
@@ -60,6 +69,7 @@ pub fn fotografar() -> Result<Retrato, String> {
             rows: a.info.rows,
             nome: nomes.get(&(a.ws.clone(), a.info.id)).cloned(),
             ia,
+            adormecida,
         });
     }
     Ok(Retrato { versao: crate::VERSAO, gravado_ms: crate::agora_ms(), keepd, workspaces, abas })
@@ -67,7 +77,7 @@ pub fn fotografar() -> Result<Retrato, String> {
 
 /// A conversa, a conta e os parâmetros da IA de uma aba. Sem o id da conversa
 /// (o Codex aberto sem `resume` só o tem nos travamentos da thread), nada.
-fn ia_da_aba(i: &keep_ia::abas::IaAba, amb: &Ambiente) -> Option<Ia> {
+pub(crate) fn ia_da_aba(i: &keep_ia::abas::IaAba, amb: &Ambiente) -> Option<Ia> {
     let conversa = i.conversa.clone().or_else(|| {
         (i.agente == "codex")
             .then(|| keep_ia::worktrees::abas::threads_do_codex(amb, i.pid).into_iter().next())
@@ -137,7 +147,7 @@ mod testes {
     fn r(pid: u32, inicio: u64, n: usize) -> Retrato {
         let aba = |i: usize| AbaGuardada {
             workspace: "W".into(), aba: i as u32 + 1, cwd: "/".into(), split_of: 0, split_dir: 0, cols: 80, rows: 24,
-            nome: None, ia: None,
+            nome: None, ia: None, adormecida: false,
         };
         Retrato {
             versao: 1, gravado_ms: inicio, keepd: Keepd { pid, inicio_ms: inicio, socket_nasceu: None },

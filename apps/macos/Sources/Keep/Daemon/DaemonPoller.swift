@@ -145,6 +145,7 @@ final class AIChores {
     private var renewing = false
     private var restoring = false
     private var resuming = false
+    private var sleeping = false
 
     nonisolated static let syncEvery: TimeInterval = 30
     nonisolated static let indexEvery: TimeInterval = 120
@@ -154,6 +155,8 @@ final class AIChores {
     /// A conversation stopped by a login, network or usage-limit drop gets
     /// its "continue" this soon after the cause clears.
     nonisolated static let resumeEvery: TimeInterval = 15
+    /// A conversation left alone for twelve hours leaves memory within this.
+    nonisolated static let sleepEvery: TimeInterval = 300
 
     func start() {
         let sync = Timer(timeInterval: Self.syncEvery, repeats: true) { [weak self] _ in
@@ -171,12 +174,18 @@ final class AIChores {
         let resumption = Timer(timeInterval: Self.resumeEvery, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.resume() }
         }
-        for timer in [sync, index, renewal, restoration, resumption] { RunLoop.main.add(timer, forMode: .common) }
-        timers = [sync, index, renewal, restoration, resumption]
+        let dormancy = Timer(timeInterval: Self.sleepEvery, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.sleep() }
+        }
+        let all = [sync, index, renewal, restoration, resumption, dormancy]
+        for timer in all { RunLoop.main.add(timer, forMode: .common) }
+        timers = all
         // A login that ran out while the app was closed is renewed at once.
         renew()
         // The conversations of a restart come back now, not in 30 s.
         restore(always: true)
+        // The first round soon after opening, once the daemon has answered, not in 5 min.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in MainActor.assumeIsolated { self?.sleep() } }
         DispatchQueue.global(qos: .utility).async {
             TabRestore.links()
             TabRestore.claudeSettings()
@@ -202,6 +211,23 @@ final class AIChores {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             TabRestore.resume()
             DispatchQueue.main.async { self?.resuming = false }
+        }
+    }
+
+    /// The conversations left alone for twelve hours out of sight leave
+    /// memory; their tabs stay, and each comes back as its tab is shown
+    /// (`keep restauro adormecer`). A tab put on screen while the round ran
+    /// is woken at its end, in case the round got to it first.
+    private func sleep() {
+        guard !sleeping, daemonUp else { return }
+        sleeping = true
+        let visible = Hibernation.shared.onScreen()
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            TabRestore.sleep(sparing: visible)
+            DispatchQueue.main.async {
+                self?.sleeping = false
+                for tab in Hibernation.shared.onScreen().subtracting(visible) { TabRestore.wake(tab) }
+            }
         }
     }
 

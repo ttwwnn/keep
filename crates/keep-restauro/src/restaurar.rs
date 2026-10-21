@@ -254,6 +254,11 @@ fn retoma_conversas(origem: &Retrato, reg: &mut Registro, falhas: &mut Vec<Strin
         }
         reg.ias.push(ia.conversa.clone());
         grava_registro(reg);
+        if a.adormecida {
+            // Saiu da memória antes do reinício: segue assim até a aba ser mostrada.
+            crate::adormecer::registrar(&reg.keepd, &c.workspace, c.aba, ia.clone());
+            continue;
+        }
         match retoma(&c.workspace, c.aba, ia, &contas) {
             Ok(()) => feitas += 1,
             Err(e) => falhas.push(format!("{}#{} ({} {}): {e}", c.workspace, c.aba, ia.agente, ia.conversa)),
@@ -298,7 +303,7 @@ pub fn subida(ws: &str, ia: &Ia, programa: String, conversa: &str, contas: &[kee
     }
 }
 
-fn retoma(ws: &str, tab: u32, ia: &Ia, contas: &[keep_ia::contas::Conta]) -> Result<(), String> {
+pub(crate) fn retoma(ws: &str, tab: u32, ia: &Ia, contas: &[keep_ia::contas::Conta]) -> Result<(), String> {
     let (programa, conversa) = if ia.agente == "codex" {
         let p = keep_ia::programas::codex().ok_or("o Codex não está instalado")?;
         (p, ia.conversa.clone())
@@ -389,7 +394,7 @@ mod testes {
     fn aba(ws: &str, n: u32, mae: u32) -> AbaGuardada {
         AbaGuardada {
             workspace: ws.into(), aba: n, cwd: "/".into(), split_of: mae, split_dir: if mae != 0 { 1 } else { 0 },
-            cols: 80, rows: 24, nome: None, ia: None,
+            cols: 80, rows: 24, nome: None, ia: None, adormecida: false,
         }
     }
 

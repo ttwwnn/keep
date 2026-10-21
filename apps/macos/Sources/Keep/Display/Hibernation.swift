@@ -50,6 +50,12 @@ final class Hibernation {
         }
     }
 
+    /// The tabs on screen in some window: a conversation there is never put
+    /// to sleep (`TabRestore.sleep`).
+    func onScreen() -> Set<TabID> {
+        Set(containers.allObjects.filter { $0.window != nil }.compactMap(\.visibleTab))
+    }
+
     /// The order tabs were put on screen in, across windows.
     func tick() -> UInt64 {
         clock += 1

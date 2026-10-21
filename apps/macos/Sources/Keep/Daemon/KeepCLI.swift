@@ -490,6 +490,37 @@ enum TabRestore {
         log(KeepCLI.run(helper, ["restauro", "manter"], within: 900, name: "keep restauro"))
     }
 
+    /// The conversations left alone for twelve hours out of sight leave
+    /// memory, each tab kept with its shell (`keep restauro adormecer`): never
+    /// one of `visible`, the tabs on screen. Blocking.
+    static func sleep(sparing visible: Set<TabID>) {
+        guard let helper else { return }
+        let args = ["restauro", "adormecer"] + visible.flatMap { ["--vista", "\($0.workspace)/\($0.root)"] }
+        let answer = KeepCLI.run(helper, args, within: 300, name: "keep restauro")
+        if case .success(let output) = answer,
+           String(decoding: output.data, as: UTF8.self).contains("\"adormecidas\":0") { return }
+        log(answer)
+    }
+
+    /// One at a time, in the order the tabs were shown.
+    private static let waking = DispatchQueue(label: "keep.restore.wake", qos: .userInitiated)
+
+    /// The conversation of a tab put to sleep comes back in it as the tab is
+    /// shown (`keep restauro acordar`); nothing for any other tab.
+    static func wake(_ tab: TabID) {
+        waking.async {
+            guard let helper else { return }
+            let answer = KeepCLI.run(
+                helper, ["restauro", "acordar", "--workspace", tab.workspace, "--aba", String(tab.root)],
+                within: 120, name: "keep restauro")
+            if case .success(let output) = answer {
+                let text = String(decoding: output.data, as: UTF8.self)
+                if text.contains("\"acordadas\":0") && !text.contains("\"falhas\":[\"") { return }
+            }
+            log(answer)
+        }
+    }
+
     /// The conversations that stopped on a dropped login, network or usage
     /// limit, told to continue once it is back. Blocking: a round that types
     /// waits up to 30 s for the message to reach the transcript. Its log and

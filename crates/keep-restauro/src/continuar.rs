@@ -159,7 +159,7 @@ fn tem(d: &Value, tipo: &str) -> bool {
         .is_some_and(|c| c.iter().any(|i| i.get("type").and_then(Value::as_str) == Some(tipo)))
 }
 
-fn carimbo_ms(d: &Value) -> u64 {
+pub(crate) fn carimbo_ms(d: &Value) -> u64 {
     d.get("timestamp")
         .and_then(Value::as_str)
         .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())

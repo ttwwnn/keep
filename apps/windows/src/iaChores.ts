@@ -6,6 +6,9 @@
 //    time, and a new picture for the next restart;
 //  - the conversations a dropped login, network or usage limit stopped (`keep
 //    continuar`, every 15 s): they are told to continue when the cause is gone;
+//  - the conversations left alone for twelve hours out of sight (`keep restauro
+//    adormecer`, every 5 min): they leave memory, each tab kept with its shell,
+//    and come back as the tab is shown (`keep restauro acordar`);
 //  - the names given to tabs, which the core keeps in a file of its own
 //    (names.ts), so that a restart gives them back and `keep nova --nome`
 //    works.
@@ -18,11 +21,23 @@
 // at a time each, while the daemon answers, and says in the log what is worth
 // saying.
 
+import { computed, effect, untracked } from "@preact/signals";
 import * as api from "./api";
 import { daemonStartOf, planNames, type NamesFile } from "./names";
-import { isQuietResume, isQuietRestore, readResume, readRestore, restoreLine, resumeLine, type Restored } from "./restauro";
-import { daemonError, gui, loaded, log, renameTab } from "./store";
-import { isLeader } from "./windowPeers";
+import {
+  dormancyLine,
+  isQuietResume,
+  isQuietRestore,
+  readResume,
+  readRestore,
+  restoreLine,
+  resumeLine,
+  sleepArgs,
+  type Restored,
+  type Shown,
+} from "./restauro";
+import { activeTab, activeWorkspace, daemonError, gui, loaded, log, renameTab } from "./store";
+import { isLeader, peers, windowLabel } from "./windowPeers";
 
 const daemonUp = () => loaded.value && daemonError.value === null;
 
@@ -99,6 +114,58 @@ async function resumeStopped(): Promise<void> {
   }
 }
 
+// ------------------------------------------------------------------ the conversations left alone
+
+/** The tab this window shows. */
+function shownHere(): Shown | null {
+  const workspace = activeWorkspace.value;
+  const tab = activeTab.value?.root.id;
+  return workspace && tab !== undefined ? { workspace, tab } : null;
+}
+
+let sleeping = false;
+
+/**
+ * The conversations left alone for twelve hours out of sight leave memory, each tab kept with its shell (`keep
+ * restauro adormecer`): never the tab this window or another one shows.
+ */
+async function sleepIdle(): Promise<void> {
+  if (sleeping || !isLeader.value || !daemonUp()) return;
+  sleeping = true;
+  try {
+    const others = peers.value.filter((p) => p.label !== windowLabel.value).flatMap((p) => (p.placement.showing ? [p.placement.showing] : []));
+    const here = shownHere();
+    const line = dormancyLine(await api.iaAsk(sleepArgs(here ? [here, ...others] : others)));
+    if (line) log(line);
+  } catch (error) {
+    log(`adormecer: ${String(error)}`);
+  } finally {
+    sleeping = false;
+  }
+}
+
+/** The tab this window shows, as text: the same tab is the same string, and a poll that rebuilds the tabs wakes nothing. */
+const shownKey = computed(() => {
+  const shown = shownHere();
+  return shown ? `${shown.workspace}/${shown.tab}` : null;
+});
+
+/** The conversation of a tab put to sleep comes back in it as the tab is shown (`keep restauro acordar`). */
+function wakeShown(): void {
+  effect(() => {
+    if (shownKey.value === null || !daemonUp()) return;
+    const shown = untracked(shownHere);
+    if (!shown) return;
+    void api
+      .iaAsk(["restauro", "acordar", "--workspace", shown.workspace, "--aba", String(shown.tab)])
+      .then((answer) => {
+        const line = dormancyLine(answer);
+        if (line) log(line);
+      })
+      .catch((error) => log(`acordar: ${String(error)}`));
+  });
+}
+
 // ------------------------------------------------------------------ the names
 
 /** The version of the names file as the window last read or wrote it, and what it said then. */
@@ -147,5 +214,7 @@ export function startChores(): void {
   void keepPicture(true);
   setInterval(() => void keepPicture(false), 30_000);
   setInterval(() => void resumeStopped(), 15_000);
+  setInterval(() => void sleepIdle(), 300_000);
+  wakeShown();
   setInterval(() => void syncNames().catch(() => {}), 2_000);
 }

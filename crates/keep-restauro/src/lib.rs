@@ -14,8 +14,10 @@
 //! Aqui moram também `keep nova` (uma conversa nova do Claude numa aba nova, o
 //! caminho para uma sessão abrir outra e o dos links `claude-cli://`) e `keep
 //! continuar` (a conversa que parou numa queda de login, de rede ou de limite
-//! recebe "continue" quando a causa passa).
+//! recebe "continue" quando a causa passa) e o adormecer (a conversa parada há
+//! 12 h sai da memória e volta quando a aba é mostrada).
 
+pub mod adormecer;
 pub mod cli;
 pub mod continuar;
 pub mod daemon;
@@ -68,6 +70,9 @@ pub struct AbaGuardada {
     pub nome: Option<String>,
     #[serde(default)]
     pub ia: Option<Ia>,
+    /// A conversa da aba tinha saído da memória (`adormecer`): volta adormecida.
+    #[serde(default)]
+    pub adormecida: bool,
 }
 
 /// De que keepd é um retrato: o pid e o nascimento (List3), e o nascimento do

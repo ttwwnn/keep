@@ -393,7 +393,10 @@ fn job_anexado(frente: u32) -> Option<SessaoClaude> {
 
 // --------------------------------------------------------------- sair
 
-fn sai_do_claude(ws: &str, tab: u32, interromper: bool, sintaxe: linha::Sintaxe) -> Result<(), Recusa> {
+/// Sai do Claude da aba pelo `/exit` e espera o shell voltar. Com trabalho em
+/// segundo plano, só sai com `interromper`; a conversa que foi para segundo
+/// plano em vez de sair é recusa.
+pub fn sai_do_claude(ws: &str, tab: u32, interromper: bool, sintaxe: linha::Sintaxe) -> Result<(), Recusa> {
     let ja_na_tela = tela::jobs_na_tela(&tela_de(ws, tab).0);
     if !digita(ws, tab, "/exit", true)? {
         return Err(Recusa::nova("tela-inesperada", "O /exit não apareceu na caixa; nada foi feito."));
@@ -525,7 +528,8 @@ fn pasta_onde_comecou(id: &str) -> Option<String> {
     })
 }
 
-fn sintaxe_da_aba(a: &daemon::Aba, vinculo_shell: Option<u32>) -> linha::Sintaxe {
+/// A sintaxe do shell da aba: o da frente, senão o do vínculo.
+pub fn sintaxe_da_aba(a: &daemon::Aba, vinculo_shell: Option<u32>) -> linha::Sintaxe {
     if let Programa::Shell(nome) = tela::programa(&a.info.command) {
         return linha::sintaxe(&nome);
     }

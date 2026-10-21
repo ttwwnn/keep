@@ -233,3 +233,44 @@ keep continuar --status    o que vê em cada conversa e as três portas
 Teste: `cargo build -p keep-restauro --examples && cargo test -p keep-restauro
 --test continuar` (daemon do teste, Claude parado de mentira em quatro abas).
 Era o `cc-continuar` do kit-mac até 13/10/2026.
+
+# A conversa parada há 12 h sai da memória, e a aba fica
+
+Cada Claude Code aberto pesa de 200 a 400 MB, e as abas esquecidas há um dia
+somam gigabytes num Mac de 8 GB. Desde 21/10/2026 é o padrão do Keep: a
+conversa parada há mais de 12 h é fechada, a aba segue no Keep com o shell, e
+a conversa volta quando a aba é mostrada.
+
+- **Adormecer** (`keep restauro adormecer`, o app 20 s depois de abrir e a cada
+  5 min): sai do Claude pelo `/exit` a aba que está fora de vista em todas as
+  janelas (o app passa as que mostra em `--vista W/N`), livre (caixa vazia,
+  nada rodando, nenhuma pergunta, nada em segundo plano no rodapé) e cuja
+  última fala (da pessoa ou do Claude) no transcrito tem mais de 12 h. O
+  tráfego da aba e a data do arquivo não servem: o app redesenha a aba e o
+  Remote Control grava no transcrito sem conversa nenhuma.
+- **Antes de sair**, a conversa, a conta e as opções vão para
+  `adormecidas.json` (por keepd, na pasta do restauro). Se a saída falha, a
+  aba sai da lista e segue como estava.
+- **Acordar** (`keep restauro acordar --workspace W --aba N`, o app ao mostrar
+  a aba): a conversa volta na mesma aba, como a restauração a retoma (os
+  parâmetros, a conta, a pasta presa). Não volta se a conversa já roda em
+  outro lugar ou se a aba roda outra coisa: a pessoa tomou a aba. Uma aba
+  posta na tela durante a rodada é acordada no fim dela.
+- **Reinício**: o retrato leva a aba adormecida com a conversa (`adormecida`)
+  e a restauração a recria adormecida, sem subir a conversa; ela acorda do
+  mesmo jeito. A varredura de worktrees não a toma por órfã (o shell da aba
+  segue com a conversa no histórico).
+- **Só o Claude**: o Codex fica de pé.
+
+```
+keep restauro adormecer [--seco] [--vista W/N]…
+keep restauro acordar --workspace W --aba N
+```
+
+`KEEP_ADORMECER_PARADA_S` troca as 12 h (os testes).
+
+Testes: `cargo build -p keep-ia --examples && cargo test -p keep-restauro
+--test adormecer` (daemon do teste, IA falsa em quatro abas: só a parada,
+livre e fora de vista adormece; o retrato a leva; acordar a retoma; o reinício
+a mantém adormecida) e `tools/adormecer-test.sh` (o KeepDev de verdade: a aba
+fora de vista adormece, a da frente não, e mostrar a aba a acorda).
