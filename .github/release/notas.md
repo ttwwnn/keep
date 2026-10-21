@@ -130,3 +130,7 @@ imagem, ⌘⇧V ou Ctrl+V) e associa a ela o número que aparece; o clique no `[
 
 **Ícone de robô (0.3.7):** o Keep ganhou ícone próprio, um robô com um terminal por rosto, no Mac (antes aparecia o
 ícone genérico de app) e no Windows.
+
+**Conversa parada há 12 h sai da memória (0.3.8):** a aba do Claude fora de vista, livre e sem fala há mais de 12 h
+fecha o Claude Code (cada um pesa de 200 a 400 MB) e fica no Keep com o shell; a conversa volta sozinha, com as
+mesmas opções e a mesma conta, quando a aba é mostrada. Depois de um reinício ela volta assim também. Mac e Windows.
