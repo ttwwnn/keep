@@ -137,3 +137,6 @@ mesmas opções e a mesma conta, quando a aba é mostrada. Depois de um reiníci
 
 **Aba adormecida com o nome da conversa (0.3.9):** a aba cuja conversa saiu da memória fica com o título da conversa
 como nome na barra (se a pessoa não lhe deu outro), e o nome sai quando ela acorda.
+
+**0.3.10:** o app do Mac da 0.3.8 e da 0.3.9 não compilou no CI (as duas releases saíram só com o instalador do
+Windows); esta traz as duas mudanças acima no Mac também.
