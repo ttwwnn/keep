@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// What happens to the text under a ⌘-click: a web address or mail link goes
 /// to the browser or the mail app, a file path opens in whatever the Mac
@@ -189,6 +190,17 @@ enum LinkOpener {
             try? line.write(toFile: logPath, atomically: false, encoding: .utf8)
         }
         return true
+    }
+
+    /// The picture a link stands for: a file there that the Mac takes for
+    /// an image, as behind the `[Image #N]` Claude Code draws for a pasted
+    /// one. Nil for any other link.
+    static func image(behind link: String) -> URL? {
+        guard let url = URL(string: link), url.isFileURL,
+            UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true,
+            FileManager.default.fileExists(atPath: url.path)
+        else { return nil }
+        return url
     }
 
     /// Opens a file already found, the same way a click does.

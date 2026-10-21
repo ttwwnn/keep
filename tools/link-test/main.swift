@@ -141,5 +141,13 @@ check("a plain click opens a file address", plain("file:///tmp/a.txt"), "true")
 check("a plain click does not start an app by its address", plain("vscode://file/tmp/a"), "false")
 check("an address is the program's when it has the mouse", plain("https://example.com", true), "false")
 check("a path is still opened when the program has the mouse", plain("/tmp/a.txt:3", true), "true")
+
+// The `[Image #N]` of a pasted picture: the file behind it, when it is one.
+FileManager.default.createFile(atPath: root + "/1.png", contents: Data())
+let png = URL(fileURLWithPath: root + "/1.png").absoluteString
+check("a picture behind a link", LinkOpener.image(behind: png)?.path, root + "/1.png")
+check("not a picture", LinkOpener.image(behind: URL(fileURLWithPath: root + "/a.txt").absoluteString)?.path, nil)
+check("a picture no longer there", LinkOpener.image(behind: URL(fileURLWithPath: root + "/2.png").absoluteString)?.path, nil)
+check("a web address", LinkOpener.image(behind: "https://example.com/1.png")?.path, nil)
 _ = real
 exit(failures == 0 ? 0 : 1)

@@ -1439,7 +1439,30 @@ final class TerminalSurfaceView: NSView {
         // without any of the tracked movement that would have said where the
         // pointer is, and a press at the wrong place selects from there.
         reportMouse(event)
+        heldPress = nil
+        if let image = imageUnderPlainPress(event) {
+            heldPress = (event, image)
+            return
+        }
         mouseButton(event, action: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_LEFT)
+    }
+
+    /// A press on a picture's link kept from the program until it is known
+    /// to be a click: Claude Code in full screen has the mouse, and a click
+    /// on the `[Image #N]` of a pasted picture only shows the file in the
+    /// Finder there (`open -R`). A click opens the picture here instead; a
+    /// drag hands the press over late, so selecting still works.
+    private var heldPress: (event: NSEvent, image: URL)?
+
+    /// The picture behind the link under a press with no modifier, in a pane
+    /// that already had the keyboard, while the program has the mouse. With
+    /// the mouse left alone the plain click opens it as any file link.
+    private func imageUnderPlainPress(_ event: NSEvent) -> URL? {
+        guard let pressed, pressed.focused, let surface, ghostty_surface_mouse_captured(surface),
+            event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+            let link = linkUnder(convert(event.locationInWindow, from: nil))
+        else { return nil }
+        return LinkOpener.image(behind: link)
     }
 
     /// When a ⌘-click last made the runtime hand over a link.
@@ -1475,12 +1498,28 @@ final class TerminalSurfaceView: NSView {
     override func mouseUp(with event: NSEvent) {
         noteActivity()
         reportMouse(event)
+        if let held = heldPress {
+            heldPress = nil
+            openHeldImage(held.image, clickCount: event.clickCount)
+            return
+        }
         mouseButton(event, action: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT)
         traceSelection()
         if event.modifierFlags.contains(.command) {
             openWordIfNoLink()
         } else {
             openPathUnderPlainClick(event)
+        }
+    }
+
+    /// The picture of a held press, opened once the double-click interval
+    /// has passed with no other press: a double click opens nothing.
+    private func openHeldImage(_ image: URL, clickCount: Int) {
+        guard clickCount == 1, let at = pressed?.time else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval) { [weak self] in
+            guard let self, self.pressed?.time == at else { return }
+            Trace.log("link", "plain click on the picture: \(image.path)")
+            LinkOpener.open(image)
         }
     }
 
@@ -1723,6 +1762,14 @@ final class TerminalSurfaceView: NSView {
     /// release in the same place and selected nothing.
     override func mouseDragged(with event: NSEvent) {
         noteActivity()
+        if let held = heldPress {
+            let from = held.event.locationInWindow
+            guard hypot(event.locationInWindow.x - from.x, event.locationInWindow.y - from.y) >= 4
+            else { return }
+            heldPress = nil
+            reportMouse(held.event)
+            mouseButton(held.event, action: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_LEFT)
+        }
         reportMouse(event)
     }
 

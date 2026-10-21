@@ -55,7 +55,7 @@ build "$WORK/Sabotaged.swift" || exit 1
 if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
 
 echo "sabotage: any row counts as full, so an address runs into the next sentence"
-sed 's/columns > 0 \&\& row.count >= columns - 3/columns > 0/' "$SOURCE" > "$WORK/Sabotaged.swift"
+sed 's/columns > 0 \&\& row.count >= columns - 2/columns > 0/' "$SOURCE" > "$WORK/Sabotaged.swift"
 cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage did not apply"; exit 1; }
 build "$WORK/Sabotaged.swift" || exit 1
 if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi

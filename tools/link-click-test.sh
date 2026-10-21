@@ -27,6 +27,11 @@
 #     screen takes it, the plain click opens nothing here: the program has
 #     it and opens its own links (opening it here too opened it twice);
 #     ⌘-click and the menu still open it.
+#   - a pasted picture (PRINT=image): the `[Image #1]` Claude Code draws, with
+#     the file behind it (OSC 8). A plain click opens the picture, also with
+#     the mouse taken, and then the program never sees the press (Claude Code
+#     would only show the file in the Finder); a double click opens nothing;
+#     a drag across it reaches the program, so selecting still works.
 #
 # It takes the pointer for a few seconds. Your app and your daemon are never
 # touched.
@@ -50,6 +55,10 @@ if [ -z "${MOUSE_MODE:-}" ]; then
             echo "== web addresses ($print), the program takes the mouse: $([ "$mode" = 1 ] && echo yes || echo no)"
             MOUSE_MODE=$mode PRINT=$print "$0" || status=1
         done
+    done
+    for mode in 0 1; do
+        echo "== a pasted picture, the program takes the mouse: $([ "$mode" = 1 ] && echo yes || echo no)"
+        MOUSE_MODE=$mode PRINT=image "$0" || status=1
     done
     exit $status
 fi
@@ -102,6 +111,9 @@ require_scratch_socket
 rm -f "$SOCKET"
 : >"$KEEP_LINK_LOG"
 
+IMAGE=$WORK/images/1.png
+mkdir -p "$(dirname "$IMAGE")"
+printf '\x89PNG\r\n\x1a\n' >"$IMAGE"
 TARGET=$WORK/nota.txt
 : >"$TARGET"
 LONG=$WORK/projetos/clinica/app/Filament/Resources/relatorio_de_atendimento_completo_do_paciente.txt
@@ -119,6 +131,15 @@ cat >"$WORK/printer" <<PY
 import sys, time
 if "$MOUSE_MODE" == "1":
     sys.stdout.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h")
+if "$MOUSE_MODE" == "1" and "$PRINT" == "image":
+    # What reaches the program: a press arrives as ESC [ < 0 ; x ; y M.
+    import os, threading, tty
+    tty.setraw(sys.stdin.fileno())
+    def listen():
+        with open("$WORK/mouse", "ab", buffering=0) as log:
+            while True:
+                log.write(os.read(sys.stdin.fileno(), 1024))
+    threading.Thread(target=listen, daemon=True).start()
 if "$PRINT" == "wrapped":
     # Broken by the program, the rest indented on the next row: to the
     # terminal two words, the second without a slash for the runtime to see
@@ -126,6 +147,18 @@ if "$PRINT" == "wrapped":
     for _ in range(20):
         print("  " + "$LONG"[:-44])
         print("  " + "$LONG"[-44:] + ":12")
+elif "$PRINT" == "image":
+    import os, signal
+    def draw(*_):
+        # The chip of a pasted picture, as Claude Code draws it, across
+        # every row: the text, with the file behind it.
+        cols, rows = os.get_terminal_size()
+        link = "\x1b]8;;file://$IMAGE\x07[Image #1]\x1b]8;;\x07 "
+        line = "  " + link * max(1, (cols - 4) // 11)
+        sys.stdout.write("\x1b[H\x1b[2J" + "\r\n".join([line] * (rows - 1)))
+        sys.stdout.flush()
+    signal.signal(signal.SIGWINCH, draw)
+    draw()
 elif "$PRINT" in ("web", "osc8", "webwrapped"):
     import os, signal
     def draw(*_):
@@ -238,6 +271,41 @@ if [ "$PRINT" = web ] || [ "$PRINT" = osc8 ]; then
     "$AXPRESS" "$APP_NAME" pick "Abrir link" >/dev/null 2>&1
     sleep 1
     check "and Abrir link opens it" "$ADDRESS" "$(head -1 "$KEEP_LINK_LOG" | cut -c1-${#ADDRESS})"
+    stop_app
+    say ""
+    say "passed $PASSED, failed $FAILED"
+    [ "$FAILED" -eq 0 ]
+    exit
+fi
+
+if [ "$PRINT" = image ]; then
+    say ""
+    say "a pasted picture on the screen"
+    # The reports come with no newline between them: counted one by one.
+    presses() { grep -ao '\[<0;[0-9]*;[0-9]*M' "$WORK/mouse" 2>/dev/null | wc -l | tr -d ' '; }
+    # The column may fall on the blank between two chips: a few cells on is
+    # one.
+    for _ in 1 2 3; do
+        "$MOUSE" click "$TX" "$TY"
+        sleep 2
+        [ -s "$KEEP_LINK_LOG" ] && break
+        TX=$((TX + 24))
+    done
+    check "a plain click opens the picture" "$IMAGE" "$(cat "$KEEP_LINK_LOG")"
+    if [ "$MOUSE_MODE" = 1 ]; then
+        check "and the program, which has the mouse, never sees the press" "0" "$(presses)"
+    fi
+    : >"$KEEP_LINK_LOG"
+    "$MOUSE" dblclick "$TX" "$((TY + 40))"
+    sleep 2
+    check "a double click opens nothing" "" "$(cat "$KEEP_LINK_LOG")"
+    before=$(presses)
+    "$MOUSE" drag "$((TX - 60))" "$((TY + 20))" "$((TX + 60))" "$((TY + 20))" 10 20
+    sleep 2
+    check "a drag across it opens nothing" "" "$(cat "$KEEP_LINK_LOG")"
+    if [ "$MOUSE_MODE" = 1 ]; then
+        check "and its press reaches the program" "yes" "$([ "$(presses)" -gt "$before" ] && echo yes || echo no)"
+    fi
     stop_app
     say ""
     say "passed $PASSED, failed $FAILED"
