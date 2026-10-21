@@ -140,3 +140,7 @@ como nome na barra (se a pessoa não lhe deu outro), e o nome sai quando ela aco
 
 **0.3.10:** o app do Mac da 0.3.8 e da 0.3.9 não compilou no CI (as duas releases saíram só com o instalador do
 Windows); esta traz as duas mudanças acima no Mac também.
+
+**Pergunta de confiança respondida ao retomar (0.3.11):** a conversa que volta (depois de um reinício, ou ao
+acordar) numa pasta que o Claude Code ainda não conhece não fica mais parada na pergunta "confiar nesta pasta?":
+o Keep responde sim por ela, como já fazia ao abrir uma conversa nova.
