@@ -118,3 +118,8 @@ Detalhes em `docs/ia.md`.
 **Modelo e esforço na conversa nova (0.3.4):** na barra sob a conversa do Claude, os itens de modelo e esforço
 ficavam desativados numa conversa nova, porque a sugestão cinza da caixa vazia (`❯ Try "…"`) parecia texto
 digitado. Agora o texto esmaecido não conta, e a barra troca o modelo e o esforço assim que a caixa está vazia.
+
+**Imagem colada abre no clique (0.3.5, Mac):** um clique no `[Image #N]` de uma imagem colada no Claude Code
+abre a imagem no app padrão (em geral, o Visualização). Com o Claude Code em tela cheia, o clique ia para ele,
+que só mostrava o arquivo no Finder; agora o Keep o retém quando há uma imagem por trás do texto. Duplo clique
+não abre nada, e arrastar continua selecionando.

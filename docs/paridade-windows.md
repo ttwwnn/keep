@@ -202,7 +202,7 @@ caixa da linha, rolagem da lista, estado do movimento, fim do arrasto por `point
   tela cheia) o Mac deixa o endereço para ele (62be02e), que o abre porque o terminal se diz ghostty; aqui o
   terminal se diz `TERM_PROGRAM=keep`, então o clique simples continua abrindo. Não visto com o Claude Code no
   Windows.
-- [ ] Imagem colada (`[Image #N]`, OSC 8 para o arquivo): no Mac (0.3.4) o clique simples a abre mesmo com o
+- [ ] Imagem colada (`[Image #N]`, OSC 8 para o arquivo): no Mac (0.3.5) o clique simples a abre mesmo com o
   mouse tomado, retendo o clique do programa (o Claude Code só a mostraria no Finder). Não visto no Windows.
 - [x] OSC 52 (`osc52.ts`): escrita permitida só no `c` (`s` e `p` descartados); leitura pergunta primeiro
   ("Permitir a leitura da área de transferência?", com prévia) e responde `ESC ] 52 ; c ; base64 ESC \`. 12
