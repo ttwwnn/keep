@@ -70,12 +70,13 @@ Uma conta do Claude é um **armazém de credenciais** do Claude Code:
 
 ### Gerente externo
 
-Se o kit do autor estiver instalado (`~/.claude/contas/.ativa` e `~/.local/bin/claude-melhor-conta`),
-quem troca a conta do armazém global é ele: no Keep, `claude:ordem` passa a ser a conta que ele pôs
+Se o kit do autor estiver instalado e ligado (`~/.claude/contas/.ativa`, `~/.local/bin/claude-melhor-conta`
+e o agente de renovação dele, `~/Library/LaunchAgents/br.ttwwnn.kit.claude-conectado.plist`), quem troca a conta do armazém global é ele: no Keep, `claude:ordem` passa a ser a conta que ele pôs
 no global (`.ativa`) — as abas de armazém próprio que seguem a ordem vão para ela na renovação
 seguinte, a quente —, o dono de uma conta é a pasta fixa dela (o global só por último: ele muda de
 dono), o global não é renovado pelo Keep, e `sincronizar` não faz nada (o kit tem a própria). Sem o
-kit, o Keep faz tudo.
+kit, o Keep faz tudo. Um kit pela metade (cofre e scripts, sem o agente) não conta: até a 0.3.2 o Keep se
+calava e ninguém renovava o login global, que caía na tela de login (MacBook de Emília, 20/10/2026).
 
 ## Renovação
 

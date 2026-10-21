@@ -686,14 +686,21 @@ pub fn acrescentar_na_ordem(chave: &str) -> std::io::Result<()> {
 /// Quem troca a conta do login global, quando não é o Keep: o kit do autor.
 /// Com ele, "seguir a ordem" é o login global, e o Keep não move abas de um
 /// Claude para outro (`docs/ia.md`, "Gerente externo").
+///
+/// Só com o agente de renovação do kit ligado (o plist do
+/// `br.ttwwnn.kit.claude-conectado`): um kit instalado pela metade tem o
+/// cofre e os scripts, mas ninguém renova o login global, e o Keep, calado,
+/// deixava o Claude cair na tela de login (MacBook de Emília, 20/10/2026).
 pub fn gerente_externo() -> bool {
     match std::env::var("KEEP_IA_GERENTE_EXTERNO").as_deref() {
         Ok("1") => return true,
         Ok("0") => return false,
         _ => {}
     }
+    let casa = caminhos::casa();
     caminhos::contas().join(".ativa").is_file()
-        && caminhos::casa().join(".local/bin/claude-melhor-conta").is_file()
+        && casa.join(".local/bin/claude-melhor-conta").is_file()
+        && casa.join("Library/LaunchAgents/br.ttwwnn.kit.claude-conectado.plist").is_file()
 }
 
 /// Por que uma conta não pode receber uma aba agora.

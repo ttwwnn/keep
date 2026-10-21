@@ -331,6 +331,22 @@ fn o_global_so_quando_nao_ha_gerente_externo() {
 }
 
 #[test]
+fn kit_sem_o_agente_de_renovacao_nao_e_gerente() {
+    let c = casa("gerente-pela-metade");
+    // SAFETY: a casa (e a trava) está de pé.
+    unsafe { std::env::remove_var("KEEP_IA_GERENTE_EXTERNO") };
+    std::fs::write(caminhos::contas().join(".ativa"), "reserva\n").unwrap();
+    let bin = c.raiz.join(".local/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(bin.join("claude-melhor-conta"), "").unwrap();
+    assert!(!contas::gerente_externo(), "cofre e scripts sem o agente: o Keep renova");
+    let agentes = c.raiz.join("Library/LaunchAgents");
+    std::fs::create_dir_all(&agentes).unwrap();
+    std::fs::write(agentes.join("br.ttwwnn.kit.claude-conectado.plist"), "").unwrap();
+    assert!(contas::gerente_externo(), "com o agente ligado, o kit renova");
+}
+
+#[test]
 fn nunca_toca_no_cofre_do_kit() {
     let c = casa("renova-cofre");
     perfis(&[]);
