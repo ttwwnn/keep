@@ -123,3 +123,7 @@ digitado. Agora o texto esmaecido não conta, e a barra troca o modelo e o esfor
 abre a imagem no app padrão (em geral, o Visualização). Com o Claude Code em tela cheia, o clique ia para ele,
 que só mostrava o arquivo no Finder; agora o Keep o retém quando há uma imagem por trás do texto. Duplo clique
 não abre nada, e arrastar continua selecionando.
+
+**Imagem colada abre também na caixa de texto (0.3.6, Mac):** antes do envio, o Claude Code ainda não gravou a
+imagem nem pôs link no `[Image #N]`. O Keep guarda uma cópia da área de transferência ao colar (⌘V só com
+imagem, ⌘⇧V ou Ctrl+V) e associa a ela o número que aparece; o clique no `[Image #N]` da caixa abre essa cópia.
