@@ -150,6 +150,12 @@ check("a text behind a link", LinkOpener.file(behind: URL(fileURLWithPath: root 
 check("a file no longer there", LinkOpener.file(behind: URL(fileURLWithPath: root + "/2.png").absoluteString)?.path, nil)
 check("a web address", LinkOpener.file(behind: "https://example.com/1.png")?.path, nil)
 
+// Audio goes to QuickTime Player when the Mac would send it to Music; other files are left alone.
+check("a text has no special player", LinkOpener.audioPlayer(for: URL(fileURLWithPath: root + "/a.txt"))?.path, nil)
+FileManager.default.createFile(atPath: root + "/a.mp3", contents: Data())
+let mp3Player = LinkOpener.audioPlayer(for: URL(fileURLWithPath: root + "/a.mp3"))?.lastPathComponent
+check("audio plays in QuickTime Player, or in the app the person chose", mp3Player == nil || mp3Player == "QuickTime Player.app" ? "ok" : "no", "ok")
+
 // The `[Image #N]` still in the box being typed: no link, only its number.
 let chip = "❯ olha [Image #2] e [Image #10]"
 check("the chips on the screen", LinkOpener.imageNumbers(in: ["x", chip]).sorted().map(String.init).joined(separator: ","), "2,10")

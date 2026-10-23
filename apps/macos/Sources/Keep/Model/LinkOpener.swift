@@ -138,8 +138,26 @@ enum LinkOpener {
     /// this set, what would have been opened is appended to that file instead.
     private static let logPath = ProcessInfo.processInfo.environment["KEEP_LINK_LOG"]
 
+    /// The app to play an audio file in when the Mac's own choice for it is
+    /// the Music app, which here starts and quits at once without playing
+    /// anything: QuickTime Player plays it. Nil for any other file, and for
+    /// audio the person has pointed at another app.
+    static func audioPlayer(for url: URL) -> URL? {
+        guard url.isFileURL, UTType(filenameExtension: url.pathExtension)?.conforms(to: .audio) == true,
+            let chosen = NSWorkspace.shared.urlForApplication(toOpen: url),
+            Bundle(url: chosen)?.bundleIdentifier == "com.apple.Music"
+        else { return nil }
+        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.QuickTimePlayerX")
+    }
+
     private static func hand(_ url: URL) -> Bool {
-        guard let logPath else { return NSWorkspace.shared.open(url) }
+        guard let logPath else {
+            if let player = audioPlayer(for: url) {
+                NSWorkspace.shared.open([url], withApplicationAt: player, configuration: NSWorkspace.OpenConfiguration())
+                return true
+            }
+            return NSWorkspace.shared.open(url)
+        }
         let line = (url.isFileURL ? url.path : url.absoluteString) + "\n"
         if let handle = FileHandle(forWritingAtPath: logPath) {
             handle.seekToEndOfFile()
