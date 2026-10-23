@@ -144,3 +144,8 @@ Windows); esta traz as duas mudanças acima no Mac também.
 **Pergunta de confiança respondida ao retomar (0.3.11):** a conversa que volta (depois de um reinício, ou ao
 acordar) numa pasta que o Claude Code ainda não conhece não fica mais parada na pergunta "confiar nesta pasta?":
 o Keep responde sim por ela, como já fazia ao abrir uma conversa nova.
+
+**Qualquer arquivo abre no clique (0.3.12, Mac):** com o Claude Code em tela cheia, só a imagem era retida pelo Keep;
+o clique em link de outro arquivo (PDF, planilha, texto, pasta) ia ao Claude Code, que só o mostrava no Finder.
+Agora o Keep retém o clique em qualquer arquivo que exista atrás do link e o abre no app padrão. Duplo clique
+não abre nada, e arrastar continua selecionando.
