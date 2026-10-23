@@ -149,3 +149,7 @@ o Keep responde sim por ela, como já fazia ao abrir uma conversa nova.
 o clique em link de outro arquivo (PDF, planilha, texto, pasta) ia ao Claude Code, que só o mostrava no Finder.
 Agora o Keep retém o clique em qualquer arquivo que exista atrás do link e o abre no app padrão. Duplo clique
 não abre nada, e arrastar continua selecionando.
+
+**Áudio abre no clique (0.3.13, Mac):** o Music, app padrão de mp3, abria e fechava na hora sem tocar nada. O Keep
+passa a abrir áudio no QuickTime Player quando o padrão do Mac para ele é o Music; se você escolher outro app para
+áudio, o Keep respeita.
