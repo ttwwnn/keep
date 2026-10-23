@@ -5,6 +5,9 @@ enum Trace { static func log(_ a: String, _ b: String) {} }
 var failures = 0
 let log = (NSTemporaryDirectory() as NSString).appendingPathComponent("keep-link-log-\(getpid())")
 setenv("KEEP_LINK_LOG", log, 1)
+let scratch = (NSTemporaryDirectory() as NSString).appendingPathComponent("keep-scratch-\(getpid())")
+setenv("KEEP_SCRATCH_ROOT", scratch, 1)
+defer { try? FileManager.default.removeItem(atPath: scratch) }
 defer { try? FileManager.default.removeItem(atPath: log) }
 func check(_ name: String, _ got: String?, _ want: String?) {
     if got == want { print("ok   \(name)") } else {
@@ -149,6 +152,16 @@ check("a picture behind a link", LinkOpener.file(behind: png)?.path, root + "/1.
 check("a text behind a link", LinkOpener.file(behind: URL(fileURLWithPath: root + "/a.txt").absoluteString)?.path, root + "/a.txt")
 check("a file no longer there", LinkOpener.file(behind: URL(fileURLWithPath: root + "/2.png").absoluteString)?.path, nil)
 check("a web address", LinkOpener.file(behind: "https://example.com/1.png")?.path, nil)
+
+// A bare name Claude Code printed for a file in a session's scratchpad.
+let pad = scratch + "/proj/sess/scratchpad"
+try! FileManager.default.createDirectory(atPath: pad + "/voz", withIntermediateDirectories: true)
+FileManager.default.createFile(atPath: pad + "/voz/nova.mp3", contents: Data())
+check("a bare name in a scratchpad folder", LinkOpener.resolve("nova.mp3", from: root)?.path, pad + "/voz/nova.mp3")
+check("and with a trailing :line", LinkOpener.resolve("nova.mp3:3", from: root)?.path, pad + "/voz/nova.mp3")
+check("a name nobody made", LinkOpener.resolve("outra.mp3", from: root)?.path, nil)
+check("a word with no extension", LinkOpener.resolve("nova", from: root)?.path, nil)
+check("the tab's own folder wins", LinkOpener.resolve("a.txt", from: root)?.path, root + "/a.txt")
 
 // Audio goes to QuickTime Player when the Mac would send it to Music; other files are left alone.
 check("a text has no special player", LinkOpener.audioPlayer(for: URL(fileURLWithPath: root + "/a.txt"))?.path, nil)

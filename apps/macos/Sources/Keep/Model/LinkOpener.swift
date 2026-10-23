@@ -33,7 +33,42 @@ enum LinkOpener {
                 return URL(fileURLWithPath: path)
             }
         }
-        return nil
+        return candidates.lazy.compactMap { scratchFile(named: $0) }.first
+    }
+
+    /// Where Claude Code keeps the files it writes for a session, one folder
+    /// per project and session. Under test it is pointed elsewhere.
+    private static let scratchRoot = ProcessInfo.processInfo.environment["KEEP_SCRATCH_ROOT"]
+        ?? "/private/tmp/claude-\(getuid())"
+
+    /// A bare file name that Claude Code printed for a file it made in a
+    /// scratchpad (`pergunta-nova.mp3`): it is not in the tab's folder, but
+    /// in the session's `scratchpad` or one folder below it. Any session's
+    /// will do, the newest file wins. Nil for anything with a slash or
+    /// without an extension, so a plain word never names a file.
+    static func scratchFile(named name: String) -> URL? {
+        guard !name.isEmpty, !name.contains("/"), !name.hasPrefix("~"),
+            !(name as NSString).pathExtension.isEmpty
+        else { return nil }
+        let fm = FileManager.default
+        func children(_ dir: String) -> [String] {
+            ((try? fm.contentsOfDirectory(atPath: dir)) ?? []).map { (dir as NSString).appendingPathComponent($0) }
+        }
+        var best: (path: String, date: Date)?
+        for project in children(scratchRoot) {
+            for session in children(project) {
+                let pad = (session as NSString).appendingPathComponent("scratchpad")
+                for dir in [pad] + children(pad) {
+                    let path = (dir as NSString).appendingPathComponent(name)
+                    var isDirectory: ObjCBool = false
+                    guard fm.fileExists(atPath: path, isDirectory: &isDirectory), !isDirectory.boolValue,
+                        let date = (try? fm.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+                    else { continue }
+                    if best == nil || date > best!.date { best = (path, date) }
+                }
+            }
+        }
+        return best.map { URL(fileURLWithPath: $0.path) }
     }
 
     /// The file a ⌘-click meant when the runtime handed over only part of
