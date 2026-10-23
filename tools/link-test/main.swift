@@ -142,13 +142,13 @@ check("a plain click does not start an app by its address", plain("vscode://file
 check("an address is the program's when it has the mouse", plain("https://example.com", true), "false")
 check("a path is still opened when the program has the mouse", plain("/tmp/a.txt:3", true), "true")
 
-// The `[Image #N]` of a pasted picture: the file behind it, when it is one.
+// The file behind a link, of any kind: a pasted picture, a text, a PDF.
 FileManager.default.createFile(atPath: root + "/1.png", contents: Data())
 let png = URL(fileURLWithPath: root + "/1.png").absoluteString
-check("a picture behind a link", LinkOpener.image(behind: png)?.path, root + "/1.png")
-check("not a picture", LinkOpener.image(behind: URL(fileURLWithPath: root + "/a.txt").absoluteString)?.path, nil)
-check("a picture no longer there", LinkOpener.image(behind: URL(fileURLWithPath: root + "/2.png").absoluteString)?.path, nil)
-check("a web address", LinkOpener.image(behind: "https://example.com/1.png")?.path, nil)
+check("a picture behind a link", LinkOpener.file(behind: png)?.path, root + "/1.png")
+check("a text behind a link", LinkOpener.file(behind: URL(fileURLWithPath: root + "/a.txt").absoluteString)?.path, root + "/a.txt")
+check("a file no longer there", LinkOpener.file(behind: URL(fileURLWithPath: root + "/2.png").absoluteString)?.path, nil)
+check("a web address", LinkOpener.file(behind: "https://example.com/1.png")?.path, nil)
 
 // The `[Image #N]` still in the box being typed: no link, only its number.
 let chip = "❯ olha [Image #2] e [Image #10]"

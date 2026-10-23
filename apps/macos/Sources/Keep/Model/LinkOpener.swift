@@ -192,12 +192,11 @@ enum LinkOpener {
         return true
     }
 
-    /// The picture a link stands for: a file there that the Mac takes for
-    /// an image, as behind the `[Image #N]` Claude Code draws for a pasted
-    /// one. Nil for any other link.
-    static func image(behind link: String) -> URL? {
+    /// The file a link stands for: one that is there, of any kind (a picture
+    /// pasted as `[Image #N]`, a PDF, a sheet, a folder). Nil for a web
+    /// address or a file no longer there.
+    static func file(behind link: String) -> URL? {
         guard let url = URL(string: link), url.isFileURL,
-            UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true,
             FileManager.default.fileExists(atPath: url.path)
         else { return nil }
         return url

@@ -32,6 +32,7 @@
 #     the mouse taken, and then the program never sees the press (Claude Code
 #     would only show the file in the Finder); a double click opens nothing;
 #     a drag across it reaches the program, so selecting still works;
+#   - a link to any other file (PRINT=file, a PDF): the same, whatever the type;
 #   - a picture still in the box being typed (PRINT=pasted): Claude Code has
 #     not written it yet and puts no link behind its `[Image #N]`, so the app
 #     keeps a copy of the clipboard at ⌘⇧V and a plain click opens that.
@@ -62,6 +63,8 @@ if [ -z "${MOUSE_MODE:-}" ]; then
     for mode in 0 1; do
         echo "== a pasted picture, the program takes the mouse: $([ "$mode" = 1 ] && echo yes || echo no)"
         MOUSE_MODE=$mode PRINT=image "$0" || status=1
+        echo "== a link to a PDF, the program takes the mouse: $([ "$mode" = 1 ] && echo yes || echo no)"
+        MOUSE_MODE=$mode PRINT=file "$0" || status=1
         echo "== a picture in the box being typed, the program takes the mouse: $([ "$mode" = 1 ] && echo yes || echo no)"
         MOUSE_MODE=$mode PRINT=pasted "$0" || status=1
     done
@@ -119,6 +122,11 @@ rm -f "$SOCKET"
 IMAGE=$WORK/images/1.png
 mkdir -p "$(dirname "$IMAGE")"
 printf '\x89PNG\r\n\x1a\n' >"$IMAGE"
+if [ "${PRINT:-}" = file ]; then  # not a picture: a link to any file
+    IMAGE=$WORK/docs/relatorio.pdf
+    mkdir -p "$(dirname "$IMAGE")"
+    printf '%%PDF-1.4\n' >"$IMAGE"
+fi
 TARGET=$WORK/nota.txt
 : >"$TARGET"
 LONG=$WORK/projetos/clinica/app/Filament/Resources/relatorio_de_atendimento_completo_do_paciente.txt
@@ -158,7 +166,7 @@ if "$PRINT" == "pasted":
                 draw()
     signal.signal(signal.SIGWINCH, draw)
     threading.Thread(target=listen, daemon=True).start()
-if "$MOUSE_MODE" == "1" and "$PRINT" == "image":
+if "$MOUSE_MODE" == "1" and "$PRINT" in ("image", "file"):
     # What reaches the program: a press arrives as ESC [ < 0 ; x ; y M.
     import os, threading, tty
     tty.setraw(sys.stdin.fileno())
@@ -176,7 +184,7 @@ if "$PRINT" == "wrapped":
         print("  " + "$LONG"[-44:] + ":12")
 elif "$PRINT" == "pasted":
     pass  # drawn on ^V, above
-elif "$PRINT" == "image":
+elif "$PRINT" in ("image", "file"):
     import os, signal
     def draw(*_):
         # The chip of a pasted picture, as Claude Code draws it, across
@@ -307,7 +315,7 @@ if [ "$PRINT" = web ] || [ "$PRINT" = osc8 ]; then
     exit
 fi
 
-if [ "$PRINT" = image ]; then
+if [ "$PRINT" = image ] || [ "$PRINT" = file ]; then
     say ""
     say "a pasted picture on the screen"
     # The reports come with no newline between them: counted one by one.

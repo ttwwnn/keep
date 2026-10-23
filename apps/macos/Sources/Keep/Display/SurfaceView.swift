@@ -1448,14 +1448,15 @@ final class TerminalSurfaceView: NSView {
         mouseButton(event, action: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_LEFT)
     }
 
-    /// A press on a picture's link kept from the program until it is known
+    /// A press on a file's link kept from the program until it is known
     /// to be a click: Claude Code in full screen has the mouse, and a click
-    /// on the `[Image #N]` of a pasted picture only shows the file in the
-    /// Finder there (`open -R`). A click opens the picture here instead; a
+    /// on a file link (the `[Image #N]` of a pasted picture, a PDF, any file)
+    /// only shows the file in the Finder there (`open -R`). A click opens
+    /// the file here instead; a
     /// drag hands the press over late, so selecting still works.
     private var heldPress: (event: NSEvent, image: URL)?
 
-    /// The picture behind the link under a press with no modifier, in a pane
+    /// The file behind the link under a press with no modifier, in a pane
     /// that already had the keyboard, while the program has the mouse. With
     /// the mouse left alone the plain click opens it as any file link.
     ///
@@ -1467,7 +1468,7 @@ final class TerminalSurfaceView: NSView {
         else { return nil }
         let point = convert(event.locationInWindow, from: nil)
         if ghostty_surface_mouse_captured(surface), let link = linkUnder(point),
-            let image = LinkOpener.image(behind: link)
+            let image = LinkOpener.file(behind: link)
         {
             return image
         }
