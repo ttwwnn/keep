@@ -153,3 +153,7 @@ não abre nada, e arrastar continua selecionando.
 **Áudio abre no clique (0.3.13, Mac):** o Music, app padrão de mp3, abria e fechava na hora sem tocar nada. O Keep
 passa a abrir áudio no QuickTime Player quando o padrão do Mac para ele é o Music; se você escolher outro app para
 áudio, o Keep respeita.
+
+**Nome solto de arquivo abre no clique (0.3.14, Mac):** quando o Claude cita só o nome de um arquivo que ele gravou na
+pasta temporária da sessão (`pergunta-nova.mp3`), o nome não existe na pasta da aba e o clique não achava nada. Agora
+o Keep procura o nome em `/private/tmp/claude-<uid>/*/*/scratchpad` (e uma pasta abaixo) e abre o mais recente.
