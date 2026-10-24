@@ -77,10 +77,11 @@ enum KeepCLI {
     // MARK: - what it runs with
 
     /// What the core is told, on top of the app's own environment: the daemon
-    /// the app uses (`KEEP_SOCKET`), and — for an app that reads a made-up
-    /// home (`KEEP_AI_USAGE_HOME`, which every test build sets) — that home
-    /// and a state folder inside it (`KEEP_IA_HOME`, `KEEP_IA_ESTADO`), so the
-    /// core reads and writes there and nowhere else.
+    /// the app uses (`KEEP_SOCKET`), where its pictures of the tabs are kept
+    /// (`KEEP_RESTAURO_ESTADO`, see `TabRestore.folder`), and — for an app
+    /// that reads a made-up home (`KEEP_AI_USAGE_HOME`, which every test build
+    /// sets) — that home and a state folder inside it (`KEEP_IA_HOME`,
+    /// `KEEP_IA_ESTADO`), so the core reads and writes there and nowhere else.
     ///
     /// The home alone is not enough. Where the home does not reach — the
     /// login Claude Code keeps in the Keychain, the services a token is shown
@@ -92,6 +93,7 @@ enum KeepCLI {
     static func environment(_ base: [String: String]) -> [String: String] {
         var environment = base
         environment["KEEP_SOCKET"] = Daemon.socketPath
+        environment["KEEP_RESTAURO_ESTADO"] = TabRestore.folder
         guard let home = madeUpHome(base) else { return environment }
         let state = (home as NSString).appendingPathComponent(".keep-ia-estado")
         environment["KEEP_IA_HOME"] = home
@@ -461,17 +463,22 @@ enum AIHelper {
 enum TabRestore {
     private static var helper: String? {
         let path = KeepCLI.bundledPath
-        guard FileManager.default.isExecutableFile(atPath: path) else { return nil }
-        isolate()
-        return path
+        return FileManager.default.isExecutableFile(atPath: path) ? path : nil
     }
 
     /// The pictures live in this build's own state folder (`restauro` inside
     /// it): a test build, with a daemon of its own, must never bring the
     /// person's tabs — or start their conversations — into its daemon.
-    private static func isolate() {
-        let folder = stateDirectory().appendingPathComponent("restauro", isDirectory: true).path
-        setenv("KEEP_RESTAURO_ESTADO", folder, 1)
+    ///
+    /// Every call to the core is told so (`KeepCLI.environment`), and never by
+    /// writing it into the app's own environment: libghostty holds on to the
+    /// environment it found at `ghostty_init`, and a variable added after that
+    /// can move it and free the old one under libghostty. Opened from the Dock,
+    /// which starts an app with a dozen variables and no LANG, this app read
+    /// freed memory the next time it loaded its config and closed itself as it
+    /// came up, every time.
+    static var folder: String {
+        stateDirectory().appendingPathComponent("restauro", isDirectory: true).path
     }
 
     /// The tabs of the last daemon, without the conversations: quick, so the

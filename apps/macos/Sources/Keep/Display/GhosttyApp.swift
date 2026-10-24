@@ -594,7 +594,10 @@ final class GhosttyApp {
         // not write into their home.
         if Self.isPersonsApp { KeepThemes.install() }
 
-        // libghostty wants the process argv before anything else.
+        // libghostty wants the process argv before anything else. It also
+        // keeps the environment as it is now, which is why the `setenv` above
+        // comes first and nothing in the app writes the environment after
+        // this (see `TabRestore.folder`; `tools/env-test.sh` holds to it).
         var argv: [UnsafeMutablePointer<CChar>?] = CommandLine.unsafeArgv[0].map { [$0] } ?? []
         if ghostty_init(UInt(argv.count), &argv) != 0 {
             failure = "ghostty_init failed"
