@@ -157,3 +157,8 @@ passa a abrir áudio no QuickTime Player quando o padrão do Mac para ele é o M
 **Nome solto de arquivo abre no clique (0.3.14, Mac):** quando o Claude cita só o nome de um arquivo que ele gravou na
 pasta temporária da sessão (`pergunta-nova.mp3`), o nome não existe na pasta da aba e o clique não achava nada. Agora
 o Keep procura o nome em `/private/tmp/claude-<uid>/*/*/scratchpad` (e uma pasta abaixo) e abre o mais recente.
+
+**O Keep aberto pelo Dock não fecha mais sozinho (0.3.15, Mac):** aberto pelo Dock, pelo Finder ou no login (sem `LANG`
+no ambiente), o app fechava meio segundo depois de abrir, toda vez, e só voltava aberto de um terminal. Ele gravava uma
+variável no próprio ambiente depois de iniciar o libghostty, que guarda esse ambiente e passava a ler memória liberada.
+Agora a variável vai só para os comandos do núcleo e o app não mexe mais no próprio ambiente.
