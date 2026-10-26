@@ -36,6 +36,7 @@ struct WorkspaceSidebar: View {
     private var textZoom: Double { titleZoom * GhosttyApp.textBoost }
     /// The workspace whose lock the pointer is over.
     @State private var hoveredLock: String?
+    @State private var hoveredSleep: String?
     /// A header's +, which brightens under the pointer. Apart from `hovered`,
     /// which the header itself sets while the pointer is anywhere on it.
     @State private var hoveredNewTab: String?
@@ -308,9 +309,9 @@ struct WorkspaceSidebar: View {
                     attentionBadge(count: row.needsYou, since: row.needsYouSince)
                 }
                 Spacer(minLength: 8)
-                // The lock's and the +'s room, kept here so the fold stays at
-                // the far end.
-                Color.clear.frame(width: 14 + 8 + 14, height: 1)
+                // The sleep's, the lock's and the +'s room, kept here so the
+                // fold stays at the far end.
+                Color.clear.frame(width: 14 + 8 + 14 + 8 + 14, height: 1)
                 disclosure(row)
             }
             .padding(.horizontal, 12)
@@ -327,6 +328,7 @@ struct WorkspaceSidebar: View {
         // and the gap between them.
         .overlay(alignment: .trailing) {
             HStack(spacing: 8) {
+                sleepButton(row)
                 confinementButton(row)
                 newTabButton(row)
             }
@@ -445,6 +447,28 @@ struct WorkspaceSidebar: View {
     /// having to be entered first. There on a header with nothing to fold as
     /// well, beside the fold's empty room, so every + in the column sits at
     /// the same x.
+    /// Before the folder: puts the workspace's idle Claude conversations out
+    /// of memory now, as twelve hours alone would. The tabs stay, struck
+    /// through, and each conversation comes back as its tab is shown.
+    private func sleepButton(_ row: SessionSnapshot.SidebarRow) -> some View {
+        let hovering = hoveredSleep == row.name
+        return Button { dispatch(.sleepWorkspace(row.name)) } label: {
+            Image(systemName: "archivebox")
+                .font(.system(size: 12 * titleZoom, weight: .semibold))
+                .foregroundStyle(hovering ? Palette.inkResting : Palette.inkFaint)
+                .frame(width: 14)
+                .contentShape(Rectangle().inset(by: -6))
+        }
+        .buttonStyle(.plain)
+        .disabled(!row.canSleep)
+        .opacity(row.canSleep ? 1 : 0.35)
+        .help("Hibernar agora as conversas do Claude de \(row.title): voltam ao abrir a aba")
+        .accessibilityIdentifier("sleep-\(row.name)")
+        .onHover { inside in
+            hoveredSleep = inside ? row.name : (hoveredSleep == row.name ? nil : hoveredSleep)
+        }
+    }
+
     /// Between the name and the +: the folder the workspace's AI is held to.
     /// Open, a click chooses one; shut, a menu changes it or lets the AI go.
     @ViewBuilder
@@ -550,6 +574,9 @@ struct WorkspaceSidebar: View {
                 }
                 Text(tab.title)
                     .font(.system(size: 12 * textZoom, weight: wantsYou || chosen ? .semibold : .regular))
+                    // Struck through: its conversation is out of memory and
+                    // comes back as the tab is shown.
+                    .strikethrough(tab.asleep)
                     .accessibilityIdentifier("sidebar-title-\(tab.id)")
                     .foregroundStyle(titleInk(for: tab, chosen: chosen, hovered: hoveredHere))
                     .lineLimit(1)

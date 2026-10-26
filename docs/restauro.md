@@ -263,10 +263,15 @@ a conversa volta quando a aba é mostrada.
   e a restauração a recria adormecida, sem subir a conversa; ela acorda do
   mesmo jeito. A varredura de worktrees não a toma por órfã (o shell da aba
   segue com a conversa no histórico).
+- **Agora** (`keep restauro adormecer --agora W`, o botão de arquivo ao lado
+  da pasta no cabeçalho do workspace): o mesmo para as abas de W, sem esperar
+  as 12 h. O que impede (trabalho, pergunta, caixa digitada) e a aba à vista
+  continuam valendo. O app lê `adormecidas.json` e risca o título da aba
+  adormecida na barra lateral; vale só para o keepd em uso.
 - **Só o Claude**: o Codex fica de pé.
 
 ```
-keep restauro adormecer [--seco] [--vista W/N]…
+keep restauro adormecer [--seco] [--agora W] [--vista W/N]…
 keep restauro acordar --workspace W --aba N
 ```
 
@@ -276,4 +281,5 @@ Testes: `cargo build -p keep-ia --examples && cargo test -p keep-restauro
 --test adormecer` (daemon do teste, IA falsa em quatro abas: só a parada,
 livre e fora de vista adormece; o retrato a leva; acordar a retoma; o reinício
 a mantém adormecida) e `tools/adormecer-test.sh` (o KeepDev de verdade: a aba
-fora de vista adormece, a da frente não, e mostrar a aba a acorda).
+fora de vista adormece, a da frente não, mostrar a aba a acorda, e o botão do
+workspace adormece a aba fora de vista sem esperar as 12 h).

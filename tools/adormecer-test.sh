@@ -15,6 +15,9 @@
 #
 #   tools/adormecer-test.sh
 #
+# At the end, the workspace's sleep button (axpress press sleep-Alfa) does
+# the same for the tab out of sight without waiting for the twelve hours.
+#
 # To see it fail: take `TabRestore.wake(...)` out of
 # TabContentContainer.markVisible, and the last two checks fail.
 #
@@ -139,6 +142,20 @@ while [ "$(fronts)" != "2=claude;3=claude" ] && [ "$waited" -lt 60 ]; do sleep 1
 check "its conversation came back as it was shown" "2=claude;3=claude" "$(fronts)"
 check "the same conversation, with the options it had" "yes" \
     "$(argv_of "$ASLEEP" | grep -qF -- "--effort max --resume $ID" && echo yes || echo no)"
+
+# The workspace's sleep button, without the twelve hours: the conversation of
+# the tab out of sight, left alone a moment ago, leaves memory; the one on
+# screen stays.
+touch "$WORK"/casa/.claude/projects/*/*.jsonl
+say "pressing the workspace's sleep button"
+"$WORK/axpress" "$APP_NAME" press "sleep-$WS" >/dev/null 2>&1
+waited=0
+while [ "$(fronts)" = "2=claude;3=claude" ] && [ "$waited" -lt 30 ]; do sleep 1; waited=$((waited + 1)); done
+check "the button put the tab out of sight to sleep, not the one on screen" "$ASLEEP=claude" "$(fronts)"
+check "and wrote it down to come back" "yes" \
+    "$(python3 -c "
+import json; d = json.load(open('$KEEP_RESTAURO_ESTADO/adormecidas.json'))
+print('yes' if any(a['aba'] == 2 for a in d['abas']) else 'no')" 2>/dev/null)"
 
 say "$PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]

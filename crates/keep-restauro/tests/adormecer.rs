@@ -159,6 +159,18 @@ fn so_a_aba_parada_e_livre_fora_de_vista_adormece_e_volta_ao_ser_mostrada() {
     let _ = adormecer::adormecer(&vistas, false).unwrap();
     assert_eq!(adormecer::do_keepd(&k1).len(), 1);
 
+    // ---- agora: o workspace pedido, sem esperar as 12 h; o que trabalha e o que está à vista ficam
+    let r = adormecer::adormecer_agora("B", &vistas).unwrap();
+    assert_eq!(r["adormecidas"], 0, "{r:#}");
+    let r = adormecer::adormecer_agora("A", &vistas).unwrap();
+    assert_eq!(r["adormecidas"], 1, "{r:#}");
+    assert!(situacao(&r, ocupada).contains("trabalhando"), "{r:#}");
+    assert_eq!(situacao(&r, vista), "à vista", "{r:#}");
+    assert!(tela_tem("A", recente, "Resume this session", 10), "a recente saiu pelo /exit");
+    assert_eq!(adormecer::do_keepd(&k1).len(), 2);
+    assert_eq!(adormecer::acordar("A", recente).unwrap()["acordadas"], 1);
+    assert!(tela_tem("A", recente, "Pronto.", 15));
+
     // ---- outra aba mostrada: nada acorda; a dela, acorda com as mesmas opções
     assert_eq!(adormecer::acordar("A", vista).unwrap()["acordadas"], 0);
     let r = adormecer::acordar("A", parada).unwrap();

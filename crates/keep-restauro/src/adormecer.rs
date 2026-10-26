@@ -10,6 +10,9 @@
 //!   nada em segundo plano) e sem fala na conversa há `PARADA`, sai do Claude
 //!   pelo `/exit`. A conversa, a conta e as opções
 //!   ficam em `adormecidas.json` (por keepd) antes da saída.
+//! - **Agora** (`keep restauro adormecer --agora W`, o botão do workspace na
+//!   barra lateral): o mesmo, para as abas livres do workspace W, sem esperar
+//!   as 12 h.
 //! - **Acordar** (`keep restauro acordar`, o app ao mostrar a aba): a
 //!   conversa volta na mesma aba, como a restauração a retoma.
 //! - O retrato leva a aba adormecida com a conversa dela: depois de um
@@ -150,6 +153,16 @@ fn impedimento(aba: &daemon::Aba, pid: u32) -> Option<String> {
 /// Uma rodada: adormece as abas paradas há `PARADA` fora de `vistas` (as abas que o app mostra, pela raiz).
 /// `seco`: só diz o que faria.
 pub fn adormecer(vistas: &HashSet<(String, u32)>, seco: bool) -> Result<Value, String> {
+    rodada(vistas, seco, None)
+}
+
+/// O mesmo para as abas do workspace `ws`, paradas há pouco ou há muito: o que impede (trabalho, pergunta,
+/// caixa digitada) e o que está à vista continuam valendo.
+pub fn adormecer_agora(ws: &str, vistas: &HashSet<(String, u32)>) -> Result<Value, String> {
+    rodada(vistas, false, Some(ws))
+}
+
+fn rodada(vistas: &HashSet<(String, u32)>, seco: bool, so_do: Option<&str>) -> Result<Value, String> {
     let Some(_trava) = crate::Trava::pegar(".adormecer.lock") else {
         return Ok(json!({ "versao": crate::VERSAO, "motivo": "outra rodada em andamento" }));
     };
@@ -175,6 +188,9 @@ pub fn adormecer(vistas: &HashSet<(String, u32)>, seco: bool) -> Result<Value, S
     let mut relato = Vec::new();
     let mut feitas = 0;
     for i in ias.iter().filter(|i| i.agente == "claude") {
+        if so_do.is_some_and(|w| w != i.workspace) {
+            continue;
+        }
         let Some(aba) = lista.aba(&i.workspace, i.aba) else { continue };
         let rotulo = format!("{}#{}", i.workspace, i.aba);
         let mut diz = |s: String| relato.push(json!({ "aba": rotulo, "situacao": s }));
@@ -187,7 +203,7 @@ pub fn adormecer(vistas: &HashSet<(String, u32)>, seco: bool) -> Result<Value, S
             continue;
         };
         let parada_ha = agora.saturating_sub(ultima_fala_ms(&conversa));
-        if parada_ha < parada {
+        if so_do.is_none() && parada_ha < parada {
             diz(format!("parada há {} min", parada_ha / 60_000));
             continue;
         }

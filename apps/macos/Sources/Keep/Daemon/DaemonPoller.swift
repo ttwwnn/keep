@@ -452,3 +452,56 @@ final class ClaudeModeWatcher {
         }
     }
 }
+
+/// The tabs whose conversation left memory (`adormecidas.json`, written by
+/// the core), read when the file changes. Tab numbers are one daemon's, so
+/// what the file says counts only for the daemon the app is using — by its
+/// start when it says (`startedMs`), else by the birth of its socket.
+@MainActor
+final class SleepingTabs {
+    private struct File: Decodable {
+        struct Daemon: Decodable {
+            let pid: UInt32
+            let inicio_ms: UInt64
+            let socket_nasceu: Double?
+        }
+        struct Tab: Decodable {
+            let workspace: String
+            let aba: UInt32
+        }
+        let keepd: Daemon
+        let abas: [Tab]
+    }
+
+    private var modified: Date?
+    private var daemon: Daemon.Info?
+    private var read: Set<TabID> = []
+
+    /// The tabs asleep now, as numbers the daemon gave (a pane's too).
+    /// Nil when nothing changed since the last look.
+    func refresh() -> Set<TabID>? {
+        let url = URL(fileURLWithPath: TabRestore.folder).appendingPathComponent("adormecidas.json")
+        let stamp = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+        let info = Daemon.lastInfo
+        guard stamp != modified || info != daemon else { return nil }
+        modified = stamp
+        daemon = info
+        var found: Set<TabID> = []
+        if let data = try? Data(contentsOf: url), let file = try? JSONDecoder().decode(File.self, from: data),
+           Self.same(file.keepd, info: info) {
+            found = Set(file.abas.map { TabID(workspace: $0.workspace, root: $0.aba) })
+        }
+        guard found != read else { return nil }
+        read = found
+        return found
+    }
+
+    private static func same(_ file: File.Daemon, info: Daemon.Info?) -> Bool {
+        guard let info else { return false }
+        if let started = info.startedMs { return file.pid == info.pid && file.inicio_ms == started }
+        guard let born = Daemon.startedAt?.timeIntervalSince1970, let wrote = file.socket_nasceu else {
+            return file.pid == info.pid
+        }
+        return abs(born - wrote) < 0.01
+    }
+}

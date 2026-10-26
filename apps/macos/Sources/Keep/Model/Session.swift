@@ -98,6 +98,9 @@ final class Session {
     /// against. Tab ids are the daemon's, and a daemon started afresh counts
     /// from one again.
     private var daemonStart: Date?
+    private let sleepingTabs = SleepingTabs()
+    /// Tabs whose conversation left memory (their panes' numbers too).
+    private var asleep: Set<TabID> = []
     /// Moved on each time an intent changes the daemon and lists it again. A
     /// poll that set out before that carries a listing from before it, and
     /// applying it would put back what was just closed, or take away from a
@@ -336,6 +339,10 @@ final class Session {
         // What the core said about the tabs' accounts is about one daemon,
         // and whether it can be asked to change one can change between polls.
         if aiAccounts.daemon(Daemon.startedAt ?? daemonStart) { changed = true }
+        if let now = sleepingTabs.refresh() {
+            asleep = now
+            changed = true
+        }
         let helper = AIHelper.path != nil
         if helper != aiHelperPresent {
             aiHelperPresent = helper
@@ -747,6 +754,19 @@ final class Session {
         case .confineWorkspace(let workspace, let folder):
             WorkspaceConfinement.set(folder, for: workspace)
             publish()
+
+        case .sleepWorkspace(let workspace):
+            let visible = Hibernation.shared.onScreen().map { ($0.workspace, $0.root) }
+            DispatchQueue.global(qos: .userInitiated).async {
+                TabRestore.sleepNow(workspace: workspace, sparing: visible)
+                DispatchQueue.main.async { [weak self] in
+                    // The file the sidebar reads has changed: see it now, not at the next poll.
+                    if let now = self?.sleepingTabs.refresh() {
+                        self?.asleep = now
+                        self?.publish()
+                    }
+                }
+            }
 
         case .renameWorkspace(let workspace, let name):
             nameStore.setWorkspace(workspace, to: Self.chosenName(name))
@@ -1815,6 +1835,11 @@ final class Session {
     }
 
     /// `program(of:)` with what the core found in the tab to settle it.
+    /// The conversation of this tab, or of a pane of it, is out of memory.
+    private func isAsleep(_ tab: TabEntity) -> Bool {
+        asleep.contains(tab.id) || tab.panes.contains { asleep.contains(TabID(workspace: tab.id.workspace, root: $0.tab)) }
+    }
+
     private func aiProgram(of tab: TabEntity) -> String {
         Self.program(of: tab, core: aiAccounts.agent(workspace: tab.id.workspace, tab: tab.id.root))
     }
@@ -1998,6 +2023,7 @@ final class Session {
                 working: workspace.tabs.contains { isAtWork($0) },
                 workingPrograms: Set(workspace.tabs.filter { isAtWork($0) }.map { aiProgram(of: $0) })
                     .intersection(["claude", "codex"]).sorted(),
+                canSleep: workspace.tabs.contains { aiProgram(of: $0) == "claude" },
                 isActive: workspace.name == view.workspace,
                 tabRows: workspace.tabs.map { tab in
                     SessionSnapshot.SidebarTab(
@@ -2014,6 +2040,7 @@ final class Session {
                         wantsYouSince: waitingSince[tab.id],
                         account: aiAccount(of: tab),
                         offersAccounts: aiHelperPresent,
+                        asleep: isAsleep(tab),
                         usageAccount: aiAccounts.confirmedAccount(
                             workspace: tab.id.workspace, tab: tab.id.root,
                             program: AIProgramKind(command: aiProgram(of: tab))),
