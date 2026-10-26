@@ -162,3 +162,10 @@ o Keep procura o nome em `/private/tmp/claude-<uid>/*/*/scratchpad` (e uma pasta
 no ambiente), o app fechava meio segundo depois de abrir, toda vez, e só voltava aberto de um terminal. Ele gravava uma
 variável no próprio ambiente depois de iniciar o libghostty, que guarda esse ambiente e passava a ler memória liberada.
 Agora a variável vai só para os comandos do núcleo e o app não mexe mais no próprio ambiente.
+
+**Hibernar a aba na hora, com o zzz (0.3.16, Mac e Windows):** ao lado do × da linha de cada aba com o Claude
+aparece, sob o ponteiro, um **zzz**. Ele tira a conversa da memória na hora, como as 12 horas paradas fariam: a aba
+segue na barra lateral e na faixa de abas com o título riscado, e a conversa volta quando você abre a aba. O zzz não
+aparece enquanto a aba trabalha ou espera você, e, se o Keep recusar, a janela diz por quê (um comando rodando, uma
+pergunta aberta, texto na caixa). No Windows a hibernação das 12 horas passa a funcionar também: o app recusava o
+pedido ao núcleo, e ela nunca tinha rodado lá.
