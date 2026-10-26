@@ -36,7 +36,6 @@ struct WorkspaceSidebar: View {
     private var textZoom: Double { titleZoom * GhosttyApp.textBoost }
     /// The workspace whose lock the pointer is over.
     @State private var hoveredLock: String?
-    @State private var hoveredSleep: String?
     /// A header's +, which brightens under the pointer. Apart from `hovered`,
     /// which the header itself sets while the pointer is anywhere on it.
     @State private var hoveredNewTab: String?
@@ -309,9 +308,9 @@ struct WorkspaceSidebar: View {
                     attentionBadge(count: row.needsYou, since: row.needsYouSince)
                 }
                 Spacer(minLength: 8)
-                // The sleep's, the lock's and the +'s room, kept here so the
-                // fold stays at the far end.
-                Color.clear.frame(width: 14 + 8 + 14 + 8 + 14, height: 1)
+                // The lock's and the +'s room, kept here so the fold stays at
+                // the far end.
+                Color.clear.frame(width: 14 + 8 + 14, height: 1)
                 disclosure(row)
             }
             .padding(.horizontal, 12)
@@ -328,7 +327,6 @@ struct WorkspaceSidebar: View {
         // and the gap between them.
         .overlay(alignment: .trailing) {
             HStack(spacing: 8) {
-                sleepButton(row)
                 confinementButton(row)
                 newTabButton(row)
             }
@@ -447,28 +445,6 @@ struct WorkspaceSidebar: View {
     /// having to be entered first. There on a header with nothing to fold as
     /// well, beside the fold's empty room, so every + in the column sits at
     /// the same x.
-    /// Before the folder: puts the workspace's idle Claude conversations out
-    /// of memory now, as twelve hours alone would. The tabs stay, struck
-    /// through, and each conversation comes back as its tab is shown.
-    private func sleepButton(_ row: SessionSnapshot.SidebarRow) -> some View {
-        let hovering = hoveredSleep == row.name
-        return Button { dispatch(.sleepWorkspace(row.name)) } label: {
-            Image(systemName: "archivebox")
-                .font(.system(size: 12 * titleZoom, weight: .semibold))
-                .foregroundStyle(hovering ? Palette.inkResting : Palette.inkFaint)
-                .frame(width: 14)
-                .contentShape(Rectangle().inset(by: -6))
-        }
-        .buttonStyle(.plain)
-        .disabled(!row.canSleep)
-        .opacity(row.canSleep ? 1 : 0.35)
-        .help("Hibernar agora as conversas do Claude de \(row.title): voltam ao abrir a aba")
-        .accessibilityIdentifier("sleep-\(row.name)")
-        .onHover { inside in
-            hoveredSleep = inside ? row.name : (hoveredSleep == row.name ? nil : hoveredSleep)
-        }
-    }
-
     /// Between the name and the +: the folder the workspace's AI is held to.
     /// Open, a click chooses one; shut, a menu changes it or lets the AI go.
     @ViewBuilder
@@ -616,8 +592,9 @@ struct WorkspaceSidebar: View {
                 }
                 Spacer(minLength: 0)
                 // The close button's room, kept whether or not it is showing,
-                // so a title does not reflow as the pointer passes over it.
-                Color.clear.frame(width: 12, height: 1)
+                // so a title does not reflow as the pointer passes over it —
+                // and the zzz's, on a row that offers it.
+                Color.clear.frame(width: tab.canSleep && !tab.asleep ? 12 + 4 + 16 : 12, height: 1)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 5)
@@ -647,8 +624,13 @@ struct WorkspaceSidebar: View {
         // Laid over the row rather than inside its label: a button inside a
         // button hands its clicks to whichever of the two SwiftUI prefers.
         .overlay(alignment: .trailing) {
-            closeButton(tab, visible: hoveredHere && dragged == nil, onBadge: wantsYou)
-                .padding(.trailing, 9)
+            HStack(spacing: 4) {
+                if tab.canSleep && !tab.asleep {
+                    sleepButton(tab, visible: hoveredHere && dragged == nil, onBadge: wantsYou)
+                }
+                closeButton(tab, visible: hoveredHere && dragged == nil, onBadge: wantsYou)
+            }
+            .padding(.trailing, 9)
         }
         .padding(.leading, 12)
         .padding(.trailing, 8)
@@ -765,6 +747,31 @@ struct WorkspaceSidebar: View {
                     renameFocus = target
                 }
             }
+    }
+
+    /// The row's zzz, beside the ×: puts this tab's Claude conversation out
+    /// of memory now, as twelve hours alone would. The tab stays, its title
+    /// struck through, and the conversation comes back as the tab is shown.
+    private func sleepButton(
+        _ tab: SessionSnapshot.SidebarTab, visible: Bool, onBadge: Bool = false
+    ) -> some View {
+        Button {
+            lastClicked = nil
+            dispatch(.sleepTab(tab.id))
+        } label: {
+            Image(systemName: "zzz")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(onBadge ? Palette.attentionInk : Palette.inkResting)
+                .frame(width: 16, height: 16)
+                .background(Circle().fill(Palette.wash(0.08)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help("Hibernar agora a conversa desta aba: volta ao abrir a aba")
+        .accessibilityIdentifier("sleep-\(tab.id)")
+        .opacity(visible ? 1 : 0)
+        .allowsHitTesting(visible)
+        .animation(.easeOut(duration: 0.12), value: visible)
     }
 
     /// The row's ×: there under the pointer, gone otherwise, the way the

@@ -468,9 +468,9 @@ enum Intent {
     /// Applies to the sessions started after it: one already running keeps the
     /// access it was started with.
     case confineWorkspace(String, to: String?)
-    /// Put the idle Claude conversations of a workspace out of memory now,
-    /// the way twelve hours alone does; each comes back as its tab is shown.
-    case sleepWorkspace(String)
+    /// Put a tab's Claude conversation out of memory now, the way twelve
+    /// hours alone does; it comes back as the tab is shown.
+    case sleepTab(TabID)
     case split(UInt8)                 // protocol values: 1 = right, 2 = down
     /// A surface took the keyboard. The tab travels with it: rebuilding an
     /// arrangement makes AppKit reassign the first responder, and a surface
@@ -825,8 +825,6 @@ struct SessionSnapshot: Hashable {
         /// the header wears: each has its own. Empty when what works is a
         /// plain command.
         let workingPrograms: [String]
-        /// A Claude Code runs in one of its tabs: there is something to put to sleep.
-        var canSleep: Bool = false
         let isActive: Bool
         /// The tabs themselves, for the sidebar that nests them under the
         /// workspace. Always carried — a handful of small values — and the
@@ -870,6 +868,8 @@ struct SessionSnapshot: Hashable {
         /// Its conversation left memory (twelve hours alone, or the sleep
         /// button) and comes back when the tab is shown: the title is struck.
         var asleep: Bool = false
+        /// A Claude Code runs here: the row offers to put it to sleep.
+        var canSleep: Bool = false
         /// Verified account for this tab's current program, used by the footer.
         var usageAccount: String? = nil
         /// The account its AI runs on now, when the core could tell — what

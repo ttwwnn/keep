@@ -15,8 +15,8 @@
 #
 #   tools/adormecer-test.sh
 #
-# At the end, the workspace's sleep button (axpress press sleep-Alfa) does
-# the same for the tab out of sight without waiting for the twelve hours.
+# At the end, a tab's zzz button (axpress press sleep-Alfa/2) does the same
+# for that tab without waiting for the twelve hours.
 #
 # To see it fail: take `TabRestore.wake(...)` out of
 # TabContentContainer.markVisible, and the last two checks fail.
@@ -78,6 +78,7 @@ say "building $APP_NAME, the client, the daemon, the AI stand-in and axpress (yo
 ./tools/build-dev.sh >/dev/null || { say "could not build $APP_NAME — run tools/build-dev.sh"; exit 1; }
 cargo build -q -p keep-ia --examples 2>/dev/null || { say "could not build the AI stand-in"; exit 1; }
 swiftc -O tools/axpress.swift -o "$WORK/axpress" 2>/dev/null || { say "could not build axpress"; exit 1; }
+swiftc -O tools/mousedrag.swift -o "$WORK/mousedrag" 2>/dev/null || { say "could not build mousedrag"; exit 1; }
 
 mkdir -p "$WORK/bin" "$WORK/casa/.claude" "$WORK/um" "$WORK/dois" "$WORK/state"
 cp target/debug/examples/ia_falsa "$WORK/bin/claude"
@@ -143,15 +144,23 @@ check "its conversation came back as it was shown" "2=claude;3=claude" "$(fronts
 check "the same conversation, with the options it had" "yes" \
     "$(argv_of "$ASLEEP" | grep -qF -- "--effort max --resume $ID" && echo yes || echo no)"
 
-# The workspace's sleep button, without the twelve hours: the conversation of
-# the tab out of sight, left alone a moment ago, leaves memory; the one on
-# screen stays.
+# The zzz of a tab, without the twelve hours: the conversation of tab 2, left
+# alone a moment ago, leaves memory; the one on screen (3) stays.
 touch "$WORK"/casa/.claude/projects/*/*.jsonl
-say "pressing the workspace's sleep button"
-"$WORK/axpress" "$APP_NAME" press "sleep-$WS" >/dev/null 2>&1
+say "pressing the zzz of tab 2"
+# The zzz shows under the pointer only: park it on the row of tab 2 and press
+# once it is there (rc 4: the app did not answer in time, ask again).
+for _ in 1 2 3 4 5 6; do
+    # In front: a hover does not reach a window another app covers.
+    osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" >/dev/null 2>&1
+    read -r RX RY RW RH < <("$WORK/axpress" "$APP_NAME" frame "sidebar-title-$WS/2")
+    [ -n "${RX:-}" ] && "$WORK/mousedrag" move $((RX + RW / 2)) $((RY + RH / 2))
+    sleep 1
+    "$WORK/axpress" "$APP_NAME" press "sleep-$WS/2" >/dev/null 2>&1 && break
+done
 waited=0
 while [ "$(fronts)" = "2=claude;3=claude" ] && [ "$waited" -lt 30 ]; do sleep 1; waited=$((waited + 1)); done
-check "the button put the tab out of sight to sleep, not the one on screen" "$ASLEEP=claude" "$(fronts)"
+check "the zzz put tab 2 to sleep, not the one on screen" "$ASLEEP=claude" "$(fronts)"
 check "and wrote it down to come back" "yes" \
     "$(python3 -c "
 import json; d = json.load(open('$KEEP_RESTAURO_ESTADO/adormecidas.json'))

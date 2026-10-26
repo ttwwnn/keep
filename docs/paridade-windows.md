@@ -66,8 +66,7 @@ não foram vistos no Windows de verdade.
   adormecida (hibernação) espera o terminal por `viewWhenAwake` antes de ir à
   linha.
 
-- [ ] Botão de arquivo no cabeçalho do workspace (`keep restauro adormecer
-  --agora W`) e título riscado da aba adormecida na barra lateral
+- [ ] Botão zzz ao lado do × da aba (`keep restauro adormecer --agora W --aba N`) e título riscado da aba adormecida na barra lateral
   (`adormecidas.json`): feitos só no Mac (26/10/2026).
 
 ## Fatia `appearance` (temas, fontes, janela)

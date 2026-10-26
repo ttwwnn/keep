@@ -755,10 +755,9 @@ final class Session {
             WorkspaceConfinement.set(folder, for: workspace)
             publish()
 
-        case .sleepWorkspace(let workspace):
-            let visible = Hibernation.shared.onScreen().map { ($0.workspace, $0.root) }
+        case .sleepTab(let id):
             DispatchQueue.global(qos: .userInitiated).async {
-                TabRestore.sleepNow(workspace: workspace, sparing: visible)
+                TabRestore.sleepNow(workspace: id.workspace, tab: id.root)
                 DispatchQueue.main.async { [weak self] in
                     // The file the sidebar reads has changed: see it now, not at the next poll.
                     if let now = self?.sleepingTabs.refresh() {
@@ -2023,7 +2022,6 @@ final class Session {
                 working: workspace.tabs.contains { isAtWork($0) },
                 workingPrograms: Set(workspace.tabs.filter { isAtWork($0) }.map { aiProgram(of: $0) })
                     .intersection(["claude", "codex"]).sorted(),
-                canSleep: workspace.tabs.contains { aiProgram(of: $0) == "claude" },
                 isActive: workspace.name == view.workspace,
                 tabRows: workspace.tabs.map { tab in
                     SessionSnapshot.SidebarTab(
@@ -2041,6 +2039,7 @@ final class Session {
                         account: aiAccount(of: tab),
                         offersAccounts: aiHelperPresent,
                         asleep: isAsleep(tab),
+                        canSleep: aiProgram(of: tab) == "claude",
                         usageAccount: aiAccounts.confirmedAccount(
                             workspace: tab.id.workspace, tab: tab.id.root,
                             program: AIProgramKind(command: aiProgram(of: tab))),

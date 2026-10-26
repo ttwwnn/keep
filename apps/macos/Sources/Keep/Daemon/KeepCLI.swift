@@ -510,13 +510,12 @@ enum TabRestore {
         log(answer)
     }
 
-    /// The idle conversations of a workspace leave memory now, without the
-    /// twelve hours (`keep restauro adormecer --agora`): never one of
-    /// `visible`, nor one at work. Blocking.
-    static func sleepNow(workspace: String, sparing visible: [(workspace: String, tab: UInt32)]) {
+    /// The conversation of one tab leaves memory now, without the twelve
+    /// hours (`keep restauro adormecer --agora`), on the person's word: on
+    /// screen or not, but not while it is at work. Blocking.
+    static func sleepNow(workspace: String, tab: UInt32) {
         guard let helper else { return }
-        let args = ["restauro", "adormecer", "--agora", workspace]
-            + visible.flatMap { ["--vista", "\($0.workspace)/\($0.tab)"] }
+        let args = ["restauro", "adormecer", "--agora", workspace, "--aba", String(tab)]
         log(KeepCLI.run(helper, args, within: 300, name: "keep restauro"))
     }
 

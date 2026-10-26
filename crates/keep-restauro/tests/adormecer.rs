@@ -160,9 +160,20 @@ fn so_a_aba_parada_e_livre_fora_de_vista_adormece_e_volta_ao_ser_mostrada() {
     assert_eq!(adormecer::do_keepd(&k1).len(), 1);
 
     // ---- agora: o workspace pedido, sem esperar as 12 h; o que trabalha e o que está à vista ficam
-    let r = adormecer::adormecer_agora("B", &vistas).unwrap();
+    let r = adormecer::adormecer_agora("B", None, &vistas).unwrap();
     assert_eq!(r["adormecidas"], 0, "{r:#}");
-    let r = adormecer::adormecer_agora("A", &vistas).unwrap();
+    // a aba pedida, não as outras do workspace; sem o filtro da aba a `recente` também sairia
+    let r = adormecer::adormecer_agora("A", Some(ocupada), &HashSet::new()).unwrap();
+    assert_eq!(r["adormecidas"], 0, "{r:#}");
+    assert!(situacao(&r, ocupada).contains("trabalhando"), "{r:#}");
+    assert_eq!(situacao(&r, recente), "(não vista)", "{r:#}");
+    let r = adormecer::adormecer_agora("A", Some(recente), &vistas).unwrap();
+    assert_eq!(r["adormecidas"], 1, "{r:#}");
+    assert_eq!(adormecer::do_keepd(&k1).len(), 2);
+    assert_eq!(adormecer::acordar("A", recente).unwrap()["acordadas"], 1);
+    assert!(tela_tem("A", recente, "Pronto.", 15));
+    // sem aba, as livres do workspace; o que trabalha e o que está à vista ficam
+    let r = adormecer::adormecer_agora("A", None, &vistas).unwrap();
     assert_eq!(r["adormecidas"], 1, "{r:#}");
     assert!(situacao(&r, ocupada).contains("trabalhando"), "{r:#}");
     assert_eq!(situacao(&r, vista), "à vista", "{r:#}");

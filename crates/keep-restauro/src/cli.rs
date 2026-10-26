@@ -4,7 +4,7 @@
 //!   keep restauro restaurar [--fase=abas] [--seco]
 //!   keep restauro manter                   restaura o que faltar e grava o retrato (o app, a cada 30 s)
 //!   keep restauro adormecer [--seco] [--vista W/N]…   fecha a conversa parada há 12 h fora de vista (o app, a cada 5 min)
-//!   keep restauro adormecer --agora W [--vista W/N]…  o mesmo para as abas livres do workspace W, sem esperar as 12 h
+//!   keep restauro adormecer --agora W [--aba N] [--vista W/N]…  o mesmo para a aba N (ou as livres do workspace W), sem esperar as 12 h
 //!   keep restauro acordar --workspace W --aba N       a conversa adormecida da aba volta (o app, ao mostrá-la)
 
 use serde_json::json;
@@ -30,7 +30,10 @@ pub fn main(args: &[String]) -> i32 {
         Some("adormecer") => {
             let vistas = args.windows(2).filter(|w| w[0] == "--vista").filter_map(|w| crate::adormecer::vista(&w[1])).collect();
             match args.windows(2).find(|w| w[0] == "--agora") {
-                Some(w) => crate::adormecer::adormecer_agora(&w[1], &vistas),
+                Some(w) => {
+                    let aba = args.windows(2).find(|a| a[0] == "--aba").and_then(|a| a[1].parse().ok());
+                    crate::adormecer::adormecer_agora(&w[1], aba, &vistas)
+                }
                 None => crate::adormecer::adormecer(&vistas, tem("--seco")),
             }
         }
@@ -43,7 +46,7 @@ pub fn main(args: &[String]) -> i32 {
         }
         _ => {
             eprintln!(
-                "uso: keep restauro retrato [--print] | restaurar [--fase=abas] [--seco] | manter | adormecer [--seco] [--agora W] [--vista W/N]… | acordar --workspace W --aba N"
+                "uso: keep restauro retrato [--print] | restaurar [--fase=abas] [--seco] | manter | adormecer [--seco] [--agora W [--aba N]] [--vista W/N]… | acordar --workspace W --aba N"
             );
             return 2;
         }

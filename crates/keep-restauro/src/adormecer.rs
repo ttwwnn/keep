@@ -10,9 +10,9 @@
 //!   nada em segundo plano) e sem fala na conversa há `PARADA`, sai do Claude
 //!   pelo `/exit`. A conversa, a conta e as opções
 //!   ficam em `adormecidas.json` (por keepd) antes da saída.
-//! - **Agora** (`keep restauro adormecer --agora W`, o botão do workspace na
-//!   barra lateral): o mesmo, para as abas livres do workspace W, sem esperar
-//!   as 12 h.
+//! - **Agora** (`keep restauro adormecer --agora W [--aba N]`, o zzz da aba na
+//!   barra lateral): o mesmo, para a aba N (ou as livres do workspace W), sem
+//!   esperar as 12 h.
 //! - **Acordar** (`keep restauro acordar`, o app ao mostrar a aba): a
 //!   conversa volta na mesma aba, como a restauração a retoma.
 //! - O retrato leva a aba adormecida com a conversa dela: depois de um
@@ -156,13 +156,13 @@ pub fn adormecer(vistas: &HashSet<(String, u32)>, seco: bool) -> Result<Value, S
     rodada(vistas, seco, None)
 }
 
-/// O mesmo para as abas do workspace `ws`, paradas há pouco ou há muito: o que impede (trabalho, pergunta,
-/// caixa digitada) e o que está à vista continuam valendo.
-pub fn adormecer_agora(ws: &str, vistas: &HashSet<(String, u32)>) -> Result<Value, String> {
-    rodada(vistas, false, Some(ws))
+/// O mesmo para a aba `aba` do workspace `ws` (sem `aba`, as do workspace), parada há pouco ou há muito: o
+/// que impede (trabalho, pergunta, caixa digitada) e o que está em `vistas` continuam valendo.
+pub fn adormecer_agora(ws: &str, aba: Option<u32>, vistas: &HashSet<(String, u32)>) -> Result<Value, String> {
+    rodada(vistas, false, Some((ws, aba)))
 }
 
-fn rodada(vistas: &HashSet<(String, u32)>, seco: bool, so_do: Option<&str>) -> Result<Value, String> {
+fn rodada(vistas: &HashSet<(String, u32)>, seco: bool, so_do: Option<(&str, Option<u32>)>) -> Result<Value, String> {
     let Some(_trava) = crate::Trava::pegar(".adormecer.lock") else {
         return Ok(json!({ "versao": crate::VERSAO, "motivo": "outra rodada em andamento" }));
     };
@@ -188,7 +188,7 @@ fn rodada(vistas: &HashSet<(String, u32)>, seco: bool, so_do: Option<&str>) -> R
     let mut relato = Vec::new();
     let mut feitas = 0;
     for i in ias.iter().filter(|i| i.agente == "claude") {
-        if so_do.is_some_and(|w| w != i.workspace) {
+        if so_do.is_some_and(|(w, a)| w != i.workspace || a.is_some_and(|a| a != raiz(&lista, w, i.aba))) {
             continue;
         }
         let Some(aba) = lista.aba(&i.workspace, i.aba) else { continue };
