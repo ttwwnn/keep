@@ -209,6 +209,25 @@ impl Trava {
         Trava::pegar_em(&pasta(), nome)
     }
 
+    /// Como `pegar`, mas espera até `ate` por quem a tem: o pedido da pessoa não some porque a rodada de 5 min estava
+    /// no meio.
+    pub fn esperar(nome: &str, ate: std::time::Duration) -> Option<Trava> {
+        Trava::esperar_em(&pasta(), nome, ate)
+    }
+
+    fn esperar_em(dir: &std::path::Path, nome: &str, ate: std::time::Duration) -> Option<Trava> {
+        let fim = std::time::Instant::now() + ate;
+        loop {
+            if let Some(t) = Trava::pegar_em(dir, nome) {
+                return Some(t);
+            }
+            if std::time::Instant::now() >= fim {
+                return None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+    }
+
     fn pegar_em(dir: &std::path::Path, nome: &str) -> Option<Trava> {
         std::fs::create_dir_all(dir).ok()?;
         let arquivo = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(dir.join(nome)).ok()?;
@@ -229,6 +248,21 @@ mod testes {
         assert!(Trava::pegar_em(dir.path(), ".y.lock").is_some(), "cada nome tem a sua");
         drop(primeira);
         assert!(Trava::pegar_em(dir.path(), ".x.lock").is_some(), "largada, a trava volta");
+    }
+
+    #[test]
+    fn quem_espera_pega_a_trava_quando_ela_e_largada_e_desiste_no_prazo() {
+        let dir = tempfile::tempdir().unwrap();
+        let primeira = Trava::pegar_em(dir.path(), ".x.lock").expect("a primeira pega");
+        let curto = std::time::Duration::from_millis(300);
+        assert!(Trava::esperar_em(dir.path(), ".x.lock", curto).is_none(), "ninguém larga: desiste no prazo");
+        let caminho = dir.path().to_path_buf();
+        let largando = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            drop(primeira);
+        });
+        assert!(Trava::esperar_em(&caminho, ".x.lock", std::time::Duration::from_secs(10)).is_some(), "largada, quem espera a pega");
+        largando.join().unwrap();
     }
 
     #[test]

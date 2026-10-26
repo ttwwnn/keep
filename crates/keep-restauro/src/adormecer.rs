@@ -179,7 +179,12 @@ pub fn adormecer_agora(ws: &str, aba: Option<u32>, vistas: &HashSet<(String, u32
 }
 
 fn rodada(vistas: &HashSet<(String, u32)>, seco: bool, so_do: Option<(&str, Option<u32>)>) -> Result<Value, String> {
-    let Some(_trava) = crate::Trava::pegar(".adormecer.lock") else {
+    // O pedido da pessoa espera a rodada que estiver no meio; a rodada de 5 min desiste da outra.
+    let trava = match so_do {
+        Some(_) => crate::Trava::esperar(".adormecer.lock", Duration::from_secs(90)),
+        None => crate::Trava::pegar(".adormecer.lock"),
+    };
+    let Some(_trava) = trava else {
         return Ok(json!({ "versao": crate::VERSAO, "motivo": "outra rodada em andamento" }));
     };
     let lista = daemon::listar()?;

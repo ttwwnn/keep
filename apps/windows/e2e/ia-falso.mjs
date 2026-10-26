@@ -194,9 +194,9 @@ function answer(args, state) {
     return [0, { ok: true }];
   }
   if (area === "worktrees" && command === "indexar") return [0, { ok: true }];
+  if (area === "restauro" && command === "adormecidas") return [0, { abas: sleepers(state) }];
   // The restart's tabs and the conversations a drop stopped, which the app asks of the core on their clocks: nothing
   // to bring back and nothing stopped, as an idle core says it.
-  if (area === "restauro" && command === "adormecidas") return [0, { abas: sleepers(state) }];
   if (area === "restauro") return [0, { restaurar: { origem: null, abas: 0, conversas: 0, falhas: [], motivo: "nada a restaurar" } }];
   if (area === "continuar") return [0, { conversas: [], ignoradas: [], enviadas: 0, confirmadas: 0 }];
   return [2, { ok: false, motivo: "uso", detalhe: `keep (falso): pedido desconhecido: ${args.join(" ")}` }];
