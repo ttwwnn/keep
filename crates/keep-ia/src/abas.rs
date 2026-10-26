@@ -190,9 +190,12 @@ pub fn das_abas(r: &Retrato, contas: &[Conta]) -> Vec<IaAba> {
         let Some(v) = vinculos.get(&(a.ws.clone(), a.info.id)) else { continue };
         let (agente, pid) = match prog.agente() {
             Some(agente) => (agente, v.frente),
-            // O keepd antigo diz "zsh" de uma aba em que a IA roda com um filho
-            // dela na frente (um servidor MCP, um php): vale a IA do shell.
-            None if !v.exato && matches!(prog, tela::Programa::Shell(_)) => {
+            // O keepd diz "zsh" de uma aba em que a IA roda com um filho dela na
+            // frente (um servidor MCP, um php) — e o exato também, numa aba que
+            // vem de antes (duas do usuário, de uma semana, diziam "zsh" com o
+            // Claude como processo da frente: nada as via, nem o zzz): vale a IA
+            // do shell. Com o shell na frente não há o que procurar.
+            None if matches!(prog, tela::Programa::Shell(_)) && v.frente != v.shell => {
                 let lista = lista.get_or_insert_with(processos::todos);
                 match ia_na_frente(lista, v.shell, v.frente) {
                     Some(achada) => achada,
@@ -342,6 +345,22 @@ mod testes {
             linha(Motor::Claude, "claude:b", &[("7d", 1_792_018_800.0)]),
         ];
         assert_eq!(conta_dos_limites(&limites(None, Some(1_792_018_800.0)), &gemeas), None);
+    }
+
+    #[test]
+    fn o_claude_na_frente_de_um_shell_que_o_daemon_chama_de_zsh_e_achado() {
+        let p = |pid, ppid, nome: &str| processos::Processo { pid, ppid, nome: nome.into(), inicio_ms: 0 };
+        // keepd → zsh (100) → claude (101), e o servidor MCP dele (102) segurando o terminal
+        let lista = [p(1, 0, "keepd"), p(100, 1, "zsh"), p(101, 100, "claude"), p(102, 101, "node")];
+        assert_eq!(ia_na_frente(&lista, 100, 101), Some(("claude", 101)));
+        assert_eq!(ia_na_frente(&lista, 100, 102), Some(("claude", 101)), "a IA é o primeiro do caminho");
+        // a versão do Claude também é o nome do arquivo que roda
+        let versao = [p(100, 1, "zsh"), p(101, 100, "2.1.310")];
+        assert_eq!(ia_na_frente(&versao, 100, 101), Some(("claude", 101)));
+        // sem IA no caminho, ou com o shell na frente: nada
+        let so_php = [p(100, 1, "zsh"), p(101, 100, "php")];
+        assert_eq!(ia_na_frente(&so_php, 100, 101), None);
+        assert_eq!(ia_na_frente(&lista, 100, 100), None);
     }
 
     #[test]

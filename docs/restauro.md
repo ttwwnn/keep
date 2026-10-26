@@ -266,13 +266,19 @@ a conversa volta quando a aba é mostrada.
 - **Agora** (`keep restauro adormecer --agora W [--aba N]`, o zzz ao lado do
   × da aba na barra lateral, que aparece sob o ponteiro): o mesmo para a aba
   N, sem esperar as 12 h, esteja ela à vista ou não. O que impede (trabalho,
-  pergunta, caixa digitada) continua valendo. Sem `--aba`, as abas livres de
-  W, poupando as `--vista`. O app lê `adormecidas.json` e risca o título da aba
-  adormecida na barra lateral; vale só para o keepd em uso.
+  pergunta, caixa digitada) continua valendo, e a recusa vem em palavras
+  (`trabalhando num turno`, `rodando um comando`, `esperando uma resposta sua`,
+  `com uma pergunta aberta`), que o app mostra; aba sem Claude diz `o Keep não
+  achou o Claude nesta aba`. Sem `--aba`, as abas livres de W, poupando as
+  `--vista`.
+- **Quais estão adormecidas**: o app do Mac lê `adormecidas.json` e o do Windows
+  pergunta (`keep restauro adormecidas`, a cada 5 s); ambos riscam o título da
+  aba, na barra lateral e na faixa de abas. Vale só para o keepd em uso.
 - **Só o Claude**: o Codex fica de pé.
 
 ```
 keep restauro adormecer [--seco] [--agora W [--aba N]] [--vista W/N]…
+keep restauro adormecidas
 keep restauro acordar --workspace W --aba N
 ```
 
@@ -283,4 +289,5 @@ Testes: `cargo build -p keep-ia --examples && cargo test -p keep-restauro
 livre e fora de vista adormece; o retrato a leva; acordar a retoma; o reinício
 a mantém adormecida) e `tools/adormecer-test.sh` (o KeepDev de verdade: a aba
 fora de vista adormece, a da frente não, mostrar a aba a acorda, e o zzz da
-aba a adormece sem esperar as 12 h).
+aba, clicado com o mouse, a adormece sem esperar as 12 h e sem entrar nela) e,
+no Windows, o passo do zzz do roteiro do app (`apps/windows/src/e2e.ts`).

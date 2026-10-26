@@ -168,4 +168,5 @@ aparece, sob o ponteiro, um **zzz**. Ele tira a conversa da memória na hora, co
 segue na barra lateral e na faixa de abas com o título riscado, e a conversa volta quando você abre a aba. O zzz não
 aparece enquanto a aba trabalha ou espera você, e, se o Keep recusar, a janela diz por quê (um comando rodando, uma
 pergunta aberta, texto na caixa). No Windows a hibernação das 12 horas passa a funcionar também: o app recusava o
-pedido ao núcleo, e ela nunca tinha rodado lá.
+pedido ao núcleo, e ela nunca tinha rodado lá. E o Keep passa a enxergar como Claude as abas em que o keepd diz
+`zsh` com o Claude na frente (as mais antigas, de dias): elas ficavam fora da hibernação, do menu de conta e do zzz.

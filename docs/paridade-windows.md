@@ -66,8 +66,10 @@ não foram vistos no Windows de verdade.
   adormecida (hibernação) espera o terminal por `viewWhenAwake` antes de ir à
   linha.
 
-- [ ] Botão zzz ao lado do × da aba (`keep restauro adormecer --agora W --aba N`) e título riscado da aba adormecida na barra lateral
-  (`adormecidas.json`): feitos só no Mac (26/10/2026).
+- [x] Botão zzz ao lado do × da aba (`keep restauro adormecer --agora W --aba N`) e título riscado da aba adormecida
+  na barra lateral e na faixa de abas (`keep restauro adormecidas`, a cada 5 s), como no Mac (0.3.16). O comando `ia` do
+  Tauri recusava `restauro adormecer` e `acordar` ("pedido que o app não faz"): a hibernação das 12 h nunca tinha rodado
+  no Windows. Provado no Windows de verdade pelo passo do zzz do roteiro (`e2e.ts`).
 
 ## Fatia `appearance` (temas, fontes, janela)
 
