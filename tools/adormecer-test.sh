@@ -177,5 +177,11 @@ waited=0
 while "$WORK/axpress" "$APP_NAME" frame "sleep-$WS/2" >/dev/null 2>&1 && [ "$waited" -lt 10 ]; do sleep 1; waited=$((waited + 1)); done
 check "the sidebar knows tab 2 is asleep" "no" "$("$WORK/axpress" "$APP_NAME" frame "sleep-$WS/2" >/dev/null 2>&1 && echo yes || echo no)"
 
+# For the eyes: the window as it stands, tab 2 asleep, in a file (KEEP_TEST_SHOT=/path/shot.png).
+if [ -n "${KEEP_TEST_SHOT:-}" ]; then
+    read -r WX WY WW WH < <("$WORK/mousedrag" frame)
+    screencapture -x -R "$WX,$WY,$WW,$WH" "$KEEP_TEST_SHOT"
+fi
+
 say "$PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]

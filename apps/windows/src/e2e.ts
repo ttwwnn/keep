@@ -670,6 +670,9 @@ async function sleepSteps(step: StepRunner): Promise<void> {
       throw new Error("o título não ficou riscado depois do zzz");
     });
     if (rowOf(id)?.querySelector(".row-zzz")) throw new Error("a aba adormecida ainda oferece o zzz");
+    // The list may be scrolled: the photograph is of the row struck through.
+    rowOf(id)?.scrollIntoView({ block: "nearest" });
+    await sleep(300);
     await api.e2eShot("aba-adormecida");
     const listed = readSleepers(await api.iaAsk(["restauro", "adormecidas"]));
     if (!listed?.some((s) => s.workspace === WORKSPACE && s.tab === id)) throw new Error(`a lista do núcleo: ${JSON.stringify(listed)}`);
