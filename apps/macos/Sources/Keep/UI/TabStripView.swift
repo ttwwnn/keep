@@ -962,6 +962,8 @@ final class TabCellView: NSView {
     /// which changes nothing does not start the breath over.
     private var breathing: (until: Date?, dark: Bool)?
     private let label = NSTextField(labelWithString: "")
+    /// The label shows attributed text (marks, a struck title) rather than the plain title.
+    private var labelIsAttributed = false
     /// Kept, because how much room the title is owed changes with how much
     /// room the tab has. As inequalities against a centred label they become
     /// unsatisfiable in a narrow cell — 28 in from the left and 36 in from the
@@ -1320,7 +1322,12 @@ final class TabCellView: NSView {
         if item.isElsewhere { marks.append("macwindow.on.rectangle") }
         let colour = label.textColor ?? palette.text
         if marks.isEmpty && !wantsYou && !item.asleep {
-            if label.stringValue != title { label.stringValue = title }
+            // After attributed text (marks, a struck title) the plain text reads the same as `title`, and its
+            // attributes would stay: put it back as plain text, once.
+            if labelIsAttributed || label.stringValue != title {
+                label.stringValue = title
+                labelIsAttributed = false
+            }
         } else {
             let line = NSMutableAttributedString()
             if wantsYou {
@@ -1340,6 +1347,7 @@ final class TabCellView: NSView {
             paragraph.lineBreakMode = .byTruncatingTail
             line.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: line.length))
             label.attributedStringValue = line
+            labelIsAttributed = true
         }
 
         let engine = AIProgramKind(command: item.command) == .codex ? "Codex" : "Claude"

@@ -269,7 +269,9 @@ fn rodada(vistas: &HashSet<(String, u32)>, seco: bool, so_do: Option<(&str, Opti
     // Uma aba pedida que não roda o Claude: a pessoa apertou o botão e merece saber por que nada saiu.
     if let Some((w, Some(a))) = so_do {
         if relato.is_empty() {
-            relato.push(json!({ "aba": format!("{w}#{a}"), "situacao": "o Keep não achou o Claude nesta aba" }));
+            let ja = do_keepd(&keepd).iter().any(|d| d.workspace == w && raiz(&lista, w, d.aba) == a);
+            let porque = if ja { "a conversa já está hibernada" } else { "o Keep não achou o Claude nesta aba" };
+            relato.push(json!({ "aba": format!("{w}#{a}"), "situacao": porque }));
         }
     }
     Ok(json!({ "versao": crate::VERSAO, "adormecidas": feitas, "abas": relato }))
@@ -299,11 +301,19 @@ pub fn acordar(ws: &str, tab: u32) -> Result<Value, String> {
     let mut falhas = Vec::new();
     for a in &alvos {
         let rotulo = format!("{}#{}", a.workspace, a.aba);
-        if keep_ia::sessoes::sessao_viva(&a.ia.conversa).is_some() {
-            falhas.push(format!("{rotulo}: a conversa já roda em outro lugar"));
+        let viva = daemon::listar().ok().and_then(|l| l.aba(&a.workspace, a.aba).cloned());
+        if let Some(s) = keep_ia::sessoes::sessao_viva(&a.ia.conversa) {
+            if viva.as_ref().is_some_and(|v| v.info.pid == s.pid) {
+                // O Claude ainda está saindo desta mesma aba (o zzz e o mostrar a aba quase juntos): ela segue
+                // adormecida, e a conversa, sem entrada, não ficaria com ninguém.
+                registrar(&keepd, &a.workspace, a.aba, a.ia.clone(), a.nome_posto.clone());
+                falhas.push(format!("{rotulo}: a conversa ainda está saindo desta aba"));
+            } else {
+                falhas.push(format!("{rotulo}: a conversa já roda em outro lugar"));
+            }
             continue;
         }
-        let Some(viva) = daemon::listar().ok().and_then(|l| l.aba(&a.workspace, a.aba).cloned()) else { continue };
+        let Some(viva) = viva else { continue };
         if !matches!(tela::programa(&viva.info.command), Programa::Shell(_)) {
             falhas.push(format!("{rotulo}: a aba roda {}", viva.info.command));
             continue;

@@ -35,6 +35,7 @@ import {
   readRestore,
   readSleepers,
   refusalOfSleep,
+  refusalSentence,
   restoreLine,
   resumeLine,
   sleepArgs,
@@ -159,6 +160,11 @@ export const dormant = signal<ReadonlySet<string>>(new Set());
 /** The conversation of this tab, or of a pane of it, is out of memory: its title is struck through. */
 export const isDormant = (workspace: string, tab: RootTab): boolean => tab.panes.some((p) => dormant.value.has(tabKey(workspace, p.id)));
 
+/** The tabs whose zzz was pressed and the core has not answered (it takes seconds to see Claude out). */
+export const sleepingNow = signal<ReadonlySet<string>>(new Set());
+
+export const isSleeping = (workspace: string, tab: RootTab): boolean => tab.panes.some((p) => sleepingNow.value.has(tabKey(workspace, p.id)));
+
 let readingDormant = false;
 
 /** Ask the core which tabs are asleep; an answer that cannot be read leaves what was known. */
@@ -184,17 +190,22 @@ export async function readDormant(): Promise<void> {
  * question to answer, a box with text — is said, since a button that does nothing says nothing.
  */
 export async function sleepTab(workspace: string, tab: number): Promise<void> {
+  const key = tabKey(workspace, tab);
+  // A second press while the first is out would ask for the same tab twice.
+  if (sleepingNow.value.has(key)) return;
+  sleepingNow.value = new Set([...sleepingNow.value, key]);
   try {
     const answer = await api.iaAsk(sleepTabArgs(workspace, tab));
     const why = refusalOfSleep(answer);
-    if (why) say(`Não deu para hibernar a aba: ${why}.`);
+    if (why) say(refusalSentence(why));
     const line = dormancyLine(answer);
     if (line) log(line);
   } catch (error) {
-    say(`Não deu para hibernar a aba: ${String(error)}`);
+    say(refusalSentence(String(error)));
     log(`adormecer: ${String(error)}`);
   }
   await readDormant();
+  sleepingNow.value = new Set([...sleepingNow.value].filter((k) => k !== key));
 }
 
 /** The tab this window shows, as text: the same tab is the same string, and a poll that rebuilds the tabs wakes nothing. */

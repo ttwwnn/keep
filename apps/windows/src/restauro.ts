@@ -155,6 +155,9 @@ export function refusalOfSleep(answer: CoreAnswer): string | null {
   return typeof answer.motivo === "string" ? answer.motivo : "nada a hibernar nesta aba";
 }
 
+/** The refusal as a sentence for the person: the core's own texts end in a full stop already. */
+export const refusalSentence = (why: string): string => `Não deu para hibernar a aba: ${why.replace(/[.\s]+$/, "")}.`;
+
 /** What a round of putting conversations to sleep (or of waking one) did, worth a line in the log, or null. */
 export function dormancyLine(answer: CoreAnswer): string | null {
   if (typeof answer.erro === "string") return `adormecer: ${answer.erro}`;

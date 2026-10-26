@@ -216,6 +216,9 @@ impl Trava {
     }
 
     fn esperar_em(dir: &std::path::Path, nome: &str, ate: std::time::Duration) -> Option<Trava> {
+        // Sem poder nem abrir o arquivo da trava não é "ocupada": esperar não adianta.
+        std::fs::create_dir_all(dir).ok()?;
+        std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(dir.join(nome)).ok()?;
         let fim = std::time::Instant::now() + ate;
         loop {
             if let Some(t) = Trava::pegar_em(dir, nome) {

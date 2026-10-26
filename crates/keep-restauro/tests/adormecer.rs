@@ -175,12 +175,28 @@ fn so_a_aba_parada_e_livre_fora_de_vista_adormece_e_volta_ao_ser_mostrada() {
     let r = adormecer::adormecer_agora("A", Some(recente), &vistas).unwrap();
     assert_eq!(r["adormecidas"], 1, "{r:#}");
     assert_eq!(adormecer::do_keepd(&k1).len(), 2);
+    // pedir de novo a aba que já dorme diz isso, não "não achei o Claude"
+    let r = adormecer::adormecer_agora("A", Some(recente), &vistas).unwrap();
+    assert_eq!(situacao(&r, recente), "a conversa já está hibernada", "{r:#}");
+    let ia_recente = adormecer::do_keepd(&k1).into_iter().find(|a| a.aba == recente).unwrap().ia;
     // a lista que o app do Windows pergunta: as duas adormecidas, e só elas
     let mut dormem: Vec<u64> = adormecer::listar().unwrap()["abas"].as_array().unwrap().iter().map(|a| a["aba"].as_u64().unwrap()).collect();
     dormem.sort();
     assert_eq!(dormem, vec![parada as u64, recente as u64]);
     assert_eq!(adormecer::acordar("A", recente).unwrap()["acordadas"], 1);
     assert_eq!(adormecer::listar().unwrap()["abas"].as_array().unwrap().len(), 1, "a que acordou sai da lista");
+    assert!(tela_tem("A", recente, "Pronto.", 15));
+    // a corrida: mostrar a aba enquanto o Claude ainda sai dela (a entrada já gravada, o Claude vivo) não perde a conversa
+    adormecer::registrar(&k1, "A", recente, ia_recente, None);
+    let r = adormecer::acordar("A", recente).unwrap();
+    assert_eq!(r["acordadas"], 0, "{r:#}");
+    assert!(r["falhas"][0].as_str().unwrap().contains("ainda está saindo"), "{r:#}");
+    assert!(adormecer::do_keepd(&k1).iter().any(|a| a.aba == recente), "a entrada volta: a conversa não fica sem dono");
+    // e o que a aba faz depois segue valendo: dorme de verdade, sem entrada em dobro, e acorda
+    let r = adormecer::adormecer_agora("A", Some(recente), &vistas).unwrap();
+    assert_eq!(r["adormecidas"], 1, "{r:#}");
+    assert_eq!(adormecer::do_keepd(&k1).iter().filter(|a| a.aba == recente).count(), 1);
+    assert_eq!(adormecer::acordar("A", recente).unwrap()["acordadas"], 1);
     assert!(tela_tem("A", recente, "Pronto.", 15));
     // sem aba, as livres do workspace; o que trabalha e o que está à vista ficam
     let r = adormecer::adormecer_agora("A", None, &vistas).unwrap();

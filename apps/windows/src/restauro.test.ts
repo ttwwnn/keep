@@ -13,6 +13,7 @@ import {
   resumeLine,
   readSleepers,
   refusalOfSleep,
+  refusalSentence,
   sleepArgs,
   sleepTabArgs,
 } from "./restauro";
@@ -174,6 +175,14 @@ describe("the conversations left alone", () => {
     expect(refusalOfSleep(answer({ motivo: "outra rodada em andamento" }))).toBe("outra rodada em andamento");
     expect(refusalOfSleep(answer({}, 2))).toBe("esta versão do keep não sabe hibernar a aba");
     expect(refusalOfSleep(answer({ erro: "o Keep não respondeu" }))).toBe("o Keep não respondeu");
+  });
+
+  it("says the refusal as one sentence, with one full stop", () => {
+    expect(refusalSentence("rodando um comando")).toBe("Não deu para hibernar a aba: rodando um comando.");
+    expect(refusalSentence("O /exit não apareceu na caixa; nada foi feito.")).toBe(
+      "Não deu para hibernar a aba: O /exit não apareceu na caixa; nada foi feito.",
+    );
+    expect(refusalSentence("o Claude não saiu... ")).toBe("Não deu para hibernar a aba: o Claude não saiu.");
   });
 
   it("says only what happened", () => {

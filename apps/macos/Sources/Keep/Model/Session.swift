@@ -772,8 +772,9 @@ final class Session {
                     self.publish()
                     // A button that does nothing says nothing: say why it did not.
                     if let refusal {
+                        let said = refusal.trimmingCharacters(in: CharacterSet(charactersIn: ". "))
                         self.renderer(window)?.present(
-                            error: "Não deu para hibernar a aba “\(title)”: \(refusal).")
+                            error: "Não deu para hibernar a aba “\(title)”: \(said).")
                     }
                 }
             }

@@ -425,6 +425,25 @@ button {
   pointer-events: auto;
 }
 
+/* Pressed and waiting for the core: kept in sight, pulsing. */
+.row-zzz.sleeping {
+  opacity: 1;
+  pointer-events: none;
+  animation: zzz-pulse 1s ease-in-out infinite;
+}
+
+@keyframes zzz-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row-zzz.sleeping {
+    animation: none;
+  }
+}
+
 .row-zzz svg {
   width: calc(9px * var(--zoom));
   height: calc(9px * var(--zoom));

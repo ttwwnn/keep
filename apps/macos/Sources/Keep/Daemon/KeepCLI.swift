@@ -519,10 +519,16 @@ enum TabRestore {
         let args = ["restauro", "adormecer", "--agora", workspace, "--aba", String(tab)]
         let answer = KeepCLI.run(helper, args, within: 300, name: "keep restauro")
         log(answer)
-        guard case .success(let output) = answer else { return "o ajudante não respondeu a tempo" }
+        let output: KeepCLI.Output
+        switch answer {
+        case .success(let done): output = done
+        case .failure(let problem): return "o ajudante falhou (\(problem.description))"
+        }
         guard let start = output.data.firstIndex(of: UInt8(ascii: "{")),
               let body = (try? JSONSerialization.jsonObject(with: output.data[start...])) as? [String: Any]
         else { return "o ajudante respondeu algo ilegível" }
+        // The core could not even list the tabs (the daemon did not answer): its own word, not "nothing to do".
+        if let error = body["erro"] as? String { return error }
         if (body["adormecidas"] as? Int ?? 0) > 0 { return nil }
         let tabs = body["abas"] as? [[String: Any]] ?? []
         return tabs.compactMap { $0["situacao"] as? String }.first

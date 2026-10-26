@@ -45,8 +45,8 @@ import {
 } from "../store";
 import { busyMark, plainTitle, programOf } from "../claude";
 import { tabAccountLabel } from "../ia";
-import { sleepTab } from "../iaChores";
-import { tabAccount, usageLines } from "../iaStore";
+import { isSleeping, sleepTab } from "../iaChores";
+import { iaAvailable, tabAccount, usageLines } from "../iaStore";
 import { homeRelative } from "../text";
 import { info } from "../store";
 import { workspaceState, workspaceTooltip } from "../tooltips";
@@ -88,7 +88,10 @@ function TabRow(props: { workspace: string; tab: RootTab; tabs: RootTab[]; index
   const repeats = program === `— ${look.label}` || program === `— ${look.label.replace(/\.exe$/i, "")}`;
   const suffix = program && !repeats ? <span class="tab-program">{program}</span> : null;
   // A Claude Code whose conversation is still in memory, and not at work or waiting on you: the core would refuse.
-  const offersSleep = account.program.kind === "claude" && !look.asleep && !look.atWork && !look.wantsYou;
+  // The zzz pressed stays, turning, until the core answers.
+  const sleeping = isSleeping(workspace, tab);
+  const offersSleep =
+    iaAvailable.value && account.program.kind === "claude" && !look.asleep && (sleeping || (!look.atWork && !look.wantsYou));
   // Another window has this tab in front.
   const elsewhere = shownElsewhere(peers.value, windowLabel.value, workspace, tab.root.id);
   return (
@@ -160,10 +163,13 @@ function TabRow(props: { workspace: string; tab: RootTab; tabs: RootTab[]; index
       )}
       {!renaming && offersSleep && (
         <button
-          class="row-zzz"
-          title="Hibernar agora a conversa desta aba: volta ao abrir a aba"
+          class={`row-zzz ${sleeping ? "sleeping" : ""}`}
+          title={sleeping ? "Hibernando a conversa…" : "Hibernar agora a conversa desta aba: volta ao abrir a aba"}
           aria-label="Hibernar a conversa da aba"
+          disabled={sleeping}
           onMouseDown={(e) => e.stopPropagation()}
+          // Not the row's rename: a double click on a button is two presses of the button.
+          onDblClick={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
             void sleepTab(workspace, tab.root.id);
