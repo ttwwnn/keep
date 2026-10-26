@@ -27,6 +27,13 @@ export const Close = ({ size = 10 }: { size?: number }) => (
   </svg>
 );
 
+/** The sleep button's glyph: a small z beside a larger one. */
+export const Zzz = ({ size = 10 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 10 10" aria-hidden="true">
+    <path d="M1.5 4.5h3L1.5 8.5h3M6 1.5h2.5L6 5h2.5" {...stroke} />
+  </svg>
+);
+
 export const Chevron = ({ open }: { open: boolean }) => (
   <svg
     width="10"

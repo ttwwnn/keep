@@ -11,6 +11,8 @@ import { defaultsOf, parseSettings, statusLineCommand } from "./claudeSettings";
 import { tabsSteps } from "./e2eTabs";
 import { windowsSteps } from "./e2eWindows";
 import { iaName, lineId } from "./ia";
+import { readSleepers } from "./restauro";
+import { tabKey } from "./state";
 import { chooseAccount, e2eHooks, iaAvailable, measureNow, moveOrder, signIn, usageLines } from "./iaStore";
 import {
   activeTab,
@@ -633,6 +635,52 @@ function sidebarSuffix(tab: number): string | null {
   return row.querySelector(".tab-program")?.textContent?.trim() ?? "";
 }
 
+/** The sidebar's row of a tab of the check's workspace. */
+const rowOf = (tab: number) =>
+  [...document.querySelectorAll<HTMLElement>(".sidebar .tab-row")].find((r) => r.dataset.row === tabKey(WORKSPACE, tab));
+
+/**
+ * The zzz on a Claude tab's row puts its conversation out of memory at once: the title is struck through and the row
+ * stops offering it, the core's list of the sleeping names the tab, and showing the tab brings it back. The stand-in
+ * core (e2e/ia-falso.mjs) keeps the sleepers, since the stand-in's conversation has no transcript to close; its list
+ * is the real core's command with those added.
+ */
+async function sleepSteps(step: StepRunner): Promise<void> {
+  await step("barra lateral: o zzz hiberna a conversa da aba, o título fica riscado, e mostrar a aba a acorda", async () => {
+    const tabs = tabsByWorkspace.value.get(WORKSPACE) ?? [];
+    const claudeTab = [...tabs]
+      .reverse()
+      .find((t) => programOf(t.root.command, t.root.title) === "claude" && statuses.value.has(viewKey(WORKSPACE, t.root.id)));
+    if (!claudeTab) throw new Error("sem a aba do Claude falso");
+    const other = tabs.find((t) => t.root.id !== claudeTab.root.id);
+    if (!other) throw new Error("sem outra aba para mostrar");
+    const id = claudeTab.root.id;
+    const struck = () => {
+      const title = rowOf(id)?.querySelector<HTMLElement>(".tab-title");
+      return !!title && getComputedStyle(title).textDecorationLine.includes("line-through");
+    };
+    // Not the tab in front: showing it again is what wakes it.
+    select(WORKSPACE, other.root.id);
+    const zzz = await waitFor(() => rowOf(id)?.querySelector<HTMLButtonElement>(".row-zzz"), 15000).catch(() => {
+      throw new Error(`a aba do Claude não oferece o zzz (linha: ${rowOf(id)?.className}; trabalhando: ${tabBusy(WORKSPACE, claudeTab)})`);
+    });
+    if (struck()) throw new Error("o título já estava riscado antes do zzz");
+    zzz.click();
+    await waitFor(() => struck(), 15000).catch(() => {
+      throw new Error("o título não ficou riscado depois do zzz");
+    });
+    if (rowOf(id)?.querySelector(".row-zzz")) throw new Error("a aba adormecida ainda oferece o zzz");
+    await api.e2eShot("aba-adormecida");
+    const listed = readSleepers(await api.iaAsk(["restauro", "adormecidas"]));
+    if (!listed?.some((s) => s.workspace === WORKSPACE && s.tab === id)) throw new Error(`a lista do núcleo: ${JSON.stringify(listed)}`);
+    select(WORKSPACE, id);
+    await waitFor(() => !struck(), 15000).catch(() => {
+      throw new Error("o título seguiu riscado depois de mostrar a aba");
+    });
+    return "zzz → riscada e sem o zzz → na lista do núcleo → mostrada, de volta";
+  });
+}
+
 /**
  * The sidebar names an AI tab's account by its place in the footer's list
  * only — "(IA·3)", never the AI or the order's own names — and the number
@@ -669,4 +717,5 @@ async function sidebarSteps(step: StepRunner): Promise<void> {
     if (odd.length > 0 || named.length > 0) throw new Error(`na barra lateral: ${[...odd, ...named].join(" | ")}`);
     return `${seen.join(" → ")}; todas: ${suffixes.join(" | ")}`;
   });
+  await sleepSteps(step);
 }

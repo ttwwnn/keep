@@ -122,7 +122,11 @@ function TabCapsule(props: {
           onDone={(value, keyboard) => finishTabName(workspace, tab.root.id, value, keyboard)}
         />
       ) : (
-        <span class="tab-title" style={look.color ? { color: look.color } : undefined} onPointerLeave={() => slowRename.disarm()}>
+        <span
+          class={`tab-title ${look.asleep ? "asleep" : ""}`}
+          style={look.color ? { color: look.color } : undefined}
+          onPointerLeave={() => slowRename.disarm()}
+        >
           {look.wantsYou && (
             <span class="hand">
               <icon.Hand />

@@ -512,11 +512,21 @@ enum TabRestore {
 
     /// The conversation of one tab leaves memory now, without the twelve
     /// hours (`keep restauro adormecer --agora`), on the person's word: on
-    /// screen or not, but not while it is at work. Blocking.
-    static func sleepNow(workspace: String, tab: UInt32) {
-        guard let helper else { return }
+    /// screen or not, but not while it is at work. Blocking. Nil when it
+    /// left; otherwise why not, in the core's words, for the person to read.
+    static func sleepNow(workspace: String, tab: UInt32) -> String? {
+        guard let helper else { return "o Keep não achou o ajudante do app" }
         let args = ["restauro", "adormecer", "--agora", workspace, "--aba", String(tab)]
-        log(KeepCLI.run(helper, args, within: 300, name: "keep restauro"))
+        let answer = KeepCLI.run(helper, args, within: 300, name: "keep restauro")
+        log(answer)
+        guard case .success(let output) = answer else { return "o ajudante não respondeu a tempo" }
+        guard let start = output.data.firstIndex(of: UInt8(ascii: "{")),
+              let body = (try? JSONSerialization.jsonObject(with: output.data[start...])) as? [String: Any]
+        else { return "o ajudante respondeu algo ilegível" }
+        if (body["adormecidas"] as? Int ?? 0) > 0 { return nil }
+        let tabs = body["abas"] as? [[String: Any]] ?? []
+        return tabs.compactMap { $0["situacao"] as? String }.first
+            ?? body["motivo"] as? String ?? "nada a hibernar nesta aba"
     }
 
     /// One at a time, in the order the tabs were shown.

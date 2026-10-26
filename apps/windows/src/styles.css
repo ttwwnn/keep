@@ -395,6 +395,50 @@ button {
   stroke-width: 1.8;
 }
 
+/* The zzz beside the ×: puts the tab's Claude conversation out of memory at
+   once. Under the pointer only, like the ×, and its room kept on the row. */
+.tab-row.has-zzz {
+  padding-right: 32px;
+}
+
+.row-zzz {
+  position: absolute;
+  right: 29px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(var(--ink-rgb), 0.08);
+  color: inherit;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+}
+
+.tab-row:hover .row-zzz {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.row-zzz svg {
+  width: calc(9px * var(--zoom));
+  height: calc(9px * var(--zoom));
+}
+
+.row-zzz svg path {
+  stroke-width: 1.5;
+}
+
+/* Its conversation is out of memory and comes back as the tab is shown. */
+.tab-title.asleep {
+  text-decoration: line-through;
+}
+
 /* The chevron that opens a tab's menu of AI and account: after the program,
    there on the chosen tab and under the pointer. */
 .ai-chevron {

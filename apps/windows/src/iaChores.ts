@@ -8,7 +8,9 @@
 //    continuar`, every 15 s): they are told to continue when the cause is gone;
 //  - the conversations left alone for twelve hours out of sight (`keep restauro
 //    adormecer`, every 5 min): they leave memory, each tab kept with its shell,
-//    and come back as the tab is shown (`keep restauro acordar`);
+//    and come back as the tab is shown (`keep restauro acordar`); a tab can be put
+//    to sleep at once from its row (the zzz), and the tabs asleep are asked of the
+//    core (`keep restauro adormecidas`) for their titles to be struck through;
 //  - the names given to tabs, which the core keeps in a file of its own
 //    (names.ts), so that a restart gives them back and `keep nova --nome`
 //    works.
@@ -21,8 +23,9 @@
 // at a time each, while the daemon answers, and says in the log what is worth
 // saying.
 
-import { computed, effect, untracked } from "@preact/signals";
+import { computed, effect, signal, untracked } from "@preact/signals";
 import * as api from "./api";
+import type { RootTab } from "./layout";
 import { daemonStartOf, planNames, type NamesFile } from "./names";
 import {
   dormancyLine,
@@ -30,13 +33,17 @@ import {
   isQuietRestore,
   readResume,
   readRestore,
+  readSleepers,
+  refusalOfSleep,
   restoreLine,
   resumeLine,
   sleepArgs,
+  sleepTabArgs,
   type Restored,
   type Shown,
 } from "./restauro";
-import { activeTab, activeWorkspace, daemonError, gui, loaded, log, renameTab } from "./store";
+import { tabKey } from "./state";
+import { activeTab, activeWorkspace, daemonError, gui, loaded, log, renameTab, say } from "./store";
 import { isLeader, peers, windowLabel } from "./windowPeers";
 
 const daemonUp = () => loaded.value && daemonError.value === null;
@@ -144,6 +151,52 @@ async function sleepIdle(): Promise<void> {
   }
 }
 
+// ------------------------------------------------------------------ the tabs asleep
+
+/** The tabs whose conversation is out of memory, by the number the daemon gave each pane (`tabKey`). */
+export const dormant = signal<ReadonlySet<string>>(new Set());
+
+/** The conversation of this tab, or of a pane of it, is out of memory: its title is struck through. */
+export const isDormant = (workspace: string, tab: RootTab): boolean => tab.panes.some((p) => dormant.value.has(tabKey(workspace, p.id)));
+
+let readingDormant = false;
+
+/** Ask the core which tabs are asleep; an answer that cannot be read leaves what was known. */
+export async function readDormant(): Promise<void> {
+  if (readingDormant || !daemonUp()) return;
+  readingDormant = true;
+  try {
+    const tabs = readSleepers(await api.iaAsk(["restauro", "adormecidas"]));
+    if (!tabs) return;
+    const next = new Set(tabs.map((t) => tabKey(t.workspace, t.tab)));
+    const before = dormant.value;
+    if (next.size !== before.size || [...next].some((k) => !before.has(k))) dormant.value = next;
+  } catch {
+    /* asked again in five seconds */
+  } finally {
+    readingDormant = false;
+  }
+}
+
+/**
+ * The conversation of one tab leaves memory now, on the person's word (`keep restauro adormecer --agora`): the tab
+ * in front too, though it only comes back when it is shown again. What the core refuses — a turn under way, a
+ * question to answer, a box with text — is said, since a button that does nothing says nothing.
+ */
+export async function sleepTab(workspace: string, tab: number): Promise<void> {
+  try {
+    const answer = await api.iaAsk(sleepTabArgs(workspace, tab));
+    const why = refusalOfSleep(answer);
+    if (why) say(`Não deu para hibernar a aba: ${why}.`);
+    const line = dormancyLine(answer);
+    if (line) log(line);
+  } catch (error) {
+    say(`Não deu para hibernar a aba: ${String(error)}`);
+    log(`adormecer: ${String(error)}`);
+  }
+  await readDormant();
+}
+
 /** The tab this window shows, as text: the same tab is the same string, and a poll that rebuilds the tabs wakes nothing. */
 const shownKey = computed(() => {
   const shown = shownHere();
@@ -162,7 +215,8 @@ function wakeShown(): void {
         const line = dormancyLine(answer);
         if (line) log(line);
       })
-      .catch((error) => log(`acordar: ${String(error)}`));
+      .catch((error) => log(`acordar: ${String(error)}`))
+      .finally(() => void readDormant());
   });
 }
 
@@ -216,6 +270,11 @@ export function startChores(): void {
   setInterval(() => void keepPicture(false), 30_000);
   setInterval(() => void resumeStopped(), 15_000);
   setInterval(() => void sleepIdle(), 300_000);
+  void readDormant();
+  // Not while the window is hidden: the titles are looked at, and a look asks again within five seconds.
+  setInterval(() => {
+    if (document.visibilityState === "visible") void readDormant();
+  }, 5_000);
   wakeShown();
   setInterval(() => void syncNames().catch(() => {}), 2_000);
 }

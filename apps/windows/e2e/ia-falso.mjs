@@ -122,6 +122,10 @@ function options(args) {
 
 const label = (key) => (key === "claude:ordem" ? "Claude (ordem de prioridade)" : `${key.startsWith("gpt:") ? "GPT" : "Claude"} · ${key.split(":")[1]}`);
 
+// The tabs put to sleep in this run, as the core lists them (`restauro adormecidas`).
+const sleepers = (state) =>
+  (state.dormentes ?? []).map((w) => ({ workspace: w.slice(0, w.lastIndexOf(":")), aba: Number(w.slice(w.lastIndexOf(":") + 1)) }));
+
 function answer(args, state) {
   const [area, command, ...more] = args;
   const opts = options(args);
@@ -192,6 +196,7 @@ function answer(args, state) {
   if (area === "worktrees" && command === "indexar") return [0, { ok: true }];
   // The restart's tabs and the conversations a drop stopped, which the app asks of the core on their clocks: nothing
   // to bring back and nothing stopped, as an idle core says it.
+  if (area === "restauro" && command === "adormecidas") return [0, { abas: sleepers(state) }];
   if (area === "restauro") return [0, { restaurar: { origem: null, abas: 0, conversas: 0, falhas: [], motivo: "nada a restaurar" } }];
   if (area === "continuar") return [0, { conversas: [], ignoradas: [], enviadas: 0, confirmadas: 0 }];
   return [2, { ok: false, motivo: "uso", detalhe: `keep (falso): pedido desconhecido: ${args.join(" ")}` }];
@@ -220,6 +225,22 @@ function core(args) {
   if (area === "worktrees" && ["preparar", "concluir"].includes(command) && samePath(subject, state.caminhoWorktree)) {
     return reply(...answer(args, state));
   }
+  // The stand-ins' conversations have no transcript for the real core to close: a tab put to sleep on the person's word
+  // (the zzz) and woken (the tab shown) are recorded here, and the real core's list of the sleeping gets them added.
+  const value = (flag) => args[args.indexOf(flag) + 1];
+  const sleeper = (ws, aba) => `${ws}:${aba}`;
+  if (area === "restauro" && command === "adormecer" && args.includes("--agora")) {
+    const where = sleeper(value("--agora"), value("--aba"));
+    state.dormentes = [...new Set([...(state.dormentes ?? []), where])];
+    return reply(0, { adormecidas: 1, abas: [{ aba: where.replace(":", "#"), situacao: "adormecida (parada há 0 h)" }] });
+  }
+  if (area === "restauro" && command === "acordar") {
+    const where = sleeper(value("--workspace"), value("--aba"));
+    if ((state.dormentes ?? []).includes(where)) {
+      state.dormentes = state.dormentes.filter((w) => w !== where);
+      return reply(0, { acordadas: 1, falhas: [] });
+    }
+  }
   const real = process.env.KEEP_E2E_REAL_KEEP;
   const run = real && fs.existsSync(real)
     ? spawnSync(real, args, { stdio: ["ignore", "pipe", "pipe"], env: process.env, windowsHide: true, encoding: "utf8" })
@@ -234,6 +255,15 @@ function core(args) {
       const [, canned] = answer(args, state);
       real.lixeira = [...(real.lixeira ?? []), ...(canned.lixeira ?? [])];
       return reply(0, real);
+    } catch {
+      /* the core's own answer, as it came */
+    }
+  }
+  if (area === "restauro" && command === "adormecidas" && run.status === 0) {
+    // The core's list (its own command, on this daemon), with the stand-ins' sleepers among them.
+    try {
+      const listed = JSON.parse(run.stdout.trim().split("\n").pop());
+      return reply(0, { ...listed, abas: [...(listed.abas ?? []), ...sleepers(state)] });
     } catch {
       /* the core's own answer, as it came */
     }

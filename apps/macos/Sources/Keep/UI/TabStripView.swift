@@ -1319,7 +1319,7 @@ final class TabCellView: NSView {
         if item.hasPanes { marks.append("rectangle.split.2x1") }
         if item.isElsewhere { marks.append("macwindow.on.rectangle") }
         let colour = label.textColor ?? palette.text
-        if marks.isEmpty && !wantsYou {
+        if marks.isEmpty && !wantsYou && !item.asleep {
             if label.stringValue != title { label.stringValue = title }
         } else {
             let line = NSMutableAttributedString()
@@ -1327,8 +1327,10 @@ final class TabCellView: NSView {
                 line.append(Self.symbol(Attention.symbol, colour: colour, size: font.pointSize))
                 line.append(NSAttributedString(string: " "))
             }
-            line.append(NSAttributedString(
-                string: title, attributes: [.font: font, .foregroundColor: colour]))
+            var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: colour]
+            // Its conversation is out of memory and comes back as the tab is shown.
+            if item.asleep { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+            line.append(NSAttributedString(string: title, attributes: attributes))
             for mark in marks {
                 line.append(NSAttributedString(string: "  "))
                 line.append(Self.symbol(mark, colour: colour, size: font.pointSize))

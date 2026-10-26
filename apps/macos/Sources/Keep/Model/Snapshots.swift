@@ -870,6 +870,8 @@ struct SessionSnapshot: Hashable {
         var asleep: Bool = false
         /// A Claude Code runs here: the row offers to put it to sleep.
         var canSleep: Bool = false
+        /// The zzz was pressed and the core has not answered: the row says so.
+        var sleeping: Bool = false
         /// Verified account for this tab's current program, used by the footer.
         var usageAccount: String? = nil
         /// The account its AI runs on now, when the core could tell — what
@@ -902,6 +904,8 @@ struct SessionSnapshot: Hashable {
         let account: String?
         let offersAccounts: Bool
         var runningAccount: String? = nil
+        /// Its conversation is out of memory: the title is struck through, as on the sidebar's row.
+        var asleep: Bool = false
     }
 
     struct ActiveTab: Hashable {

@@ -626,7 +626,11 @@ struct WorkspaceSidebar: View {
         .overlay(alignment: .trailing) {
             HStack(spacing: 4) {
                 if tab.canSleep && !tab.asleep {
-                    sleepButton(tab, visible: hoveredHere && dragged == nil, onBadge: wantsYou)
+                    // Not while a turn is under way or the tab waits on you: the core would refuse.
+                    sleepButton(
+                        tab,
+                        visible: tab.sleeping || (hoveredHere && dragged == nil && !tab.busy && !wantsYou),
+                        onBadge: wantsYou)
                 }
                 closeButton(tab, visible: hoveredHere && dragged == nil, onBadge: wantsYou)
             }
@@ -759,15 +763,24 @@ struct WorkspaceSidebar: View {
             lastClicked = nil
             dispatch(.sleepTab(tab.id))
         } label: {
-            Image(systemName: "zzz")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(onBadge ? Palette.attentionInk : Palette.inkResting)
-                .frame(width: 16, height: 16)
-                .background(Circle().fill(Palette.wash(0.08)))
-                .contentShape(Circle())
+            // Pressed and waiting for the core, which takes seconds to see Claude out: a spinner,
+            // so that the press is seen to have been taken.
+            ZStack {
+                if tab.sleeping {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: "zzz")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(onBadge ? Palette.attentionInk : Palette.inkResting)
+                }
+            }
+            .frame(width: 16, height: 16)
+            .background(Circle().fill(Palette.wash(0.08)))
+            .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .help("Hibernar agora a conversa desta aba: volta ao abrir a aba")
+        .disabled(tab.sleeping)
+        .help(tab.sleeping ? "Hibernando a conversa…" : "Hibernar agora a conversa desta aba: volta ao abrir a aba")
         .accessibilityIdentifier("sleep-\(tab.id)")
         .opacity(visible ? 1 : 0)
         .allowsHitTesting(visible)

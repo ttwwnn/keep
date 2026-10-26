@@ -13,6 +13,8 @@
 //! - **Agora** (`keep restauro adormecer --agora W [--aba N]`, o zzz da aba na
 //!   barra lateral): o mesmo, para a aba N (ou as livres do workspace W), sem
 //!   esperar as 12 h.
+//! - **Adormecidas** (`keep restauro adormecidas`, o app do Windows): quais abas
+//!   do keepd de agora estão adormecidas, para a barra lateral riscar o título.
 //! - **Acordar** (`keep restauro acordar`, o app ao mostrar a aba): a
 //!   conversa volta na mesma aba, como a restauração a retoma.
 //! - O retrato leva a aba adormecida com a conversa dela: depois de um
@@ -62,6 +64,14 @@ fn parada() -> Duration {
 /// As adormecidas do keepd `k` (de outro keepd, nenhuma).
 pub fn do_keepd(k: &Keepd) -> Vec<Adormecida> {
     crate::ler::<Estado>(&crate::pasta().join(ARQUIVO)).filter(|e| e.keepd.mesmo(k)).map(|e| e.abas).unwrap_or_default()
+}
+
+/// As abas adormecidas do keepd de agora, para o app desenhar (o do macOS lê o arquivo; o do Windows pergunta).
+pub fn listar() -> Result<Value, String> {
+    let lista = daemon::listar()?;
+    let keepd = crate::retrato::keepd_da_lista(&lista, &Ambiente::do_sistema());
+    let abas: Vec<Value> = do_keepd(&keepd).iter().map(|a| json!({ "workspace": a.workspace, "aba": a.aba })).collect();
+    Ok(json!({ "versao": crate::VERSAO, "abas": abas }))
 }
 
 /// Lê, muda e grava o estado do keepd `k` sob uma trava (o app adormece e acorda ao mesmo tempo).
@@ -131,7 +141,8 @@ fn ultima_fala_ms(conversa: &str) -> u64 {
     quando
 }
 
-/// Por que a aba não adormece agora, ou `None` se pode.
+/// Por que a aba não adormece agora, ou `None` se pode. Em palavras que a pessoa lê: o app as mostra quando o
+/// zzz da aba é recusado.
 fn impedimento(aba: &daemon::Aba, pid: u32) -> Option<String> {
     let (linhas, limpas) = keep_ia::trocar::tela_de(&aba.ws, aba.info.id);
     let (estado, detalhe) = tela::situacao(&Programa::Claude, &linhas, &limpas);
@@ -140,7 +151,12 @@ fn impedimento(aba: &daemon::Aba, pid: u32) -> Option<String> {
     }
     if let Some(s) = keep_ia::sessoes::sessao_claude(pid) {
         if s.trabalhando() || s.esperando() {
-            return Some(format!("sessão {}", s.status));
+            return Some(match s.status.as_str() {
+                "busy" => "trabalhando num turno".into(),
+                "shell" => "rodando um comando".into(),
+                "waiting" => "esperando uma resposta sua".into(),
+                outro => format!("sessão {outro}"),
+            });
         }
     }
     let fundo = tela::segundo_plano_no_rodape(&linhas);
@@ -213,7 +229,8 @@ fn rodada(vistas: &HashSet<(String, u32)>, seco: bool, so_do: Option<(&str, Opti
             continue;
         }
         if let Some(motivo) = impedimento(aba, i.pid) {
-            diz(format!("parada há {} h, mas {motivo}", parada_ha / 3_600_000));
+            // Pedida pela pessoa, o motivo vai sozinho: "parada há 0 h" não explica nada.
+            diz(if so_do.is_some() { motivo } else { format!("parada há {} h, mas {motivo}", parada_ha / 3_600_000) });
             continue;
         }
         let Some(ia) = crate::retrato::ia_da_aba(i, &amb).map(|ia| Ia { conversa: conversa.clone(), ..ia }) else {
@@ -242,6 +259,12 @@ fn rodada(vistas: &HashSet<(String, u32)>, seco: bool, so_do: Option<(&str, Opti
                 mudar(&keepd, |abas| abas.retain(|a| !(a.workspace == i.workspace && a.aba == i.aba)));
                 diz(format!("não saiu: {}", r.detalhe));
             }
+        }
+    }
+    // Uma aba pedida que não roda o Claude: a pessoa apertou o botão e merece saber por que nada saiu.
+    if let Some((w, Some(a))) = so_do {
+        if relato.is_empty() {
+            relato.push(json!({ "aba": format!("{w}#{a}"), "situacao": "o Keep não achou o Claude nesta aba" }));
         }
     }
     Ok(json!({ "versao": crate::VERSAO, "adormecidas": feitas, "abas": relato }))

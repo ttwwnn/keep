@@ -147,16 +147,21 @@ check "the same conversation, with the options it had" "yes" \
 # The zzz of a tab, without the twelve hours: the conversation of tab 2, left
 # alone a moment ago, leaves memory; the one on screen (3) stays.
 touch "$WORK"/casa/.claude/projects/*/*.jsonl
-say "pressing the zzz of tab 2"
-# The zzz shows under the pointer only: park it on the row of tab 2 and press
-# once it is there (rc 4: the app did not answer in time, ask again).
+say "clicking the zzz of tab 2 with the mouse"
+# The zzz shows under the pointer only: park the pointer on the row of tab 2 and, once the button is there, click
+# its middle, as a hand does (rc 4: the app did not answer in time, ask again). A press through the accessibility
+# tree would not tell whether the click also enters the tab, which wakes it as it is shown.
+SHOWN_BEFORE=$(grep -c "switch    → $WS/2 " "$WORK/app.log")
 for _ in 1 2 3 4 5 6; do
     # In front: a hover does not reach a window another app covers.
     osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" >/dev/null 2>&1
     read -r RX RY RW RH < <("$WORK/axpress" "$APP_NAME" frame "sidebar-title-$WS/2")
     [ -n "${RX:-}" ] && "$WORK/mousedrag" move $((RX + RW / 2)) $((RY + RH / 2))
     sleep 1
-    "$WORK/axpress" "$APP_NAME" press "sleep-$WS/2" >/dev/null 2>&1 && break
+    if read -r BX BY BW BH < <("$WORK/axpress" "$APP_NAME" frame "sleep-$WS/2"); then
+        "$WORK/mousedrag" click $((BX + BW / 2)) $((BY + BH / 2))
+        break
+    fi
 done
 waited=0
 while [ "$(fronts)" = "2=claude;3=claude" ] && [ "$waited" -lt 30 ]; do sleep 1; waited=$((waited + 1)); done
@@ -165,6 +170,12 @@ check "and wrote it down to come back" "yes" \
     "$(python3 -c "
 import json; d = json.load(open('$KEEP_RESTAURO_ESTADO/adormecidas.json'))
 print('yes' if any(a['aba'] == 2 for a in d['abas']) else 'no')" 2>/dev/null)"
+sleep 3
+check "the click did not enter the tab (that would wake it at once)" "$SHOWN_BEFORE" "$(grep -c "switch    → $WS/2 " "$WORK/app.log")"
+# The row knows: it stops offering the zzz (and strikes the title), which only a tab asleep does.
+waited=0
+while "$WORK/axpress" "$APP_NAME" frame "sleep-$WS/2" >/dev/null 2>&1 && [ "$waited" -lt 10 ]; do sleep 1; waited=$((waited + 1)); done
+check "the sidebar knows tab 2 is asleep" "no" "$("$WORK/axpress" "$APP_NAME" frame "sleep-$WS/2" >/dev/null 2>&1 && echo yes || echo no)"
 
 say "$PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]

@@ -123,6 +123,38 @@ export function sleepArgs(shown: readonly Shown[]): string[] {
   return ["restauro", "adormecer", ...shown.flatMap((s) => ["--vista", `${s.workspace}/${s.tab}`])];
 }
 
+/** `keep restauro adormecer --agora W --aba N`: the conversation of one tab leaves memory now, on the person's word. */
+export const sleepTabArgs = (workspace: string, tab: number): string[] => [
+  "restauro", "adormecer", "--agora", workspace, "--aba", String(tab),
+];
+
+/**
+ * The tabs asleep in this daemon, from the answer to `restauro adormecidas`;
+ * null when the core could not say (an older one, a failure), so the window
+ * keeps what it knew.
+ */
+export function readSleepers(answer: CoreAnswer): Shown[] | null {
+  if (typeof answer.erro === "string" || answer._saida === 2 || answer.ok === false || !Array.isArray(answer.abas)) return null;
+  const tabs: Shown[] = [];
+  for (const a of answer.abas) {
+    if (isRecord(a) && typeof a.workspace === "string" && typeof a.aba === "number") tabs.push({ workspace: a.workspace, tab: a.aba });
+  }
+  return tabs;
+}
+
+/**
+ * Why a tab did not go to sleep when asked to, for the person, or null when it did. The core says it per tab, as
+ * it does to the round: "parada há 0 h, mas trabalhando".
+ */
+export function refusalOfSleep(answer: CoreAnswer): string | null {
+  if (typeof answer.erro === "string") return answer.erro;
+  if (answer._saida === 2) return "esta versão do keep não sabe hibernar a aba";
+  if (count(answer.adormecidas) > 0) return null;
+  const why = Array.isArray(answer.abas) ? answer.abas.map((a) => (isRecord(a) ? a.situacao : null)).find((s) => typeof s === "string") : null;
+  if (typeof why === "string") return why;
+  return typeof answer.motivo === "string" ? answer.motivo : "nada a hibernar nesta aba";
+}
+
 /** What a round of putting conversations to sleep (or of waking one) did, worth a line in the log, or null. */
 export function dormancyLine(answer: CoreAnswer): string | null {
   if (typeof answer.erro === "string") return `adormecer: ${answer.erro}`;

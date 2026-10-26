@@ -11,7 +11,10 @@ import {
   remapTabNumbers,
   restoreLine,
   resumeLine,
+  readSleepers,
+  refusalOfSleep,
   sleepArgs,
+  sleepTabArgs,
 } from "./restauro";
 
 const answer = (body: Record<string, unknown>, exit = 0): CoreAnswer => ({ versao: 1, _saida: exit, ...body });
@@ -143,6 +146,34 @@ describe("the conversations left alone", () => {
       "restauro", "adormecer", "--vista", "Clinica/8", "--vista", "a/b/2",
     ]);
     expect(sleepArgs([])).toEqual(["restauro", "adormecer"]);
+  });
+
+  it("puts one tab to sleep on the person's word", () => {
+    expect(sleepTabArgs("Clinica", 8)).toEqual(["restauro", "adormecer", "--agora", "Clinica", "--aba", "8"]);
+    expect(sleepTabArgs("a/b", 2)).toEqual(["restauro", "adormecer", "--agora", "a/b", "--aba", "2"]);
+  });
+
+  it("reads the tabs asleep, and nothing from an answer that is not the list", () => {
+    expect(readSleepers(answer({ abas: [{ workspace: "A", aba: 3 }, { workspace: "a/b", aba: 12 }] }))).toEqual([
+      { workspace: "A", tab: 3 }, { workspace: "a/b", tab: 12 },
+    ]);
+    expect(readSleepers(answer({ abas: [] }))).toEqual([]);
+    expect(readSleepers(answer({ abas: [{ workspace: "A" }, null, { aba: 1 }, { workspace: "B", aba: 2 }] }))).toEqual([{ workspace: "B", tab: 2 }]);
+    expect(readSleepers(answer({}, 2)), "a core that does not know the question").toBeNull();
+    expect(readSleepers(answer({ erro: "o Keep não respondeu" }))).toBeNull();
+    expect(readSleepers(answer({ ok: false, abas: [{ workspace: "A", aba: 1 }] }))).toBeNull();
+    expect(readSleepers(answer({ adormecidas: 1 })), "the round's answer is not the list").toBeNull();
+  });
+
+  it("tells why a tab refused to sleep, and nothing when it slept", () => {
+    expect(refusalOfSleep(answer({ adormecidas: 1, abas: [{ aba: "A#2", situacao: "adormecida (parada há 0 h)" }] }))).toBeNull();
+    expect(refusalOfSleep(answer({ adormecidas: 0, abas: [{ aba: "A#2", situacao: "parada há 0 h, mas trabalhando" }] }))).toBe(
+      "parada há 0 h, mas trabalhando",
+    );
+    expect(refusalOfSleep(answer({ adormecidas: 0, abas: [] })), "no word on it").toBe("nada a hibernar nesta aba");
+    expect(refusalOfSleep(answer({ motivo: "outra rodada em andamento" }))).toBe("outra rodada em andamento");
+    expect(refusalOfSleep(answer({}, 2))).toBe("esta versão do keep não sabe hibernar a aba");
+    expect(refusalOfSleep(answer({ erro: "o Keep não respondeu" }))).toBe("o Keep não respondeu");
   });
 
   it("says only what happened", () => {

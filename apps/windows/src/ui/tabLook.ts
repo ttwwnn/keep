@@ -13,6 +13,7 @@ import {
   modeColor,
   programOf,
 } from "../claude";
+import { isDormant } from "../iaChores";
 import type { RootTab } from "../layout";
 import { now, palette, tabActivity, tabBusy, tabLabel, tabMode, tabWaitingSince } from "../store";
 
@@ -27,6 +28,8 @@ export interface TabLook {
   mark: { glyph: string; color: string } | undefined;
   /** The badge breathes for its first minute, while out of sight. */
   breathing: boolean;
+  /** Its conversation is out of memory (twelve hours alone, or the zzz): the title is struck through. */
+  asleep: boolean;
   fill: string;
 }
 
@@ -45,7 +48,7 @@ export function tabLook(workspace: string, tab: RootTab, index: number, selected
   const since = tabWaitingSince(workspace, tab);
   const until = lastBreath(since);
   const breathing = wantsYou && !selected && until !== undefined && now.value / 1000 < until;
-  return { label, color, wantsYou, atWork, mark, breathing, fill: css(attentionFill(dark)) };
+  return { label, color, wantsYou, atWork, mark, breathing, asleep: isDormant(workspace, tab), fill: css(attentionFill(dark)) };
 }
 
 /**

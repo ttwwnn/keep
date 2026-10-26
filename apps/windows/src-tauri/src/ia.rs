@@ -125,6 +125,11 @@ pub fn deadline(args: &[String]) -> Option<Duration> {
         // the next restart. The full `restaurar`, with no phase, is not asked.
         ("restauro", "restaurar") if args.iter().any(|a| a == "--fase=abas") => 30.0,
         ("restauro", "manter") => 900.0,
+        // The conversations left alone leave memory (every five minutes, or one tab on the person's word) and come
+        // back as their tab is shown; and which tabs are asleep, for the sidebar to strike their titles.
+        ("restauro", "adormecer") => 300.0,
+        ("restauro", "acordar") => 120.0,
+        ("restauro", "adormecidas") => 10.0,
         // The conversations a dropped login, network or usage limit stopped.
         ("continuar", _) => 120.0,
         _ => return None,
@@ -798,9 +803,12 @@ mod tests {
         assert_eq!(deadline(&args("worktrees listar --prazo 3.0 a:1")), Some(Duration::from_secs_f64(4.5)));
         assert_eq!(deadline(&args("ia login claude")), None);
         assert_eq!(deadline(&args("worktrees preparar C:\\x")), None);
-        // The restart's two phases, and the stopped conversations; nothing else of theirs.
+        // The restart's two phases, the stopped conversations and the ones left alone; nothing else of theirs.
         assert_eq!(deadline(&args("restauro restaurar --fase=abas")), Some(Duration::from_secs(30)));
         assert_eq!(deadline(&args("restauro manter")), Some(Duration::from_secs(900)));
+        assert_eq!(deadline(&args("restauro adormecer --agora a --aba 2")), Some(Duration::from_secs(300)));
+        assert_eq!(deadline(&args("restauro acordar --workspace a --aba 2")), Some(Duration::from_secs(120)));
+        assert_eq!(deadline(&args("restauro adormecidas")), Some(Duration::from_secs(10)));
         assert_eq!(deadline(&args("restauro restaurar")), None);
         assert_eq!(deadline(&args("restauro retrato --print")), None);
         assert_eq!(deadline(&args("continuar")), Some(Duration::from_secs(120)));

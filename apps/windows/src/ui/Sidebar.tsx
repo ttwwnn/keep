@@ -45,6 +45,7 @@ import {
 } from "../store";
 import { busyMark, plainTitle, programOf } from "../claude";
 import { tabAccountLabel } from "../ia";
+import { sleepTab } from "../iaChores";
 import { tabAccount, usageLines } from "../iaStore";
 import { homeRelative } from "../text";
 import { info } from "../store";
@@ -86,12 +87,14 @@ function TabRow(props: { workspace: string; tab: RootTab; tabs: RootTab[]; index
   const program = tabAccountLabel(account.program, tab.root.command, account.key, account.running, usageLines.value, account.proven);
   const repeats = program === `— ${look.label}` || program === `— ${look.label.replace(/\.exe$/i, "")}`;
   const suffix = program && !repeats ? <span class="tab-program">{program}</span> : null;
+  // A Claude Code whose conversation is still in memory, and not at work or waiting on you: the core would refuse.
+  const offersSleep = account.program.kind === "claude" && !look.asleep && !look.atWork && !look.wantsYou;
   // Another window has this tab in front.
   const elsewhere = shownElsewhere(peers.value, windowLabel.value, workspace, tab.root.id);
   return (
     <div
       ref={badge as never}
-      class={`tab-row ${selected ? "selected" : ""} ${look.wantsYou ? "wants" : ""} ${carried ? "carried" : ""} ${offered ? "offered" : ""}`}
+      class={`tab-row ${selected ? "selected" : ""} ${look.wantsYou ? "wants" : ""} ${carried ? "carried" : ""} ${offered ? "offered" : ""} ${offersSleep ? "has-zzz" : ""}`}
       style={look.wantsYou || shown ? { background: look.wantsYou ? look.fill : undefined, transform: shown ? `translateY(${shown}px)` : undefined } : undefined}
       title={where || undefined}
       data-row={tabKey(workspace, tab.root.id)}
@@ -142,7 +145,11 @@ function TabRow(props: { workspace: string; tab: RootTab; tabs: RootTab[]; index
               </span>
             )
           )}
-          <span class="tab-title" style={look.color ? { color: look.color } : undefined} onPointerLeave={() => slowRename.disarm()}>
+          <span
+            class={`tab-title ${look.asleep ? "asleep" : ""}`}
+            style={look.color ? { color: look.color } : undefined}
+            onPointerLeave={() => slowRename.disarm()}
+          >
             {look.label}
           </span>
           {tab.panes.length > 1 && <PaneMark />}
@@ -150,6 +157,20 @@ function TabRow(props: { workspace: string; tab: RootTab; tabs: RootTab[]; index
           <AccountChevron workspace={workspace} tab={tab} label={look.label} />
           {elsewhere && <WindowMark />}
         </span>
+      )}
+      {!renaming && offersSleep && (
+        <button
+          class="row-zzz"
+          title="Hibernar agora a conversa desta aba: volta ao abrir a aba"
+          aria-label="Hibernar a conversa da aba"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            void sleepTab(workspace, tab.root.id);
+          }}
+        >
+          <icon.Zzz size={9} />
+        </button>
       )}
       {!renaming && (
         <button

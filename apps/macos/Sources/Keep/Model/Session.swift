@@ -101,6 +101,8 @@ final class Session {
     private let sleepingTabs = SleepingTabs()
     /// Tabs whose conversation left memory (their panes' numbers too).
     private var asleep: Set<TabID> = []
+    /// Tabs whose zzz was pressed, until the core answers.
+    private var sleepingNow: Set<TabID> = []
     /// Moved on each time an intent changes the daemon and lists it again. A
     /// poll that set out before that carries a listing from before it, and
     /// applying it would put back what was just closed, or take away from a
@@ -756,13 +758,22 @@ final class Session {
             publish()
 
         case .sleepTab(let id):
-            DispatchQueue.global(qos: .userInitiated).async {
-                TabRestore.sleepNow(workspace: id.workspace, tab: id.root)
-                DispatchQueue.main.async { [weak self] in
+            guard !sleepingNow.contains(id) else { return }
+            sleepingNow.insert(id)
+            publish()
+            let title = tabName(id)
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let refusal = TabRestore.sleepNow(workspace: id.workspace, tab: id.root)
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.sleepingNow.remove(id)
                     // The file the sidebar reads has changed: see it now, not at the next poll.
-                    if let now = self?.sleepingTabs.refresh() {
-                        self?.asleep = now
-                        self?.publish()
+                    if let now = self.sleepingTabs.refresh() { self.asleep = now }
+                    self.publish()
+                    // A button that does nothing says nothing: say why it did not.
+                    if let refusal {
+                        self.renderer(window)?.present(
+                            error: "Não deu para hibernar a aba “\(title)”: \(refusal).")
                     }
                 }
             }
@@ -2040,6 +2051,7 @@ final class Session {
                         offersAccounts: aiHelperPresent,
                         asleep: isAsleep(tab),
                         canSleep: aiProgram(of: tab) == "claude",
+                        sleeping: sleepingNow.contains(tab.id),
                         usageAccount: aiAccounts.confirmedAccount(
                             workspace: tab.id.workspace, tab: tab.id.root,
                             program: AIProgramKind(command: aiProgram(of: tab))),
@@ -2067,7 +2079,8 @@ final class Session {
                 command: aiProgram(of: tab),
                 account: aiAccount(of: tab),
                 offersAccounts: aiHelperPresent,
-                runningAccount: aiRunning(of: tab)
+                runningAccount: aiRunning(of: tab),
+                asleep: isAsleep(tab)
             )
         }
         let active = shownTab(in: window).map { tab in

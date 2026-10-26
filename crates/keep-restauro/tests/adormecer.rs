@@ -167,10 +167,20 @@ fn so_a_aba_parada_e_livre_fora_de_vista_adormece_e_volta_ao_ser_mostrada() {
     assert_eq!(r["adormecidas"], 0, "{r:#}");
     assert!(situacao(&r, ocupada).contains("trabalhando"), "{r:#}");
     assert_eq!(situacao(&r, recente), "(não vista)", "{r:#}");
+    // pedida pela pessoa, a recusa vai em palavras, sem o "parada há…" da rodada; aba sem Claude também diz por quê
+    assert!(!situacao(&r, ocupada).contains("parada há"), "{r:#}");
+    let r = adormecer::adormecer_agora("A", Some(9999), &vistas).unwrap();
+    assert_eq!(r["adormecidas"], 0, "{r:#}");
+    assert_eq!(situacao(&r, 9999), "o Keep não achou o Claude nesta aba", "{r:#}");
     let r = adormecer::adormecer_agora("A", Some(recente), &vistas).unwrap();
     assert_eq!(r["adormecidas"], 1, "{r:#}");
     assert_eq!(adormecer::do_keepd(&k1).len(), 2);
+    // a lista que o app do Windows pergunta: as duas adormecidas, e só elas
+    let mut dormem: Vec<u64> = adormecer::listar().unwrap()["abas"].as_array().unwrap().iter().map(|a| a["aba"].as_u64().unwrap()).collect();
+    dormem.sort();
+    assert_eq!(dormem, vec![parada as u64, recente as u64]);
     assert_eq!(adormecer::acordar("A", recente).unwrap()["acordadas"], 1);
+    assert_eq!(adormecer::listar().unwrap()["abas"].as_array().unwrap().len(), 1, "a que acordou sai da lista");
     assert!(tela_tem("A", recente, "Pronto.", 15));
     // sem aba, as livres do workspace; o que trabalha e o que está à vista ficam
     let r = adormecer::adormecer_agora("A", None, &vistas).unwrap();
