@@ -2206,22 +2206,24 @@ final class TerminalSurfaceView: NSView {
 
     /// The question asked before the clipboard goes to the program: a paste
     /// that would run itself, or a program reading the clipboard where the
-    /// config says to ask — here, and for a kept pane (`KeeperWatch`).
-    static func pasteQuestion(_ text: String) -> NSAlert {
+    /// config says to ask — here, and for a kept pane (`KeeperWatch`). Four
+    /// hundred characters of it can be four hundred lines: they go in a box
+    /// that scrolls (`NSAlert.say`), on the window it is to hang from.
+    static func pasteQuestion(_ text: String, on window: NSWindow?) -> NSAlert {
         let alert = NSAlert()
         alert.messageText = "Paste this?"
-        alert.informativeText = "What you are pasting has line breaks in it, "
-            + "and the program running here reads those as return: it will run "
-            + "as soon as it lands.\n\n" + String(text.prefix(400))
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Paste")
         alert.addButton(withTitle: "Cancel")
+        alert.say("What you are pasting has line breaks in it, "
+            + "and the program running here reads those as return: it will run "
+            + "as soon as it lands.\n\n" + String(text.prefix(400)), on: window)
         return alert
     }
 
     /// Ask before pasting something that would run itself.
     func confirmPaste(_ text: String, state: UnsafeMutableRawPointer?) {
-        let alert = Self.pasteQuestion(text)
+        let alert = Self.pasteQuestion(text, on: window)
         // A sheet on this surface's own window: the question is about this
         // terminal, and the other window has no business being frozen by it.
         // The answer is allowed to arrive later — this is already a turn of

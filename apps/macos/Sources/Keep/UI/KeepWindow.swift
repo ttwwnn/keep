@@ -558,18 +558,23 @@ extension MainWindowController {
     /// A sheet on this window: its own question, not every window's, and not
     /// a modal loop that would stop the poller while it waits.
     ///
-    /// The ending is the first button, so return answers it, and escape
-    /// cancels. A no hands the keyboard back to the terminal the click took
-    /// it from. A second question while one is up is dropped: the first is
-    /// still waiting for its answer, and two sheets cannot stack.
+    /// The ending is the first button, marked destructive, and AppKit keeps
+    /// return off such a button: a return typed into the terminal as the
+    /// question comes up — it waits for the worktrees to be found — ends
+    /// nothing. "Cancelar" answers Escape by name: the button AppKit gives
+    /// Escape of its own accord is one titled "Cancel", and without it no key
+    /// answered the question at all. A no hands the keyboard back to the
+    /// terminal the click took it from. A second question while one is up is
+    /// dropped: the first is still waiting for its answer, and two sheets
+    /// cannot stack.
     func confirm(_ question: Confirmation, then: @escaping () -> Void) {
         let alert = NSAlert()
         alert.messageText = question.title
-        alert.informativeText = question.detail
         alert.alertStyle = .warning
-        let end = alert.addButton(withTitle: question.action)
-        end.hasDestructiveAction = true
-        alert.addButton(withTitle: "Cancelar")
+        // What it goes on to do ends something, and says so.
+        alert.addButton(withTitle: question.action).hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancelar").keyEquivalent = "\u{1b}"
+        alert.say(question.detail, on: window)
         let answer: (NSApplication.ModalResponse) -> Void = { [weak self] response in
             if response == .alertFirstButtonReturn {
                 then()
@@ -586,31 +591,10 @@ extension MainWindowController {
     }
 
     /// The same sheet, for going on with something that was refused as it
-    /// stood: the way on is the first button, and "Cancelar" answers Escape
-    /// by name — the button AppKit gives Escape of its own accord is one
-    /// titled "Cancel". Dropped when a sheet is up already, as a question is.
+    /// stood: the way on is the first button, and it stops something under
+    /// way, as an ending does.
     func ask(_ question: Confirmation, then: @escaping () -> Void) {
-        let alert = NSAlert()
-        alert.messageText = question.title
-        alert.informativeText = question.detail
-        alert.alertStyle = .warning
-        // What it goes on to do stops something under way, and says so.
-        alert.addButton(withTitle: question.action).hasDestructiveAction = true
-        let cancel = alert.addButton(withTitle: "Cancelar")
-        cancel.keyEquivalent = "\u{1b}"
-        let answer: (NSApplication.ModalResponse) -> Void = { [weak self] response in
-            if response == .alertFirstButtonReturn {
-                then()
-            } else {
-                self?.focusActiveTerminal()
-            }
-        }
-        guard let window else {
-            answer(alert.runModal())
-            return
-        }
-        guard window.attachedSheet == nil else { return }
-        alert.beginSheetModal(for: window, completionHandler: answer)
+        confirm(question, then: then)
     }
 
     /// Something asked for could not be done: a sheet saying what and why,
@@ -618,12 +602,101 @@ extension MainWindowController {
     func present(problem: String, detail: String) {
         let alert = NSAlert()
         alert.messageText = problem
-        alert.informativeText = detail
+        alert.say(detail, on: window)
         guard let window else {
             alert.runModal()
             return
         }
         guard window.attachedSheet == nil else { return }
         alert.beginSheetModal(for: window, completionHandler: nil)
+    }
+}
+
+// MARK: - a question that fits on the screen
+
+extension NSAlert {
+    /// Put `text` under the title, in no more room than the screen has.
+    ///
+    /// An alert grows to fit what it says, and nothing stops it: the question
+    /// before closing a tab whose conversation had made twenty-seven
+    /// worktrees came out 1088 points tall on a screen of 881, its buttons
+    /// below the bottom edge, where no click reached them — and with the
+    /// sheet up, nothing else in the window did either.
+    ///
+    /// So a line or a paragraph is said as it always was, and in anything
+    /// longer the first paragraph — what the question is about — stays there
+    /// while the rest, the list, is read in a box of its own: as tall as it
+    /// is up to half the screen, as the Windows app's question is, and
+    /// scrolling past that or past the foot of the screen. The box sets the
+    /// alert's width, as a sheet and on its own alike, so the height measured
+    /// here is the one shown; plain text gives no such promise — a sheet and
+    /// an alert of its own pick different widths for the same words, and so
+    /// different heights.
+    ///
+    /// Call it once the title and the buttons are in: they take room too.
+    /// `window` is the one the alert is to hang from, under its title bar;
+    /// nil for an alert in the middle of the screen.
+    func say(_ text: String, on window: NSWindow?) {
+        guard let cut = text.range(of: "\n\n") ?? text.range(of: "\n") else {
+            informativeText = text
+            return
+        }
+        informativeText = String(text[..<cut.lowerBound])
+        let box = Self.box(saying: String(text[cut.upperBound...]))
+        accessoryView = box
+        let screen = (window?.screen ?? NSScreen.main)?.visibleFrame ?? .zero
+        box.limit(to: screen.height / 2)
+        // Laid out on its own, which is never shorter than as a sheet.
+        layout()
+        let over = self.window.frame.height - Self.room(below: window, on: screen)
+        guard over > 0 else { return }
+        box.limit(to: box.frame.height - over)
+        layout()
+    }
+
+    /// From where a sheet hangs — the foot of the window's title bar — down
+    /// to the bottom of the screen, a margin short; the screen, for an alert
+    /// of its own.
+    private static func room(below window: NSWindow?, on screen: NSRect) -> CGFloat {
+        let margin: CGFloat = 16
+        guard let window else { return screen.height - 2 * margin }
+        let top = min(window.frame.minY + window.contentLayoutRect.maxY, screen.maxY)
+        return top - screen.minY - margin
+    }
+
+    /// The words, in the alert's own type, selectable as its text is, and as
+    /// tall as they are.
+    private static func box(saying text: String) -> NSScrollView {
+        let box = NSTextView.scrollableTextView()
+        box.frame.size.width = 400
+        box.drawsBackground = false
+        box.hasVerticalScroller = false
+        guard let view = box.documentView as? NSTextView,
+              let lines = view.layoutManager, let container = view.textContainer
+        else { return box }
+        view.string = text
+        view.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        view.textColor = .labelColor
+        view.isEditable = false
+        view.drawsBackground = false
+        view.textContainerInset = .zero
+        container.lineFragmentPadding = 0
+        view.frame.size.width = box.contentSize.width
+        lines.ensureLayout(for: container)
+        box.frame.size.height = ceil(lines.usedRect(for: container).height)
+        return box
+    }
+}
+
+private extension NSScrollView {
+    /// No taller than `height`, nor shorter than a few lines; cut short, it
+    /// shows an edge and a scroller to say there is more, and the words keep
+    /// off the edge.
+    func limit(to height: CGFloat) {
+        guard height < frame.height else { return }
+        borderType = .bezelBorder
+        hasVerticalScroller = true
+        (documentView as? NSTextView)?.textContainerInset = NSSize(width: 6, height: 4)
+        frame.size.height = max(height, 60)
     }
 }

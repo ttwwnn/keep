@@ -725,7 +725,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     func present(error: String) {
         let alert = NSAlert()
         alert.messageText = "Keep"
-        alert.informativeText = error
+        // A list of what did not go to the Trash can be as long as the list
+        // that was to go.
+        alert.say(error, on: window)
         // On this window, and only this one. `runModal` would freeze the
         // others and hold the run loop, which stops the poller reconciling
         // and leaves every window's idea of the daemon ageing.

@@ -218,9 +218,10 @@ final class KeeperWatch {
             // Its client knows not to ask; told nothing, should it ask anyway.
             reply("")
         case .ask:
-            let alert = TerminalSurfaceView.pasteQuestion(text)
             // On the pane's own window, as a surface asks on its own.
-            guard let window = window ?? NSApp.keyWindow ?? NSApp.mainWindow else {
+            let window = self.window ?? NSApp.keyWindow ?? NSApp.mainWindow
+            let alert = TerminalSurfaceView.pasteQuestion(text, on: window)
+            guard let window else {
                 reply(alert.runModal() == .alertFirstButtonReturn ? text : "")
                 return
             }

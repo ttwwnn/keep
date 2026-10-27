@@ -13,6 +13,8 @@
 //   axpress <app name> title <label>          its title (a button's text)
 //   axpress <app name> enabled <label>        1 if it can be pressed, 0 if not
 //   axpress <app name> menuenabled <menu> <item>  the same, for an item of the menu bar
+//   axpress <app name> default                the title of the button return presses, in a
+//                                             window or a sheet on one; nothing when none is
 //
 // A button is looked for in every window of the app, sheets included, which
 // is where a question before closing lives. Exits 0 when it did what it was
@@ -35,7 +37,7 @@ let arguments = CommandLine.arguments
 let usage = """
     usage: axpress <app> menu <menu> <item> | button <title> | press <label> | open <label>
                    | items | pick <title> | cancel | frame <label> | value <label>
-                   | title <label> | enabled <label> | menuenabled <menu> <item>
+                   | title <label> | enabled <label> | menuenabled <menu> <item> | default
 
     """
 guard arguments.count >= 3 else {
@@ -48,7 +50,7 @@ guard AXIsProcessTrusted() else {
     FileHandle.standardError.write("axpress: not trusted for accessibility\n".data(using: .utf8)!)
     exit(3)
 }
-let reads: Set<String> = ["frame", "value", "title", "enabled", "menuenabled"]
+let reads: Set<String> = ["frame", "value", "title", "enabled", "menuenabled", "default"]
 let timeout: Float = reads.contains(arguments[2]) ? 4.0 : 1.0
 AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), timeout)
 
@@ -269,6 +271,17 @@ case "enabled" where arguments.count >= 4:
     guard let target = element(labelled: arguments[3]),
           let enabled = attribute(target, "AXEnabled") as? Bool else { notFound() }
     print(enabled ? 1 : 0)
+
+case "default":
+    for window in attribute(root, "AXWindows") as? [AXUIElement] ?? [] {
+        for element in [window] + children(window) {
+            guard let button = attribute(element, "AXDefaultButton") else { continue }
+            print(title(button as! AXUIElement) ?? "")
+            exit(0)
+        }
+    }
+    // None — unless the app did not answer: then nothing is known.
+    exit(silent ? 4 : 0)
 
 default:
     FileHandle.standardError.write(usage.data(using: .utf8)!)
