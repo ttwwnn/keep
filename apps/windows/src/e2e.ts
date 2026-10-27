@@ -18,6 +18,7 @@ import {
   activeTab,
   answer,
   closeTab,
+  daemonError,
   dialog,
   fontSize,
   gui,
@@ -78,6 +79,24 @@ async function waitForAsync<T>(what: () => Promise<T | undefined | null | false>
   }
 }
 
+/** Each workspace with its tabs, a finished one marked †. */
+const listed = (list: api.WorkspaceInfo[]): string =>
+  list.map((w) => `${w.name}=${w.tabs.map((t) => `${t.id}${t.finished ? "†" : ""}`).join(",")}`).join(" ");
+
+/**
+ * What the window holds of the daemon's list, what the daemon says now and whether it was
+ * answering: a workspace made a moment ago stayed out of the window's list for twenty seconds
+ * on CI, three times, and the step said only that it had waited.
+ */
+async function listings(): Promise<string> {
+  // A daemon that does not answer holds each failing step no longer than this.
+  const now = await Promise.race([
+    api.list().then(listed, (error) => `sem resposta (${error})`),
+    new Promise<string>((resolve) => setTimeout(() => resolve("sem resposta em 3 s"), 3000)),
+  ]);
+  return `{janela: ${listed(workspaces.value)}; daemon agora: ${now}; erro do daemon: ${daemonError.value ?? "nenhum"}}`;
+}
+
 const WORKSPACE = "e2e";
 
 function firstTab() {
@@ -97,7 +116,8 @@ export async function runE2E(): Promise<void> {
       const detail = await run();
       steps.push({ name, ok: true, ms: Math.round(performance.now() - started), detail });
     } catch (error) {
-      steps.push({ name, ok: false, ms: Math.round(performance.now() - started), detail: String(error) });
+      const ms = Math.round(performance.now() - started);
+      steps.push({ name, ok: false, ms, detail: `${String(error)} ${await listings()}` });
     }
   };
 

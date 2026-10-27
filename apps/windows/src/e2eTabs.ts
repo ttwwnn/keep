@@ -606,11 +606,15 @@ export async function tabsSteps(runStep: StepRunner, windows: boolean, home: str
     await waitFor(() => terminals.existing(H, first)?.allText().includes("marcador-sono"), 5000, "o marcador do sono");
     for (let i = 0; i < 7; i++) await newTab(H);
     await waitFor(() => idsOf(H).length === 8, 30000, "oito abas");
-    const chosen = settle();
-    check(chosen.length > 0, "nenhuma aba adormeceu");
+    settle();
+    // Asleep is what counts, whoever put it to sleep: the window settles on its own a second after
+    // a tab is shown and every quarter of a minute, and on CI one of those came first — the oldest
+    // was asleep already, and this call chose only the next one.
+    const asleep = idsOf(H).filter((id) => !awake.value.has(tabKey(H, id)));
+    check(asleep.length > 0, "nenhuma aba adormeceu");
     // One left awake that something holds on to is allowed: a selection, the keyboard.
     check(awake.value.size <= 7, `${awake.value.size} abas acordadas`);
-    check(chosen.includes(tabKey(H, first)), "a mais antiga não foi escolhida");
+    check(asleep.includes(first), "a mais antiga não adormeceu");
     await waitFor(() => !terminals.existing(H, first), 5000, "a aba mais antiga adormecer").catch(() => {
       throw new Error("a aba mais antiga ainda tem terminal");
     });
@@ -624,7 +628,7 @@ export async function tabsSteps(runStep: StepRunner, windows: boolean, home: str
     });
     check(awake.value.has(tabKey(H, first)), "a aba acordada não consta como acordada");
     await photo("hibernacao", windows);
-    return `${chosen.length} abas dormiram; a mais antiga voltou com a rolagem; ${awake.value.size} acordadas`;
+    return `${asleep.length} abas dormiram; a mais antiga voltou com a rolagem; ${awake.value.size} acordadas`;
   });
 
   await step("barra lateral: perto da borda a lista rola sozinha, e o pouso segue o que passa sob o ponteiro parado", async () => {
