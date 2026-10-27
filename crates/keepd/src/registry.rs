@@ -9,6 +9,7 @@ use anyhow::{Result, anyhow};
 use keep_proto::{DaemonInfo, SearchHit, TabInfo, WorkspaceInfo};
 
 use crate::Workspace;
+use crate::workspace::Filling;
 
 #[derive(Default)]
 pub struct Registry {
@@ -170,14 +171,14 @@ impl Registry {
     }
 
     /// Workspaces are created on demand: naming one is enough to have it.
-    pub fn get_or_create(&self, name: &str) -> Result<Arc<Workspace>> {
+    ///
+    /// It comes back held as being filled (`Filling`), taken under the lock
+    /// the reap drops empty workspaces under: a list asked while its first tab
+    /// was starting used to drop it, and the tab with it.
+    pub fn get_or_create(&self, name: &str) -> Result<Filling> {
         let mut guard = self.workspaces.lock().map_err(|_| anyhow!("registry poisoned"))?;
-        if let Some(existing) = guard.get(name) {
-            return Ok(Arc::clone(existing));
-        }
-        let workspace = Arc::new(Workspace::new(name));
-        guard.insert(name.to_string(), Arc::clone(&workspace));
-        Ok(workspace)
+        let workspace = guard.entry(name.to_string()).or_insert_with(|| Arc::new(Workspace::new(name)));
+        Ok(Workspace::hold(workspace))
     }
 
     /// Move a tab — panes and all — from one workspace to another.
@@ -223,7 +224,7 @@ impl Registry {
             note(log, &young);
         }
         if let Ok(mut guard) = self.workspaces.lock() {
-            guard.retain(|_, s| !s.is_empty());
+            guard.retain(|_, s| !s.is_empty() || s.is_being_filled());
         }
     }
 }

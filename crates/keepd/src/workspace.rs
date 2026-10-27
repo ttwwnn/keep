@@ -36,6 +36,27 @@ pub struct Workspace {
     name: String,
     tabs: Mutex<Vec<Entry>>,
     next_id: AtomicU32,
+    /// The hands that took it to put a tab in and have not let go (`Filling`).
+    filling: AtomicU32,
+}
+
+/// A workspace taken to put a tab in (`Registry::get_or_create`). While it is
+/// held, the reaper does not count it as empty: its first tab takes a moment
+/// to start, and a workspace dropped in that moment took the tab out of every
+/// list with it, the shell running on unseen.
+pub struct Filling(Arc<Workspace>);
+
+impl std::ops::Deref for Filling {
+    type Target = Workspace;
+    fn deref(&self) -> &Workspace {
+        &self.0
+    }
+}
+
+impl Drop for Filling {
+    fn drop(&mut self) {
+        self.0.filling.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 /// Give a departed tab's panes somewhere to belong.
@@ -331,7 +352,23 @@ fn term_name() -> &'static str {
 
 impl Workspace {
     pub fn new(name: impl Into<String>) -> Self {
-        Self { name: name.into(), tabs: Mutex::new(Vec::new()), next_id: AtomicU32::new(1) }
+        Self {
+            name: name.into(),
+            tabs: Mutex::new(Vec::new()),
+            next_id: AtomicU32::new(1),
+            filling: AtomicU32::new(0),
+        }
+    }
+
+    /// Hold it as being filled until the `Filling` is let go.
+    pub(crate) fn hold(workspace: &Arc<Workspace>) -> Filling {
+        workspace.filling.fetch_add(1, Ordering::AcqRel);
+        Filling(Arc::clone(workspace))
+    }
+
+    /// Whether a tab is on its way into it (`Filling`).
+    pub fn is_being_filled(&self) -> bool {
+        self.filling.load(Ordering::Acquire) > 0
     }
 
     pub fn name(&self) -> &str {

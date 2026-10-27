@@ -181,6 +181,41 @@ fn a_tab_that_dies_young_is_written_down() {
 }
 
 #[test]
+fn a_new_workspace_survives_the_lists_asked_while_its_tab_starts() {
+    let path = start_daemon("filling");
+    // Every list reaps, and the app asks for one each second: here, without a pause.
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let lister = {
+        let (path, stop) = (path.clone(), Arc::clone(&stop));
+        std::thread::spawn(move || {
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                if let Ok(mut sock) = Stream::connect(&path) {
+                    let _ = ClientMsg::List.write(&mut sock);
+                    sock.set_read_timeout(Some(Duration::from_secs(5))).ok();
+                    let _ = ServerMsg::read(&mut sock);
+                }
+            }
+        })
+    };
+    let mut lost = Vec::new();
+    for i in 0..5 {
+        let name = format!("nova-{i}");
+        let mut sock = Stream::connect(&path).unwrap();
+        ClientMsg::NewTab { workspace: name.clone(), cwd: None, cols: 80, rows: 24, split_of: 0, split_dir: 0 }
+            .write(&mut sock)
+            .unwrap();
+        sock.set_read_timeout(Some(Duration::from_secs(10))).ok();
+        assert!(matches!(ServerMsg::read(&mut sock), Ok(Some(ServerMsg::TabCreated { .. }))), "{name} was not made");
+        if tabs_of(&path, &name).len() != 1 {
+            lost.push(name);
+        }
+    }
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    lister.join().unwrap();
+    assert!(lost.is_empty(), "made, and gone from the list: {lost:?}");
+}
+
+#[test]
 fn attaching_twice_reuses_one_shell() {
     let path = start_daemon("reuse");
 
