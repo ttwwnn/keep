@@ -21,7 +21,11 @@ fn main() {
                 "windows" => format!("libghostty-vt-windows-{arch}"),
                 _ => "libghostty-vt".to_string(),
             };
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../vendor").join(slice)
+            // Read as the script runs, not as it was compiled: a worktree that
+            // shares this `target/` gets the same script, built once, and the
+            // path compiled into it is the other checkout's.
+            let manifest = std::env::var_os("CARGO_MANIFEST_DIR").unwrap_or_default();
+            PathBuf::from(manifest).join("../../vendor").join(slice)
         }
     };
     let vendor = vendor
