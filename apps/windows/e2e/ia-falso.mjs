@@ -204,18 +204,54 @@ function answer(args, state) {
 
 const samePath = (a, b) => !!a && !!b && a.replace(/\//g, "\\").toLowerCase() === b.replace(/\//g, "\\").toLowerCase();
 
+/** `body`, holding `lock`: a file only one call can create. One a call that died left behind gives way after 2 s. */
+function exclusive(lock, body) {
+  for (;;) {
+    try {
+      fs.closeSync(fs.openSync(lock, "wx"));
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      try {
+        if (Date.now() - fs.statSync(lock).mtimeMs > 2000) fs.rmSync(lock, { force: true });
+      } catch {}
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+    }
+  }
+  try {
+    return body();
+  } finally {
+    fs.rmSync(lock, { force: true });
+  }
+}
+
 function core(args) {
   const stateFile = process.env.KEEP_E2E_FAKE_STATE;
   const log = (line) => stateFile && fs.appendFileSync(`${stateFile}.chamadas.log`, `${line}\n`);
   log(args.join(" "));
-  let state = {};
-  try {
-    state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-  } catch {
-    state = {};
-  }
+  const load = () => {
+    try {
+      return JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    } catch {
+      return {};
+    }
+  };
+  const state = load();
+  const before = Object.fromEntries(Object.entries(state).map(([key, value]) => [key, JSON.stringify(value)]));
   const reply = (code, body) => {
-    if (stateFile) fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
+    // Only what this call changed, onto the file as it is now, swapped in whole: the app asks several things of the
+    // core at once, and a call that wrote back all it had read undid another's (27/10: an `acordar` took away the
+    // `concluido` that the `concluir` just before it had written).
+    const changed = Object.keys(state).filter((key) => JSON.stringify(state[key]) !== before[key]);
+    if (stateFile && changed.length > 0) {
+      exclusive(`${stateFile}.lock`, () => {
+        const now = load();
+        for (const key of changed) now[key] = state[key];
+        const temp = `${stateFile}.${process.pid}`;
+        fs.writeFileSync(temp, JSON.stringify(now, null, 2));
+        fs.renameSync(temp, stateFile);
+      });
+    }
     process.stdout.write(JSON.stringify({ versao: 1, ...body }).replace('"@BORN@"', BORN) + "\n");
     process.exit(code);
   };

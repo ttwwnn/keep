@@ -54,11 +54,21 @@ export async function clipSteps(step: StepRunner, { waitFor, workspace, windows 
       const copy =
         "Add-Type -AssemblyName System.Windows.Forms; $l = New-Object System.Collections.Specialized.StringCollection; " +
         "[void]$l.Add($env:KEEP_E2E_CLIPFILE); [System.Windows.Forms.Clipboard]::SetFileDropList($l)";
-      view.term.input(
-        `$env:KEEP_E2E_CLIPFILE = Join-Path $env:TEMP 'keep e2e clip.txt'; Set-Content -Path $env:KEEP_E2E_CLIPFILE -Value x; powershell.exe -NoProfile -STA -Command '${copy}'; Write-Host ('keep-e2e-' + 'clip-pronto')\r`,
-        true,
-      );
-      await until("a cópia do arquivo", () => view.allText().includes("keep-e2e-clip-pronto") && atPrompt());
+      const command = `$env:KEEP_E2E_CLIPFILE = Join-Path $env:TEMP 'keep e2e clip.txt'; Set-Content -Path $env:KEEP_E2E_CLIPFILE -Value x; powershell.exe -NoProfile -STA -Command '${copy}'; Write-Host ('keep-e2e-' + 'clip-pronto')\r`;
+      const copied = () => view.allText().includes("keep-e2e-clip-pronto") && atPrompt();
+      view.term.input(command, true);
+      // The Windows PowerShell that puts the file there stayed past twenty seconds twice in some fifty runs, in a step
+      // that takes four; it is the check's own setup, not the paste: what was in front is said, and it is asked again.
+      let again = "";
+      try {
+        await waitFor(copied, 20000);
+      } catch {
+        again = `; a cópia foi pedida de novo (na 1ª, ${tabsByWorkspace.value.get(workspace)?.[0]?.root.command || "?"} ficou em frente por 20 s)`;
+        view.term.input("\x03", true);
+        await until("o prompt depois de interromper a cópia", atPrompt);
+        view.term.input(command, true);
+        await until("a cópia do arquivo", copied, 40000);
+      }
 
       const paths = await api.clipboardFiles();
       if (paths.length !== 1 || !paths[0].endsWith("keep e2e clip.txt")) {
@@ -78,7 +88,7 @@ export async function clipSteps(step: StepRunner, { waitFor, workspace, windows 
       await until("o texto no prompt", () => flat().includes("texto-e2e-clip"));
       view.term.input("\x03", true);
       await until("o prompt no fim", atPrompt);
-      return `${paths[0]} digitado entre aspas; o texto, como texto`;
+      return `${paths[0]} digitado entre aspas; o texto, como texto${again}`;
     } finally {
       // A step that failed leaves what it typed on the line, and the steps after it need a clean prompt.
       if (!atPrompt()) {
