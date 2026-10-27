@@ -10,10 +10,11 @@ use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use keep_vt::{Format, Terminal};
-use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
+use portable_pty::{Child, CommandBuilder, ExitStatus, MasterPty, PtySize, native_pty_system};
 
 /// How much we read from the PTY per syscall.
 const READ_CHUNK: usize = 64 * 1024;
@@ -75,6 +76,9 @@ pub struct Tab {
     /// typing, and counting only output calls a REPL you are typing into
     /// stale while it waits for you.
     last_active: Arc<AtomicU64>,
+    /// When the shell was started, in unix milliseconds (`now_ms`), to tell a
+    /// tab that died as it opened.
+    born: u64,
 }
 
 fn now_ms() -> u64 {
@@ -436,6 +440,7 @@ impl Tab {
             size: Mutex::new((cols, rows)),
             shell_pid,
             last_active,
+            born: now_ms(),
         })
     }
 
@@ -699,6 +704,16 @@ impl Tab {
     /// True once the child is gone and the PTY hit EOF.
     pub fn is_finished(&self) -> bool {
         self.finished.load(Ordering::Acquire)
+    }
+
+    /// How long since the shell was started.
+    pub fn age(&self) -> Duration {
+        Duration::from_millis(now_ms().saturating_sub(self.born))
+    }
+
+    /// How the shell ended; None while it still runs.
+    pub fn exit_status(&self) -> Option<ExitStatus> {
+        self.child.lock().ok()?.try_wait().ok().flatten()
     }
 
     pub fn kill(&self) -> Result<()> {

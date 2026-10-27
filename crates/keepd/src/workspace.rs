@@ -8,9 +8,10 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::{Result, anyhow};
-use portable_pty::CommandBuilder;
+use portable_pty::{CommandBuilder, ExitStatus};
 
 use crate::Tab;
 
@@ -110,6 +111,23 @@ fn rehome(tabs: &mut [Entry], departed: &HashMap<u32, (u32, u8)>) {
         } else if let Some(heir) = inherit(tabs, id, 0, 0) {
             promoted.insert(top, heir);
         }
+    }
+}
+
+/// A tab that ends sooner than this after opening is written down as it goes
+/// (`Workspace::reap`).
+const YOUNG: Duration = Duration::from_secs(10);
+
+/// How a shell ended, for the log: its code — in hex too, the way Windows'
+/// own codes read (0xC0000142) — the signal, or that it still runs, when the
+/// tab ended without it.
+fn ended(status: Option<ExitStatus>, pid: Option<u32>) -> String {
+    match status {
+        Some(status) => match status.signal() {
+            Some(signal) => format!("terminou pelo sinal {signal}"),
+            None => format!("saiu com {0} (0x{0:08X})", status.exit_code()),
+        },
+        None => format!("o shell (pid {}) ainda roda", pid.map_or("?".into(), |p| p.to_string())),
     }
 }
 
@@ -604,8 +622,11 @@ impl Workspace {
     /// Drop tabs whose child exited and that nobody is watching.
     ///
     /// A finished tab someone is still attached to stays: they may not have
-    /// read the last of its output yet.
-    pub fn reap(&self) {
+    /// read the last of its output yet. One that ended within seconds of
+    /// opening goes before anyone saw why, so how it ended comes back, a line
+    /// each, for the daemon's log (`Registry::reap`).
+    pub fn reap(&self) -> Vec<String> {
+        let mut young = Vec::new();
         if let Ok(mut guard) = self.tabs.lock() {
             let departed: HashMap<u32, (u32, u8)> = guard
                 .iter()
@@ -613,7 +634,16 @@ impl Workspace {
                 .map(|e| (e.id, (e.split_of, e.split_dir)))
                 .collect();
             if departed.is_empty() {
-                return;
+                return young;
+            }
+            for e in guard.iter().filter(|e| departed.contains_key(&e.id) && e.tab.age() < YOUNG) {
+                young.push(format!(
+                    "{}/{}: morreu {:.1} s depois de abrir; {}",
+                    self.name,
+                    e.id,
+                    e.tab.age().as_secs_f32(),
+                    ended(e.tab.exit_status(), e.tab.shell_pid()),
+                ));
             }
             guard.retain(|e| !departed.contains_key(&e.id));
             // The same inheritance as `close_tab`, resolved across the whole
@@ -621,6 +651,7 @@ impl Workspace {
             // below them out of the arrangement.
             rehome(&mut guard, &departed);
         }
+        young
     }
 
     pub fn is_empty(&self) -> bool {

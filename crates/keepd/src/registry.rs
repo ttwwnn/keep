@@ -1,6 +1,8 @@
 //! The set of live workspaces, keyed by name.
 
 use std::collections::HashMap;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, anyhow};
@@ -14,6 +16,9 @@ pub struct Registry {
     /// When this daemon started, in unix milliseconds: with its pid, what
     /// tells one daemon's tab 3 from the next one's.
     started_ms: u64,
+    /// Where the tabs that died within seconds of opening are written down
+    /// (`Server::deaths_log`); none, nothing is.
+    log: Option<PathBuf>,
 }
 
 impl Registry {
@@ -23,6 +28,11 @@ impl Registry {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
         Self { started_ms, ..Self::default() }
+    }
+
+    /// The same, writing the tabs that die young to `log`.
+    pub fn with_log(self, log: Option<PathBuf>) -> Self {
+        Self { log, ..self }
     }
 
     /// Which daemon this is.
@@ -200,17 +210,37 @@ impl Registry {
         workspace.kill_all()
     }
 
-    /// Drop dead tabs, then workspaces left with nothing in them.
+    /// Drop dead tabs, then workspaces left with nothing in them. How the
+    /// ones that died within seconds of opening ended is written down: nobody
+    /// was there to see it, and their workspace can go with them.
     pub fn reap(&self) {
         let workspaces: Vec<Arc<Workspace>> = match self.workspaces.lock() {
             Ok(g) => g.values().cloned().collect(),
             Err(_) => return,
         };
-        for workspace in &workspaces {
-            workspace.reap();
+        let young: Vec<String> = workspaces.iter().flat_map(|w| w.reap()).collect();
+        if let (Some(log), false) = (&self.log, young.is_empty()) {
+            note(log, &young);
         }
         if let Ok(mut guard) = self.workspaces.lock() {
             guard.retain(|_, s| !s.is_empty());
         }
+    }
+}
+
+/// Add the lines to the log, each after the time in unix seconds. Best effort:
+/// a log that cannot be written changes nothing else.
+// shortcut: no rotation; a tab that dies as it opens is rare — rotate if the file ever grows.
+fn note(log: &Path, lines: &[String]) {
+    if let Some(dir) = log.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(log) else { return };
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    for line in lines {
+        let _ = writeln!(file, "{at} {line}");
     }
 }

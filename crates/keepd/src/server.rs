@@ -48,7 +48,22 @@ impl Server {
         let listener =
             Listener::bind(path).with_context(|| format!("bind {}", path.display()))?;
 
-        Ok(Self { listener, path: path.to_path_buf(), registry: Arc::new(Registry::new()) })
+        let registry = Registry::new().with_log(Self::deaths_log(path));
+        Ok(Self { listener, path: path.to_path_buf(), registry: Arc::new(registry) })
+    }
+
+    /// Where a daemon on `path` writes down the tabs that died within seconds
+    /// of opening (`Registry::reap`): beside its socket — so a test's daemon
+    /// writes beside the test's — or, on Windows, where the address is a pipe,
+    /// in the app's folder, beside `keepd.log`.
+    pub fn deaths_log(path: &Path) -> Option<PathBuf> {
+        #[cfg(windows)]
+        {
+            let _ = path;
+            std::env::var_os("LOCALAPPDATA").map(|dir| Path::new(&dir).join("Keep").join("abas.log"))
+        }
+        #[cfg(not(windows))]
+        Some(path.with_extension("abas.log"))
     }
 
     pub fn registry(&self) -> Arc<Registry> {

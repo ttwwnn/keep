@@ -143,6 +143,44 @@ fn list_reports_live_workspaces() {
 }
 
 #[test]
+fn a_tab_that_dies_young_is_written_down() {
+    let path = start_daemon("young");
+    // On Windows the log is the app folder's, shared by the whole run: the name is this run's own.
+    let name = format!("jovem-{}", std::process::id());
+    let log = Server::deaths_log(&path).expect("where the log goes");
+
+    let mut tab = Stream::connect(&path).unwrap();
+    ClientMsg::Attach { workspace: name.clone(), tab: TAB_ANY, cols: 80, rows: 24 }
+        .write(&mut tab)
+        .unwrap();
+    tab.set_read_timeout(Some(Duration::from_secs(5))).ok();
+    assert!(matches!(ServerMsg::read(&mut tab), Ok(Some(ServerMsg::Attached { .. }))), "no attach");
+    ClientMsg::Input(common::line("exit 3")).write(&mut tab).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if matches!(ServerMsg::read(&mut tab), Ok(Some(ServerMsg::Ended)) | Ok(None)) {
+            break;
+        }
+    }
+    drop(tab);
+
+    // A list reaps: the tab goes, and how it ended is written down.
+    let wanted = format!("{name}/1:");
+    let mut said = String::new();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline && !said.contains(&wanted) {
+        let mut lister = Stream::connect(&path).unwrap();
+        ClientMsg::List.write(&mut lister).unwrap();
+        lister.set_read_timeout(Some(Duration::from_secs(5))).ok();
+        let _ = ServerMsg::read(&mut lister);
+        said = std::fs::read_to_string(&log).unwrap_or_default();
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let line = said.lines().find(|l| l.contains(&wanted)).unwrap_or_else(|| panic!("nothing for {name} in {said:?}"));
+    assert!(line.contains("saiu com 3 (0x00000003)"), "how it ended: {line}");
+}
+
+#[test]
 fn attaching_twice_reuses_one_shell() {
     let path = start_daemon("reuse");
 

@@ -255,6 +255,13 @@ $cli = Join-Path $dir 'bin\keep.exe'
 if (Test-Path $cli) {
     & $cli ls 2>&1 | Tee-Object -FilePath (Join-Path $Out 'keep-ls.txt') | Write-Host
 }
+# The tabs that died within seconds of opening, before anyone saw them: how each ended, as the daemon wrote it down.
+$abas = Join-Path $env:LOCALAPPDATA 'Keep\abas.log'
+if (Test-Path $abas) {
+    Copy-Item $abas (Join-Path $Out 'abas.txt')
+    Write-Host '==> abas que morreram ao abrir:'
+    Get-Content $abas | ForEach-Object { Write-Host "    $_" }
+}
 Get-Process | Where-Object { $_.ProcessName -in @('Keep', 'keepd', 'OpenConsole', 'conhost', 'pwsh', 'powershell') } |
     Select-Object ProcessName, Id, Path | Format-Table -AutoSize | Out-String |
     Tee-Object -FilePath (Join-Path $Out 'processos.txt') | Write-Host
