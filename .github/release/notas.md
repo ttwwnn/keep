@@ -176,3 +176,9 @@ muitas worktrees crescia além da tela: com 27, os botões ficavam abaixo da bor
 não fechava nem cancelava. Agora a lista vai numa caixa que rola a partir de metade da tela, como no Windows, os botões
 ficam sempre à vista e o Esc cancela. O Return segue sem fechar a aba, porque o botão de fechar é destrutivo. O mesmo
 vale para o aviso do que não foi para a lixeira e para a pergunta antes de colar várias linhas.
+
+**Workspace novo não some mais (0.3.18, Mac e Windows):** criar um workspace às vezes não dava em nada: a aba nascia,
+mas o workspace saía da lista e o shell ficava rodando sem que ninguém o visse. Acontecia quando o app pedia a lista de
+abas no instante em que a primeira aba abria, o que no Windows, onde o PowerShell demora mais a abrir, era frequente.
+Agora o workspace fica de pé até a primeira aba entrar. E o daemon passa a anotar em `abas.log` a aba que morre nos
+primeiros segundos sem ninguém olhando, com o código de saída do shell.
