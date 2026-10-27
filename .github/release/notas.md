@@ -170,3 +170,9 @@ aparece enquanto a aba trabalha ou espera você, e, se o Keep recusar, a janela 
 pergunta aberta, texto na caixa). No Windows a hibernação das 12 horas passa a funcionar também: o app recusava o
 pedido ao núcleo, e ela nunca tinha rodado lá. E o Keep passa a enxergar como Claude as abas em que o keepd diz
 `zsh` com o Claude na frente (as mais antigas, de dias): elas ficavam fora da hibernação, do menu de conta e do zzz.
+
+**A pergunta de fechar cabe na tela (0.3.17, Mac):** a pergunta antes de fechar uma aba cuja conversa tinha feito
+muitas worktrees crescia além da tela: com 27, os botões ficavam abaixo da borda e nenhuma tecla respondia, e o Keep
+não fechava nem cancelava. Agora a lista vai numa caixa que rola a partir de metade da tela, como no Windows, os botões
+ficam sempre à vista e o Esc cancela. O Return segue sem fechar a aba, porque o botão de fechar é destrutivo. O mesmo
+vale para o aviso do que não foi para a lixeira e para a pergunta antes de colar várias linhas.
