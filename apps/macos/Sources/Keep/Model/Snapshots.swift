@@ -343,28 +343,32 @@ enum ClaudeActivity: Hashable {
         // the turn is over but Claude Code will be back when it ends or
         // speaks, as with a workflow. The `… · 5 shells, 1 monitor still
         // running` on the turn's last line is not read — it stays after they
-        // end.
-        if footer.contains(where: isRunningBackgroundWork) { return .waitingForWorkflow }
+        // end. Not decided yet: Claude Code no longer prints `esc to
+        // interrupt` there, and a turn still running next to a shell is a
+        // turn running (the status line below says so).
+        let background = footer.contains(where: isRunningBackgroundWork)
         // Above it, the conversation — unless it is scrolled back, where the
         // last status line in sight is an old one.
         let conversation = lines[..<opening]
         if conversation.contains(where: { $0.contains("Jump to bottom") || $0.contains(" new message") }) {
-            return nil
+            return background ? .waitingForWorkflow : nil
         }
         // The last status line Claude Code wrote: a glyph of its spinner and
         // a capitalised word, `✻ Baked for 23s`, `✶ Roosting… (16m)`. A bullet
         // in the conversation (`· Qual…` under an answer) is indented under
         // `⎿` or starts lower-case.
-        guard let status = conversation.last(where: isStatusLine) else { return .done }
+        guard let status = conversation.last(where: isStatusLine) else {
+            return background ? .waitingForWorkflow : .done
+        }
         if status.contains("Waiting for"), status.contains("to finish") {
             // Dynamic workflows or background agents. Still waited on only
             // while one is listed running under the footer (`◯ name ▰▰ 1/2`);
             // a turn that went on and was interrupted writes no new line, and
             // the old one would otherwise stand for good.
-            return footer.contains(where: { trimmed($0).hasPrefix("◯") }) ? .waitingForWorkflow : .done
+            return background || footer.contains(where: { trimmed($0).hasPrefix("◯") }) ? .waitingForWorkflow : .done
         }
         if status.contains("…") { return .working }
-        return .done
+        return background ? .waitingForWorkflow : .done
     }
 
     /// The kinds of background work whose count Claude Code keeps under the

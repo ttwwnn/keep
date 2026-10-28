@@ -189,3 +189,10 @@ mandava a mensagem em seguida (o Claude ainda leu o login de antes por uns 30 s)
 armazém próprio ("não sei qual conta a aba usa") e esperava para sempre. Agora a conta vem do processo da aba, e o
 "continue" sai sozinho. E o título "(IA·1→2)" some depois de 32 s sem o Claude falar, porque a próxima fala já sai
 na conta nova.
+
+**Título azul que devia ser da cor do modo (0.3.20, Mac e Windows):** o Claude Code 2.1.312 deixou de escrever
+`esc to interrupt` sob o prompt, e com um shell em segundo plano o rodapé vira `bypass permissions on · 1 shell`. O
+Keep tomava a contagem por "turno acabou, esperando tarefa" e pintava de azul a aba que ainda trabalhava, quando devia
+ter a cor do modo (vermelha no bypass). Agora a linha de status do turno (`· Creating… (7m 57s …)`) vale primeiro: a aba
+que trabalha tem a cor do modo, mesmo com shell ou monitor em segundo plano, e o azul fica para o turno que acabou e
+espera a tarefa.

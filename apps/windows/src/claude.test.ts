@@ -85,6 +85,16 @@ describe("Claude Code's turn", () => {
     expect(readActivity(screen("✶ Roosting… (16m)", `${mode} · esc to interrupt · ${tail}`))).toBe("working");
   });
 
+  it("a spinner running beside a shell, no esc to interrupt: working", () => {
+    expect(readActivity(screen("· Creating… (7m 57s · ↓ 20.9k tokens)", `${mode} · 1 shell`))).toBe("working");
+  });
+
+  it("“Waiting for” with shells under the box: waiting", () => {
+    expect(readActivity(screen("✻ Waiting for 1 background agent to finish", `${mode} · 2 shells, 1 monitor`))).toBe(
+      "waitingForWorkflow",
+    );
+  });
+
   it("a dynamic workflow listed running: waiting", () => {
     expect(readActivity(screen("✻ Waiting for 1 dynamic workflow to finish", `${mode}\n  ◯ review ▰▰▱ 1/3`))).toBe(
       "waitingForWorkflow",

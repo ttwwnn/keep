@@ -47,6 +47,11 @@ check(read(screen(status: "✻ Baked for 2s", footer: "\(mode) · 2 files change
 // The rules that were there before.
 check(read(screen(status: "✶ Roosting… (16m)", footer: "\(mode) · esc to interrupt · \(tail)")) == .working,
       "esc to interrupt: working")
+// Claude Code 2.1.312 prints no `esc to interrupt`: a turn running beside a shell is working.
+check(read(screen(status: "· Creating… (7m 57s · ↓ 20.9k tokens)", footer: "\(mode) · 1 shell")) == .working,
+      "a spinner running beside a shell: working, the mode's colour")
+check(read(screen(status: "✻ Waiting for 1 background agent to finish", footer: "\(mode) · 2 shells, 1 monitor")) == .waitingForWorkflow,
+      "“Waiting for” with shells under the box: waiting")
 check(read(screen(status: "✻ Waiting for 1 dynamic workflow to finish", footer: "\(mode)\n  ◯ review ▰▰▱ 1/3")) == .waitingForWorkflow,
       "a dynamic workflow listed running: waiting")
 check(read(screen(status: "✻ Waiting for 1 dynamic workflow to finish", footer: mode)) == .done,

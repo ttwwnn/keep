@@ -163,17 +163,20 @@ export function readActivity(text: string): ClaudeActivity | undefined {
     return undefined;
   }
   if (footer.some((l) => l.toLowerCase().includes("esc to interrupt"))) return "working";
-  if (footer.some(isRunningBackgroundWork)) return "waitingForWorkflow";
+  // Not decided yet: Claude Code no longer prints `esc to interrupt`, and a turn still running next to a shell is working.
+  const background = footer.some(isRunningBackgroundWork);
   const conversation = lines.slice(0, opening);
-  if (conversation.some((l) => l.includes("Jump to bottom") || l.includes(" new message"))) return undefined;
+  if (conversation.some((l) => l.includes("Jump to bottom") || l.includes(" new message"))) {
+    return background ? "waitingForWorkflow" : undefined;
+  }
   const at = findLastIndex(conversation, isStatusLine);
-  if (at < 0) return "done";
+  if (at < 0) return background ? "waitingForWorkflow" : "done";
   const status = conversation[at];
   if (status.includes("Waiting for") && status.includes("to finish")) {
-    return footer.some((l) => trimmed(l).startsWith("◯")) ? "waitingForWorkflow" : "done";
+    return background || footer.some((l) => trimmed(l).startsWith("◯")) ? "waitingForWorkflow" : "done";
   }
   if (status.includes("…")) return "working";
-  return "done";
+  return background ? "waitingForWorkflow" : "done";
 }
 
 const CODEX_CHOICE = /^[❯›»]\s*\d+[.)]\s+/;
