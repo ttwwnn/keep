@@ -186,7 +186,7 @@ pub fn so_acesso(oauth: &Value) -> Value {
     Value::Object(o)
 }
 
-fn agora() -> u64 {
+pub(crate) fn agora() -> u64 {
     donos::agora_ms()
 }
 
@@ -771,7 +771,7 @@ pub fn trocar_processo(
 const RECONECTAR_CHROME: &str = "/mcp reconnect claude-in-chrome";
 // O Claude 2.1.296 guarda o login em cache por 30 s. Reconectar antes disso
 // pode autenticar de novo a ponte na conta anterior.
-const CACHE_LOGIN_MS: u64 = 32_000;
+pub(crate) const CACHE_LOGIN_MS: u64 = 32_000;
 
 fn comando_na_caixa(tela: &str, comando: &str) -> bool {
     let (linhas, limpas) = crate::tela::as_duas(tela);

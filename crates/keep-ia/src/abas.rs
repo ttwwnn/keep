@@ -152,8 +152,10 @@ pub fn conta_dos_limites(limites: &serde_json::Value, linhas: &[Linha]) -> Optio
 
 /// A conta em que o Claude `pid` respondeu por último: a statusLine da aba
 /// dele, gravada depois que ele nasceu (a de um Claude anterior na mesma
-/// aba não vale).
-fn conta_provada(pid: u32, linhas: &[Linha]) -> Option<String> {
+/// aba não vale). Se a conta trocada a quente já passou da janela do cache de
+/// login e o Claude não respondeu desde então, os limites são os de antes da
+/// troca e nada se afirma: a próxima fala já sai na conta nova.
+fn conta_provada(pid: u32, linhas: &[Linha], atual: Option<&str>) -> Option<String> {
     let shell = statusline::shell_da_aba(pid)?;
     let arquivo = statusline::pasta().join(format!("{shell}.json"));
     let gravado = std::fs::metadata(&arquivo).ok()?.modified().ok()?;
@@ -162,7 +164,36 @@ fn conta_provada(pid: u32, linhas: &[Linha]) -> Option<String> {
         return None;
     }
     let entrada: serde_json::Value = serde_json::from_slice(&std::fs::read(&arquivo).ok()?).ok()?;
-    conta_dos_limites(entrada.get("rate_limits")?, linhas)
+    let conta = conta_dos_limites(entrada.get("rate_limits")?, linhas)?;
+    if atual.is_some_and(|a| a != conta) {
+        let valida_desde = crate::quente::registro_do_processo(pid)?.1.em + crate::quente::CACHE_LOGIN_MS;
+        let transcrito = entrada.get("transcript_path").and_then(|t| t.as_str());
+        if crate::quente::agora() >= valida_desde && !transcrito.is_some_and(|t| respondeu_depois(Path::new(t), valida_desde)) {
+            return None;
+        }
+    }
+    Some(conta)
+}
+
+/// Se o transcrito tem fala do Claude depois de `desde_ms` (lê só o fim).
+fn respondeu_depois(transcrito: &Path, desde_ms: u64) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(transcrito) else { return false };
+    let fim = f.metadata().map(|m| m.len()).unwrap_or(0);
+    if f.seek(SeekFrom::Start(fim.saturating_sub(262_144))).is_err() {
+        return false;
+    }
+    let mut bytes = Vec::new();
+    if f.read_to_end(&mut bytes).is_err() {
+        return false;
+    }
+    // O corte pode partir um caractere ao meio; a conversão com perda guarda as linhas inteiras.
+    String::from_utf8_lossy(&bytes).lines().filter(|l| l.contains("\"type\":\"assistant\"")).any(|l| {
+        serde_json::from_str::<serde_json::Value>(l)
+            .ok()
+            .and_then(|v| v.get("timestamp")?.as_str().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()))
+            .is_some_and(|t| t.timestamp_millis() as u64 >= desde_ms)
+    })
 }
 
 /// A conversa de um processo de IA.
@@ -206,7 +237,7 @@ pub fn das_abas(r: &Retrato, contas: &[Conta]) -> Vec<IaAba> {
         };
         let (conta, atual) = conta_do_processo(pid, agente, contas);
         let provada = if agente == "claude" {
-            conta_provada(pid, linhas.get_or_insert_with(|| crate::uso::em_cache_de(contas)))
+            conta_provada(pid, linhas.get_or_insert_with(|| crate::uso::em_cache_de(contas)), atual.as_deref())
         } else {
             None
         };
@@ -278,6 +309,24 @@ mod testes {
         assert_eq!(ia_na_frente(&lista, 4_000_010, 4_000_099), None);
         let sem_ia = vec![p(4_000_010, 1, "zsh"), p(4_000_013, 4_000_010, "vim")];
         assert_eq!(ia_na_frente(&sem_ia, 4_000_010, 4_000_013), None);
+    }
+
+    #[test]
+    fn respondeu_depois_olha_so_a_fala_do_claude_posterior_a_troca() {
+        let dir = tempfile::tempdir().unwrap();
+        let t = dir.path().join("c.jsonl");
+        // 2026-10-28T13:37:26Z = 1793194646 s; o /mcp local depois dela não conta.
+        std::fs::write(
+            &t,
+            concat!(
+                "{\"type\":\"assistant\",\"timestamp\":\"2026-10-28T13:37:26.460Z\"}\n",
+                "{\"type\":\"user\",\"timestamp\":\"2026-10-28T13:38:06.484Z\"}\n"
+            ),
+        )
+        .unwrap();
+        assert!(respondeu_depois(&t, 1_793_194_640_000));
+        assert!(!respondeu_depois(&t, 1_793_194_700_000));
+        assert!(!respondeu_depois(&dir.path().join("nao-existe"), 0));
     }
 
     fn linha(motor: Motor, ordem: &str, janelas: &[(&str, f64)]) -> Linha {
