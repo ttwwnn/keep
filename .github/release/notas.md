@@ -182,3 +182,10 @@ mas o workspace saía da lista e o shell ficava rodando sem que ninguém o visse
 abas no instante em que a primeira aba abria, o que no Windows, onde o PowerShell demora mais a abrir, era frequente.
 Agora o workspace fica de pé até a primeira aba entrar. E o daemon passa a anotar em `abas.log` a aba que morre nos
 primeiros segundos sem ninguém olhando, com o código de saída do shell.
+
+**A troca de conta não deixa a aba parada (0.3.19, Mac e Windows):** quem trocava de conta depois de bater no limite e
+mandava a mensagem em seguida (o Claude ainda leu o login de antes por uns 30 s) ficava com a aba parada: o
+`keep continuar`, que devia mandar "continue" quando a conta com folga assumisse, não achava a conta de uma aba com
+armazém próprio ("não sei qual conta a aba usa") e esperava para sempre. Agora a conta vem do processo da aba, e o
+"continue" sai sozinho. E o título "(IA·1→2)" some depois de 32 s sem o Claude falar, porque a próxima fala já sai
+na conta nova.
