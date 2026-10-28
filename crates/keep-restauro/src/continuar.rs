@@ -504,11 +504,13 @@ fn rede_de_volta() -> (bool, String) {
     }
 }
 
-/// A conta da aba saiu do limite? Pela medição do rodapé "Consumo de IA" (a conta global, ou a da pasta fixa).
-fn cota_livre(fixa: Option<&str>) -> (bool, String) {
+/// A conta da aba saiu do limite? Pela medição do rodapé "Consumo de IA". A conta é a que o processo roda agora
+/// (`conta_do_processo`: o armazém da aba, trocado a quente, ou a pasta fixa, ou a global); sem processo, a global.
+fn cota_livre(pid: Option<u32>) -> (bool, String) {
     let linhas = keep_ia::uso::medir(false, None);
-    let da_aba = linhas.iter().find(|l| match fixa {
-        Some(p) => l.account.fixa().is_some_and(|f| f.to_string_lossy() == p),
+    let atual = pid.and_then(|p| keep_ia::abas::conta_do_processo(p, "claude", &keep_ia::contas::listar(false)).1);
+    let da_aba = linhas.iter().find(|l| match &atual {
+        Some(chave) => l.account.order_key == *chave,
         None => l.account.global(),
     });
     match da_aba {
@@ -705,7 +707,7 @@ pub fn rodada(seco: bool, status: bool) -> Result<Value, String> {
             .or_insert_with(|| match erro.tipo {
                 Tipo::Login => credencial_boa(fixa.as_deref()),
                 Tipo::Rede => rede_de_volta(),
-                Tipo::Limite => cota_livre(fixa.as_deref()),
+                Tipo::Limite => cota_livre(Some(c.pid)),
             })
             .clone();
         if !boa {
