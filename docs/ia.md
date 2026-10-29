@@ -448,6 +448,25 @@ ligar|desligar]`.
 - Teste: `cargo test -p keep-ia automacao` (casa falsa, `claude` falso por `KEEP_IA_CLAUDE_BIN`) e
   `tools/automation-switch-test.sh` (o app, pela acessibilidade).
 
+## Abas para quem automatiza a IA de fora (`keep ia aba`)
+
+O Jev (que escolhe modelo e esforço a cada mensagem e os digita na aba) e qualquer outra automação leem e digitam nas
+abas pelo próprio Keep, sem falar o protocolo do daemon nem calcular onde fica o socket:
+
+- `lista`: as abas com os campos do protocolo (`TabInfo`: `ws`, `id`, `title`, `cols`, `rows`, `clients`, `finished`,
+  `busy`, `splitOf`, `splitDir`, `cwd`, `lastActive`, `command`, `shellPid`, `pid`), o socket, se o daemon disse os
+  processos (`exato`) e quem é ele (`daemon`: `pid`, `inicioMs`);
+- `tela --ws --aba [--cores]`: a tela em texto (com `--cores`, com o SGR: a sugestão esmaecida do Claude e do Codex só
+  se distingue do digitado por ele);
+- `digitar --ws --aba`: os bytes da entrada chegam ao programa da aba como digitados (`\r` é Enter). Entra com o
+  tamanho que a aba já tem e recusa a aba que acabou;
+- `nova --ws [--pasta] [--colunas --linhas]`: uma aba nova com o shell do daemon (80×24 sem tamanho);
+- `socket`: o socket que vale no ambiente de quem chama (`KEEP_SOCKET`, senão `XDG_RUNTIME_DIR` ou `TMPDIR` +
+  `keep-$USER.sock`): quem lida com uma IA de outro processo roda com o ambiente dela.
+
+Nunca sobe daemon: sem o Keep no ar, `sem-keepd`. Aba que não existe ou acabou: `sem-aba`. Teste:
+`cargo test -p keep-ia aba::testes` (daemon do próprio teste).
+
 ## Linha de comando (JSON, sempre `"versao": 1`; saída 0 = ok, 1 = recusado, 2 = uso errado)
 
 ```
@@ -457,6 +476,11 @@ keep ia ordem [mover <chave> cima|baixo] --json
 keep ia abas --json
 keep ia trocar --ws=<W> --aba=<N> --para=<chave> [--interromper] --json
 keep ia preparar --ws=<W> --shell=<pid> [--escolha=claude:ordem|claude:<apelido>] --json
+keep ia rodar -- <programa> [argumentos…]      (não é JSON: vira o programa)
+keep ia aba lista | socket
+keep ia aba tela --ws=<W> --aba=<N> [--cores]
+keep ia aba digitar --ws=<W> --aba=<N>          (os bytes na entrada)
+keep ia aba nova --ws=<W> [--pasta=<P>] [--colunas=<c> --linhas=<l>]
 keep ia entrar claude|gpt --ws=<W> --json
 keep ia login claude|gpt [--apelido=<A>] [--depois=<W>:<N>:<chave>]     (interativo, roda na aba)
 keep ia sincronizar --json

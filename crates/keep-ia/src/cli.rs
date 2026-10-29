@@ -67,6 +67,7 @@ pub fn ia(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         Some("confinar") => return crate::confinar::cli(&args[1..]),
         Some("rodar") => return crate::rodar::cli(&args[1..]),
+        Some("aba") => return crate::aba::cli(&args[1..]),
         Some("statusline") => return crate::statusline::cli(),
         Some("conta-da-aba") => return crate::conta_da_aba::cli(&args[1..]),
         Some("iniciar-com-contexto") => return crate::contexto::cli_iniciar(&args[1..]),
@@ -127,7 +128,7 @@ pub fn ia(args: &[String]) -> i32 {
         "ajustar-claude" => crate::ajustar_claude::cli(&a),
         "reconectar-chrome" => responde(json!({ "ok": true, "reconectadas": crate::quente::reconectar_chrome() })),
         _ => uso_errado(
-            "keep ia contas | uso | jev | automacao | ordem [mover] | abas | trocar | preparar | entrar | login | sincronizar | renovar | rodar | confinar | statusline | confiar | ajustar-claude",
+            "keep ia contas | uso | jev | automacao | ordem [mover] | abas | trocar | preparar | entrar | login | sincronizar | renovar | rodar | aba | confinar | statusline | confiar | ajustar-claude",
         ),
     }
 }
