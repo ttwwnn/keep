@@ -315,14 +315,13 @@ enum AIChoices {
     /// can still be chosen, since that is the person's call.
     ///
     /// Following the order is asked as such (`claude:ordem`), whatever
-    /// account comes first in it now: the core resolves it — to a GPT
-    /// account too, when every Claude one is at its limit — and keeps the tab
+    /// account comes first in it now: the core resolves it and keeps the tab
     /// following it. Asking for that account instead would fix the tab on it.
     ///
     /// `current` is what the tab was put on; `running`, the account it runs
     /// on now, when the core could tell. A tab following the order has a dash
-    /// on that account — or, not told, on the Claude account whose login the
-    /// tabs share.
+    /// on that account — or, not told, on the one the core would put it on
+    /// (`followed`).
     static func rows(
         lines: [AccountUsage], current: String?, running: String? = nil, program: AIProgramKind
     ) -> [Row] {
@@ -333,8 +332,7 @@ enum AIChoices {
                 kind: .note, title: "Esta aba está rodando \(name)", key: nil, mark: .none,
                 enabled: false, help: nil))
         }
-        let now = lines.firstIndex(where: \.isAvailable).map { "Agora: \(name(number: $0 + 1))" }
-            ?? (lines.isEmpty ? nil : "Agora: \(name(number: 1))")
+        let now = number(of: followed(in: lines)?.account.order, in: lines).map { "Agora: \(name(number: $0))" }
         rows.append(Row(
             kind: .follow, title: followTitle, key: AIHelper.followOrder,
             mark: current == AIHelper.followOrder ? .on : .none, enabled: enabled, help: now,
@@ -349,7 +347,7 @@ enum AIChoices {
             } else if current == AIHelper.followOrder {
                 if let running {
                     if account.keys.contains(running) { mark = .mixed }
-                } else if account.engine == .claude, account.isActive {
+                } else if account.key == followed(in: lines)?.account.key {
                     mark = .mixed
                 }
             }
@@ -358,6 +356,15 @@ enum AIChoices {
                 mark: mark, enabled: enabled, help: nil, label: name(number: index + 1)))
         }
         return rows
+    }
+
+    /// The account a tab following the order goes to now, as the core
+    /// decides it (`quente::conta_da_ordem`): the first Claude one in the
+    /// list that can take work, or the first Claude one. Never the account of
+    /// the global login: the tabs run on their own logins.
+    static func followed(in lines: [AccountUsage]) -> AccountUsage? {
+        let claude = lines.filter { $0.account.engine == .claude }
+        return claude.first(where: \.isAvailable) ?? claude.first
     }
 
     /// An account is called by its place in the footer's list, "Consumo de
@@ -386,8 +393,8 @@ enum AIChoices {
     /// What the sidebar writes after a tab's title. For a tab running an AI,
     /// only the number of the account it runs on — "(IA·3)", never the AI's
     /// name (asked for 13/10/2026) —, the one it was put on when the core has
-    /// not said, and for a tab following the order the Claude login the
-    /// tabs share; nothing when no account can be told. For any other
+    /// not said, and for a tab following the order the account it goes to
+    /// (`followed`); nothing when no account can be told. For any other
     /// program, its name: "— bash".
     ///
     /// A Claude switched to another account that has not answered on it yet
@@ -404,7 +411,7 @@ enum AIChoices {
         }
         var key = running ?? account
         if key == AIHelper.followOrder {
-            key = lines.first { $0.account.engine == .claude && $0.account.isActive }?.account.keys.first
+            key = followed(in: lines)?.account.order
         }
         guard let now = number(of: key, in: lines) else { return "" }
         if let before = number(of: proven, in: lines), before != now {

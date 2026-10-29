@@ -46,7 +46,6 @@ enum AIEngine: String, Equatable, Codable {
 struct AIAccountSummary: Equatable, Codable {
     func isUsed(by selectedAccount: String?) -> Bool {
         guard let selectedAccount else { return false }
-        if selectedAccount == "claude:ordem" { return engine == .claude && isActive }
         return ([alias] + aliases).contains { engine.key($0) == selectedAccount }
     }
 

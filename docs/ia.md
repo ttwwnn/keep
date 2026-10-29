@@ -144,7 +144,7 @@ assim que o cache de login venceu e a aba ficou livre.
 - `keep ia preparar --ws=<W> --shell=<pid> [--escolha=<chave>]` cria (ou atualiza) o armazém da aba
   do shell e devolve a pasta. O shell é o dado ou o ancestral dele cujo pai é o keepd (um script na
   aba acha a aba). Sem escolha, fica a que a aba já tinha, senão seguir a ordem. Quem chama: a função
-  `claude` do shell (numa aba do Keep, sem a variável já posta: a `claude()` do zsh do autor no Mac, e
+  `claude` do shell (numa aba do Keep, sem a variável já posta: no Mac pelo `keep ia rodar`, e
   no Windows a que o keepd põe no PowerShell de cada aba; ver "A função `claude` do shell" abaixo), a
   troca que sobe o Claude numa aba (`trocar`, linha com `CLAUDE_SECURESTORAGE_CONFIG_DIR=<pasta>`) e a
   restauração depois de reiniciar (`keep restauro`).
@@ -154,12 +154,13 @@ assim que o cache de login venceu e a aba ficou livre.
   processo diz só as de quando ele subiu).
 - De onde vem o acesso: o dono da conta, com o acesso em dia (sem o kit, o global quando é dela; as
   pastas fixas dela; com o kit, o global por último). Dono com o acesso vencido: uma rodada da
-  renovação antes. Seguir a ordem = com o kit, a conta que ele pôs no login global (`.ativa`); sem
-  ele, a primeira do Claude disponível da fila (pela última medição), ou a primeira que roda.
+  renovação antes. Seguir a ordem = a primeira do Claude disponível da fila (pela última medição);
+  nenhuma disponível: com o kit, a conta que ele pôs no login global (`.ativa`), e sem ele a primeira
+  que roda. O app mostra a mesma regra (`AIChoices.followed`), nunca a conta do login global.
 - A gravação num armazém de aba muda só a chave `claudeAiOauth` (os `mcpOAuth` que o Claude da aba
   guardou ficam), sob as duas travas do CLI daquela pasta.
 - Renovação (`renovar`, a cada minuto): cada armazém de aba recebe o acesso atual do dono da conta
-  dele; com o kit, quem segue a ordem passa para a conta da `.ativa`. Sem o kit, a conta de quem segue
+  dele; com o kit, quem segue a ordem passa para a conta de seguir a ordem (acima). Sem o kit, a conta de quem segue
   a ordem só muda pela sincronização (as regras dela). O armazém de uma aba cujo shell acabou (pid e
   nascimento) e em que nenhum processo roda mais (uma conversa em segundo plano segura o dela) é
   apagado: o item e a pasta; pastas soltas em `abas/` também.
@@ -183,7 +184,18 @@ quem faz isso, quando se digita `claude` numa aba, é uma função do shell da a
 preparar` antes. Sem ela o Claude roda no login global, a troca a quente é recusada (`claude-global`)
 e o Claude fica de fora da renovação do armazém.
 
-- macOS: a função `claude()` do zsh do autor (kit-mac); o Keep não instala shell nenhum.
+- macOS: `keep ia rodar -- <programa> [argumentos…]` faz o que é do Keep, e o shell só o chama (o
+  Keep não instala shell nenhum; a pessoa põe no `~/.zshrc`, com as preferências dela na linha:
+  `claude() { /Applications/Keep.app/Contents/Resources/keep ia rodar -- claude "$@"; }`, e o mesmo
+  para `codex`). Fora de uma aba do Keep, roda o programa como rodaria. Numa aba:
+  - o Claude que abre conversa sobe no armazém da aba (`preparar`, com o shell = o processo pai e
+    `--escolha=<KEEP_IA_ESCOLHA>`), salvo com `CLAUDE_SECURESTORAGE_CONFIG_DIR` já posto; recusa ou
+    falha: uma linha ("Keep: não deu para preparar o login desta aba (<motivo>); o Claude sobe como
+    antes.") e o Claude sobe no login global;
+  - "confiar nesta pasta?" é respondido sim (`keep ia confiar <shell>`, solto em segundo plano);
+  - o programa sobe pelo `confinar` (preso à pasta do workspace quando há uma);
+  - o que não abre conversa (`claude mcp|update|auth|doctor|plugin…`, `--version`, `--help`) roda
+    direto; `claude agents|attach|rc|remote-control` e o `codex` passam só pelo `confinar`.
 - Windows: o keepd põe as funções no PowerShell de cada aba (5.1 ou 7) antes do primeiro prompt
   (`crates/keepd/src/ai.ps1`, montado por `shellhook.rs`, junto do gancho do prompt):
   - `claude`, numa aba do Keep sem armazém posto (`KEEP_WORKSPACE` sim, `CLAUDE_SECURESTORAGE_CONFIG_DIR`

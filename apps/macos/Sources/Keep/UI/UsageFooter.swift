@@ -483,6 +483,12 @@ struct UsageFooter: View {
     /// in the workspace this window is in.
     let dispatch: (Intent) -> Void
     var selectedAccount: String? = nil
+    /// The account the selected tab runs on; following the order, the one
+    /// the order gives it now.
+    private var usedAccount: String? {
+        selectedAccount == AIHelper.followOrder
+            ? AIChoices.followed(in: monitor.lines)?.account.order : selectedAccount
+    }
     /// Quiet at rest, legible under the pointer (PRODUCT.md).
     /// The terminal's zoom, which the footer's text follows as the sidebar's
     /// names do: at 100% it was too small to read, so it also sits a step up.
@@ -632,7 +638,7 @@ struct UsageFooter: View {
     /// there is a `keep` to keep the order: without it the footer is
     /// as it always was.
     private func heading(_ text: String, _ line: AccountUsage, at index: Int) -> Text {
-        let name = Text(text).foregroundColor(line.account.isUsed(by: selectedAccount) ? UsageInk.ink : UsageInk.inkResting)
+        let name = Text(text).foregroundColor(line.account.isUsed(by: usedAccount) ? UsageInk.ink : UsageInk.inkResting)
         guard monitor.helperAvailable else { return name }
         return Text("\(index + 1) · ").foregroundColor(UsageInk.inkFaint) + name
     }
@@ -647,7 +653,7 @@ struct UsageFooter: View {
                         .font(numbers)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    if line.account.isUsed(by: selectedAccount) {
+                    if line.account.isUsed(by: usedAccount) {
                         Circle()
                             .fill(UsageInk.live)
                             .frame(width: 5, height: 5)
@@ -999,7 +1005,7 @@ struct UsageFooter: View {
         lines.append(numbered(line))
         if let email = line.account.email { lines.append(email) }
         if let plan = line.account.plan { lines.append("Plano \(plan)") }
-        if line.account.isUsed(by: selectedAccount) {
+        if line.account.isUsed(by: usedAccount) {
             lines.append("Conta usada nesta aba")
         }
         if let at = line.measuredAt { lines.append("Medido \(UsageText.ago(at, now: now))") }

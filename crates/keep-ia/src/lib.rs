@@ -27,6 +27,7 @@ pub mod programas;
 pub mod quente;
 pub mod rede;
 pub mod renovar;
+pub mod rodar;
 pub mod sessoes;
 pub mod sincronizar;
 pub mod statusline;
