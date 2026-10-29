@@ -235,8 +235,8 @@ sabotage "$CHOICE" "a tab back at its shell still said to be on an account" \
         guard program.runsAI else { return nil }|||    func account(workspace: String, tab: UInt32, program: AIProgramKind) -> String? {' || ok=1
 sabotage "$CHOICE" "the footer lighting the choice over the account the tab runs on" \
     'if let running = entry.running, running.hasPrefix(prefix) { return running }|||' || ok=1
-sabotage "$CHOICE" "the sidebar naming Codex's own login" \
-    'case "gpt" where alias != "principal": return "codex · \(alias)"|||case "gpt": return "codex · \(alias)"' || ok=1
+sabotage "$CHOICE" "the sidebar naming the AI beside the account's number" \
+    'return "(\(name(number: now)))"|||return "(claude \(name(number: now)))"' || ok=1
 sabotage "$HELPER" "KEEP_IA_BIN pointing at nothing falling through to the app's keep" \
     'if let named { return isRunnable(named) ? named : nil }|||if let named, isRunnable(named) { return named }' || ok=1
 sabotage "$HELPER" "a directory taken for the keep" \
