@@ -353,7 +353,7 @@ fn o_armazem_de_um_claude_que_sobreviveu_a_aba_fica() {
 }
 
 #[test]
-fn com_o_kit_quem_segue_a_ordem_vai_para_a_ativa_e_a_presa_fica() {
+fn com_o_kit_quem_segue_a_ordem_sai_da_conta_no_limite_e_a_presa_fica() {
     let c = casa("kit");
     perfis(&[("A1", "u-1", "ana@x.com"), ("F", "u-2", "bia@y.com"), ("G", "u-1", "ana@x.com")]);
     c.global("G", "rG");
@@ -369,8 +369,10 @@ fn com_o_kit_quem_segue_a_ordem_vai_para_a_ativa_e_a_presa_fica() {
     let p = preparar("T", presa.pid(), Some("claude:ana"), None).unwrap();
     // Com o kit, o dono é a pasta fixa (o global é dele, que o troca de dono).
     assert_eq!((acesso(&o.pasta), acesso(&p.pasta)), ("A1".into(), "A1".into()));
-    std::fs::write(c.raiz.join(".claude/contas/.ativa"), "bia\n").unwrap();
-    let r = espalhar(&contas::listar(false));
+    // A Ana chega ao limite; o kit, que ainda não a mediu, fica nela.
+    let lista = contas::listar(false);
+    crate::uso::testes::no_limite(contas::achar(&lista, "claude:ana").unwrap());
+    let r = espalhar(&lista);
     assert_eq!(r.trocadas, vec![(o.chave.clone(), "claude:bia".to_string())], "{r:?}");
     assert_eq!(acesso(&o.pasta), "F");
     assert_eq!(acesso(&p.pasta), "A1", "a aba presa numa conta não segue a ordem");
@@ -378,6 +380,30 @@ fn com_o_kit_quem_segue_a_ordem_vai_para_a_ativa_e_a_presa_fica() {
     assert_eq!((ro.escolha.as_str(), ro.conta.as_str()), (SEGUIR_ORDEM, "claude:bia"));
     assert!(ro.chrome_pendente_desde.is_some(), "a troca automática também renova a ponte");
     assert!(registro_da_pasta(&p.pasta).unwrap().1.chrome_pendente_desde.is_none());
+}
+
+#[test]
+fn com_o_kit_a_aba_nova_nasce_na_primeira_livre_da_fila() {
+    let c = casa("kit-fila");
+    perfis(&[("A1", "u-1", "ana@x.com"), ("F", "u-2", "bia@y.com")]);
+    c.fixa("k-1", Some(("A1", "rA1")), Some(("ana", "ana@x.com", "u-1")));
+    c.fixa("k-2", Some(("F", "rF")), Some(("bia", "bia@y.com", "u-2")));
+    c.ordem(&["claude:bia", "claude:ana"]);
+    // O kit deixou o login global na Ana, no limite: o cofre dele perdeu o
+    // login da Bia, que o Keep ainda tem.
+    std::fs::write(c.raiz.join(".claude/contas/.ativa"), "ana\n").unwrap();
+    // SAFETY: a casa (e a trava) está de pé.
+    unsafe { std::env::set_var("KEEP_IA_GERENTE_EXTERNO", "1") };
+    let lista = contas::listar(true);
+    crate::uso::testes::no_limite(contas::achar(&lista, "claude:ana").unwrap());
+    let primeira = Filho::novo(&[]);
+    let p = preparar("T", primeira.pid(), None, None).unwrap();
+    assert_eq!((p.conta.as_str(), acesso(&p.pasta)), ("claude:bia", "F".into()));
+    // Nenhuma livre: vale a do kit.
+    crate::uso::testes::no_limite(contas::achar(&lista, "claude:bia").unwrap());
+    let segunda = Filho::novo(&[]);
+    let q = preparar("T", segunda.pid(), None, None).unwrap();
+    assert_eq!((q.conta.as_str(), acesso(&q.pasta)), ("claude:ana", "A1".into()));
 }
 
 #[test]

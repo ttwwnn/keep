@@ -534,6 +534,15 @@ pub(crate) mod testes {
 
     pub(crate) type Resposta = (u16, Vec<(&'static str, String)>, String);
 
+    /// Guarda, como a última medição desta conta, a semanal cheia.
+    pub(crate) fn no_limite(conta: &Conta) {
+        let mut c = le_cache();
+        let semanal = Janela { label: "7d".into(), title: "Semanal (7 dias)".into(), percent: 100.0, resets_at: Some(agora() + 86_400.0) };
+        let reading = Leitura { windows: vec![semanal], limit_reached: true };
+        c.contas.insert(id(conta), Registro { reading: Some(reading), measured_at: Some(agora()), ..Default::default() });
+        grava_cache(&c);
+    }
+
     /// Os endpoints de consumo nesta máquina: `responde` decide por pedido, e
     /// a lista guarda todos.
     pub(crate) fn servidor(responde: impl Fn(&Pedido) -> Resposta + Send + 'static) -> Arc<Mutex<Vec<Pedido>>> {

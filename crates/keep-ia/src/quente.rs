@@ -279,11 +279,19 @@ fn fonte_renovando(conta: &Conta) -> Option<Fonte> {
     fonte(conta)
 }
 
-/// A conta de quem segue a ordem: com o kit, a que ele pôs no login global
-/// (`.ativa`); sem ele, a primeira do Claude disponível da fila (pela última
-/// medição), ou a primeira que roda.
+/// A conta de quem segue a ordem: a primeira do Claude disponível da fila
+/// (pela última medição). Nenhuma disponível: com o kit, a que ele pôs no
+/// login global (`.ativa`); sem ele, a primeira que roda. O `.ativa` não vale
+/// antes da fila: o kit o deixa numa conta no limite quando o cofre dele
+/// perde o login de outra que o Keep ainda tem (29/10: a aba nova nascia na
+/// IA·2, semanal a 100%, com a IA·1 livre).
 pub fn conta_da_ordem(lista: &[Conta]) -> Option<&Conta> {
     let claude = |c: &&Conta| c.engine == Motor::Claude;
+    let livres = uso::disponiveis_de(lista);
+    let rodam: Vec<&Conta> = lista.iter().filter(claude).filter(|c| c.roda).collect();
+    if let Some(c) = rodam.iter().find(|c| livres.contains(&c.key)) {
+        return Some(c);
+    }
     if contas::gerente_externo() {
         if let Some(ativa) = contas::ativa_do_kit() {
             if let Some(c) = lista.iter().filter(claude).find(|c| c.aliases.contains(&ativa)) {
@@ -292,9 +300,7 @@ pub fn conta_da_ordem(lista: &[Conta]) -> Option<&Conta> {
         }
         return lista.iter().filter(claude).find(|c| c.global()).or_else(|| lista.iter().find(claude));
     }
-    let livres = uso::disponiveis_de(lista);
-    let rodam: Vec<&Conta> = lista.iter().filter(claude).filter(|c| c.roda).collect();
-    rodam.iter().find(|c| livres.contains(&c.key)).or(rodam.first()).copied()
+    rodam.first().copied()
 }
 
 fn conta_por_dono<'a>(lista: &'a [Conta], dono: &str) -> Option<&'a Conta> {
