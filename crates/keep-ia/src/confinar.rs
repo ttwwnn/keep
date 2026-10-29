@@ -1,8 +1,8 @@
 //! A pasta a que a IA de um workspace fica presa.
 //!
 //! O app grava em `~/.config/keep/confinement.json` ({"workspace": "/pasta"})
-//! a pasta que a IA do workspace pode acessar. Quem sobe a IA numa aba (a
-//! função `claude()` do shell, a troca de conta ou de IA e a restauração)
+//! a pasta que a IA do workspace pode acessar. Quem sobe a IA numa aba (`keep ia
+//! rodar`, a função do PowerShell, a troca de conta ou de IA e a restauração)
 //! passa por `keep ia confinar -- <programa> …`, que decide pelo workspace da
 //! aba (`KEEP_WORKSPACE`) e roda o programa num sandbox do macOS
 //! (`sandbox-exec`): ele e tudo o que ele roda não leem nem gravam em /Users

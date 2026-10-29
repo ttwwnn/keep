@@ -209,9 +209,13 @@ sabotage "$HELPER" "a test app letting the Jev's key reach the real OpenRouter" 
 sabotage "$CHOICE" "following the order sent as the account first in it" \
     'kind: .follow, title: followTitle, key: AIHelper.followOrder,|||kind: .follow, title: followTitle, key: lines.first(where: \.isAvailable).map { $0.account.engine.key($0.account.alias) } ?? AIHelper.followOrder,' || ok=1
 sabotage "$CHOICE" "the dash on every Claude account, not the one in use" \
-    '} else if account.engine == .claude, account.isActive {|||} else if account.engine == .claude {' || ok=1
-sabotage "$CHOICE" "the dash on the shared login even when the core said where the tab runs" \
-    'if account.keys.contains(running) { mark = .mixed }|||if account.engine == .claude, account.isActive { mark = .mixed }' || ok=1
+    '} else if account.key == followed(in: lines)?.account.key {|||} else if account.engine == .claude {' || ok=1
+sabotage "$CHOICE" "the dash on the followed account even when the core said where the tab runs" \
+    'if account.keys.contains(running) { mark = .mixed }|||if account.key == followed(in: lines)?.account.key { mark = .mixed }' || ok=1
+sabotage "$CHOICE" "following the order read as the account of the global login" \
+    'return claude.first(where: \.isAvailable) ?? claude.first|||return claude.first(where: \.account.isActive) ?? claude.first' || ok=1
+sabotage "$CHOICE" "following the order taken to an account at its limit" \
+    'return claude.first(where: \.isAvailable) ?? claude.first|||return claude.first' || ok=1
 sabotage "$CHOICE" "a tab running another program still offered choices" \
     'let enabled = program.allowsChoice|||let enabled = true' || ok=1
 sabotage "$CHOICE" "Claude Code named by its version taken for another program" \
