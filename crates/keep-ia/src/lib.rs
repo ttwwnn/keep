@@ -5,6 +5,7 @@
 //! O app do macOS fala com isto pela linha de comando (`keep ia …`,
 //! `keep worktrees …`, em JSON); o do Windows chama as funções direto.
 
+pub mod aba;
 pub mod abas;
 pub mod ajustar_claude;
 pub mod automacao;
