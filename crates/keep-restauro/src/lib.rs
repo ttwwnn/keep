@@ -14,14 +14,16 @@
 //! Aqui moram também `keep nova` (uma conversa nova do Claude numa aba nova, o
 //! caminho para uma sessão abrir outra e o dos links `claude-cli://`) e `keep
 //! continuar` (a conversa que parou numa queda de login, de rede ou de limite
-//! recebe "continue" quando a causa passa) e o adormecer (a conversa parada há
-//! 12 h sai da memória e volta quando a aba é mostrada).
+//! recebe "continue" quando a causa passa), o adormecer (a conversa parada há
+//! 12 h sai da memória e volta quando a aba é mostrada) e a importação das abas
+//! de outro computador (`importar`).
 
 pub mod adormecer;
 pub mod cli;
 pub mod continuar;
 pub mod daemon;
 pub mod deeplink;
+pub mod importar;
 pub mod links;
 pub mod membro_json;
 pub mod nova;

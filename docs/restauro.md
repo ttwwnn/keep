@@ -45,9 +45,32 @@ repetido: a aba volta no shell, na pasta dele.
     keep restauro retrato [--print]          grava o retrato (--print: só mostra, em JSON)
     keep restauro restaurar [--fase=abas] [--seco]
     keep restauro manter                     restaura o que faltar e grava o retrato
+    keep restauro importar --de PASTA [--disponivel ID]… [--seco]
+    keep restauro importado --pid N --inicio MS [--keepd-atual PID:MS]
 
 `KEEP_RESTAURO_ESTADO` troca a pasta (o app passa a da pasta de estado dele:
 um app de testes, com daemon próprio, nunca lê o retrato da pessoa).
+
+## As abas de outro computador (`importar`)
+
+Quem leva o Keep para um computador novo traz a pasta do Keep de lá: `origem.json` (`{"home", "keepd"}`) e
+`restauro/retrato.json`. `importar --de <pasta>` grava esse retrato como o `anterior.json` daqui, e o
+`restaurado.json` do keepd daqui volta a "não feito": o Keep aberto recria as abas em até 30 s (`manter`); sem
+Keep aberto, na primeira abertura. O que já estava aqui fica.
+
+- As pastas trocam o HOME de lá pelo daqui; a que não existe aqui abre no HOME.
+- A conversa do Claude volta se o transcrito dela está aqui ou vai estar (`--disponivel <id>`, para o que vem
+  junto e ainda vai ser copiado); a que já roda aqui não ganha outra aba; a do Codex e a sem transcrito voltam
+  como shell.
+- O keepd do retrato nunca é o daqui (o nascimento muda) e o retrato fica mais velho que o daqui: um reinício
+  antes da restauração volta às abas deste computador.
+- Com a restauração do keepd daqui no meio, nada se grava (`"motivo": "restaurando"`). O `anterior.json` e o
+  `restaurado.json` de antes ficam ao lado, com `.antes-de-importar-<ms>`.
+- `--seco`: só diz o que faria. A resposta traz `keepdSintetico`, que `importado --pid --inicio` acompanha:
+  `pendente`, `restaurando`, `feito` (com `criadas` e `conversas`), `keepd-mudou` (reiniciou antes; com
+  `--keepd-atual`, o keepd daqui na hora de importar) ou `perdido` (outro `anterior.json` tomou o lugar).
+
+Teste: `cargo test -p keep-restauro importar` (casa falsa).
 
 ## No Windows
 
