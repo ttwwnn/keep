@@ -7,6 +7,8 @@
 //!   keep restauro adormecer --agora W [--aba N] [--vista W/N]…  o mesmo para a aba N (ou as livres do workspace W), sem esperar as 12 h
 //!   keep restauro adormecidas                         as abas adormecidas de agora (o app do Windows, para riscar o título)
 //!   keep restauro acordar --workspace W --aba N       a conversa adormecida da aba volta (o app, ao mostrá-la)
+//!   keep restauro importar --de PASTA [--disponivel ID]… [--seco]   as abas de outro computador (importar.rs)
+//!   keep restauro importado --pid N --inicio MS [--keepd-atual PID:MS]   em que pé está essa importação
 
 use serde_json::json;
 
@@ -39,6 +41,38 @@ pub fn main(args: &[String]) -> i32 {
             }
         }
         Some("adormecidas") => crate::adormecer::listar(),
+        Some("importar") => {
+            let valor = |o: &str| args.windows(2).find(|w| w[0] == o).map(|w| w[1].clone());
+            match valor("--de") {
+                Some(de) => {
+                    let disponiveis = args.windows(2).filter(|w| w[0] == "--disponivel").map(|w| w[1].clone()).collect();
+                    let p = crate::importar::Pedido { de: de.into(), disponiveis, seco: tem("--seco") };
+                    match crate::importar::importar(&p) {
+                        Ok(v) => {
+                            let ok = v["ok"].as_bool().unwrap_or(false);
+                            println!("{v}");
+                            return if ok { 0 } else { 1 };
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+                None => Err("importar pede --de PASTA (com origem.json e restauro/retrato.json)".into()),
+            }
+        }
+        Some("importado") => {
+            let valor = |o: &str| args.windows(2).find(|w| w[0] == o).map(|w| w[1].clone());
+            let keepd = |pid: Option<String>, inicio: Option<String>| -> Option<crate::Keepd> {
+                Some(crate::Keepd { pid: pid?.parse().ok()?, inicio_ms: inicio?.parse().ok()?, socket_nasceu: None })
+            };
+            let atual = valor("--keepd-atual").and_then(|v| {
+                let (pid, inicio) = v.split_once(':')?;
+                keepd(Some(pid.into()), Some(inicio.into()))
+            });
+            match keepd(valor("--pid"), valor("--inicio")) {
+                Some(sint) => Ok(crate::importar::importado(&sint, atual.as_ref())),
+                None => Err("importado pede --pid N --inicio MS (o keepdSintetico que o importar disse)".into()),
+            }
+        }
         Some("acordar") => {
             let valor = |o: &str| args.windows(2).find(|w| w[0] == o).map(|w| w[1].clone());
             match (valor("--workspace"), valor("--aba").and_then(|n| n.parse().ok())) {
@@ -48,7 +82,7 @@ pub fn main(args: &[String]) -> i32 {
         }
         _ => {
             eprintln!(
-                "uso: keep restauro retrato [--print] | restaurar [--fase=abas] [--seco] | manter | adormecer [--seco] [--agora W [--aba N]] [--vista W/N]… | adormecidas | acordar --workspace W --aba N"
+                "uso: keep restauro retrato [--print] | restaurar [--fase=abas] [--seco] | manter | adormecer [--seco] [--agora W [--aba N]] [--vista W/N]… | adormecidas | acordar --workspace W --aba N | importar --de PASTA [--disponivel ID]… [--seco] | importado --pid N --inicio MS [--keepd-atual PID:MS]"
             );
             return 2;
         }
