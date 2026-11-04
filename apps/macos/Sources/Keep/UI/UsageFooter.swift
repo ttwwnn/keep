@@ -777,7 +777,7 @@ struct UsageFooter: View {
     /// of one service apart — and the figures of its first two windows, each
     /// in its own colour: one amber figure must not paint its calm neighbour.
     private func compact(_ line: AccountUsage, at index: Int) -> some View {
-        let windows = Array((line.reading?.windows ?? []).prefix(2))
+        let windows = Array(UsageText.barOrder(line.reading?.windows ?? []).prefix(2))
         let figures = windows.map { UsageText.percent($0.percent) }.joined(separator: " · ")
         // The address's own part, before the @: it is what tells the logins
         // apart, and it fits a row at any zoom. The whole address, and the

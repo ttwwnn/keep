@@ -167,7 +167,7 @@ function Compact(props: { line: UsageLine; index: number; count: number }) {
   const { line, index, count } = props;
   const selected = selectedAccount.value;
   const used = isUsedBy(line.account, selected.key, selected.running);
-  const windows = (line.reading?.windows ?? []).slice(0, 2);
+  const windows = fableBeforeTotal(line.reading?.windows ?? []).slice(0, 2);
   const name = engineTitle(line.account.engine);
   const numbered = numberedName(index + 1, line.account);
   const figures = windows.map((w) => `${w.title}: ${percentText(w.percent)}`);
