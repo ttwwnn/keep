@@ -679,7 +679,7 @@ struct UsageFooter: View {
             }
 
             if let reading = line.reading {
-                ForEach(Array(reading.windows.enumerated()), id: \.offset) { _, window in
+                ForEach(Array(UsageText.barOrder(reading.windows).enumerated()), id: \.offset) { _, window in
                     bar(window, of: line, now: now)
                 }
                 .opacity(stale ? 0.55 : 1)
