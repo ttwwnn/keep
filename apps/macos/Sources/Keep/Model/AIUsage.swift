@@ -358,9 +358,10 @@ enum UsageText {
     /// The bars of an expanded account: Fable's weekly window before the
     /// general "7d" one. The folded row keeps "5h · 7d", the order the core gives.
     static func barOrder(_ windows: [UsageWindow]) -> [UsageWindow] {
-        guard windows.count > 2, windows[1].label == "7d", windows[2].label == "Fable" else { return windows }
+        guard let total = windows.firstIndex(where: { $0.label == "7d" }),
+              let fable = windows.firstIndex(where: { $0.label == "Fable" }), fable > total else { return windows }
         var ordered = windows
-        ordered.swapAt(1, 2)
+        ordered.swapAt(total, fable)
         return ordered
     }
 

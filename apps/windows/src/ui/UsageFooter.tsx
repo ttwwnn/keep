@@ -51,7 +51,12 @@ import * as icon from "./icons";
 
 /** Expanded bars: Fable's weekly window before the general "7d"; the folded row keeps the core's order. */
 function fableBeforeTotal<T extends { label: string }>(w: T[]): T[] {
-  return w.length > 2 && w[1].label === "7d" && w[2].label === "Fable" ? [w[0], w[2], w[1], ...w.slice(3)] : w;
+  const total = w.findIndex((x) => x.label === "7d");
+  const fable = w.findIndex((x) => x.label === "Fable");
+  if (total < 0 || fable < total) return w;
+  const out = [...w];
+  [out[total], out[fable]] = [out[fable], out[total]];
+  return out;
 }
 
 /** ▲ and ▼: one place up or down. The first has nowhere up to go and the last nowhere down; each keeps the other's place. */
