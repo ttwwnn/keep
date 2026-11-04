@@ -49,6 +49,11 @@ import {
 import { openSignInMenu } from "./AccountMenu";
 import * as icon from "./icons";
 
+/** Expanded bars: Fable's weekly window before the general "7d"; the folded row keeps the core's order. */
+function fableBeforeTotal<T extends { label: string }>(w: T[]): T[] {
+  return w.length > 2 && w[1].label === "7d" && w[2].label === "Fable" ? [w[0], w[2], w[1], ...w.slice(3)] : w;
+}
+
 /** ▲ and ▼: one place up or down. The first has nowhere up to go and the last nowhere down; each keeps the other's place. */
 function Arrows(props: { line: UsageLine; index: number; count: number }) {
   const { line, index, count } = props;
@@ -139,7 +144,7 @@ function Block(props: { line: UsageLine; index: number; count: number; nowMs: nu
       )}
       {line.reading && line.reading.windows.length > 0 && (
         <div class={`usage-bars ${stale ? "stale" : ""}`}>
-          {line.reading.windows.map((w, i) => (
+          {fableBeforeTotal(line.reading.windows).map((w, i) => (
             <Bar key={`${w.label}${i}`} window={w} name={numbered} nowMs={nowMs} />
           ))}
         </div>
