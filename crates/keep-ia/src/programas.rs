@@ -87,6 +87,19 @@ pub fn codex() -> Option<PathBuf> {
     lugares.into_iter().find(|p| executavel(p))
 }
 
+/// O PR-Agent da skill `pr-agent` (o `pr-agent` que o `uv tool install` põe em `~/.local/bin`):
+/// `KEEP_IA_PR_AGENT_BIN`, o PATH, e essa pasta. Só conta o que existe e roda.
+pub fn pr_agent() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("KEEP_IA_PR_AGENT_BIN") {
+        return Some(PathBuf::from(p)).filter(|p| executavel(p));
+    }
+    #[cfg(windows)]
+    let nome = "pr-agent.exe";
+    #[cfg(not(windows))]
+    let nome = "pr-agent";
+    no_path(&[nome]).or_else(|| Some(casa().join(".local/bin").join(nome)).filter(|p| executavel(p)))
+}
+
 /// `2.1.289` dentro de um caminho ou de um texto.
 fn versao_em(texto: &str) -> Option<String> {
     let bytes = texto.as_bytes();

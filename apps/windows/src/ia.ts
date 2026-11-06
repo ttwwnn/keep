@@ -661,17 +661,26 @@ export function readJev(value: unknown): JevLine | null {
 // ------------------------------------------------------------------ the switches
 
 /**
- * The footer's two switches, as `keep ia automacao` answers: the Jev, which
+ * The footer's three switches, as `keep ia automacao` answers: the Jev, which
  * decides each message's model, effort and whether it takes the Ponytail's
- * rules, and the Ponytail plugin in Claude and Codex. Null is not installed on
- * this machine, and the footer shows no switch for it. The macOS app's
- * `Automation`.
+ * rules; the Ponytail plugin in Claude and Codex; and the PR-Agent, the skill
+ * the core writes into both, which reviews a PR through `claude -p`. Null is
+ * not installed on this machine, and the footer shows no switch for it. The
+ * macOS app's `Automation`; each key is the core's name for it.
  */
 export interface Automation {
   jev: boolean | null;
   ponytail: boolean | null;
+  "pr-agent": boolean | null;
 }
 export type AutomationSwitch = keyof Automation;
+
+/** How the footer names each switch. */
+export const AUTOMATION_TITLES: Record<AutomationSwitch, string> = {
+  jev: "Jev",
+  ponytail: "Ponytail",
+  "pr-agent": "PR-Agent",
+};
 
 export function readAutomation(answer: unknown): Automation | null {
   if (typeof answer !== "object" || answer === null) return null;
@@ -682,5 +691,5 @@ export function readAutomation(answer: unknown): Automation | null {
     if (typeof item !== "object" || item === null || item.instalado !== true) return null;
     return item.ligado === true;
   };
-  return { jev: state("jev"), ponytail: state("ponytail") };
+  return { jev: state("jev"), ponytail: state("ponytail"), "pr-agent": state("pr-agent") };
 }

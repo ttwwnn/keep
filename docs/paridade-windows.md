@@ -341,10 +341,11 @@ caixa da linha, rolagem da lista, estado do movimento, fim do arrasto por `point
 - [ ] `arquivos_abertos` no Windows (id da thread do Codex pelos arquivos abertos): o Restart Manager ou o
   `NtQuerySystemInformation` dariam o dado, mas desde o Codex 0.159 os locks são do daemon dele, não da tela
   (o ganho é pouco) e nada disso se prova daqui; fica como está, dito em `processos.rs`.
-- [~] Botões "Jev" e "Ponytail" embaixo do "Consumo de IA" (14/10/2026; docs/ia.md, "Botões do Jev e do
-  Ponytail"): `keep ia automacao`, o mesmo núcleo do Mac; os três arquivos na assinatura do olhar de 2 s.
-  Testado no vitest (`readAutomation`) e, no Mac, pelo `tools/automation-switch-test.sh`; no Windows só
-  compilado.
+- [~] Botões "Jev", "Ponytail" e "PR-Agent" embaixo do "Consumo de IA" (14/10/2026 e 06/11/2026; docs/ia.md,
+  "Botões do Jev, do Ponytail e do PR-Agent"): `keep ia automacao`, o mesmo núcleo do Mac; os arquivos de cada
+  um na assinatura do olhar de 2 s (o do PR-Agent é o `pr-agent.exe` de `~/.local/bin`); os botões quebram de
+  linha na lateral estreita. Testado no vitest (`readAutomation`) e, no Mac, pelo
+  `tools/automation-switch-test.sh`; no Windows só compilado. O `pr-agent.sh` da skill roda no Git Bash.
 
 ## Fatia `confine`
 

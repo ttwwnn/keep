@@ -95,6 +95,13 @@ no Mac e no Windows (`keep ia automacao jev|ponytail ligar|desligar`).
 - o que não está instalado não ganha botão; um botão mudado no terminal aparece em segundos, e uma recusa
   aparece no rodapé, com o botão de volta ao que a IA tem.
 
+**Botão do PR-Agent (0.3.22):** um terceiro botão ao lado do Jev e do Ponytail
+(`keep ia automacao pr-agent ligar|desligar`): ligado, o Keep grava a skill `pr-agent` no Claude Code e no Codex;
+desligado, a apaga. A skill revisa o PR antes do merge (e descreve, sugere e responde perguntas) pelo PR-Agent com
+o provider `claude-code/`, que usa a assinatura do Claude Code (`claude -p`): sem chave de API e sem publicar nada
+no PR. O botão aparece onde o `pr-agent` está instalado (`uv tool install`); os botões quebram de linha quando a
+lateral é estreita.
+
 **Barra do Claude e gancho da conta da aba em qualquer Mac (0.3.2):** ao abrir, o app do Mac grava no
 `~/.claude/settings.json` a statusLine do Keep (`keep ia statusline`, de onde a barra tira o modelo, o esforço
 e os agentes de cada conversa) e o gancho `keep ia conta-da-aba --gancho` (o Claude de uma aba trocada a quente

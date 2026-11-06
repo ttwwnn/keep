@@ -8,6 +8,7 @@
 // the colour is never the only thing saying it.
 
 import {
+  AUTOMATION_TITLES,
   STALE_AFTER_S,
   accountHelp,
   available,
@@ -285,14 +286,16 @@ function Switch(props: { which: AutomationSwitch; title: string; on: boolean; he
 }
 
 /**
- * "Jev ⏻  Ponytail ⏻": who decides for the AIs, each on or off — the macOS
- * footer's `switches`. The Jev chooses each message's model, effort and
- * whether it takes the Ponytail's rules, and answers the AIs' questions; the
- * Ponytail is the plugin in Claude and Codex, there for the Jev and the AIs.
+ * "Jev ⏻  Ponytail ⏻  PR-Agent ⏻": who works for the AIs, each on or off —
+ * the macOS footer's `switches`. The Jev chooses each message's model, effort
+ * and whether it takes the Ponytail's rules, and answers the AIs' questions;
+ * the Ponytail is the plugin in Claude and Codex, there for the Jev and the
+ * AIs; the PR-Agent is the skill that reviews a PR before the merge. They wrap
+ * when the sidebar is narrow.
  */
 function Switches() {
   const state = automation.value;
-  if (!state || (state.jev === null && state.ponytail === null)) return null;
+  if (!state || (state.jev === null && state.ponytail === null && state["pr-agent"] === null)) return null;
   return (
     <div class="usage-switches">
       {state.jev !== null && (
@@ -316,6 +319,18 @@ function Switches() {
             state.ponytail
               ? "Ponytail ligado no Claude e no Codex: entra quando o Jev decide ou quando a própria IA o chama"
               : "Ponytail desligado: nem o Jev nem as IAs o usam"
+          }
+        />
+      )}
+      {state["pr-agent"] !== null && (
+        <Switch
+          which="pr-agent"
+          title={AUTOMATION_TITLES["pr-agent"]}
+          on={state["pr-agent"]}
+          help={
+            state["pr-agent"]
+              ? "PR-Agent ligado no Claude e no Codex: revisa o PR antes do merge, pela assinatura do Claude"
+              : "PR-Agent desligado: as IAs não revisam com ele"
           }
         />
       )}
