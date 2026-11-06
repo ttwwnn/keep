@@ -68,20 +68,24 @@ fn agora() -> f64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
 }
 
-/// A parada no limite em que está a conversa do Claude da aba, quando o
-/// serviço disse qual janela da conta recusou (sem isso, quem diz é a tela).
-fn parada_da_aba(i: &abas::IaAba) -> Option<sessoes::ParadaNoLimite> {
+/// O que o transcrito da conversa do Claude da aba diz do limite: `None` se
+/// ele não pode ser lido (sem conversa ou sem arquivo: quem diz é a tela);
+/// `Some(None)` se a conversa não está parada no limite da conta (andou
+/// depois, ou parou noutra coisa) — e aí a tela, mesmo com a frase de uma
+/// parada antiga à vista, não conta.
+fn transcrito_da_aba(i: &abas::IaAba) -> Option<Option<sessoes::ParadaNoLimite>> {
     let caminho = sessoes::transcrito_claude(i.conversa.as_deref()?)?;
-    sessoes::parada_no_fim(&caminho, processos::inicio_ms(i.pid)?).filter(|p| p.janela.is_some())
+    let nasceu = processos::inicio_ms(i.pid)?;
+    Some(sessoes::parada_no_fim(&caminho, nasceu).filter(|p| p.da_conta))
 }
 
-/// A conta que parou no limite. Primeiro a que o serviço disse: o recomeço da
-/// janela recusada casa com o medido de uma conta só. Senão, a da aba (`atual`)
-/// — salvo quando o armazém dela foi regravado menos de um cache de login
-/// antes da parada (`vale_em`): o pedido pode ter saído ainda pela conta de
-/// antes, e nenhuma leva a culpa (a medição seguinte diz). A parada cuja
-/// janela já recomeçou (`agora`, em segundos) acabou: de nenhuma, e a tela
-/// dela, ainda à vista, não conta.
+/// A conta que parou no limite. A parada cuja janela já recomeçou (`agora`,
+/// em segundos) acabou: de nenhuma. Depois que a conta da aba passou a valer
+/// no Claude (`vale_em`), o pedido que parou saiu por ela (`atual`). Logo
+/// depois de uma troca a quente (ou sem armazém de aba, quando a conta muda
+/// com o login global), quem diz é o recomeço da janela recusada, se casa com
+/// o medido de uma conta só; sem casar, depois da troca nenhuma leva a culpa
+/// (a medição seguinte diz) e sem armazém de aba vale a da aba.
 fn conta_que_parou(
     p: &sessoes::ParadaNoLimite,
     linhas: &[uso::Linha],
@@ -92,6 +96,9 @@ fn conta_que_parou(
     if p.recomeca.is_some_and(|fim| fim <= agora) {
         return None;
     }
+    if vale_em.is_some_and(|v| p.quando_ms >= v) {
+        return atual.map(str::to_string);
+    }
     if let (Some(janela), Some(recomeca)) = (&p.janela, p.recomeca) {
         let mut ditos = json!({});
         ditos[janela.as_str()] = json!({ "resets_at": recomeca });
@@ -99,7 +106,7 @@ fn conta_que_parou(
             return Some(c);
         }
     }
-    if vale_em.is_some_and(|v| p.quando_ms < v) {
+    if vale_em.is_some() {
         return None;
     }
     atual.map(str::to_string)
@@ -159,16 +166,19 @@ pub fn rodada() -> Value {
         let claude_aberto = prog == tela::Programa::Claude;
         let vale_em = if claude_aberto { quente::conta_vale_em(i.pid) } else { None };
         let atual = i.atual.as_deref().and_then(|k| contas::achar(&contas, k));
-        // Quem parou no limite. O que o serviço disse, gravado no transcrito
-        // junto da parada, vale antes da tela: a frase muda de uma versão do
-        // Claude Code para outra, e a tela da conta que parou segue à vista
-        // depois da troca a quente para a próxima.
-        let (culpada, marca, recomeca) = match claude_aberto.then(|| parada_da_aba(&i)).flatten() {
-            Some(p) => (
+        // Quem parou no limite. O transcrito, quando há, vale antes da tela: a
+        // frase muda de uma versão do Claude Code para outra, e a tela da conta
+        // que parou segue à vista depois da troca a quente para a próxima,
+        // mesmo depois que a conversa andou nela.
+        let (culpada, marca, recomeca) = match claude_aberto.then(|| transcrito_da_aba(&i)).flatten() {
+            Some(Some(p)) => (
                 conta_que_parou(&p, &linhas, i.atual.as_deref(), vale_em, t).and_then(|k| contas::achar(&contas, &k)),
                 format!("parada|{}", p.uuid),
                 p.recomeca,
             ),
+            // A conversa andou depois da parada (o "continue", a resposta da conta nova) ou não parou no limite.
+            Some(None) => (None, String::new(), None),
+            // Sem o transcrito, a tela.
             None if limite => {
                 let marca = format!("{}|{}|{}", historico::nascimento(&r), i.pid, tela::impressao(&linhas_tela));
                 // A tela que já culpou uma conta é a de antes da troca: não culpa a conta nova, nem depois
@@ -329,22 +339,28 @@ mod testes {
             quando_ms,
             janela: Some("five_hour".into()),
             recomeca,
+            da_conta: true,
         };
         const ANTES: f64 = 1_700_000_000.0; // antes de todos os recomeços
+        const DA_ANA: Option<f64> = Some(1_900_000_060.0);
+        // A aba está na Bia; a conta dela vale no Claude desde 50_000 ms.
         let culpa = |p: sessoes::ParadaNoLimite, vale_em: Option<u64>, agora: f64| {
             conta_que_parou(&p, &linhas, Some("claude:bia"), vale_em, agora)
         };
-        // O recomeço dito casa com o medido de uma conta: é ela, mesmo com a aba noutra e logo depois da troca.
-        assert_eq!(culpa(parada(Some(1_900_000_060.0), 10_000), Some(50_000), ANTES).as_deref(), Some("claude:ana"));
-        // Sem recomeço que case, a conta da aba...
-        assert_eq!(culpa(parada(Some(1_800_000_000.0), 90_000), Some(50_000), ANTES).as_deref(), Some("claude:bia"));
-        assert_eq!(culpa(parada(None, 90_000), None, ANTES).as_deref(), Some("claude:bia"));
+        // Depois que a conta da aba vale, a parada é dela, diga o recomeço o que disser.
+        assert_eq!(culpa(parada(DA_ANA, 90_000), Some(50_000), ANTES).as_deref(), Some("claude:bia"));
         assert_eq!(culpa(parada(None, 50_000), Some(50_000), ANTES).as_deref(), Some("claude:bia"));
-        // ...salvo a parada de antes de o Claude pedir pela conta nova (o cache de login): de nenhuma.
+        // Logo depois da troca: o recomeço dito casa com o medido de uma conta, e é ela.
+        assert_eq!(culpa(parada(DA_ANA, 10_000), Some(50_000), ANTES).as_deref(), Some("claude:ana"));
+        // ...e sem casar, nenhuma: o pedido pode ter saído pela conta de antes.
         assert_eq!(culpa(parada(None, 49_999), Some(50_000), ANTES), None);
         assert_eq!(culpa(parada(Some(1_800_000_000.0), 10_000), Some(50_000), ANTES), None);
-        // A janela recusada já recomeçou: a parada acabou, de nenhuma (nem da que o recomeço diz).
-        assert_eq!(culpa(parada(Some(1_900_000_060.0), 90_000), None, 1_900_000_060.0), None);
-        assert_eq!(culpa(parada(Some(1_900_000_060.0), 90_000), None, 1_900_000_059.0).as_deref(), Some("claude:ana"));
+        // Sem armazém de aba (a conta muda com o login global): o recomeço, senão a da aba.
+        assert_eq!(culpa(parada(DA_ANA, 90_000), None, ANTES).as_deref(), Some("claude:ana"));
+        assert_eq!(culpa(parada(None, 90_000), None, ANTES).as_deref(), Some("claude:bia"));
+        // A janela recusada já recomeçou: a parada acabou, de nenhuma.
+        assert_eq!(culpa(parada(DA_ANA, 90_000), None, 1_900_000_060.0), None);
+        assert_eq!(culpa(parada(DA_ANA, 90_000), Some(50_000), 1_900_000_061.0), None);
+        assert_eq!(culpa(parada(DA_ANA, 90_000), None, 1_900_000_059.0).as_deref(), Some("claude:ana"));
     }
 }

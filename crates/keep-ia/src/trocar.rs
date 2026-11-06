@@ -1153,10 +1153,11 @@ mod ponta_a_ponta {
     }
 
     /// A parada no limite leva a aba que segue a ordem para a próxima conta,
-    /// e quem leva a culpa é a conta que parou: a tela dela, ainda à vista
-    /// depois da troca a quente, não culpa a conta nova; o que o serviço disse
-    /// (a janela recusada e o recomeço dela, gravados no transcrito) vale numa
-    /// frase que a tela não conhece e diz de quem é a parada.
+    /// e quem leva a culpa é a conta que parou. O transcrito manda: a parada
+    /// no fim dele (com o que o serviço disse, a janela recusada e o recomeço
+    /// dela, numa frase que a tela não conhece) e a conversa que andou depois;
+    /// a tela da conta antiga, ainda à vista depois da troca a quente, não
+    /// culpa a conta nova. Sem transcrito, a tela.
     #[test]
     fn a_parada_no_limite_culpa_a_conta_que_parou() {
         let Some(falsa) = falsa() else {
@@ -1210,29 +1211,42 @@ mod ponta_a_ponta {
             (r["alvo"].as_str().map(str::to_string), alteradas, pendentes)
         };
 
-        // 1. Um Claude que não grava a recusa (só a frase): quem diz é a tela. A Ana parou; a aba passa à Bia.
+        let sem_bloqueios = || {
+            let _ = std::fs::remove_file(caminhos::estado().join("ia-prioridade.json"));
+        };
+        let limpa_a_tela = || {
+            assert!(digita("T", tab, "/limpar", true).unwrap());
+            let limpa = daemon::espera(Duration::from_secs(15), Duration::from_millis(100), || {
+                daemon::tela("T", tab).ok().filter(|t| !t.contains("You've hit") && !t.contains("allowance")).map(|_| ())
+            });
+            assert!(limpa.is_some(), "{}", daemon::tela("T", tab).unwrap_or_default());
+        };
+
+        // 1. Um Claude que não grava a recusa, só a frase: a parada no fim do transcrito, de quando a conta da aba já
+        // valia, é da Ana; a aba passa à Bia.
         limite("-", "You've hit your session limit - resets 5pm");
-        assert_eq!(rodada("tela, 1ª"), (Some("claude:bia".into()), 1, vec![]));
+        assert_eq!(rodada("frase, 1ª"), (Some("claude:bia".into()), 1, vec![]));
         assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:bia"));
-        // A mesma tela, ainda à vista na Bia, é a da parada da Ana: a Bia não leva a culpa e a aba fica.
-        assert_eq!(rodada("tela, 2ª"), (Some("claude:bia".into()), 0, vec![]));
-        // Cinco minutos depois o bloqueio da Ana venceu (a Ana volta a ser o alvo), e a tela dela segue à vista:
-        // a Bia ainda não leva a culpa, e a aba, em uso há pouco, fica na Bia.
+        // A mesma parada, de antes de a Bia valer no Claude, com a tela da Ana ainda à vista: a Bia não leva a culpa.
+        assert_eq!(rodada("frase, 2ª"), (Some("claude:bia".into()), 0, vec![]));
+        // Cinco minutos depois o bloqueio da Ana venceu (a Ana volta a ser o alvo): a Bia ainda não leva a culpa, e
+        // a aba, em uso há pouco, fica na Bia.
         let arquivo = caminhos::estado().join("ia-prioridade.json");
         let mut registro: Value = serde_json::from_str(&std::fs::read_to_string(&arquivo).unwrap()).unwrap();
         registro["limites"] = json!({});
         std::fs::write(&arquivo, registro.to_string()).unwrap();
-        assert_eq!(rodada("tela, depois do bloqueio"), (Some("claude:ana".into()), 0, vec![]));
+        assert_eq!(rodada("frase, depois do bloqueio"), (Some("claude:ana".into()), 0, vec![]));
+        // A conversa andou na Bia (o "continue"), com a frase da Ana ainda à vista: nenhuma conta parou.
+        assert!(digita("T", tab, "continue", true).unwrap());
+        assert!(tela_tem("T", tab, "Feito: continue, conta=F"));
+        assert!(tela::limite_na_tela(&tela_de("T", tab).0), "a frase da Ana segue à vista");
+        assert_eq!(rodada("frase, a conversa andou"), (Some("claude:ana".into()), 0, vec![]));
         assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:bia"));
 
-        // 2. O que o serviço disse, numa frase que a tela não conhece (e sem a frase antiga à vista): a parada é
-        // da Bia, pelo recomeço dela, e a aba volta à Ana (sem os bloqueios da parte 1).
-        let _ = std::fs::remove_file(caminhos::estado().join("ia-prioridade.json"));
-        assert!(digita("T", tab, "/limpar", true).unwrap());
-        let limpa = daemon::espera(Duration::from_secs(15), Duration::from_millis(100), || {
-            daemon::tela("T", tab).ok().filter(|t| !t.contains("You've hit") && t.contains("Pronto")).map(|_| ())
-        });
-        assert!(limpa.is_some(), "{}", daemon::tela("T", tab).unwrap_or_default());
+        // 2. O que o serviço disse, numa frase que a tela não conhece: a parada é da Bia (pelo recomeço dela, ou por
+        // ser de quando ela já valia), e a aba volta à Ana.
+        sem_bloqueios();
+        limpa_a_tela();
         limite(&RECOMECO_BIA.to_string(), "Session allowance used up");
         assert_eq!(rodada("serviço, 1ª"), (Some("claude:ana".into()), 1, vec![]));
         assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:ana"));
@@ -1244,6 +1258,16 @@ mod ponta_a_ponta {
         limite(&RECOMECO_ANA.to_string(), "Session allowance used up");
         assert_eq!(rodada("serviço, as duas"), (None, 0, vec!["todas-no-limite".to_string()]));
         assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:ana"));
+
+        // 4. Sem o transcrito, quem diz é a tela: a Ana parou e a aba passa à Bia; a mesma tela não culpa a Bia.
+        sem_bloqueios();
+        let conversa = ia_da_aba(tab).conversa.expect("a conversa da aba");
+        std::fs::remove_file(crate::sessoes::transcrito_claude(&conversa).expect("o transcrito")).unwrap();
+        limpa_a_tela();
+        limite("-", "You've hit your session limit - resets 5pm");
+        assert_eq!(rodada("tela, 1ª"), (Some("claude:bia".into()), 1, vec![]));
+        assert_eq!(rodada("tela, 2ª"), (Some("claude:bia".into()), 0, vec![]));
+        assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:bia"));
 
         // SAFETY: a casa (e a trava) está de pé.
         unsafe {

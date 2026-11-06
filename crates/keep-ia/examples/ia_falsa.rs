@@ -260,8 +260,19 @@ mod falsa {
                             }
                             caixa(&mut out, &format!("\r\n  ⎿  {frase}"));
                         }
-                        // A resposta diz o pedido: cada uma se acha na tela.
-                        outro => caixa(&mut out, &format!("\r\n> {outro}\r\n● Feito: {outro}, conta={}", conta_no_armazem())),
+                        // A resposta diz o pedido: cada uma se acha na tela. A conversa anda também no
+                        // transcrito, como o de verdade grava: a fala da pessoa e a resposta.
+                        outro => {
+                            let conta = conta_no_armazem();
+                            if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&transcrito) {
+                                let quando = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                                let pessoa = serde_json::json!({"type": "user", "timestamp": quando, "message": {"role": "user", "content": outro}});
+                                let resposta = serde_json::json!({"type": "assistant", "timestamp": quando,
+                                    "message": {"role": "assistant", "content": [{"type": "text", "text": format!("Feito: {outro}")}]}});
+                                let _ = writeln!(f, "{pessoa}\n{resposta}");
+                            }
+                            caixa(&mut out, &format!("\r\n> {outro}\r\n● Feito: {outro}, conta={conta}"));
+                        }
                     }
                 }
                 b => {

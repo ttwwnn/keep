@@ -168,10 +168,14 @@ pub fn registro_do_processo(pid: u32) -> Option<(String, Registro)> {
 }
 
 /// Desde quando (ms) o Claude `pid` pede pela conta que está no armazém da
-/// aba dele: o cache de login depois da última gravação. Antes disso, um
-/// pedido ainda pode sair pela conta anterior.
+/// aba dele: o cache de login depois da última gravação, quando ela veio com
+/// ele aberto (antes disso, um pedido ainda pode sair pela conta anterior);
+/// senão, desde que ele abriu, porque nunca guardou outra conta. `None`: ele
+/// não roda num armazém de aba.
 pub fn conta_vale_em(pid: u32) -> Option<u64> {
-    registro_do_processo(pid).map(|(_, r)| r.em + CACHE_LOGIN_MS)
+    let (_, r) = registro_do_processo(pid)?;
+    let nasceu = processos::inicio_ms(pid).unwrap_or(0);
+    Some(if r.em > nasceu { r.em + CACHE_LOGIN_MS } else { nasceu })
 }
 
 // ------------------------------------------------------------- de onde vem

@@ -1,8 +1,9 @@
 //! O `keep continuar` de verdade, num daemon do próprio teste, com o Claude parado de mentira
-//! (`cargo build -p keep-restauro --examples`) em quatro abas: duas paradas que podem receber o
-//! "continue" (login, rede), uma com rascunho na caixa e uma ocupada. Enquanto o login e a rede não
-//! voltam, nada é digitado; quando voltam, só as duas recebem, a mensagem entra no transcrito, e a
-//! rodada seguinte não digita de novo.
+//! (`cargo build -p keep-restauro --examples`) em cinco abas: duas paradas que podem receber o
+//! "continue" (login, rede), uma com rascunho na caixa, uma ocupada e uma parada no limite logo depois
+//! de a conta dela trocar a quente. Enquanto o login e a rede não voltam, nada é digitado; quando
+//! voltam, só as duas recebem, a mensagem entra no transcrito, e a rodada seguinte não digita de novo.
+//! A do limite espera o Claude passar a pedir pela conta nova (o cache de login dele).
 #![cfg(unix)]
 
 use std::io::{Read, Write};
@@ -110,6 +111,17 @@ fn so_a_aba_parada_e_segura_recebe_o_continue_quando_a_causa_volta() {
     let rede = abre("FALSO_ERRO=rede");
     let rascunho = abre("FALSO_RASCUNHO=meu-rascunho");
     let ocupada = abre("FALSO_OCUPADO=1");
+    // No limite, num armazém de aba que o Keep regravou com o Claude já aberto (a troca a quente).
+    let armazem = raiz.join("armazem-da-aba");
+    std::fs::create_dir_all(&armazem).unwrap();
+    let limite = abre(&format!("FALSO_ERRO=limite CLAUDE_SECURESTORAGE_CONFIG_DIR={}", armazem.display()));
+    let abas = casa.join(".claude/contas/abas");
+    std::fs::create_dir_all(&abas).unwrap();
+    // A gravação, longe no futuro: o teste não depende do relógio.
+    let estado = serde_json::json!({ "versao": 1, "abas": { "C-limite": {
+        "pasta": armazem, "conta": "claude:outra", "dono": "u-outra", "escolha": "claude:ordem", "ws": "C", "aba": limite,
+        "em": keep_restauro::agora_ms() + 600_000 } } });
+    std::fs::write(abas.join("estado.json"), estado.to_string()).unwrap();
     let rot = |a: u32| format!("C#{a}");
     // o erro precisa de 5 s de idade
     std::thread::sleep(Duration::from_millis(5500));
@@ -119,6 +131,7 @@ fn so_a_aba_parada_e_segura_recebe_o_continue_quando_a_causa_volta() {
     assert_eq!(r["enviadas"], 0, "{r:#}");
     assert!(situacao(&r, &rot(login)).contains("o login ainda não voltou"), "{r:#}");
     assert!(situacao(&r, &rot(rede)).contains("a rede ainda não voltou"), "{r:#}");
+    assert!(situacao(&r, &rot(limite)).contains("a conta nova da aba vale no Claude em"), "{r:#}");
 
     // ---- voltaram: no seco, diz o que faria e não digita
     std::fs::write(
@@ -143,6 +156,7 @@ fn so_a_aba_parada_e_segura_recebe_o_continue_quando_a_causa_volta() {
     assert!(situacao(&r, &rot(ocupada)).contains("ocupada"), "{r:#}");
     assert!(!tela_tem("C", rascunho, "Retomado", 1));
     assert!(!tela_tem("C", ocupada, "Retomado", 1));
+    assert!(!tela_tem("C", limite, "Retomado", 1), "o continue sairia pela conta de antes");
 
     // ---- a conversa andou: nada em dobro
     let r = continuar::rodada(false, false).unwrap();

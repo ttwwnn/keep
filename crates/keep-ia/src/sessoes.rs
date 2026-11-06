@@ -240,6 +240,10 @@ pub struct ParadaNoLimite {
     /// grava isso, e no limite de um modelo só.
     pub janela: Option<String>,
     pub recomeca: Option<f64>,
+    /// O limite é da conta inteira (o que tira a conta da fila): a janela
+    /// recusada, ou, sem ela, a frase de sessão, semana ou uso que a tela
+    /// também reconhece. O de um modelo só (Opus, Fable) não é.
+    pub da_conta: bool,
 }
 
 /// As janelas da conta inteira: as que tiram a conta da fila
@@ -265,7 +269,8 @@ pub fn parada_no_limite(d: &Value) -> Option<ParadaNoLimite> {
         .or_else(|| d.get("apiErrorParams").and_then(|p| p.get("rate_limit_info")))
         .filter(|i| i.get("status").and_then(Value::as_str) == Some("rejected"));
     let janela = recusa.and_then(|i| i.get("rateLimitType")).and_then(Value::as_str).filter(|t| JANELAS_DA_CONTA.contains(t));
-    if janela.is_none() && !frase_de_limite(&texto_da_fala(d)) {
+    let texto = texto_da_fala(d);
+    if janela.is_none() && !frase_de_limite(&texto) {
         return None;
     }
     let quando_ms = carimbo_ms(d);
@@ -274,6 +279,7 @@ pub fn parada_no_limite(d: &Value) -> Option<ParadaNoLimite> {
         quando_ms,
         janela: janela.map(str::to_string),
         recomeca: janela.and(recusa).and_then(|i| i.get("resetsAt")).and_then(Value::as_f64),
+        da_conta: janela.is_some() || tela::limite_na_tela(&[texto.trim().to_string()]),
     })
 }
 
@@ -416,19 +422,19 @@ mod testes {
     #[test]
     fn a_parada_no_limite_vale_pelo_que_o_servico_disse() {
         let semanal = parada_no_limite(&parada("seven_day", "You've hit your weekly limit · resets 8pm", "2026-11-04T18:54:42.688Z")).unwrap();
-        assert_eq!((semanal.janela.as_deref(), semanal.recomeca), (Some("seven_day"), Some(1_793_833_200.0)));
+        assert_eq!((semanal.janela.as_deref(), semanal.recomeca, semanal.da_conta), (Some("seven_day"), Some(1_793_833_200.0), true));
         assert_eq!((semanal.uuid.as_str(), semanal.quando_ms), ("u-2026-11-04T18:54:42.688Z", 1_793_818_482_688));
         // Outra frase para a mesma recusa: vale o que o serviço disse.
         let outra = parada_no_limite(&parada("five_hour", "Your session allowance is used up", "2026-11-04T18:54:42Z")).unwrap();
         assert_eq!(outra.janela.as_deref(), Some("five_hour"));
         // O limite de um modelo só não tira a conta da fila: só a frase antiga o diz, como antes, sem janela.
         let opus = parada_no_limite(&parada("seven_day_opus", "You've hit your Opus limit · resets 8pm", "2026-11-04T18:54:42Z")).unwrap();
-        assert_eq!((opus.janela, opus.recomeca), (None, None));
+        assert_eq!((opus.janela, opus.recomeca, opus.da_conta), (None, None, false));
         assert!(parada_no_limite(&parada("seven_day_fable", "You've reached your Fable limit.", "2026-11-04T18:54:42Z")).is_none());
         // A versão que não grava a recusa: a frase.
         let antiga = serde_json::json!({"type": "assistant", "error": "rate_limit", "timestamp": "2026-10-13T01:00:00Z",
             "message": {"content": [{"type": "text", "text": "You've hit your session limit · resets 5:10pm"}]}});
-        assert_eq!(parada_no_limite(&antiga).map(|p| p.janela), Some(None));
+        assert_eq!(parada_no_limite(&antiga).map(|p| (p.janela, p.da_conta)), Some((None, true)));
         // Não é parada no limite.
         let mut sem_frase = antiga.clone();
         sem_frase["message"]["content"][0]["text"] = "API Error: Request rejected (429)".into();

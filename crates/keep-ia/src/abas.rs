@@ -166,7 +166,7 @@ fn conta_provada(pid: u32, linhas: &[Linha], atual: Option<&str>) -> Option<Stri
     let entrada: serde_json::Value = serde_json::from_slice(&std::fs::read(&arquivo).ok()?).ok()?;
     let conta = conta_dos_limites(entrada.get("rate_limits")?, linhas)?;
     if atual.is_some_and(|a| a != conta) {
-        let valida_desde = crate::quente::conta_vale_em(pid)?;
+        let valida_desde = crate::quente::registro_do_processo(pid)?.1.em + crate::quente::CACHE_LOGIN_MS;
         let transcrito = entrada.get("transcript_path").and_then(|t| t.as_str());
         if crate::quente::agora() >= valida_desde && !transcrito.is_some_and(|t| respondeu_depois(Path::new(t), valida_desde)) {
             return None;
