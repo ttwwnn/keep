@@ -13,6 +13,7 @@ import { computed, signal } from "@preact/signals";
 import * as api from "./api";
 import type { CoreAnswer, TabInfo } from "./api";
 import {
+  AUTOMATION_TITLES,
   FOLLOW_ORDER,
   adopt,
   fresh,
@@ -75,7 +76,7 @@ export const iaAvailable = computed(() => iaInfo.value?.available === true);
 export const usageLines = signal<UsageLine[]>([]);
 /** What the Jev can still spend on OpenRouter; null when this machine has no key of the Jev's. */
 export const jev = signal<JevLine | null>(readStoredJev());
-/** The Jev's and the Ponytail's switches; null until the core has said. */
+/** The Jev's, the Ponytail's and the PR-Agent's switches; null until the core has said. */
 export const automation = signal<Automation | null>(null);
 /** A round somebody asked for is running. */
 export const measuring = signal(false);
@@ -140,7 +141,7 @@ export function toggleAutomation(which: AutomationSwitch): void {
   turning += 1;
   noticeTicket += 1;
   usageNotice.value = null;
-  const name = which === "jev" ? "Jev" : "Ponytail";
+  const name = AUTOMATION_TITLES[which];
   void (async () => {
     try {
       const answer = await api.iaAsk(["ia", "automacao", which, on ? "desligar" : "ligar", "--json"]);

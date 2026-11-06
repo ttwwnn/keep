@@ -125,9 +125,12 @@ enum AIAccounts {
         // The book the Jev's skill writes a line in at each decision it pays
         // for: the core adds what OpenRouter has not counted yet.
         parts.append("jev livro " + stamp(home.appendingPathComponent(".claude/jev/chamadas.jsonl")))
-        // The footer's two switches: the Jev's "off" file, and where each AI
-        // keeps its plugins on and off (`keep ia automacao`).
-        for file in [".claude/jev/desligado", ".claude/settings.json", ".codex/config.toml"] {
+        // The footer's switches: the Jev's "off" file, where each AI keeps its
+        // plugins on and off, the PR-Agent's skill in each and the PR-Agent
+        // itself, which `uv tool install` puts in ~/.local/bin
+        // (`keep ia automacao`).
+        for file in [".claude/jev/desligado", ".claude/settings.json", ".codex/config.toml",
+                     ".claude/skills/pr-agent/SKILL.md", ".codex/skills/pr-agent/SKILL.md", ".local/bin/pr-agent"] {
             parts.append("auto \(file) " + stamp(home.appendingPathComponent(file)))
         }
         let extras = home.appendingPathComponent(".codex-contas")
@@ -322,33 +325,57 @@ struct JevAnswer: Decodable {
     }
 }
 
-/// The footer's two switches, as `keep ia automacao` answers: the Jev, which
+/// The footer's three switches, as `keep ia automacao` answers: the Jev, which
 /// decides each message's model, effort and whether it takes the Ponytail's
-/// rules, and the Ponytail plugin in Claude and Codex. Nil is not installed on
-/// this Mac, and the footer shows no switch for it.
+/// rules; the Ponytail plugin in Claude and Codex; and the PR-Agent, the skill
+/// the core writes into both, which reviews a PR through `claude -p`. Nil is
+/// not installed on this Mac, and the footer shows no switch for it.
 struct Automation: Equatable {
     var jev: Bool?
     var ponytail: Bool?
+    var prAgent: Bool?
 
-    enum Switch: String {
+    enum Switch: String, CaseIterable {
         case jev
         case ponytail
+        case prAgent = "pr-agent"
+
+        /// How the footer names it.
+        var title: String {
+            switch self {
+            case .jev: return "Jev"
+            case .ponytail: return "Ponytail"
+            case .prAgent: return "PR-Agent"
+            }
+        }
     }
 
     static func decode(_ data: Data) -> Automation? {
         guard let answer = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        func state(_ key: String) -> Bool? {
-            guard let item = answer[key] as? [String: Any], item["instalado"] as? Bool == true else { return nil }
+        func state(_ which: Switch) -> Bool? {
+            guard let item = answer[which.rawValue] as? [String: Any], item["instalado"] as? Bool == true else { return nil }
             return item["ligado"] as? Bool ?? false
         }
-        return Automation(jev: state("jev"), ponytail: state("ponytail"))
+        return Automation(jev: state(.jev), ponytail: state(.ponytail), prAgent: state(.prAgent))
     }
 
-    var isEmpty: Bool { jev == nil && ponytail == nil }
+    var isEmpty: Bool { jev == nil && ponytail == nil && prAgent == nil }
 
     subscript(_ which: Switch) -> Bool? {
-        get { which == .jev ? jev : ponytail }
-        set { if which == .jev { jev = newValue } else { ponytail = newValue } }
+        get {
+            switch which {
+            case .jev: return jev
+            case .ponytail: return ponytail
+            case .prAgent: return prAgent
+            }
+        }
+        set {
+            switch which {
+            case .jev: jev = newValue
+            case .ponytail: ponytail = newValue
+            case .prAgent: prAgent = newValue
+            }
+        }
     }
 }
 

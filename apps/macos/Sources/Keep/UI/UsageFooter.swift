@@ -36,8 +36,8 @@ final class UsageMonitor: ObservableObject {
     /// What the Jev can still spend, when this Mac has a key of its own for
     /// OpenRouter; nil when it has none, and the footer says nothing of it.
     @Published private(set) var jev: JevLine?
-    /// The Jev's and the Ponytail's switches; nil until the core has said,
-    /// and a member nil when that one is not installed here.
+    /// The Jev's, the Ponytail's and the PR-Agent's switches; nil until the
+    /// core has said, and a member nil when that one is not installed here.
     @Published private(set) var automation: Automation?
 
     private var timer: Timer?
@@ -405,7 +405,7 @@ final class UsageMonitor: ObservableObject {
                     if self.switching == 0 { self.automation = state }
                 case .failure(let problem):
                     Trace.log("ia", "automacao: \(which.rawValue) recusado: \(problem.detail)")
-                    self.say("Não deu para \(on ? "desligar" : "ligar") o \(which == .jev ? "Jev" : "Ponytail"): \(problem.detail)")
+                    self.say("Não deu para \(on ? "desligar" : "ligar") o \(which.title): \(problem.detail)")
                     self.look(force: true)
                 }
             }
@@ -821,39 +821,64 @@ struct UsageFooter: View {
 
     // MARK: - the switches
 
-    /// "Jev ⏻  Ponytail ⏻": who decides for the AIs, each on or off. The Jev
-    /// chooses each message's model, effort and whether it takes the
-    /// Ponytail's rules, and answers the AIs' questions; the Ponytail is the
-    /// plugin in Claude and Codex, there for the Jev and the AIs to call on.
-    /// Folded or not, the same row: it is what the person turns, not a figure.
+    /// "Jev ⏻  Ponytail ⏻  PR-Agent ⏻": who works for the AIs, each on or
+    /// off. The Jev chooses each message's model, effort and whether it takes
+    /// the Ponytail's rules, and answers the AIs' questions; the Ponytail is the
+    /// plugin in Claude and Codex, there for the Jev and the AIs to call on;
+    /// the PR-Agent is the skill that reviews a PR before the merge. Folded or
+    /// not, the same switches: they are what the person turns, not a figure.
+    /// One row when it fits the sidebar (200 to 320 points, and the font
+    /// grows with the zoom); else the first two and the rest; else one per line.
     private func switches(_ automation: Automation) -> some View {
-        HStack(spacing: 12) {
-            if let on = automation.jev {
-                switchButton(.jev, "Jev", on: on, help: on
-                    ? "Jev ligado: escolhe modelo, esforço e Ponytail a cada mensagem do Claude e do Codex, e responde as perguntas de decisão"
-                    : "Jev desligado: as mensagens e as perguntas seguem sem ele")
+        let shown = Automation.Switch.allCases.compactMap { which in automation[which].map { (which, $0) } }
+        return ViewThatFits(in: .horizontal) {
+            switchRow(shown)
+            VStack(alignment: .leading, spacing: 4) {
+                switchRow(Array(shown.prefix(2)))
+                if shown.count > 2 { switchRow(Array(shown.dropFirst(2))) }
             }
-            if let on = automation.ponytail {
-                switchButton(.ponytail, "Ponytail", on: on, help: on
-                    ? "Ponytail ligado no Claude e no Codex: entra quando o Jev decide ou quando a própria IA o chama"
-                    : "Ponytail desligado: nem o Jev nem as IAs o usam")
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(shown, id: \.0) { item in switchRow([item]) }
             }
-            Spacer(minLength: 0)
         }
         .padding(.top, folded ? 2 : 0)
     }
 
-    private func switchButton(_ which: Automation.Switch, _ title: String, on: Bool, help: String) -> some View {
+    private func switchRow(_ items: [(Automation.Switch, Bool)]) -> some View {
+        HStack(spacing: 12) {
+            ForEach(items, id: \.0) { item in switchButton(item.0, on: item.1) }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func switchHelp(_ which: Automation.Switch, on: Bool) -> String {
+        switch which {
+        case .jev:
+            return on
+                ? "Jev ligado: escolhe modelo, esforço e Ponytail a cada mensagem do Claude e do Codex, e responde as perguntas de decisão"
+                : "Jev desligado: as mensagens e as perguntas seguem sem ele"
+        case .ponytail:
+            return on
+                ? "Ponytail ligado no Claude e no Codex: entra quando o Jev decide ou quando a própria IA o chama"
+                : "Ponytail desligado: nem o Jev nem as IAs o usam"
+        case .prAgent:
+            return on
+                ? "PR-Agent ligado no Claude e no Codex: revisa o PR antes do merge, pela assinatura do Claude"
+                : "PR-Agent desligado: as IAs não revisam com ele"
+        }
+    }
+
+    private func switchButton(_ which: Automation.Switch, on: Bool) -> some View {
         Toggle(isOn: Binding(get: { on }, set: { _ in monitor.toggle(which) })) {
-            Text(title)
+            Text(which.title)
                 .font(numbers)
                 .foregroundStyle(on ? UsageInk.inkResting : UsageInk.inkFaint)
         }
         .toggleStyle(.switch)
         .controlSize(.mini)
         .fixedSize()
-        .help(help)
-        .accessibilityLabel(title)
+        .help(switchHelp(which, on: on))
+        .accessibilityLabel(which.title)
         .accessibilityValue(on ? "ligado" : "desligado")
         .accessibilityIdentifier("automation-\(which.rawValue)")
     }

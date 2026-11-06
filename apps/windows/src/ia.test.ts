@@ -3,6 +3,7 @@
 // worktrees — the macOS app's rules, which these mirror.
 import { describe, expect, it } from "vitest";
 import {
+  AUTOMATION_TITLES,
   FOLLOW_ORDER,
   accountHelp,
   accountTitle,
@@ -448,18 +449,25 @@ describe("the Jev's credit", () => {
 
 describe("the footer's switches", () => {
   it("reads `keep ia automacao`: what is not installed has no switch", () => {
-    const both = {
+    const all = {
       ok: true,
       versao: 1,
       jev: { instalado: true, ligado: false },
       ponytail: { instalado: true, ligado: true, claude: true, codex: null },
+      "pr-agent": { instalado: true, ligado: true, claude: true, codex: true },
     };
-    expect(readAutomation(both)).toEqual({ jev: false, ponytail: true });
-    expect(readAutomation({ ok: true, jev: { instalado: false, ligado: false }, ponytail: { instalado: false } })).toEqual({
-      jev: null,
-      ponytail: null,
-    });
-    expect(readAutomation({ ok: true, jev: { instalado: true } })).toEqual({ jev: false, ponytail: null });
+    expect(readAutomation(all)).toEqual({ jev: false, ponytail: true, "pr-agent": true });
+    expect(
+      readAutomation({
+        ok: true,
+        jev: { instalado: false, ligado: false },
+        ponytail: { instalado: false },
+        "pr-agent": { instalado: false, ligado: false, claude: false, codex: null },
+      }),
+    ).toEqual({ jev: null, ponytail: null, "pr-agent": null });
+    // A core from before the PR-Agent: no switch for it.
+    expect(readAutomation({ ok: true, jev: { instalado: true } })).toEqual({ jev: false, ponytail: null, "pr-agent": null });
+    expect(AUTOMATION_TITLES["pr-agent"]).toBe("PR-Agent");
     expect(readAutomation({ ok: false, motivo: "automacao", detalhe: "x" })).toBeNull();
     expect(readAutomation(null)).toBeNull();
   });

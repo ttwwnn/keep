@@ -90,6 +90,9 @@ pub fn casa(nome: &str) -> Casa {
         // Um daemon que não existe: nada aqui fala com o Keep de verdade (o
         // teste que precisa de um sobe o dele e aponta para ele).
         std::env::set_var("KEEP_SOCKET", raiz.join("sem-keepd.sock"));
+        // Nem o PR-Agent instalado nesta máquina: o teste que precisa de um
+        // aponta para o falso dele.
+        std::env::set_var("KEEP_IA_PR_AGENT_BIN", raiz.join("sem-pr-agent"));
         // Os serviços, num lugar desta máquina onde ninguém ouve: um teste
         // que esquecer o dele falha na hora, sem mandar nada para fora. (A
         // página do login do OpenRouter não: ela só vai para o navegador.)

@@ -1,21 +1,26 @@
 #!/usr/bin/env bash
 #
-# The footer's two switches, the Jev and the Ponytail, from outside the app.
+# The footer's three switches, the Jev, the Ponytail and the PR-Agent, from
+# outside the app.
 #
 # The Jev decides each message's model, effort and whether it takes the
 # Ponytail's rules; its hooks do nothing while ~/.claude/jev/desligado is
 # there. The Ponytail is the plugin ponytail@ponytail in Claude
 # (`enabledPlugins` in ~/.claude/settings.json, changed by `claude plugin
 # enable|disable`) and in Codex (`[plugins."ponytail@ponytail"] enabled` in
-# ~/.codex/config.toml). What this checks:
-#   - both switches are under the footer, each saying whether it is on;
+# ~/.codex/config.toml). The PR-Agent is the skill `pr-agent` the core writes
+# into ~/.claude/skills and ~/.codex/skills, where the `pr-agent` command is
+# installed. What this checks:
+#   - the three switches are under the footer, each saying whether it is on;
 #   - the Jev's switch writes and removes the Jev's "off" file;
 #   - the Ponytail's switch turns the plugin off and on in both AIs, through
 #     Claude Code itself and the one line of Codex's file;
-#   - a switch turned in a terminal (`jev auto desligar`) shows in the footer
-#     within seconds;
+#   - the PR-Agent's switch writes the skill into both AIs and takes it out;
+#   - a switch turned in a terminal (`jev auto desligar`, `keep ia automacao
+#     pr-agent ligar`) shows in the footer within seconds;
 #   - a refusal is said, and the switch goes back to what the AI has;
-#   - what is not installed has no switch.
+#   - what is not installed has no switch, and the PR-Agent's shows when the
+#     command is installed.
 #
 #   tools/automation-switch-test.sh
 #
@@ -87,6 +92,7 @@ until_true() {
 }
 plugin_in_claude() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("enabledPlugins",{}).get("ponytail@ponytail"))' "$FAKE/.claude/settings.json"; }
 plugin_in_codex() { grep -A1 -F '[plugins."ponytail@ponytail"]' "$FAKE/.codex/config.toml" | tail -1; }
+skill_in() { [ -f "$FAKE/$1/skills/pr-agent/SKILL.md" ] && [ -x "$FAKE/$1/skills/pr-agent/pr-agent.sh" ] && echo yes || echo no; }
 
 if [ -z "${SKIP_BUILD:-}" ]; then
     say "building $APP_NAME, the client, the daemon and the tools (yours is left alone)"
@@ -126,11 +132,18 @@ echo "\$@" >> "$WORK/claude.log"
 sed -i '' "s/\"ponytail@ponytail\": *[a-z]*/\"ponytail@ponytail\": \$V/" "$FAKE/.claude/settings.json"
 SH
 chmod +x "$WORK/claude"
+# The PR-Agent command, where `uv tool install` puts it (the core only looks
+# for it, and only there: yours, on the PATH, is not this home's).
+PR_AGENT=$FAKE/.local/bin/pr-agent
+mkdir -p "$FAKE/.local/bin"
+printf '#!/bin/sh\nexit 0\n' >"$PR_AGENT"
+chmod +x "$PR_AGENT"
 
 export KEEP_SOCKET=$SOCKET
 export KEEP_STATE_DIR=$WORK/state
 export KEEP_AI_USAGE_HOME=$FAKE
 export KEEP_IA_CLAUDE_BIN=$WORK/claude
+export KEEP_IA_PR_AGENT_BIN=$PR_AGENT
 # The core, the real one in the bundle (scratch.sh points the tests at none).
 export KEEP_IA_BIN=$APP/Contents/Resources/keep
 mkdir -p "$KEEP_STATE_DIR"
@@ -153,11 +166,20 @@ done
 place_on_screen
 
 say ""
-say "both switches, each saying whether it is on"
+say "the three switches, each saying whether it is on"
 check "the Jev's switch, on" ligado "$(until_value jev ligado)"
 check "the Ponytail's switch, on" ligado "$(until_value ponytail ligado)"
+check "the PR-Agent's switch, off: the skill is in no AI yet" desligado "$(until_value pr-agent desligado)"
 "$AXTEXT" "$APP_NAME" >"$WORK/ax.txt" 2>/dev/null
-check "named in the footer" yes "$(grep -qF "Ponytail" "$WORK/ax.txt" && echo yes || echo no)"
+check "named in the footer" yes "$(grep -qF "Ponytail" "$WORK/ax.txt" && grep -qF "PR-Agent" "$WORK/ax.txt" && echo yes || echo no)"
+# The sidebar is 200 to 320 points and the font grows with the zoom: the row
+# wraps rather than run past the footer's right edge (the "+" of its header).
+edge=$("$AXPRESS" "$APP_NAME" frame usage-signin 2>/dev/null | awk '{ print $1 + $3 }')
+for s in jev ponytail pr-agent; do
+    right=$("$AXPRESS" "$APP_NAME" frame "automation-$s" 2>/dev/null | awk '{ print $1 + $3 }')
+    check "the $s switch inside the footer ($right <= $edge)" yes \
+        "$([ -n "$right" ] && [ -n "$edge" ] && [ "$right" -le $((edge + 2)) ] && echo yes || echo no)"
+done
 
 say ""
 say "the Jev's switch is the Jev's off file"
@@ -181,11 +203,26 @@ check "and Codex's file is as it was, line for line" yes "$(until_true "cmp -s '
 check "the switch says on" ligado "$(until_value ponytail ligado)"
 
 say ""
+say "the PR-Agent's switch is the skill in both AIs"
+"$AXPRESS" "$APP_NAME" press automation-pr-agent >/dev/null 2>&1
+check "pressed, the skill is in Claude" yes "$(until_true "[ \"\$(skill_in .claude)\" = yes ]")"
+check "and in Codex" yes "$(skill_in .codex)"
+check "the switch says on" ligado "$(until_value pr-agent ligado)"
+"$AXPRESS" "$APP_NAME" press automation-pr-agent >/dev/null 2>&1
+check "pressed again, it is gone from Claude" yes "$(until_true "[ ! -e '$FAKE/.claude/skills/pr-agent' ]")"
+check "and from Codex" yes "$([ ! -e "$FAKE/.codex/skills/pr-agent" ] && echo yes || echo no)"
+check "the switch says off" desligado "$(until_value pr-agent desligado)"
+
+say ""
 say "a switch turned in a terminal shows"
 date >"$FAKE/.claude/jev/desligado"   # what `jev auto desligar` writes
 check "the Jev turned off outside the app" desligado "$(until_value jev desligado)"
 rm -f "$FAKE/.claude/jev/desligado"
 check "and back on" ligado "$(until_value jev ligado)"
+KEEP_IA_HOME=$FAKE "$KEEP_IA_BIN" ia automacao pr-agent ligar --json >/dev/null
+check "the PR-Agent turned on outside the app" ligado "$(until_value pr-agent ligado)"
+KEEP_IA_HOME=$FAKE "$KEEP_IA_BIN" ia automacao pr-agent desligar --json >/dev/null
+check "and off" desligado "$(until_value pr-agent desligado)"
 
 say ""
 say "a refusal is said and taken back"
@@ -204,6 +241,10 @@ say "what is not installed has no switch"
 printf '{\n  "model": "opus[1m]"\n}\n' >"$FAKE/.claude/settings.json"
 check "the Ponytail gone from both AIs, its switch goes" - "$(until_value ponytail -)"
 check "the Jev's stays" ligado "$(value jev)"
+mv "$PR_AGENT" "$WORK/pr-agent.fora"
+check "the PR-Agent uninstalled, its switch goes" - "$(until_value pr-agent -)"
+mv "$WORK/pr-agent.fora" "$PR_AGENT"
+check "installed again, the switch is back, off" desligado "$(until_value pr-agent desligado)"
 
 say ""
 say "$PASSED passed, $FAILED failed"

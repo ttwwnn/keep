@@ -97,7 +97,7 @@ pub fn deadline(args: &[String]) -> Option<Duration> {
         ("ia", "contas") => 30.0,
         ("ia", "uso") => 30.0,
         ("ia", "jev") => 30.0,
-        // The footer's two switches, the Jev and the Ponytail: turning the plugin runs Claude Code once.
+        // The footer's switches, the Jev, the Ponytail and the PR-Agent: turning the plugin runs Claude Code once.
         ("ia", "automacao") => 20.0,
         ("ia", "ordem") if word(2) == "mover" => 10.0,
         ("ia", "ordem") => 5.0,
@@ -285,10 +285,15 @@ pub fn signature() -> String {
     // in two seconds rather than when OpenRouter catches up.
     files.push(claude.join("jev").join("chamadas.jsonl"));
     // The footer's switches, where the Jev and each AI read them: turned in a
-    // terminal (`jev auto desligar`, `/plugin`) they show as well.
+    // terminal (`jev auto desligar`, `/plugin`) they show as well. The
+    // PR-Agent's skill in each AI, and the PR-Agent itself, which
+    // `uv tool install` puts in ~/.local/bin: installed later, its switch shows.
     files.push(claude.join("jev").join("desligado"));
     files.push(claude.join("settings.json"));
     files.push(home.join(".codex").join("config.toml"));
+    files.push(claude.join("skills").join("pr-agent").join("SKILL.md"));
+    files.push(home.join(".codex").join("skills").join("pr-agent").join("SKILL.md"));
+    files.push(home.join(".local").join("bin").join("pr-agent.exe"));
     let mut out = String::new();
     for file in files {
         if let Ok(meta) = std::fs::metadata(&file) {

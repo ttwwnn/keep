@@ -425,11 +425,12 @@ min seguidos (a carência recomeça se a conversa voltar). Registro cuja pasta j
 pode estar desmontado fica). Depois de renomear a pasta dos projetos (mesmo só na caixa), o `indexar`
 refaz as chaves das decisões pelo caminho canônico, e nenhuma decisão se perde.
 
-## Botões do Jev e do Ponytail
+## Botões do Jev, do Ponytail e do PR-Agent
 
 Embaixo do "Consumo de IA", um botão de liga e desliga para cada um (14/10/2026, pedido: "Deve ter um botão de
-liga e desliga do Jev e um botão de liga desliga do ponytail no keep"): `keep ia automacao [jev|ponytail
-ligar|desligar]`.
+liga e desliga do Jev e um botão de liga desliga do ponytail no keep"; 06/11/2026, o do PR-Agent: "coloque essa
+skill dentro do keep com uma chave como o jev e o ponytail"): `keep ia automacao [jev|ponytail|pr-agent
+ligar|desligar]`. Os botões ficam numa linha quando cabem na lateral; senão, quebram.
 
 - Jev: os ganchos da skill `jev` nada fazem enquanto existir `~/.claude/jev/desligado` (o mesmo arquivo de
   `jev auto desligar`). Desligar grava o arquivo; ligar o apaga. Instalado = existe `~/.claude/jev` ou
@@ -440,12 +441,31 @@ ligar|desligar]`.
   vale ligada). O botão muda as duas IAs juntas; mostra ligado o que o Claude tem (ou, sem ele, o Codex).
   Com o modo padrão `off` do plugin, ele não liga sozinho: entra quando o Jev decide (a cada mensagem, as
   regras vão como contexto do pedido) ou quando a própria IA chama a skill. Desligado, nenhum dos dois o usa.
-- O que não está instalado vem com `"instalado": false` e não ganha botão. Os apps vigiam esses três arquivos
-  no olhar de 2 s: um botão mudado no terminal aparece em segundos. Recusa (o `claude` que não mudou o
+- PR-Agent: a skill `pr-agent` (`crates/keep-ia/skills/pr-agent`, dentro do `keep`), que o botão grava em
+  `~/.claude/skills/pr-agent` e em `~/.codex/skills/pr-agent` (as contas extras do GPT ligam a pasta `skills`
+  do `~/.codex`) e apaga ao desligar. Ela revisa um PR ou o ramo atual pelo PR-Agent
+  (github.com/the-pr-agent/pr-agent, com o provider `claude-code/` do fork privado
+  github.com/ttwwnn/pr-agent-claude), que chama o modelo por `claude -p --safe-mode`, na assinatura de quem roda:
+  sem chave de API, sem token do GitHub e sem publicar nada no PR. O `pr-agent.sh` da skill monta o diff (o
+  ramo contra a base, com o que não foi commitado, ou o do PR pelo `gh`), roda `claude-opus-5-5` com esforço
+  `medium`, até 100 mil tokens de entrada e respostas em português, e imprime o Markdown e a cobertura (os
+  arquivos fora do orçamento). A skill manda revisar antes do merge de um PR e avaliar cada apontamento pelo
+  mérito. Instalado = há o `pr-agent` (`KEEP_IA_PR_AGENT_BIN`, o PATH ou `~/.local/bin`, onde o põe
+  `uv tool install --python 3.12 'pr-agent @ git+https://github.com/ttwwnn/pr-agent-claude@main'`; instalado
+  em outro lugar do PATH, o botão aparece na leitura seguinte, porque o olhar de 2 s vigia só essa pasta) ou a
+  skill está numa IA. Ligado = a skill do Keep em alguma IA. A skill é do Keep pela marca
+  `keep ia automacao pr-agent` no `SKILL.md`: uma `pr-agent` da pessoa não é tocada, e ligar com ela numa IA é
+  recusado sem gravar em nenhuma. A cópia que outra versão do Keep gravou é regravada na leitura do estado, só
+  quando difere.
+- O que não está instalado vem com `"instalado": false` e não ganha botão. Os apps vigiam esses arquivos no
+  olhar de 2 s (o "desligado" do Jev, o `settings.json`, o `config.toml`, o `SKILL.md` da skill em cada IA e o
+  `~/.local/bin/pr-agent`): um botão mudado no terminal aparece em segundos. Recusa (o `claude` que não mudou o
   arquivo, por exemplo) aparece no rodapé, e o botão volta ao que a IA tem.
 - Resposta: `{"jev": {"instalado", "ligado"}, "ponytail": {"instalado", "ligado", "claude": bool|null,
-  "codex": bool|null}}`.
-- Teste: `cargo test -p keep-ia automacao` (casa falsa, `claude` falso por `KEEP_IA_CLAUDE_BIN`) e
+  "codex": bool|null}, "pr-agent": {"instalado", "ligado", "claude": bool|null, "codex": bool|null}}`
+  (`null` = a IA nunca rodou aqui).
+- Teste: `cargo test -p keep-ia automacao` (casa falsa, `claude` e `pr-agent` falsos por `KEEP_IA_CLAUDE_BIN` e
+  `KEEP_IA_PR_AGENT_BIN`; o `pr-agent.sh` rodado com git de verdade e `gh` falso) e
   `tools/automation-switch-test.sh` (o app, pela acessibilidade).
 
 ## Abas para quem automatiza a IA de fora (`keep ia aba`)
@@ -485,7 +505,7 @@ keep ia entrar claude|gpt --ws=<W> --json
 keep ia login claude|gpt [--apelido=<A>] [--depois=<W>:<N>:<chave>]     (interativo, roda na aba)
 keep ia sincronizar --json
 keep ia renovar [--agora] --json
-keep ia automacao [jev|ponytail ligar|desligar] --json
+keep ia automacao [jev|ponytail|pr-agent ligar|desligar] --json
 keep ia ajustar-claude [--keep=<caminho>]      (Mac; o caminho padrão é o deste keep)
 keep worktrees listar [--prazo SEG] <workspace>:<root>[,<painel>…]…
 keep worktrees preparar <caminho>
@@ -556,8 +576,8 @@ Toda resposta é um objeto JSON numa linha, com `"versao": 1` e `"ok"`. Recusa: 
 | a cada 60 s, e ao abrir (mesmo sem o daemon) | `keep ia renovar --json` |
 | a cada 2 min | `keep worktrees indexar --json` e, logo depois, `keep worktrees orfas --json` (com `preparar`/`concluir` ou `esquecer` para o que vier) e `keep worktrees purgar --json` |
 | setas, "+", menu da aba, fechar aba | `ordem mover`, `entrar`, `trocar`, `worktrees listar/preparar/concluir` |
-| ao abrir, e quando o Jev ou os plugins mudam (vigia barato, sem rede) | `keep ia automacao --json` |
-| botões "Jev" e "Ponytail" | `keep ia automacao jev\|ponytail ligar\|desligar --json` |
+| ao abrir, e quando o Jev, os plugins ou a skill do PR-Agent mudam (vigia barato, sem rede) | `keep ia automacao --json` |
+| botões "Jev", "Ponytail" e "PR-Agent" | `keep ia automacao jev\|ponytail\|pr-agent ligar\|desligar --json` |
 | ao abrir, e quando o keepd volta de uma ausência, se ele não tem abas | `keep restauro restaurar --fase=abas` (a janela espera; docs/restauro.md) |
 | logo ao abrir, e a cada 30 s | `keep restauro manter` |
 | uma vez por abertura (Mac, só o app da pessoa) | `keep links instalar` e `keep ia ajustar-claude` |
