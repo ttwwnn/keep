@@ -29,6 +29,8 @@ use crate::{caminhos, daemon, historico, processos, quente, sessoes, uso};
 
 const POR_RODADA: usize = 3;
 const OCIOSA_MS: u64 = 120_000;
+/// Quanto tempo uma tela de limite que já culpou uma conta é lembrada (s).
+const TELAS_POR: f64 = 12.0 * 3600.0;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 struct Bloqueio {
@@ -52,6 +54,10 @@ struct Registro {
     limites: BTreeMap<String, Bloqueio>,
     esperas: BTreeMap<String, Espera>,
     alvo: Option<String>,
+    /// As telas de limite que já culparam uma conta (a marca, e quando): a
+    /// mesma tela, ainda à vista depois que o bloqueio venceu, não culpa
+    /// outra conta.
+    telas: BTreeMap<String, f64>,
 }
 
 fn arquivo() -> PathBuf {
@@ -125,6 +131,8 @@ pub fn rodada() -> Value {
     let anterior: Registro = std::fs::read_to_string(arquivo()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     let mut bloqueios = anterior.limites.clone();
     bloqueios.retain(|_, b| b.ate > t);
+    let mut telas = anterior.telas.clone();
+    telas.retain(|_, em| t - *em < TELAS_POR);
     let ia = abas::das_abas(&r, &contas);
 
     // As abas que seguem a ordem, e o que as telas delas dizem.
@@ -163,8 +171,13 @@ pub fn rodada() -> Value {
             ),
             None if limite => {
                 let marca = format!("{}|{}|{}", historico::nascimento(&r), i.pid, tela::impressao(&linhas_tela));
-                // A tela que já bloqueou uma conta é a de antes da troca: não culpa a conta nova.
-                (atual.filter(|_| !bloqueios.values().any(|b| b.marca == marca)), marca, None)
+                // A tela que já culpou uma conta é a de antes da troca: não culpa a conta nova, nem depois
+                // que o bloqueio da antiga venceu (a tela segue à vista enquanto ninguém digita).
+                let nova = !telas.contains_key(&marca) && !bloqueios.values().any(|b| b.marca == marca);
+                if nova {
+                    telas.insert(marca.clone(), t);
+                }
+                (atual.filter(|_| nova), marca, None)
             }
             None => (None, String::new(), None),
         };
@@ -277,7 +290,7 @@ pub fn rodada() -> Value {
             }
         }
     }
-    let novo = Registro { limites: bloqueios, esperas, alvo: alvo.map(|c| c.order_key.clone()) };
+    let novo = Registro { limites: bloqueios, esperas, alvo: alvo.map(|c| c.order_key.clone()), telas };
     if let Ok(texto) = serde_json::to_vec_pretty(&novo) {
         let tmp = arquivo().with_extension("json.tmp");
         if std::fs::write(&tmp, texto).is_ok() {

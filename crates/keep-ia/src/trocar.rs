@@ -1216,6 +1216,14 @@ mod ponta_a_ponta {
         assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:bia"));
         // A mesma tela, ainda à vista na Bia, é a da parada da Ana: a Bia não leva a culpa e a aba fica.
         assert_eq!(rodada("tela, 2ª"), (Some("claude:bia".into()), 0, vec![]));
+        // Cinco minutos depois o bloqueio da Ana venceu (a Ana volta a ser o alvo), e a tela dela segue à vista:
+        // a Bia ainda não leva a culpa, e a aba, em uso há pouco, fica na Bia.
+        let arquivo = caminhos::estado().join("ia-prioridade.json");
+        let mut registro: Value = serde_json::from_str(&std::fs::read_to_string(&arquivo).unwrap()).unwrap();
+        registro["limites"] = json!({});
+        std::fs::write(&arquivo, registro.to_string()).unwrap();
+        assert_eq!(rodada("tela, depois do bloqueio"), (Some("claude:ana".into()), 0, vec![]));
+        assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:bia"));
 
         // 2. O que o serviço disse, numa frase que a tela não conhece (e sem a frase antiga à vista): a parada é
         // da Bia, pelo recomeço dela, e a aba volta à Ana (sem os bloqueios da parte 1).
