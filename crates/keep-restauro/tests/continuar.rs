@@ -130,6 +130,8 @@ fn so_a_aba_parada_e_segura_recebe_o_continue_quando_a_causa_volta() {
     let rede = abre("FALSO_ERRO=rede");
     let rascunho = abre("FALSO_RASCUNHO=meu-rascunho");
     let ocupada = abre("FALSO_OCUPADO=1");
+    // Trabalhando sem "esc to interrupt" na tela (o 2.1.312+): só a sessão diz "busy".
+    let trabalhando = abre("FALSO_TRABALHANDO=1");
     // No limite, num armazém de aba que o Keep regravou com o Claude já aberto (a troca a quente).
     let armazem = raiz.join("armazem-da-aba");
     std::fs::create_dir_all(&armazem).unwrap();
@@ -182,6 +184,8 @@ fn so_a_aba_parada_e_segura_recebe_o_continue_quando_a_causa_volta() {
     assert!(situacao(&r, &rot(ocupada)).contains("ocupada"), "{r:#}");
     assert!(!tela_tem("C", rascunho, "Retomado", 1));
     assert!(!tela_tem("C", ocupada, "Retomado", 1));
+    assert!(situacao(&r, &rot(trabalhando)).contains("a sessão diz que o Claude trabalha"), "{r:#}");
+    assert!(!tela_tem("C", trabalhando, "Retomado", 1), "nada digitado no Claude que trabalha");
     assert!(!tela_tem("C", limite, "Retomado", 1), "o continue sairia pela conta de antes");
     // a do recomeço casado com a conta global espera por ele; a outra, pela medição (e a porta de uma não vale para a outra)
     assert!(situacao(&r, &rot(limite_ate)).contains("a janela recusada recomeça"), "{r:#}");

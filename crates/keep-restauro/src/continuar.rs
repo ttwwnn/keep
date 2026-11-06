@@ -659,6 +659,16 @@ pub fn rodada(seco: bool, status: bool) -> Result<Value, String> {
             vistas.push(json!({ "aba": c.rotulo, "situacao": format!("parada; {} ainda não voltou ({porque})", erro.tipo.nome()) }));
             continue;
         }
+        // O Claude Code 2.1.312+ não escreve mais "esc to interrupt": quem diz que ele trabalha é a sessão dele.
+        // Sem isto, o "continue" ia para a caixa de um Claude trabalhando (cuja última fala principal ainda era a
+        // parada) e ficava lá sem Enter, dobrado na rodada seguinte (Brokerfy#1, 06/11/2026).
+        // Antes de qualquer tecla: o Esc que volta a vista interromperia o trabalho.
+        if keep_ia::sessoes::sessao_claude(c.pid).is_some_and(|s| s.status == "busy") {
+            let texto = "parada no transcrito, mas a sessão diz que o Claude trabalha";
+            aviso(r, "trabalhando", texto.to_string());
+            vistas.push(json!({ "aba": c.rotulo, "situacao": texto }));
+            continue;
+        }
         // a tela: volta à conversa se a vista está desviada e a pessoa longe
         let mut tela = tela_da_aba(&c.ws, c.tab).unwrap_or_default();
         let mut motivo_desvio = None;

@@ -4,6 +4,7 @@
 //! digitar e confirmar com Enter vira fala da pessoa no transcrito, seguida de uma resposta sem erro.
 //!
 //!   FALSO_ERRO=login|rede|limite   a queda (login, se nada)
+//!   FALSO_TRABALHANDO=1            a sessão diz "busy", sem "esc to interrupt" na tela (o 2.1.312+)
 //!   FALSO_RECOMECO=<segundos unix>  no limite, a recusa da janela de 5 h como o 2.1.318 a grava (quotaLimits)
 //!   FALSO_RASCUNHO=<texto>         a caixa já começa com isto digitado
 //!   FALSO_OCUPADO=1                o rodapé diz "esc to interrupt"
@@ -75,10 +76,11 @@ mod parado {
         let sessao = casa().join(".claude/sessions").join(format!("{pid}.json"));
         let _ = std::fs::create_dir_all(sessao.parent().unwrap());
         let cwd = std::env::current_dir().unwrap_or_default();
+        let status = if std::env::var("FALSO_TRABALHANDO").as_deref() == Ok("1") { "busy" } else { "idle" };
         let _ = std::fs::write(
             &sessao,
             format!(
-                r#"{{"pid":{pid},"sessionId":"{id}","cwd":"{}","startedAt":{inicio},"procStart":"{}","kind":"interactive","status":"idle"}}"#,
+                r#"{{"pid":{pid},"sessionId":"{id}","cwd":"{}","startedAt":{inicio},"procStart":"{}","kind":"interactive","status":"{status}"}}"#,
                 cwd.display(),
                 inicio_utc()
             ),
