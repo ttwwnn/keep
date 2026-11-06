@@ -283,16 +283,15 @@ pub fn parada_no_limite(d: &Value) -> Option<ParadaNoLimite> {
     })
 }
 
-/// A parada no limite em que a conversa está: a última fala dela, gravada a
-/// partir de `desde_ms` (quando o processo abriu: a de uma abertura anterior
-/// não é dele).
-pub fn parada_no_fim(caminho: &Path, desde_ms: u64) -> Option<ParadaNoLimite> {
+/// A última fala da conversa principal (`continued-in` também): onde a
+/// conversa parou, se parou.
+pub fn ultima_fala(caminho: &Path) -> Option<Value> {
     let mut ultima = None;
     falas_de_tras(caminho, |d| {
         ultima = Some(d.clone());
         false
     });
-    parada_no_limite(&ultima?).filter(|p| p.quando_ms >= desde_ms)
+    ultima
 }
 
 fn cauda(arquivo: &Path, bytes: u64) -> Option<String> {
@@ -449,7 +448,7 @@ mod testes {
     }
 
     #[test]
-    fn a_parada_e_a_ultima_fala_desta_abertura() {
+    fn a_ultima_fala_e_a_da_conversa_principal() {
         let dir = tempfile::tempdir().unwrap();
         let t = dir.path().join("t.jsonl");
         let erro = parada("five_hour", "You've hit your session limit · resets 5pm", "2026-11-04T18:00:00Z");
@@ -461,12 +460,10 @@ mod testes {
         ];
         let texto: String = linhas.iter().map(|l| format!("{l}\n")).collect();
         std::fs::write(&t, &texto).unwrap();
-        let antes = carimbo_ms(&serde_json::json!({"timestamp": "2026-11-04T17:00:00Z"}));
-        assert_eq!(parada_no_fim(&t, antes).map(|p| p.uuid), Some("u-2026-11-04T18:00:00Z".into()), "subagente e comando local não contam");
-        let depois = carimbo_ms(&serde_json::json!({"timestamp": "2026-11-04T18:00:01Z"}));
-        assert!(parada_no_fim(&t, depois).is_none(), "parada de antes desta abertura");
+        let parada = |t: &Path| ultima_fala(t).and_then(|d| parada_no_limite(&d));
+        assert_eq!(parada(&t).map(|p| p.uuid), Some("u-2026-11-04T18:00:00Z".into()), "subagente e comando local não contam");
         std::fs::write(&t, format!("{texto}{}\n", serde_json::json!({"type": "assistant", "timestamp": "2026-11-04T18:05:00Z", "message": {"content": [{"type": "text", "text": "pronto"}]}}))).unwrap();
-        assert!(parada_no_fim(&t, antes).is_none(), "o Claude respondeu depois");
+        assert!(parada(&t).is_none(), "o Claude respondeu depois");
     }
 
     #[test]

@@ -400,7 +400,9 @@ mais nova):
   versões que não gravam isso, com a frase de sessão, semana ou uso. A frase da tela muda de uma versão para
   outra; o limite de um modelo só (`seven_day_opus`, o do Fable) não tira a conta da fila e fica de fora, como
   antes. A conversa que andou depois da parada (o "continue", a resposta da conta nova) não está parada: a frase
-  antiga, ainda à vista, não conta.
+  antiga, ainda à vista, não conta. A parada num limite que o transcrito não diz se é da conta (a frase genérica
+  "You've hit your limit" das versões antigas, que só o diálogo do limite confirma; um formato novo) fica com a
+  tela, como antes.
 - A culpa: a parada cuja janela já recomeçou acabou, e não é de nenhuma. A de quando a conta da aba já valia no
   Claude (`quente::conta_vale_em`: um cache de login, 32 s, depois da última gravação do armazém com o Claude
   aberto; desde a abertura, se a gravação veio antes) é dela. Logo depois da troca a quente, o pedido pode ter

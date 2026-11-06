@@ -1294,6 +1294,17 @@ mod ponta_a_ponta {
         assert_eq!(rodada("tela, depois do bloqueio"), (Some("claude:ana".into()), 0, vec![]));
         assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:bia"));
 
+        // 5. A conversa parou num limite que o transcrito não diz se é da conta (um formato que ele não conhece):
+        // a tela decide, como antes, e o aviso dela culpa a Bia; a aba volta à Ana.
+        sem_bloqueios();
+        std::fs::write(crate::sessoes::transcritos_claude(&conversa).first().cloned().unwrap_or_else(|| {
+            caminhos::claude().join("projects/-falso").join(format!("{conversa}.jsonl"))
+        }), "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"pedido feito no claude\"}}\n").unwrap();
+        limpa_a_tela();
+        limite("-", "Usage limit reached - resets 5pm");
+        assert_eq!(rodada("formato novo"), (Some("claude:ana".into()), 1, vec![]));
+        assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:ana"));
+
         // SAFETY: a casa (e a trava) está de pé.
         unsafe {
             match shell_antes {

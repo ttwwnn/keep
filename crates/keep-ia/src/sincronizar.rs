@@ -70,15 +70,27 @@ fn agora() -> f64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
 }
 
-/// O que o transcrito da conversa do Claude da aba diz do limite: `None` se
-/// ele não pode ser lido (sem conversa ou sem arquivo: quem diz é a tela);
-/// `Some(None)` se a conversa não está parada no limite da conta (andou
-/// depois, ou parou noutra coisa) — e aí a tela, mesmo com a frase de uma
-/// parada antiga à vista, não conta.
+/// O que o transcrito da conversa do Claude da aba diz do limite.
+/// - `Some(Some(parada))`: a conversa parou no limite da conta (a última fala, desta abertura).
+/// - `Some(None)`: a conversa não está parada no limite (andou depois, parou noutra coisa, ou a parada é de uma
+///   abertura anterior) — e aí a tela, mesmo com a frase de uma parada antiga à vista, não conta.
+/// - `None`: quem diz é a tela, como antes. O transcrito não pode ser lido (sem conversa ou sem arquivo), ou a
+///   conversa parou num limite que ele não diz se é da conta: a frase genérica de versões antigas ("You've hit
+///   your limit", que só o diálogo do limite na tela confirma), um formato novo.
 fn transcrito_da_aba(i: &abas::IaAba) -> Option<Option<sessoes::ParadaNoLimite>> {
     let caminho = sessoes::transcrito_claude(i.conversa.as_deref()?)?;
     let nasceu = processos::inicio_ms(i.pid)?;
-    Some(sessoes::parada_no_fim(&caminho, nasceu).filter(|p| p.da_conta))
+    o_que_a_fala_diz(sessoes::ultima_fala(&caminho).as_ref(), nasceu)
+}
+
+/// `transcrito_da_aba` sem o disco: a última fala da conversa e quando o processo abriu (ms).
+fn o_que_a_fala_diz(fala: Option<&Value>, nasceu: u64) -> Option<Option<sessoes::ParadaNoLimite>> {
+    let Some(fala) = fala else { return Some(None) };
+    let parou = fala.get("error").and_then(Value::as_str) == Some("rate_limit") && sessoes::carimbo_ms(fala) >= nasceu;
+    if !parou {
+        return Some(None);
+    }
+    sessoes::parada_no_limite(fala).filter(|p| p.da_conta).map(Some)
 }
 
 /// A conta que parou no limite. A parada cuja janela já recomeçou (`agora`,
@@ -331,6 +343,36 @@ mod testes {
     use super::*;
     use crate::abas::testes::linha;
     use crate::contas::Motor;
+
+    #[test]
+    fn o_transcrito_cala_a_tela_so_quando_a_conversa_nao_esta_parada() {
+        let fala = |erro: Option<&str>, texto: &str, cota: Option<&str>| {
+            let mut v = json!({ "type": "assistant", "uuid": "u", "timestamp": "2026-11-04T18:00:00Z",
+                "message": { "content": [{ "type": "text", "text": texto }] } });
+            if let Some(e) = erro {
+                v["error"] = json!(e);
+            }
+            if let Some(tipo) = cota {
+                v["quotaLimits"] = json!({ "status": "rejected", "resetsAt": 1_793_833_200, "rateLimitType": tipo });
+            }
+            v
+        };
+        let abriu = sessoes::carimbo_ms(&json!({ "timestamp": "2026-11-04T17:00:00Z" }));
+        let diz = |v: &Value| o_que_a_fala_diz(Some(v), abriu).map(|p| p.map(|p| p.janela));
+        // Parada no limite da conta: o transcrito diz.
+        assert_eq!(diz(&fala(Some("rate_limit"), "x", Some("five_hour"))), Some(Some(Some("five_hour".into()))));
+        assert_eq!(diz(&fala(Some("rate_limit"), "You've hit your weekly limit · resets 8pm", None)), Some(Some(None)));
+        // A conversa não está parada no limite: a tela não conta.
+        assert_eq!(o_que_a_fala_diz(None, abriu), Some(None));
+        assert_eq!(diz(&fala(None, "Feito.", None)), Some(None));
+        assert_eq!(diz(&fala(Some("server_error"), "API Error: Connection error.", None)), Some(None));
+        let depois = sessoes::carimbo_ms(&json!({ "timestamp": "2026-11-04T19:00:00Z" }));
+        assert_eq!(o_que_a_fala_diz(Some(&fala(Some("rate_limit"), "x", Some("five_hour"))), depois), Some(None), "de outra abertura");
+        // Parada num limite que o transcrito não diz se é da conta: a tela decide, como antes.
+        assert_eq!(diz(&fala(Some("rate_limit"), "You've hit your limit · resets 5pm", None)), None);
+        assert_eq!(diz(&fala(Some("rate_limit"), "Usage limit reached · resets 5pm", None)), None);
+        assert_eq!(diz(&fala(Some("rate_limit"), "You've hit your Opus limit · resets 8pm", Some("seven_day_opus"))), None);
+    }
 
     #[test]
     fn a_culpa_e_da_conta_que_parou() {

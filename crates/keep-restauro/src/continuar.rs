@@ -42,7 +42,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use keep_ia::daemon;
-use keep_ia::sessoes::{carimbo_ms, falas_de_tras, parada_no_limite, texto_da_fala as texto, transcrito_claude as transcrito};
+use keep_ia::sessoes::{
+    carimbo_ms, falas_de_tras, parada_no_limite, texto_da_fala as texto, transcrito_claude as transcrito, ultima_fala,
+};
 
 // ------------------------------------------------------------------ regras
 
@@ -140,12 +142,7 @@ fn tem(d: &Value, tipo: &str) -> bool {
 /// A conversa parou num erro que isto conserta? `inicio_ms`: quando o processo abriu (o erro anterior a uma
 /// reabertura é de quem reabriu decidir).
 pub fn avaliar(caminho: &Path, inicio_ms: u64) -> Result<Erro, String> {
-    let mut ultima = None;
-    falas_de_tras(caminho, |d| {
-        ultima = Some(d.clone());
-        false
-    });
-    let d = ultima.ok_or("sem fala no transcrito")?;
+    let d = ultima_fala(caminho).ok_or("sem fala no transcrito")?;
     if d.get("type").and_then(Value::as_str) == Some("continued-in") {
         return Err("a conversa seguiu em outra sessão".into());
     }
