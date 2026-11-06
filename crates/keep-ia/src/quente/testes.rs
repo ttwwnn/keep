@@ -176,6 +176,11 @@ fn trocar_regrava_o_armazem_do_claude_aberto_sem_tocar_nos_donos() {
         assert_eq!(t("claude:bia").unwrap(), Feito::Trocou("claude:bia".into()));
         let pendente = registro_da_pasta(&p.pasta).unwrap().1.chrome_pendente_desde;
         assert!(pendente.is_some(), "a ponte persistente precisa acompanhar a nova conta");
+        // O Claude só pede pela conta nova depois do cache de login dele: o "continue" espera até lá.
+        let em = registro_da_pasta(&p.pasta).unwrap().1.em;
+        assert_eq!(conta_vale_em(claude.pid()), Some(em + CACHE_LOGIN_MS));
+        assert!(conta_vale_em(claude.pid()).unwrap() > agora());
+        assert_eq!(conta_vale_em(shell.pid()), None, "o shell não roda num armazém de aba");
         assert_eq!(acesso(&p.pasta), "F");
         assert_eq!(
             crate::abas::conta_do_processo(claude.pid(), "claude", &lista),

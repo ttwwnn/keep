@@ -25,7 +25,7 @@ use crate::abas::{self, SEGUIR_ORDEM};
 use crate::contas::{self, Conta};
 use crate::tela::{self, Estado};
 use crate::trocar::{self, Pedido};
-use crate::{caminhos, daemon, historico, uso};
+use crate::{caminhos, daemon, historico, processos, quente, sessoes, uso};
 
 const POR_RODADA: usize = 3;
 const OCIOSA_MS: u64 = 120_000;
@@ -62,6 +62,37 @@ fn agora() -> f64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
 }
 
+/// A parada no limite em que está a conversa do Claude da aba, quando o
+/// serviço disse qual janela da conta recusou (sem isso, quem diz é a tela).
+fn parada_da_aba(i: &abas::IaAba) -> Option<sessoes::ParadaNoLimite> {
+    let caminho = sessoes::transcrito_claude(i.conversa.as_deref()?)?;
+    sessoes::parada_no_fim(&caminho, processos::inicio_ms(i.pid)?).filter(|p| p.janela.is_some())
+}
+
+/// A conta que parou no limite. Primeiro a que o serviço disse: o recomeço da
+/// janela recusada casa com o medido de uma conta só. Senão, a da aba (`atual`)
+/// — salvo quando o armazém dela foi regravado menos de um cache de login
+/// antes da parada (`vale_em`): o pedido pode ter saído ainda pela conta de
+/// antes, e nenhuma leva a culpa (a medição seguinte diz).
+fn conta_que_parou(
+    p: &sessoes::ParadaNoLimite,
+    linhas: &[uso::Linha],
+    atual: Option<&str>,
+    vale_em: Option<u64>,
+) -> Option<String> {
+    if let (Some(janela), Some(recomeca)) = (&p.janela, p.recomeca) {
+        let mut ditos = json!({});
+        ditos[janela.as_str()] = json!({ "resets_at": recomeca });
+        if let Some(c) = abas::conta_dos_limites(&ditos, linhas) {
+            return Some(c);
+        }
+    }
+    if vale_em.is_some_and(|v| p.quando_ms < v) {
+        return None;
+    }
+    atual.map(str::to_string)
+}
+
 /// Uma rodada. Devolve o objeto da resposta (sem `versao`).
 pub fn rodada() -> Value {
     if contas::gerente_externo() {
@@ -94,7 +125,11 @@ pub fn rodada() -> Value {
     struct Seguidora {
         ia: abas::IaAba,
         estado: Estado,
+        /// A tela mostra o limite.
         limite: bool,
+        /// Quem parou no limite foi a conta em que a aba está (e não a de
+        /// antes de uma troca, cuja tela ainda está à vista).
+        limite_da_atual: bool,
         ociosa: bool,
         claude_aberto: bool,
         /// O Claude roda num armazém de aba: troca a quente.
@@ -107,20 +142,38 @@ pub fn rodada() -> Value {
         let (linhas_tela, limpas) = trocar::tela_de(&i.workspace, i.aba);
         let (estado, _) = tela::situacao(&prog, &linhas_tela, &limpas);
         let limite = estado != Estado::Digitado && tela::limite_na_tela(&linhas_tela);
-        if limite {
-            if let Some(atual) = i.atual.as_deref().and_then(|k| contas::achar(&contas, k)) {
+        let claude_aberto = prog == tela::Programa::Claude;
+        let vale_em = if claude_aberto { quente::conta_vale_em(i.pid) } else { None };
+        let atual = i.atual.as_deref().and_then(|k| contas::achar(&contas, k));
+        // Quem parou no limite. O que o serviço disse, gravado no transcrito
+        // junto da parada, vale antes da tela: a frase muda de uma versão do
+        // Claude Code para outra, e a tela da conta que parou segue à vista
+        // depois da troca a quente para a próxima.
+        let (culpada, marca, recomeca) = match claude_aberto.then(|| parada_da_aba(&i)).flatten() {
+            Some(p) => (
+                conta_que_parou(&p, &linhas, i.atual.as_deref(), vale_em).and_then(|k| contas::achar(&contas, &k)),
+                format!("parada|{}", p.uuid),
+                p.recomeca,
+            ),
+            None if limite => {
                 let marca = format!("{}|{}|{}", historico::nascimento(&r), i.pid, tela::impressao(&linhas_tela));
-                // A mesma tela antiga não prorroga o bloqueio.
-                if bloqueios.get(&atual.key).is_none_or(|b| b.marca != marca) {
-                    bloqueios.insert(atual.key.clone(), Bloqueio { em: t, ate: t + 300.0, marca });
-                }
+                // A tela que já bloqueou uma conta é a de antes da troca: não culpa a conta nova.
+                (atual.filter(|_| !bloqueios.values().any(|b| b.marca == marca)), marca, None)
+            }
+            None => (None, String::new(), None),
+        };
+        if let Some(c) = culpada {
+            // A mesma parada não prorroga o bloqueio, que acaba no máximo quando a janela recusada recomeça.
+            if bloqueios.get(&c.key).is_none_or(|b| b.marca != marca) {
+                let ate = recomeca.map_or(t + 300.0, |fim| fim.min(t + 300.0));
+                bloqueios.insert(c.key.clone(), Bloqueio { em: t, ate, marca });
             }
         }
+        let limite_da_atual = culpada.is_some_and(|c| atual.is_some_and(|a| a.key == c.key));
         let ociosa = a.info.last_active != 0
             && crate::contas::donos::agora_ms().saturating_sub(a.info.last_active) >= OCIOSA_MS;
-        let claude_aberto = prog == tela::Programa::Claude;
-        let armazem_proprio = claude_aberto && crate::quente::registro_do_processo(i.pid).is_some();
-        seguidoras.push(Seguidora { ia: i, estado, limite, ociosa, claude_aberto, armazem_proprio });
+        let armazem_proprio = vale_em.is_some();
+        seguidoras.push(Seguidora { ia: i, estado, limite, limite_da_atual, ociosa, claude_aberto, armazem_proprio });
     }
 
     let livre = |c: &Conta| -> bool {
@@ -142,7 +195,7 @@ pub fn rodada() -> Value {
         let i = &s.ia;
         let refe = |motivo: &str, detalhe: &str| json!({ "ws": i.workspace, "aba": i.aba, "motivo": motivo, "detalhe": detalhe });
         let atual = i.atual.as_deref().and_then(|k| contas::achar(&contas, k));
-        let atual_livre = atual.is_some_and(|c| livre(c)) && !s.limite;
+        let atual_livre = atual.is_some_and(|c| livre(c)) && !s.limite_da_atual;
         let Some(alvo) = alvo else {
             if !atual_livre {
                 pendentes.push(refe("todas-no-limite", ""));
@@ -238,4 +291,35 @@ pub fn rodada() -> Value {
 /// `keep ia sincronizar`.
 pub fn cli() -> i32 {
     crate::cli::responde(rodada())
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+    use crate::abas::testes::linha;
+    use crate::contas::Motor;
+
+    #[test]
+    fn a_culpa_e_da_conta_que_parou() {
+        let linhas = vec![
+            linha(Motor::Claude, "claude:ana", &[("5h", 1_900_000_000.0)]),
+            linha(Motor::Claude, "claude:bia", &[("5h", 1_900_003_600.0)]),
+        ];
+        let parada = |recomeca: Option<f64>, quando_ms: u64| sessoes::ParadaNoLimite {
+            uuid: "u".into(),
+            quando_ms,
+            janela: Some("five_hour".into()),
+            recomeca,
+        };
+        let culpa = |p: sessoes::ParadaNoLimite, vale_em: Option<u64>| conta_que_parou(&p, &linhas, Some("claude:bia"), vale_em);
+        // O recomeço dito casa com o medido de uma conta: é ela, mesmo com a aba noutra e logo depois da troca.
+        assert_eq!(culpa(parada(Some(1_900_000_060.0), 10_000), Some(50_000)).as_deref(), Some("claude:ana"));
+        // Sem recomeço que case, a conta da aba...
+        assert_eq!(culpa(parada(Some(1_800_000_000.0), 90_000), Some(50_000)).as_deref(), Some("claude:bia"));
+        assert_eq!(culpa(parada(None, 90_000), None).as_deref(), Some("claude:bia"));
+        assert_eq!(culpa(parada(None, 50_000), Some(50_000)).as_deref(), Some("claude:bia"));
+        // ...salvo a parada de antes de o Claude pedir pela conta nova (o cache de login): de nenhuma.
+        assert_eq!(culpa(parada(None, 49_999), Some(50_000)), None);
+        assert_eq!(culpa(parada(Some(1_800_000_000.0), 10_000), Some(50_000)), None);
+    }
 }

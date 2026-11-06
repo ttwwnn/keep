@@ -391,6 +391,21 @@ para ela depois de 2 min sem uso. Com o kit, a sincronização não faz nada, e 
 de armazém próprio que seguem a ordem para a conta da `.ativa`. No máximo 3 abas por rodada; uma aba que recusou espera 30 s (5 min se for trabalho em
 segundo plano). Uma janela cheia cujo recomeço já passou não conta.
 
+Quem parou no limite (o que bloqueia uma conta por 5 min, ou até a janela recusada recomeçar, ou até uma medição
+mais nova):
+
+- Vale primeiro o que o serviço disse, gravado no transcrito junto da fala de erro: `"error": "rate_limit"` com
+  `quotaLimits` (`status: "rejected"`, a janela da conta recusada, `five_hour` ou `seven_day`, e `resetsAt`, quando
+  ela recomeça; Claude Code 2.1.318). A frase da tela muda de uma versão para outra; o limite de um modelo só
+  (`seven_day_opus`, o do Fable) não tira a conta da fila e fica de fora, como antes.
+- A culpa é da conta cujo recomeço medido no `uso` casa com o dito (a mesma regra da `provada`); sem casar, da
+  conta da aba — salvo a parada de menos de um cache de login (32 s) depois da última gravação do armazém dela, que
+  pode ter saído ainda pela conta anterior: nenhuma leva a culpa, e a medição seguinte diz. A aba que parou na conta
+  de antes da troca a quente já saiu dela: fica onde está, e o `keep continuar` a retoma.
+- Sem a recusa gravada (versões que não a gravam), quem diz é a tela, como antes; a tela que já bloqueou uma conta,
+  ainda à vista depois da troca a quente, não culpa a conta nova. A tela conta pelas linhas com texto: numa conversa
+  curta numa aba alta, o aviso fica no alto, acima de linhas em branco.
+
 ## Lixeira de worktrees
 
 Ao fechar uma aba, as worktrees git que a conversa dela criou vão para a Lixeira (Lixeira do Windows),

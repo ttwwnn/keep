@@ -128,6 +128,167 @@ pub fn transcritos_claude(id: &str) -> Vec<PathBuf> {
         .collect()
 }
 
+/// O transcrito da conversa `id` do Claude, onde ela nasceu: um `--resume`
+/// de outra pasta continua gravando no original (o mexido por último).
+pub fn transcrito_claude(id: &str) -> Option<PathBuf> {
+    transcritos_claude(id).into_iter().max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
+}
+
+/// O que se lê de trás para a frente, por vez, e no máximo.
+const BLOCO: u64 = 64 << 10;
+const TETO_LEITURA: u64 = 16 << 20;
+
+/// As falas da pessoa que são comandos locais (`/effort`, `!ls`): não são da
+/// conversa com o modelo.
+const COMANDO_LOCAL: &[&str] = &[
+    "<command-name>",
+    "<command-message>",
+    "<local-command-stdout>",
+    "<local-command-stderr>",
+    "<local-command-caveat>",
+    "<bash-input>",
+    "<bash-stdout>",
+    "<bash-stderr>",
+];
+
+/// O texto de uma fala do transcrito.
+pub fn texto_da_fala(d: &Value) -> String {
+    match d.get("message").and_then(|m| m.get("content")) {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Array(itens)) => {
+            itens.iter().filter_map(|i| i.get("text").and_then(Value::as_str)).collect::<Vec<_>>().join(" ")
+        }
+        _ => String::new(),
+    }
+}
+
+/// Quando a fala foi gravada (ms); 0 sem carimbo.
+pub fn carimbo_ms(d: &Value) -> u64 {
+    d.get("timestamp")
+        .and_then(Value::as_str)
+        .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+        .map(|t| t.timestamp_millis().max(0) as u64)
+        .unwrap_or(0)
+}
+
+/// As falas da conversa principal, da última para a primeira (`continued-in` também: o fim deste transcrito
+/// deixou de ser o fim da conversa). Lê o arquivo de trás para a frente, em blocos, e para quando `f` diz.
+pub fn falas_de_tras(caminho: &Path, mut f: impl FnMut(&Value) -> bool) {
+    let Ok(mut fh) = std::fs::File::open(caminho) else { return };
+    let Ok(tamanho) = fh.seek(SeekFrom::End(0)) else { return };
+    let mut pos = tamanho;
+    let mut resto: Vec<u8> = Vec::new();
+    let mut lidos = 0u64;
+    let mut visita = |linha: &[u8]| -> bool {
+        let tem_tipo = |t: &[u8]| linha.windows(t.len()).any(|w| w == t);
+        if !tem_tipo(b"\"type\":\"user\"") && !tem_tipo(b"\"type\":\"assistant\"") && !tem_tipo(b"\"type\":\"continued-in\"") {
+            return true;
+        }
+        let Ok(d) = serde_json::from_slice::<Value>(linha) else { return true };
+        let tipo = d.get("type").and_then(Value::as_str).unwrap_or("");
+        if tipo == "continued-in" {
+            return f(&d);
+        }
+        if !matches!(tipo, "user" | "assistant") {
+            return true;
+        }
+        if d.get("isSidechain").and_then(Value::as_bool) == Some(true) || d.get("isMeta").and_then(Value::as_bool) == Some(true) {
+            return true;
+        }
+        if tipo == "user" {
+            let t = texto_da_fala(&d);
+            let t = t.trim_start();
+            if COMANDO_LOCAL.iter().any(|c| t.starts_with(c)) {
+                return true;
+            }
+        }
+        f(&d)
+    };
+    while pos > 0 && lidos < TETO_LEITURA {
+        let n = BLOCO.min(pos);
+        pos -= n;
+        lidos += n;
+        let mut bloco = vec![0u8; n as usize];
+        if fh.seek(SeekFrom::Start(pos)).is_err() || fh.read_exact(&mut bloco).is_err() {
+            return;
+        }
+        bloco.extend_from_slice(&resto);
+        let mut partes: Vec<&[u8]> = bloco.split(|b| *b == b'\n').collect();
+        // a primeira parte pode ser o fim de uma linha que começa no bloco anterior
+        let primeira = if pos > 0 { partes.remove(0).to_vec() } else { Vec::new() };
+        for linha in partes.iter().rev() {
+            if !linha.is_empty() && !visita(linha) {
+                return;
+            }
+        }
+        resto = primeira;
+    }
+    if pos == 0 && !resto.is_empty() {
+        visita(&resto);
+    }
+}
+
+/// A conversa parou no limite de uso da conta: a fala de erro que o Claude
+/// Code grava quando o serviço recusa o pedido (`"error": "rate_limit"`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParadaNoLimite {
+    pub uuid: String,
+    pub quando_ms: u64,
+    /// A janela da conta que o serviço recusou (`five_hour`, `seven_day`) e
+    /// quando ela recomeça, em segundos unix: o que ele disse
+    /// (`quotaLimits`), sem ler a frase da tela. `None` no Claude Code que não
+    /// grava isso, e no limite de um modelo só.
+    pub janela: Option<String>,
+    pub recomeca: Option<f64>,
+}
+
+/// As janelas da conta inteira: as que tiram a conta da fila
+/// (`uso::Linha::disponivel`).
+const JANELAS_DA_CONTA: &[&str] = &["five_hour", "seven_day"];
+
+/// A frase das versões que não gravam a janela recusada.
+fn frase_de_limite(t: &str) -> bool {
+    t.trim().starts_with("You've hit your ") && t.contains("limit")
+}
+
+/// Se a fala é a parada no limite de uso. Vale primeiro o que o serviço disse
+/// (a recusa de uma janela da conta, gravada junto da fala), depois a frase
+/// das versões antigas ("You've hit your session limit · resets 5:10pm").
+pub fn parada_no_limite(d: &Value) -> Option<ParadaNoLimite> {
+    if d.get("type").and_then(Value::as_str) != Some("assistant")
+        || d.get("error").and_then(Value::as_str) != Some("rate_limit")
+    {
+        return None;
+    }
+    let recusa = d
+        .get("quotaLimits")
+        .or_else(|| d.get("apiErrorParams").and_then(|p| p.get("rate_limit_info")))
+        .filter(|i| i.get("status").and_then(Value::as_str) == Some("rejected"));
+    let janela = recusa.and_then(|i| i.get("rateLimitType")).and_then(Value::as_str).filter(|t| JANELAS_DA_CONTA.contains(t));
+    if janela.is_none() && !frase_de_limite(&texto_da_fala(d)) {
+        return None;
+    }
+    let quando_ms = carimbo_ms(d);
+    Some(ParadaNoLimite {
+        uuid: d.get("uuid").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| quando_ms.to_string()),
+        quando_ms,
+        janela: janela.map(str::to_string),
+        recomeca: janela.and(recusa).and_then(|i| i.get("resetsAt")).and_then(Value::as_f64),
+    })
+}
+
+/// A parada no limite em que a conversa está: a última fala dela, gravada a
+/// partir de `desde_ms` (quando o processo abriu: a de uma abertura anterior
+/// não é dele).
+pub fn parada_no_fim(caminho: &Path, desde_ms: u64) -> Option<ParadaNoLimite> {
+    let mut ultima = None;
+    falas_de_tras(caminho, |d| {
+        ultima = Some(d.clone());
+        false
+    });
+    parada_no_limite(&ultima?).filter(|p| p.quando_ms >= desde_ms)
+}
+
 fn cauda(arquivo: &Path, bytes: u64) -> Option<String> {
     let mut f = std::fs::File::open(arquivo).ok()?;
     let n = f.metadata().ok()?.len();
@@ -239,6 +400,67 @@ mod testes {
         if local.offset().local_minus_utc() != -3 * 3600 {
             assert!(!mesmo_processo(&serde_json::json!({ "procStart": outro }), eu), "{outro}");
         }
+    }
+
+    /// A fala de erro como o Claude Code 2.1.318 a grava (04/11/2026), sem a conversa em volta.
+    fn parada(tipo: &str, frase: &str, quando: &str) -> Value {
+        serde_json::json!({
+            "type": "assistant", "uuid": format!("u-{quando}"), "timestamp": quando, "isApiErrorMessage": true,
+            "error": "rate_limit", "apiError": "usage_limit_reached",
+            "apiErrorParams": {"rate_limit_info": {"status": "rejected", "resetsAt": 1793833200, "rateLimitType": tipo}},
+            "quotaLimits": {"status": "rejected", "resetsAt": 1793833200, "rateLimitType": tipo, "overageStatus": "rejected"},
+            "message": {"role": "assistant", "content": [{"type": "text", "text": frase}]}
+        })
+    }
+
+    #[test]
+    fn a_parada_no_limite_vale_pelo_que_o_servico_disse() {
+        let semanal = parada_no_limite(&parada("seven_day", "You've hit your weekly limit · resets 8pm", "2026-11-04T18:54:42.688Z")).unwrap();
+        assert_eq!((semanal.janela.as_deref(), semanal.recomeca), (Some("seven_day"), Some(1_793_833_200.0)));
+        assert_eq!((semanal.uuid.as_str(), semanal.quando_ms), ("u-2026-11-04T18:54:42.688Z", 1_793_818_482_688));
+        // Outra frase para a mesma recusa: vale o que o serviço disse.
+        let outra = parada_no_limite(&parada("five_hour", "Your session allowance is used up", "2026-11-04T18:54:42Z")).unwrap();
+        assert_eq!(outra.janela.as_deref(), Some("five_hour"));
+        // O limite de um modelo só não tira a conta da fila: só a frase antiga o diz, como antes, sem janela.
+        let opus = parada_no_limite(&parada("seven_day_opus", "You've hit your Opus limit · resets 8pm", "2026-11-04T18:54:42Z")).unwrap();
+        assert_eq!((opus.janela, opus.recomeca), (None, None));
+        assert!(parada_no_limite(&parada("seven_day_fable", "You've reached your Fable limit.", "2026-11-04T18:54:42Z")).is_none());
+        // A versão que não grava a recusa: a frase.
+        let antiga = serde_json::json!({"type": "assistant", "error": "rate_limit", "timestamp": "2026-10-13T01:00:00Z",
+            "message": {"content": [{"type": "text", "text": "You've hit your session limit · resets 5:10pm"}]}});
+        assert_eq!(parada_no_limite(&antiga).map(|p| p.janela), Some(None));
+        // Não é parada no limite.
+        let mut sem_frase = antiga.clone();
+        sem_frase["message"]["content"][0]["text"] = "API Error: Request rejected (429)".into();
+        assert!(parada_no_limite(&sem_frase).is_none());
+        let mut servidor = parada("seven_day", "x", "2026-11-04T18:54:42Z");
+        servidor["error"] = "server_error".into();
+        assert!(parada_no_limite(&servidor).is_none());
+        let mut aceita = parada("seven_day", "x", "2026-11-04T18:54:42Z");
+        aceita["quotaLimits"]["status"] = "allowed".into();
+        aceita["apiErrorParams"]["rate_limit_info"]["status"] = "allowed".into();
+        assert!(parada_no_limite(&aceita).is_none());
+    }
+
+    #[test]
+    fn a_parada_e_a_ultima_fala_desta_abertura() {
+        let dir = tempfile::tempdir().unwrap();
+        let t = dir.path().join("t.jsonl");
+        let erro = parada("five_hour", "You've hit your session limit · resets 5pm", "2026-11-04T18:00:00Z");
+        let linhas = [
+            serde_json::json!({"type": "user", "timestamp": "2026-11-04T17:59:00Z", "message": {"content": "faça"}}),
+            erro.clone(),
+            serde_json::json!({"type": "assistant", "isSidechain": true, "timestamp": "2026-11-04T18:00:05Z", "message": {"content": [{"type": "text", "text": "subagente"}]}}),
+            serde_json::json!({"type": "user", "timestamp": "2026-11-04T18:00:06Z", "message": {"content": "<command-name>/effort</command-name>"}}),
+        ];
+        let texto: String = linhas.iter().map(|l| format!("{l}\n")).collect();
+        std::fs::write(&t, &texto).unwrap();
+        let antes = carimbo_ms(&serde_json::json!({"timestamp": "2026-11-04T17:00:00Z"}));
+        assert_eq!(parada_no_fim(&t, antes).map(|p| p.uuid), Some("u-2026-11-04T18:00:00Z".into()), "subagente e comando local não contam");
+        let depois = carimbo_ms(&serde_json::json!({"timestamp": "2026-11-04T18:00:01Z"}));
+        assert!(parada_no_fim(&t, depois).is_none(), "parada de antes desta abertura");
+        std::fs::write(&t, format!("{texto}{}\n", serde_json::json!({"type": "assistant", "timestamp": "2026-11-04T18:05:00Z", "message": {"content": [{"type": "text", "text": "pronto"}]}}))).unwrap();
+        assert!(parada_no_fim(&t, antes).is_none(), "o Claude respondeu depois");
     }
 
     #[test]

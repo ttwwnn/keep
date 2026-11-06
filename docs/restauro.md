@@ -238,7 +238,13 @@ parou." quando a causa volta.
   sessão `bg`.
 - A porta de cada causa: login, a credencial da aba com acesso válido (aba
   presa a uma conta fica de fora: o login dela volta pelo menu); rede, a API
-  responde; limite, a conta da aba tem folga.
+  responde; limite, a conta da aba tem folga e o Claude já pede por ela: depois
+  de uma troca a quente, o cache de login dele (32 s desde a gravação do
+  armazém da aba). Antes disso o "continue" sairia pela conta anterior, voltaria
+  no limite e gastaria uma das tentativas, com 2 min até a próxima (29/10/2026).
+- O limite é a recusa de uma janela da conta como o serviço a gravou junto da
+  fala de erro (`quotaLimits`, docs/ia.md "Seguir a ordem"), ou, nas versões
+  que não a gravam, a frase "You've hit your … limit".
 - A tela só confirma que é seguro: caixa vazia (ou já com a mensagem, faltando
   o Enter), nada rodando, nenhuma tarefa do rodapé selecionada, o erro à vista.
   Vista desviada (modo transcrito, painel de agentes, diálogo do limite,

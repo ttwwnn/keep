@@ -33,7 +33,6 @@
 //!   keep continuar --status    o que vê em cada conversa aberta (só leitura)
 
 use std::collections::{BTreeMap, HashMap};
-use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -43,6 +42,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use keep_ia::daemon;
+use keep_ia::sessoes::{carimbo_ms, falas_de_tras, parada_no_limite, texto_da_fala as texto, transcrito_claude as transcrito};
 
 // ------------------------------------------------------------------ regras
 
@@ -59,24 +59,12 @@ const ESQUECE_MS: u64 = 60 * 60_000;
 /// A mensagem tem este prazo para aparecer no transcrito. Um gancho UserPromptSubmit pode segurá-la antes de gravar
 /// (em 13/10/2026, no teste real, o do Jev rodou um /effort antes e ela entrou 11 s depois do Enter).
 const CONFIRMA: Duration = Duration::from_secs(30);
-const BLOCO: u64 = 64 << 10;
-const TETO_LEITURA: u64 = 16 << 20;
 
 pub const MSG_LOGIN: &str = "continue: o login caiu e já voltou sozinho; siga exatamente de onde parou.";
 pub const MSG_REDE: &str = "continue: a conexão com a API caiu e já voltou; siga exatamente de onde parou.";
 pub const MSG_LIMITE: &str =
     "continue: o limite de uso já liberou (ou a conta com folga está ativa); siga exatamente de onde parou.";
 
-const COMANDO_LOCAL: &[&str] = &[
-    "<command-name>",
-    "<command-message>",
-    "<local-command-stdout>",
-    "<local-command-stderr>",
-    "<local-command-caveat>",
-    "<bash-input>",
-    "<bash-stdout>",
-    "<bash-stderr>",
-];
 const MARCAS_DE_LOGIN: &[&str] = &["Please run /login", "Not logged in", "Login expired", "Could not refresh your login"];
 
 fn re(padrao: &'static str, guarda: &'static OnceLock<Regex>) -> &'static Regex {
@@ -101,9 +89,6 @@ fn erro_de_rede(t: &str) -> bool {
 fn erro_de_servidor(t: &str) -> bool {
     static R: OnceLock<Regex> = OnceLock::new();
     re(r"(?i)\b(?:5\d\d|Overloaded|Internal server error|Server error)\b", &R).is_match(t)
-}
-fn erro_de_limite(t: &str) -> bool {
-    t.trim().starts_with("You've hit your ") && t.contains("limit")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -141,94 +126,13 @@ pub struct Erro {
 }
 
 // ------------------------------------------------------------------ transcrito
-
-fn texto(d: &Value) -> String {
-    match d.get("message").and_then(|m| m.get("content")) {
-        Some(Value::String(s)) => s.clone(),
-        Some(Value::Array(itens)) => {
-            itens.iter().filter_map(|i| i.get("text").and_then(Value::as_str)).collect::<Vec<_>>().join(" ")
-        }
-        _ => String::new(),
-    }
-}
+// (o leitor do transcrito é o do núcleo, `keep_ia::sessoes`: o `keep ia sincronizar` lê a mesma parada)
 
 fn tem(d: &Value, tipo: &str) -> bool {
     d.get("message")
         .and_then(|m| m.get("content"))
         .and_then(Value::as_array)
         .is_some_and(|c| c.iter().any(|i| i.get("type").and_then(Value::as_str) == Some(tipo)))
-}
-
-pub(crate) fn carimbo_ms(d: &Value) -> u64 {
-    d.get("timestamp")
-        .and_then(Value::as_str)
-        .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
-        .map(|t| t.timestamp_millis().max(0) as u64)
-        .unwrap_or(0)
-}
-
-/// As falas da conversa principal, da última para a primeira (`continued-in` também: o fim deste transcrito
-/// deixou de ser o fim da conversa). Lê o arquivo de trás para a frente, em blocos, e para quando `f` diz.
-pub fn falas_de_tras(caminho: &Path, mut f: impl FnMut(&Value) -> bool) {
-    let Ok(mut fh) = std::fs::File::open(caminho) else { return };
-    let Ok(tamanho) = fh.seek(SeekFrom::End(0)) else { return };
-    let mut pos = tamanho;
-    let mut resto: Vec<u8> = Vec::new();
-    let mut lidos = 0u64;
-    let mut visita = |linha: &[u8]| -> bool {
-        let tem_tipo = |t: &[u8]| linha.windows(t.len()).any(|w| w == t);
-        if !tem_tipo(b"\"type\":\"user\"") && !tem_tipo(b"\"type\":\"assistant\"") && !tem_tipo(b"\"type\":\"continued-in\"") {
-            return true;
-        }
-        let Ok(d) = serde_json::from_slice::<Value>(linha) else { return true };
-        let tipo = d.get("type").and_then(Value::as_str).unwrap_or("");
-        if tipo == "continued-in" {
-            return f(&d);
-        }
-        if !matches!(tipo, "user" | "assistant") {
-            return true;
-        }
-        if d.get("isSidechain").and_then(Value::as_bool) == Some(true) || d.get("isMeta").and_then(Value::as_bool) == Some(true) {
-            return true;
-        }
-        if tipo == "user" {
-            let t = texto(&d);
-            let t = t.trim_start();
-            if COMANDO_LOCAL.iter().any(|c| t.starts_with(c)) {
-                return true;
-            }
-        }
-        f(&d)
-    };
-    while pos > 0 && lidos < TETO_LEITURA {
-        let n = BLOCO.min(pos);
-        pos -= n;
-        lidos += n;
-        let mut bloco = vec![0u8; n as usize];
-        if fh.seek(SeekFrom::Start(pos)).is_err() || fh.read_exact(&mut bloco).is_err() {
-            return;
-        }
-        bloco.extend_from_slice(&resto);
-        let mut partes: Vec<&[u8]> = bloco.split(|b| *b == b'\n').collect();
-        // a primeira parte pode ser o fim de uma linha que começa no bloco anterior
-        let primeira = if pos > 0 { partes.remove(0).to_vec() } else { Vec::new() };
-        for linha in partes.iter().rev() {
-            if !linha.is_empty() && !visita(linha) {
-                return;
-            }
-        }
-        resto = primeira;
-    }
-    if pos == 0 && !resto.is_empty() {
-        visita(&resto);
-    }
-}
-
-/// O .jsonl da conversa (onde ela nasceu: um `--resume` de outra pasta continua gravando no original).
-pub fn transcrito(sid: &str) -> Option<PathBuf> {
-    keep_ia::sessoes::transcritos_claude(sid)
-        .into_iter()
-        .max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
 }
 
 /// A conversa parou num erro que isto conserta? `inicio_ms`: quando o processo abriu (o erro anterior a uma
@@ -253,7 +157,8 @@ pub fn avaliar(caminho: &Path, inicio_ms: u64) -> Result<Erro, String> {
         "server_error" if erro_de_trava(&msg) => Tipo::Login,
         "server_error" if erro_de_rede(&msg) => Tipo::Rede,
         "server_error" => return Err(format!("erro de servidor desconhecido ({:?})", corta(&msg, 50))),
-        "rate_limit" if erro_de_limite(&msg) => Tipo::Limite,
+        // A recusa de uma janela da conta, como o serviço a disse (ou a frase das versões que não a gravam).
+        "rate_limit" if parada_no_limite(&d).is_some() => Tipo::Limite,
         "rate_limit" => return Err(format!("limite desconhecido ({:?})", corta(&msg, 50))),
         _ if erro_de_config(&msg) || !erro_de_login(&msg) => {
             return Err(format!("erro de autenticação que login não cura ({:?})", corta(&msg, 50)))
@@ -504,9 +409,20 @@ fn rede_de_volta() -> (bool, String) {
     }
 }
 
+/// O armazém da aba regravado há menos que o cache de login do Claude (a troca a quente, ou a renovação que
+/// espalhou o acesso) ainda pode mandar o pedido pela conta de antes: o "continue" voltaria no limite e gastaria
+/// uma das tentativas, com 2 min até a próxima (aba Clinica#2 em 29/10/2026, 08:15:33 e 08:17:34).
+fn porta_do_cache(vale_em: Option<u64>, agora: u64) -> Option<String> {
+    let falta = vale_em?.checked_sub(agora).filter(|f| *f > 0)?;
+    Some(format!("a conta nova da aba vale no Claude em {} s", falta.div_ceil(1000)))
+}
+
 /// A conta da aba saiu do limite? Pela medição do rodapé "Consumo de IA". A conta é a que o processo roda agora
 /// (`conta_do_processo`: o armazém da aba, trocado a quente, ou a pasta fixa, ou a global); sem processo, a global.
 fn cota_livre(pid: Option<u32>) -> (bool, String) {
+    if let Some(espera) = porta_do_cache(pid.and_then(keep_ia::quente::conta_vale_em), crate::agora_ms()) {
+        return (false, espera);
+    }
     let linhas = keep_ia::uso::medir(false, None);
     let atual = pid.and_then(|p| keep_ia::abas::conta_do_processo(p, "claude", &keep_ia::contas::listar(false)).1);
     let da_aba = linhas.iter().find(|l| match &atual {
@@ -871,11 +787,35 @@ mod testes {
     }
 
     #[test]
+    fn o_limite_vale_pelo_que_o_servico_disse_e_nao_pela_frase() {
+        let recusa = |tipo: &str, frase: &str| {
+            let mut e = erro("rate_limit", frase, "2026-11-04T18:54:42.688Z");
+            e["quotaLimits"] = json!({ "status": "rejected", "resetsAt": 1793833200, "rateLimitType": tipo });
+            e
+        };
+        // Uma frase nova para a semanal da conta: a recusa gravada basta.
+        let nova = transcrito_com(&[recusa("seven_day", "Weekly allowance used up · resets 8pm")]);
+        assert_eq!(avaliar(nova.path(), 0).unwrap().tipo, Tipo::Limite);
+        // O limite de um modelo só segue como antes: sem a frase conhecida, não se digita nada.
+        let fable = transcrito_com(&[recusa("seven_day_fable", "You've reached your Fable limit.")]);
+        assert!(avaliar(fable.path(), 0).unwrap_err().starts_with("limite desconhecido"));
+    }
+
+    #[test]
+    fn o_continue_espera_o_cache_de_login_depois_da_troca() {
+        assert_eq!(porta_do_cache(None, 1_000), None, "aba sem armazém próprio");
+        assert_eq!(porta_do_cache(Some(1_000), 1_000), None);
+        assert_eq!(porta_do_cache(Some(900), 1_000), None);
+        assert_eq!(porta_do_cache(Some(13_000), 1_000).as_deref(), Some("a conta nova da aba vale no Claude em 12 s"));
+        assert_eq!(porta_do_cache(Some(1_001), 1_000).as_deref(), Some("a conta nova da aba vale no Claude em 1 s"));
+    }
+
+    #[test]
     fn transcrito_grande_lido_de_tras_em_blocos() {
         let mut linhas: Vec<Value> = (0..3000).map(|i| fala("user", &format!("pedido {i} {}", "x".repeat(100)), "2026-10-13T00:00:00Z")).collect();
         linhas.push(erro("authentication_failed", "Not logged in · Please run /login", "2026-10-13T01:00:00Z"));
         let f = transcrito_com(&linhas);
-        assert!(std::fs::metadata(f.path()).unwrap().len() > BLOCO * 3);
+        assert!(std::fs::metadata(f.path()).unwrap().len() > 3 * (64 << 10), "mais de três blocos da leitura de trás");
         assert_eq!(avaliar(f.path(), 0).unwrap().tipo, Tipo::Login);
     }
 

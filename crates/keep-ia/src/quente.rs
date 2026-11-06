@@ -167,6 +167,13 @@ pub fn registro_do_processo(pid: u32) -> Option<(String, Registro)> {
     registro_da_pasta(Path::new(&v))
 }
 
+/// Desde quando (ms) o Claude `pid` pede pela conta que está no armazém da
+/// aba dele: o cache de login depois da última gravação. Antes disso, um
+/// pedido ainda pode sair pela conta anterior.
+pub fn conta_vale_em(pid: u32) -> Option<u64> {
+    registro_do_processo(pid).map(|(_, r)| r.em + CACHE_LOGIN_MS)
+}
+
 // ------------------------------------------------------------- de onde vem
 
 /// O dono de uma conta, de onde o acesso dela é espalhado.

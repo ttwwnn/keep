@@ -1152,6 +1152,96 @@ mod ponta_a_ponta {
         }
     }
 
+    /// A parada no limite leva a aba que segue a ordem para a próxima conta,
+    /// e quem leva a culpa é a conta que parou: a tela dela, ainda à vista
+    /// depois da troca a quente, não culpa a conta nova; o que o serviço disse
+    /// (a janela recusada e o recomeço dela, gravados no transcrito) vale numa
+    /// frase que a tela não conhece e diz de quem é a parada.
+    #[test]
+    fn a_parada_no_limite_culpa_a_conta_que_parou() {
+        let Some(falsa) = falsa() else {
+            eprintln!("sem a IA falsa (cargo build -p keep-ia --examples): pulado");
+            return;
+        };
+        let keep = falsa.parent().unwrap().parent().unwrap().join("keep");
+        assert!(keep.is_file(), "compile o launcher: cargo build -p keep -p keep-ia --examples --bins");
+        let c = casa("parada");
+        perfis(&[("G", "u-1", "ana@x.com"), ("F", "u-2", "bia@y.com")]);
+        c.global("G", "r");
+        let _fixa = c.fixa("k-2", Some(("F", "r")), Some(("bia", "bia@y.com", "u-2")));
+        let bin = c.raiz.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::copy(&falsa, bin.join("claude")).unwrap();
+        let sock = daemon(&c.raiz);
+        let shell_antes = std::env::var_os("SHELL");
+        // SAFETY: a casa (e a trava) está de pé.
+        unsafe {
+            std::env::set_var("KEEP_IA_CLAUDE_BIN", bin.join("claude"));
+            std::env::set_var("KEEP_IA_KEEP_BIN", &keep);
+            std::env::set_var("KEEP_SOCKET", &sock);
+            std::env::set_var("SHELL", "/bin/sh");
+            std::env::set_var("PS1", "$ ");
+        }
+        // As duas com folga pela medição, cada uma com o recomeço da janela de 5 h dela.
+        const RECOMECO_ANA: u64 = 1_900_000_000; // 2030-03-17T17:46:40Z
+        const RECOMECO_BIA: u64 = 1_900_003_600;
+        let _uso = crate::uso::testes::servidor(|p| match p.token.as_str() {
+            "G" => (200, vec![], r#"{"five_hour":{"utilization":10,"resets_at":"2030-03-17T17:46:40+00:00"},"seven_day":{"utilization":2}}"#.into()),
+            _ => (200, vec![], r#"{"five_hour":{"utilization":1,"resets_at":"2030-03-17T18:46:40+00:00"},"seven_day":{"utilization":3}}"#.into()),
+        });
+        let _ = contas::listar(true); // os donos ficam em cache
+        let tab = daemon::nova_aba("T", Some(&c.raiz.to_string_lossy()), 160, 40).unwrap();
+        assert!(tela_tem("T", tab, "$"), "o prompt do shell");
+        let p = Pedido { ws: "T".into(), aba: tab, para: "claude:ordem".into(), ..Default::default() };
+        trocar(&p).unwrap();
+        assert!(tela_tem("T", tab, "FALSO claude"));
+        let antes = ia_da_aba(tab);
+        assert_eq!((antes.conta.as_str(), antes.atual.as_deref()), ("claude:ordem", Some("claude:ana")));
+        let limite = |recomeco: &str, frase: &str| {
+            assert!(digita("T", tab, &format!("/limite {recomeco} {frase}"), true).unwrap());
+            assert!(tela_tem("T", tab, &format!("⎿ {frase}")), "{}", daemon::tela("T", tab).unwrap_or_default());
+        };
+        let rodada = |rotulo: &str| {
+            let r = crate::sincronizar::rodada();
+            let alteradas = r["alteradas"].as_array().map(Vec::len).unwrap_or(99);
+            let pendentes: Vec<String> =
+                r["pendentes"].as_array().into_iter().flatten().map(|p| p["motivo"].as_str().unwrap_or("?").to_string()).collect();
+            eprintln!("{rotulo}: {r}");
+            (r["alvo"].as_str().map(str::to_string), alteradas, pendentes)
+        };
+
+        // 1. Um Claude que não grava a recusa (só a frase): quem diz é a tela. A Ana parou; a aba passa à Bia.
+        limite("-", "You've hit your session limit - resets 5pm");
+        assert_eq!(rodada("tela, 1ª"), (Some("claude:bia".into()), 1, vec![]));
+        assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:bia"));
+        // A mesma tela, ainda à vista na Bia, é a da parada da Ana: a Bia não leva a culpa e a aba fica.
+        assert_eq!(rodada("tela, 2ª"), (Some("claude:bia".into()), 0, vec![]));
+
+        // 2. O que o serviço disse, numa frase que a tela não conhece: a parada é da Bia, pelo recomeço dela,
+        // e a aba volta à Ana (sem os bloqueios da parte 1).
+        let _ = std::fs::remove_file(caminhos::estado().join("ia-prioridade.json"));
+        limite(&RECOMECO_BIA.to_string(), "Session allowance used up");
+        assert_eq!(rodada("serviço, 1ª"), (Some("claude:ana".into()), 1, vec![]));
+        assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:ana"));
+        // A parada segue no fim do transcrito, já na Ana: é da Bia, pelo recomeço; a aba fica.
+        assert_eq!(rodada("serviço, 2ª"), (Some("claude:ana".into()), 0, vec![]));
+
+        // 3. Logo depois da troca (o cache de login do Claude ainda vale), a parada é da Ana pelo recomeço dela:
+        // as duas pararam, e a aba espera.
+        limite(&RECOMECO_ANA.to_string(), "Session allowance used up");
+        assert_eq!(rodada("serviço, as duas"), (None, 0, vec!["todas-no-limite".to_string()]));
+        assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:ana"));
+
+        // SAFETY: a casa (e a trava) está de pé.
+        unsafe {
+            match shell_antes {
+                Some(s) => std::env::set_var("SHELL", s),
+                None => std::env::remove_var("SHELL"),
+            }
+            std::env::remove_var("PS1");
+        }
+    }
+
     #[test]
     fn a_aba_aberta_para_o_login_fecha_quando_ele_da_certo() {
         let c = casa("fecha-login");
