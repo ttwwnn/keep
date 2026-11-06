@@ -467,7 +467,7 @@ describe("the footer's switches", () => {
     ).toEqual({ jev: null, ponytail: null, "pr-agent": null });
     // A core from before the PR-Agent: no switch for it.
     expect(readAutomation({ ok: true, jev: { instalado: true } })).toEqual({ jev: false, ponytail: null, "pr-agent": null });
-    expect(AUTOMATION_TITLES["pr-agent"]).toBe("PR-Agent");
+    expect(AUTOMATION_TITLES["pr-agent"]).toBe("PR Agent");
     expect(readAutomation({ ok: false, motivo: "automacao", detalhe: "x" })).toBeNull();
     expect(readAutomation(null)).toBeNull();
   });

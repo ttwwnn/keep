@@ -136,7 +136,12 @@ assim que o cache de login venceu e a aba ficou livre.
 - A ponte do Chrome já conectada conserva a autenticação anterior até reconectar. Toda mudança
   de dono, manual ou pela ordem, marca `chrome_pendente_desde` no armazém da aba. A rodada de
   `renovar` aguarda pelo menos 32 s e envia `/mcp reconnect claude-in-chrome` quando a mesma aba
-  está livre, sem diálogo nem rascunho, com vínculo exato ao processo. É um comando local:
+  está livre, sem diálogo nem rascunho, com vínculo exato ao processo. A aba é achada pelo shell (ela pode ter
+  mudado de área depois da troca), e a sessão ociosa com um shell em segundo plano (`status: "shell"`) conta como
+  livre. A extensão só atende o Claude da conta em que ela está entrada (Claude Code 2.1.319: o relay é por conta,
+  `/chrome/<conta>`, e o pareamento local recusa com `account_mismatch`; um mesmo Claude não separa a conta do Chrome
+  da conta da aba): depois da troca, a ponte só acha uma extensão entrada na conta nova (um perfil do Chrome por
+  conta), e volta à de antes quando a aba volta para a conta dela. É um comando local:
   não inicia uma resposta do modelo, não sai do Claude e não muda a conversa ou o login global.
   Renovar o token da mesma conta não marca reconexão. Se o Claude já reiniciou depois da troca,
   a pendência é descartada; uma nova troca não é apagada pela conclusão da anterior.

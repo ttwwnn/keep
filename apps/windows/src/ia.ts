@@ -679,7 +679,7 @@ export type AutomationSwitch = keyof Automation;
 export const AUTOMATION_TITLES: Record<AutomationSwitch, string> = {
   jev: "Jev",
   ponytail: "Ponytail",
-  "pr-agent": "PR-Agent",
+  "pr-agent": "PR Agent",
 };
 
 export function readAutomation(answer: unknown): Automation | null {

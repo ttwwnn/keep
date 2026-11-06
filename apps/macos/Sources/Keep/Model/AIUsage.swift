@@ -345,7 +345,7 @@ struct Automation: Equatable {
             switch self {
             case .jev: return "Jev"
             case .ponytail: return "Ponytail"
-            case .prAgent: return "PR-Agent"
+            case .prAgent: return "PR Agent"
             }
         }
     }

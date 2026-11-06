@@ -970,14 +970,18 @@ button {
 
 .usage-switches {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 4px 12px;
+  gap: 4px 8px;
+  /* Always one row: the names shrink with the sidebar (container units). */
+  container-type: inline-size;
   min-height: calc(18px * var(--s));
 }
 
 .usage-switch {
   display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
   align-items: center;
   gap: 6px;
   padding: 0;
@@ -1939,4 +1943,12 @@ button.danger.primary {
   * {
     transition: none !important;
   }
+}
+
+/* Always one row: in a narrow sidebar the names shrink, then cut, but never wrap. */
+.usage-switch-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: min(1em, 4.4cqi);
 }

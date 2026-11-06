@@ -857,10 +857,12 @@ pub fn reconectar_chrome() -> Vec<(String, String)> {
     }
     let mut saida = vec![];
     for (chave, r, desde) in pendentes {
-        let Some(aba) = retrato.aba(&r.ws, r.aba) else {
+        // A aba pelo shell dela: o registro guarda a área e o número de quando a
+        // conta foi trocada, e a aba pode ter mudado de área depois.
+        let Some(aba) = retrato.abas.iter().find(|a| !a.info.finished && a.info.shell_pid == r.shell) else {
             continue;
         };
-        if aba.info.shell_pid != r.shell || !mesmo_processo(r.shell, r.nascimento) {
+        if !mesmo_processo(r.shell, r.nascimento) {
             continue;
         }
         let pid = aba.info.pid;
@@ -877,7 +879,9 @@ pub fn reconectar_chrome() -> Vec<(String, String)> {
             let _ = concluir_reconexao(&chave, &r.dono, desde);
             continue;
         }
-        let sessao = crate::sessoes::sessao_claude(pid);
+        // Ociosa com um shell em segundo plano ("shell"), a sessão aceita um
+        // comando local: só a tela (turno, diálogo, rascunho) decide.
+        let sessao = crate::sessoes::sessao_claude(pid).filter(|s| s.status != "shell");
         if crate::trocar::situacao(aba, &crate::tela::Programa::Claude, sessao.as_ref()).0
             != crate::tela::Estado::Livre
         {
@@ -888,12 +892,14 @@ pub fn reconectar_chrome() -> Vec<(String, String)> {
             continue;
         };
         let Some(aba) = atual
-            .aba(&r.ws, r.aba)
-            .filter(|a| atual.exato && a.info.pid == pid && a.info.shell_pid == r.shell)
+            .abas
+            .iter()
+            .find(|a| atual.exato && !a.info.finished && a.info.pid == pid && a.info.shell_pid == r.shell)
         else {
             continue;
         };
-        let Ok(tela) = crate::daemon::tela_vt(&r.ws, r.aba) else {
+        let (ws, id) = (aba.ws.clone(), aba.info.id);
+        let Ok(tela) = crate::daemon::tela_vt(&ws, id) else {
             continue;
         };
         if !comando_na_caixa(&tela, "") {
@@ -907,7 +913,7 @@ pub fn reconectar_chrome() -> Vec<(String, String)> {
         }
         let visto =
             crate::daemon::espera(Duration::from_secs(3), Duration::from_millis(100), || {
-                let tela = crate::daemon::tela_vt(&r.ws, r.aba).ok()?;
+                let tela = crate::daemon::tela_vt(&ws, id).ok()?;
                 comando_na_caixa(&tela, RECONECTAR_CHROME).then_some(())
             });
         if visto.is_some() && teclado.manda(b"\r").is_ok() {

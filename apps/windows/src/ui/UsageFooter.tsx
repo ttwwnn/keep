@@ -286,12 +286,12 @@ function Switch(props: { which: AutomationSwitch; title: string; on: boolean; he
 }
 
 /**
- * "Jev ⏻  Ponytail ⏻  PR-Agent ⏻": who works for the AIs, each on or off —
+ * "Jev ⏻  Ponytail ⏻  PR Agent ⏻": who works for the AIs, each on or off —
  * the macOS footer's `switches`. The Jev chooses each message's model, effort
  * and whether it takes the Ponytail's rules, and answers the AIs' questions;
  * the Ponytail is the plugin in Claude and Codex, there for the Jev and the
- * AIs; the PR-Agent is the skill that reviews a PR before the merge. They wrap
- * when the sidebar is narrow.
+ * AIs; the PR Agent is the skill that reviews a PR before the merge. Always one
+ * row: in a narrow sidebar the names shrink (06/11/2026).
  */
 function Switches() {
   const state = automation.value;
@@ -329,8 +329,8 @@ function Switches() {
           on={state["pr-agent"]}
           help={
             state["pr-agent"]
-              ? "PR-Agent ligado no Claude e no Codex: revisa o PR antes do merge, pela assinatura do Claude"
-              : "PR-Agent desligado: as IAs não revisam com ele"
+              ? "PR Agent ligado no Claude e no Codex: revisa o PR antes do merge, pela assinatura do Claude"
+              : "PR Agent desligado: as IAs não revisam com ele"
           }
         />
       )}
