@@ -1364,11 +1364,14 @@ mod ponta_a_ponta {
         // A aba foi levada para outra área depois da troca: o registro guarda a de antes.
         let estado = caminhos::abas().join("estado.json");
         let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&estado).unwrap()).unwrap();
+        let mut movidas = 0;
         for r in v["abas"].as_object_mut().unwrap().values_mut().filter(|r| r["aba"] == json!(tab)) {
             assert!(r["chromePendenteDesde"].is_u64(), "a troca marca a reconexão: {r}");
             r["ws"] = json!("Outra");
             r["aba"] = json!(tab + 50);
+            movidas += 1;
         }
+        assert_eq!(movidas, 1, "o registro da aba: {v}");
         std::fs::write(&estado, v.to_string()).unwrap();
         // E a sessão está ociosa, com um shell em segundo plano.
         assert!(digita("T", tab, "/fundo", true).unwrap());
