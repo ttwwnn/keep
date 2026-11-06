@@ -828,13 +828,22 @@ struct UsageFooter: View {
     /// the PR-Agent is the skill that reviews a PR before the merge. Folded or
     /// not, the same switches: they are what the person turns, not a figure.
     /// Always one row (pedido de 06/11/2026): in a narrow sidebar (200 to 320
-    /// points, the font growing with the zoom) the names shrink instead of
-    /// the row breaking.
+    /// points, the font growing with the zoom) the three names shrink
+    /// together, to the first size at which the row fits.
     private func switches(_ automation: Automation) -> some View {
         let shown = Automation.Switch.allCases.compactMap { which in automation[which].map { (which, $0) } }
-        return HStack(spacing: 8) {
-            ForEach(shown, id: \.0) { item in switchButton(item.0, on: item.1) }
-            Spacer(minLength: 0)
+        return ViewThatFits(in: .horizontal) {
+            ForEach([1.0, 0.9, 0.8, 0.7, 0.6], id: \.self) { escala in
+                HStack(spacing: 8) {
+                    ForEach(shown, id: \.0) { item in switchButton(item.0, on: item.1, escala: escala) }
+                    Spacer(minLength: 0)
+                }
+            }
+            // Nem a 60% coube: os nomes encolhem mais ou são cortados, mas a linha não vaza.
+            HStack(spacing: 6) {
+                ForEach(shown, id: \.0) { item in switchButton(item.0, on: item.1, escala: 0.6, cabe: false) }
+                Spacer(minLength: 0)
+            }
         }
         .padding(.top, folded ? 2 : 0)
     }
@@ -856,17 +865,18 @@ struct UsageFooter: View {
         }
     }
 
-    private func switchButton(_ which: Automation.Switch, on: Bool) -> some View {
-        Toggle(isOn: Binding(get: { on }, set: { _ in monitor.toggle(which) })) {
+    private func switchButton(_ which: Automation.Switch, on: Bool, escala: Double, cabe: Bool = true) -> some View {
+        let fonte = GhosttyApp.shared.tabNameFont
+        return Toggle(isOn: Binding(get: { on }, set: { _ in monitor.toggle(which) })) {
             Text(which.title)
-                .font(numbers)
+                .font(Font(fonte.withSize(fonte.pointSize * escala)))
                 .lineLimit(1)
-                .minimumScaleFactor(0.6)
+                .minimumScaleFactor(cabe ? 1 : 0.6)
                 .foregroundStyle(on ? UsageInk.inkResting : UsageInk.inkFaint)
         }
         .toggleStyle(.switch)
         .controlSize(.mini)
-        .fixedSize(horizontal: false, vertical: true)
+        .fixedSize(horizontal: cabe, vertical: true)
         .help(switchHelp(which, on: on))
         .accessibilityLabel(which.title)
         .accessibilityValue(on ? "ligado" : "desligado")
