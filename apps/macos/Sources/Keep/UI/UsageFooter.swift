@@ -839,6 +839,11 @@ struct UsageFooter: View {
                     Spacer(minLength: 0)
                 }
             }
+            // Nem a 60% coube: os nomes encolhem mais ou são cortados, mas a linha não vaza.
+            HStack(spacing: 6) {
+                ForEach(shown, id: \.0) { item in switchButton(item.0, on: item.1, escala: 0.6, cabe: false) }
+                Spacer(minLength: 0)
+            }
         }
         .padding(.top, folded ? 2 : 0)
     }
@@ -860,17 +865,18 @@ struct UsageFooter: View {
         }
     }
 
-    private func switchButton(_ which: Automation.Switch, on: Bool, escala: Double) -> some View {
+    private func switchButton(_ which: Automation.Switch, on: Bool, escala: Double, cabe: Bool = true) -> some View {
         let fonte = GhosttyApp.shared.tabNameFont
         return Toggle(isOn: Binding(get: { on }, set: { _ in monitor.toggle(which) })) {
             Text(which.title)
                 .font(Font(fonte.withSize(fonte.pointSize * escala)))
                 .lineLimit(1)
+                .minimumScaleFactor(cabe ? 1 : 0.6)
                 .foregroundStyle(on ? UsageInk.inkResting : UsageInk.inkFaint)
         }
         .toggleStyle(.switch)
         .controlSize(.mini)
-        .fixedSize()
+        .fixedSize(horizontal: cabe, vertical: true)
         .help(switchHelp(which, on: on))
         .accessibilityLabel(which.title)
         .accessibilityValue(on ? "ligado" : "desligado")
