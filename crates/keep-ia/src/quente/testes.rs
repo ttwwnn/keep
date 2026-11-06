@@ -181,8 +181,9 @@ fn trocar_regrava_o_armazem_do_claude_aberto_sem_tocar_nos_donos() {
         assert_eq!(conta_vale_em(claude.pid()), Some(em + CACHE_LOGIN_MS));
         assert!(conta_vale_em(claude.pid()).unwrap() > agora());
         assert_eq!(conta_vale_em(shell.pid()), None, "o shell não roda num armazém de aba");
-        // Um Claude aberto depois da troca nunca guardou a conta de antes: vale desde que abriu.
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        // Um Claude aberto depois da troca nunca guardou a conta de antes: vale desde que abriu. (No Linux, o
+        // nascimento soma o boot em segundos inteiros: mais de 1 s depois, ele é certamente posterior.)
+        std::thread::sleep(std::time::Duration::from_millis(1100));
         let depois = Filho::novo(&[(VAR, &pasta)]);
         let nasceu = crate::processos::inicio_ms(depois.pid());
         assert!(nasceu.is_some_and(|n| n > em));

@@ -83,14 +83,18 @@ fn transcrito_da_aba(i: &abas::IaAba) -> Option<Option<sessoes::ParadaNoLimite>>
     o_que_a_fala_diz(sessoes::ultima_fala(&caminho).as_ref(), nasceu)
 }
 
-/// `transcrito_da_aba` sem o disco: a última fala da conversa e quando o processo abriu (ms).
+/// `transcrito_da_aba` sem o disco: a última fala da conversa e quando o processo abriu (ms). Sem fala (o
+/// transcrito ainda sem a conversa, ou num formato que não se lê) ou sem carimbo na parada, a tela decide.
 fn o_que_a_fala_diz(fala: Option<&Value>, nasceu: u64) -> Option<Option<sessoes::ParadaNoLimite>> {
-    let Some(fala) = fala else { return Some(None) };
-    let parou = fala.get("error").and_then(Value::as_str) == Some("rate_limit") && sessoes::carimbo_ms(fala) >= nasceu;
-    if !parou {
+    let fala = fala?;
+    if fala.get("error").and_then(Value::as_str) != Some("rate_limit") {
         return Some(None);
     }
-    sessoes::parada_no_limite(fala).filter(|p| p.da_conta).map(Some)
+    match sessoes::carimbo_ms(fala) {
+        0 => None,
+        quando if quando < nasceu => Some(None),
+        _ => sessoes::parada_no_limite(fala).filter(|p| p.da_conta).map(Some),
+    }
 }
 
 /// A conta que parou no limite. A parada cuja janela já recomeçou (`agora`,
@@ -369,7 +373,6 @@ mod testes {
         assert_eq!(diz(&fala(Some("rate_limit"), "x", Some("five_hour"))), Some(Some(Some("five_hour".into()))));
         assert_eq!(diz(&fala(Some("rate_limit"), "You've hit your weekly limit · resets 8pm", None)), Some(Some(None)));
         // A conversa não está parada no limite: a tela não conta.
-        assert_eq!(o_que_a_fala_diz(None, abriu), Some(None));
         assert_eq!(diz(&fala(None, "Feito.", None)), Some(None));
         assert_eq!(diz(&fala(Some("server_error"), "API Error: Connection error.", None)), Some(None));
         let depois = sessoes::carimbo_ms(&json!({ "timestamp": "2026-11-04T19:00:00Z" }));
@@ -378,6 +381,11 @@ mod testes {
         assert_eq!(diz(&fala(Some("rate_limit"), "You've hit your limit · resets 5pm", None)), None);
         assert_eq!(diz(&fala(Some("rate_limit"), "Usage limit reached · resets 5pm", None)), None);
         assert_eq!(diz(&fala(Some("rate_limit"), "You've hit your Opus limit · resets 8pm", Some("seven_day_opus"))), None);
+        // Sem fala, ou a parada sem carimbo (não se sabe de que abertura): a tela decide.
+        assert_eq!(o_que_a_fala_diz(None, abriu), None);
+        let mut sem_carimbo = fala(Some("rate_limit"), "x", Some("five_hour"));
+        sem_carimbo.as_object_mut().unwrap().remove("timestamp");
+        assert_eq!(o_que_a_fala_diz(Some(&sem_carimbo), abriu), None);
     }
 
     #[test]
