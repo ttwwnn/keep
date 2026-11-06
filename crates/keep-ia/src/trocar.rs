@@ -1267,6 +1267,11 @@ mod ponta_a_ponta {
         limite("-", "You've hit your session limit - resets 5pm");
         assert_eq!(rodada("tela, 1ª"), (Some("claude:bia".into()), 1, vec![]));
         assert_eq!(rodada("tela, 2ª"), (Some("claude:bia".into()), 0, vec![]));
+        // Nem depois que o bloqueio da Ana venceu: a tela que já culpou uma conta fica lembrada.
+        let mut registro: Value = serde_json::from_str(&std::fs::read_to_string(&arquivo).unwrap()).unwrap();
+        registro["limites"] = json!({});
+        std::fs::write(&arquivo, registro.to_string()).unwrap();
+        assert_eq!(rodada("tela, depois do bloqueio"), (Some("claude:ana".into()), 0, vec![]));
         assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:bia"));
 
         // SAFETY: a casa (e a trava) está de pé.
