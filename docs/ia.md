@@ -407,10 +407,11 @@ mais nova):
   saído pela conta de antes: decide o recomeço dito, se casa com o medido no `uso` de uma conta só (a mesma regra
   da `provada`); sem casar, nenhuma leva a culpa e a medição seguinte diz. A aba que parou na conta de antes da
   troca já saiu dela: fica onde está, e o `keep continuar` a retoma.
-- Sem o transcrito, quem diz é a tela, como antes; a tela que já culpou uma conta fica lembrada por 12 h (o
-  bloqueio vence em 5 min, e ela segue à vista enquanto ninguém digita) e não culpa a conta nova. A tela conta as
-  12 últimas linhas até o fim da conversa: numa conversa curta numa aba alta, o aviso fica no alto, acima de
-  linhas em branco.
+- Uma parada culpa uma vez só (lembrada por 12 h, em `ia-prioridade.json`): a mesma, ainda no fim do transcrito
+  ou à vista, não culpa a conta nova depois de uma troca, nem bloqueia de novo a mesma conta quando o bloqueio
+  vence; daí em diante, quem diz é a medição.
+- Sem o transcrito, quem diz é a tela, como antes, com a mesma regra. A tela conta as 12 últimas linhas até o fim
+  da conversa: numa conversa curta numa aba alta, o aviso fica no alto, acima de linhas em branco.
 
 ## Lixeira de worktrees
 

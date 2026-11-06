@@ -1258,6 +1258,13 @@ mod ponta_a_ponta {
         limite(&RECOMECO_ANA.to_string(), "Session allowance used up");
         assert_eq!(rodada("serviço, as duas"), (None, 0, vec!["todas-no-limite".to_string()]));
         assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:ana"));
+        // Os bloqueios venceram, e a parada da Ana segue no fim do transcrito: ela já culpou, e não bloqueia de
+        // novo (quem diz agora é a medição, que dá folga à Ana); a aba fica.
+        let mut registro: Value = serde_json::from_str(&std::fs::read_to_string(&arquivo).unwrap()).unwrap();
+        registro["limites"] = json!({});
+        std::fs::write(&arquivo, registro.to_string()).unwrap();
+        assert_eq!(rodada("serviço, depois dos bloqueios"), (Some("claude:ana".into()), 0, vec![]));
+        assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:ana"));
 
         // 4. Sem o transcrito, quem diz é a tela: a Ana parou e a aba passa à Bia; a mesma tela não culpa a Bia.
         sem_bloqueios();

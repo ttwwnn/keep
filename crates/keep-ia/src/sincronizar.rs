@@ -29,8 +29,8 @@ use crate::{caminhos, daemon, historico, processos, quente, sessoes, uso};
 
 const POR_RODADA: usize = 3;
 const OCIOSA_MS: u64 = 120_000;
-/// Quanto tempo uma tela de limite que já culpou uma conta é lembrada (s).
-const TELAS_POR: f64 = 12.0 * 3600.0;
+/// Quanto tempo uma parada que já culpou uma conta é lembrada (s).
+const CULPAS_POR: f64 = 12.0 * 3600.0;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 struct Bloqueio {
@@ -54,10 +54,12 @@ struct Registro {
     limites: BTreeMap<String, Bloqueio>,
     esperas: BTreeMap<String, Espera>,
     alvo: Option<String>,
-    /// As telas de limite que já culparam uma conta (a marca, e quando): a
-    /// mesma tela, ainda à vista depois que o bloqueio venceu, não culpa
-    /// outra conta.
-    telas: BTreeMap<String, f64>,
+    /// As paradas no limite (do transcrito ou da tela) que já culparam uma
+    /// conta (a marca, e quando). Uma parada culpa uma vez: a mesma, ainda no
+    /// fim do transcrito ou à vista, não culpa a conta nova depois de uma troca
+    /// nem bloqueia de novo a mesma conta quando o bloqueio vence (aí quem diz
+    /// é a medição).
+    culpas: BTreeMap<String, f64>,
 }
 
 fn arquivo() -> PathBuf {
@@ -138,8 +140,8 @@ pub fn rodada() -> Value {
     let anterior: Registro = std::fs::read_to_string(arquivo()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     let mut bloqueios = anterior.limites.clone();
     bloqueios.retain(|_, b| b.ate > t);
-    let mut telas = anterior.telas.clone();
-    telas.retain(|_, em| t - *em < TELAS_POR);
+    let mut culpas = anterior.culpas.clone();
+    culpas.retain(|_, em| t - *em < CULPAS_POR);
     let ia = abas::das_abas(&r, &contas);
 
     // As abas que seguem a ordem, e o que as telas delas dizem.
@@ -171,11 +173,14 @@ pub fn rodada() -> Value {
         // que parou segue à vista depois da troca a quente para a próxima,
         // mesmo depois que a conversa andou nela.
         let (culpada, marca, recomeca) = match claude_aberto.then(|| transcrito_da_aba(&i)).flatten() {
-            Some(Some(p)) => (
-                conta_que_parou(&p, &linhas, i.atual.as_deref(), vale_em, t).and_then(|k| contas::achar(&contas, &k)),
-                format!("parada|{}", p.uuid),
-                p.recomeca,
-            ),
+            Some(Some(p)) => {
+                let marca = format!("parada|{}", p.uuid);
+                let culpada = (!culpas.contains_key(&marca))
+                    .then(|| conta_que_parou(&p, &linhas, i.atual.as_deref(), vale_em, t))
+                    .flatten()
+                    .and_then(|k| contas::achar(&contas, &k));
+                (culpada, marca, p.recomeca)
+            }
             // A conversa andou depois da parada (o "continue", a resposta da conta nova) ou não parou no limite.
             Some(None) => (None, String::new(), None),
             // Sem o transcrito, a tela.
@@ -183,17 +188,14 @@ pub fn rodada() -> Value {
                 let marca = format!("{}|{}|{}", historico::nascimento(&r), i.pid, tela::impressao(&linhas_tela));
                 // A tela que já culpou uma conta é a de antes da troca: não culpa a conta nova, nem depois
                 // que o bloqueio da antiga venceu (a tela segue à vista enquanto ninguém digita).
-                let nova = !telas.contains_key(&marca) && !bloqueios.values().any(|b| b.marca == marca);
-                let culpada = atual.filter(|_| nova);
-                // Lembrada só quando culpou alguém: a conta da aba ainda não reconhecida culpa depois.
-                if culpada.is_some() {
-                    telas.insert(marca.clone(), t);
-                }
-                (culpada, marca, None)
+                let nova = !culpas.contains_key(&marca) && !bloqueios.values().any(|b| b.marca == marca);
+                (atual.filter(|_| nova), marca, None)
             }
             None => (None, String::new(), None),
         };
         if let Some(c) = culpada {
+            // Lembrada só quando culpou alguém: a conta da aba ainda não reconhecida culpa depois.
+            culpas.insert(marca.clone(), t);
             // A mesma parada não prorroga o bloqueio, que acaba no máximo quando a janela recusada recomeça.
             if bloqueios.get(&c.key).is_none_or(|b| b.marca != marca) {
                 let ate = recomeca.map_or(t + 300.0, |fim| fim.min(t + 300.0));
@@ -302,7 +304,7 @@ pub fn rodada() -> Value {
             }
         }
     }
-    let novo = Registro { limites: bloqueios, esperas, alvo: alvo.map(|c| c.order_key.clone()), telas };
+    let novo = Registro { limites: bloqueios, esperas, alvo: alvo.map(|c| c.order_key.clone()), culpas };
     if let Ok(texto) = serde_json::to_vec_pretty(&novo) {
         let tmp = arquivo().with_extension("json.tmp");
         if std::fs::write(&tmp, texto).is_ok() {
