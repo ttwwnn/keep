@@ -821,34 +821,22 @@ struct UsageFooter: View {
 
     // MARK: - the switches
 
-    /// "Jev ⏻  Ponytail ⏻  PR-Agent ⏻": who works for the AIs, each on or
+    /// "Jev ⏻  Ponytail ⏻  PR Agent ⏻": who works for the AIs, each on or
     /// off. The Jev chooses each message's model, effort and whether it takes
     /// the Ponytail's rules, and answers the AIs' questions; the Ponytail is the
     /// plugin in Claude and Codex, there for the Jev and the AIs to call on;
     /// the PR-Agent is the skill that reviews a PR before the merge. Folded or
     /// not, the same switches: they are what the person turns, not a figure.
-    /// One row when it fits the sidebar (200 to 320 points, and the font
-    /// grows with the zoom); else the first two and the rest; else one per line.
+    /// Always one row (pedido de 06/11/2026): in a narrow sidebar (200 to 320
+    /// points, the font growing with the zoom) the names shrink instead of
+    /// the row breaking.
     private func switches(_ automation: Automation) -> some View {
         let shown = Automation.Switch.allCases.compactMap { which in automation[which].map { (which, $0) } }
-        return ViewThatFits(in: .horizontal) {
-            switchRow(shown)
-            VStack(alignment: .leading, spacing: 4) {
-                switchRow(Array(shown.prefix(2)))
-                if shown.count > 2 { switchRow(Array(shown.dropFirst(2))) }
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(shown, id: \.0) { item in switchRow([item]) }
-            }
-        }
-        .padding(.top, folded ? 2 : 0)
-    }
-
-    private func switchRow(_ items: [(Automation.Switch, Bool)]) -> some View {
-        HStack(spacing: 12) {
-            ForEach(items, id: \.0) { item in switchButton(item.0, on: item.1) }
+        return HStack(spacing: 8) {
+            ForEach(shown, id: \.0) { item in switchButton(item.0, on: item.1) }
             Spacer(minLength: 0)
         }
+        .padding(.top, folded ? 2 : 0)
     }
 
     private func switchHelp(_ which: Automation.Switch, on: Bool) -> String {
@@ -863,8 +851,8 @@ struct UsageFooter: View {
                 : "Ponytail desligado: nem o Jev nem as IAs o usam"
         case .prAgent:
             return on
-                ? "PR-Agent ligado no Claude e no Codex: revisa o PR antes do merge, pela assinatura do Claude"
-                : "PR-Agent desligado: as IAs não revisam com ele"
+                ? "PR Agent ligado no Claude e no Codex: revisa o PR antes do merge, pela assinatura do Claude"
+                : "PR Agent desligado: as IAs não revisam com ele"
         }
     }
 
@@ -872,11 +860,13 @@ struct UsageFooter: View {
         Toggle(isOn: Binding(get: { on }, set: { _ in monitor.toggle(which) })) {
             Text(which.title)
                 .font(numbers)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
                 .foregroundStyle(on ? UsageInk.inkResting : UsageInk.inkFaint)
         }
         .toggleStyle(.switch)
         .controlSize(.mini)
-        .fixedSize()
+        .fixedSize(horizontal: false, vertical: true)
         .help(switchHelp(which, on: on))
         .accessibilityLabel(which.title)
         .accessibilityValue(on ? "ligado" : "desligado")

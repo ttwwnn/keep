@@ -171,15 +171,18 @@ check "the Jev's switch, on" ligado "$(until_value jev ligado)"
 check "the Ponytail's switch, on" ligado "$(until_value ponytail ligado)"
 check "the PR-Agent's switch, off: the skill is in no AI yet" desligado "$(until_value pr-agent desligado)"
 "$AXTEXT" "$APP_NAME" >"$WORK/ax.txt" 2>/dev/null
-check "named in the footer" yes "$(grep -qF "Ponytail" "$WORK/ax.txt" && grep -qF "PR-Agent" "$WORK/ax.txt" && echo yes || echo no)"
+check "named in the footer" yes "$(grep -qF "Ponytail" "$WORK/ax.txt" && grep -qF "PR Agent" "$WORK/ax.txt" && echo yes || echo no)"
 # The sidebar is 200 to 320 points and the font grows with the zoom: the row
-# wraps rather than run past the footer's right edge (the "+" of its header).
+# never runs past the footer's right edge (the "+" of its header), and the three
+# stay on one line, the names shrinking instead (pedido de 06/11/2026).
 edge=$("$AXPRESS" "$APP_NAME" frame usage-signin 2>/dev/null | awk '{ print $1 + $3 }')
 for s in jev ponytail pr-agent; do
     right=$("$AXPRESS" "$APP_NAME" frame "automation-$s" 2>/dev/null | awk '{ print $1 + $3 }')
     check "the $s switch inside the footer ($right <= $edge)" yes \
         "$([ -n "$right" ] && [ -n "$edge" ] && [ "$right" -le $((edge + 2)) ] && echo yes || echo no)"
 done
+rows=$(for s in jev ponytail pr-agent; do "$AXPRESS" "$APP_NAME" frame "automation-$s" 2>/dev/null | awk '{ print int(($2 + $4 / 2) / 6) }'; done | sort -u | wc -l | tr -d ' ')
+check "the three switches on one line" 1 "$rows"
 
 say ""
 say "the Jev's switch is the Jev's off file"
