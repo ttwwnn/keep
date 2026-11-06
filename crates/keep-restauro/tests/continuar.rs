@@ -141,9 +141,9 @@ fn so_a_aba_parada_e_segura_recebe_o_continue_quando_a_causa_volta() {
         "pasta": armazem, "conta": "claude:outra", "dono": "u-outra", "escolha": "claude:ordem", "ws": "C", "aba": limite,
         "em": keep_restauro::agora_ms() + 600_000 } } });
     std::fs::write(abas.join("estado.json"), estado.to_string()).unwrap();
-    // No limite no login global: uma com o recomeço que o serviço disse (daqui a 1 h), outra sem.
-    let ate = keep_restauro::agora_ms() / 1000 + 3600;
-    let limite_ate = abre(&format!("FALSO_ERRO=limite FALSO_RECOMECO={ate}"));
+    // No limite no login global: uma com o recomeço que o serviço disse (o mesmo que o consumo de mentira mede
+    // para a conta global, 2099-01-01), outra sem.
+    let limite_ate = abre("FALSO_ERRO=limite FALSO_RECOMECO=4070908800");
     let limite_sem = abre("FALSO_ERRO=limite");
     let rot = |a: u32| format!("C#{a}");
     // o erro precisa de 5 s de idade
@@ -155,8 +155,9 @@ fn so_a_aba_parada_e_segura_recebe_o_continue_quando_a_causa_volta() {
     assert!(situacao(&r, &rot(login)).contains("o login ainda não voltou"), "{r:#}");
     assert!(situacao(&r, &rot(rede)).contains("a rede ainda não voltou"), "{r:#}");
     assert!(situacao(&r, &rot(limite)).contains("a conta nova da aba vale no Claude em"), "{r:#}");
-    assert!(situacao(&r, &rot(limite_ate)).contains("a janela recusada recomeça"), "{r:#}");
-    assert!(situacao(&r, &rot(limite_sem)).contains("não sei qual conta a aba usa"), "a porta da outra não vale aqui: {r:#}");
+    // sem o login global, nenhuma conta para medir nem para casar o recomeço
+    assert!(situacao(&r, &rot(limite_ate)).contains("não sei qual conta a aba usa"), "{r:#}");
+    assert!(situacao(&r, &rot(limite_sem)).contains("não sei qual conta a aba usa"), "{r:#}");
 
     // ---- voltaram: no seco, diz o que faria e não digita
     std::fs::write(
@@ -182,6 +183,7 @@ fn so_a_aba_parada_e_segura_recebe_o_continue_quando_a_causa_volta() {
     assert!(!tela_tem("C", rascunho, "Retomado", 1));
     assert!(!tela_tem("C", ocupada, "Retomado", 1));
     assert!(!tela_tem("C", limite, "Retomado", 1), "o continue sairia pela conta de antes");
+    // a do recomeço casado com a conta global espera por ele; a outra, pela medição (e a porta de uma não vale para a outra)
     assert!(situacao(&r, &rot(limite_ate)).contains("a janela recusada recomeça"), "{r:#}");
     assert!(situacao(&r, &rot(limite_sem)).contains("a conta da aba segue no limite"), "{r:#}");
 

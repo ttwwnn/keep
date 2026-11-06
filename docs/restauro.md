@@ -244,7 +244,8 @@ parou." quando a causa volta.
   no limite e gastaria uma das tentativas, com 2 min até a próxima (29/10/2026).
   A parada da própria conta em que a aba está espera, antes, o recomeço que o
   serviço disse da janela recusada: a medição pode ter até 5 min e ainda dizer
-  folga.
+  folga. Sem armazém de aba (o login global, que muda de conta por fora), só
+  quando esse recomeço é o medido da conta de agora.
 - O limite é a recusa de uma janela da conta como o serviço a gravou junto da
   fala de erro (`quotaLimits`, docs/ia.md "Seguir a ordem"), ou, nas versões
   que não a gravam, a frase "You've hit your … limit".

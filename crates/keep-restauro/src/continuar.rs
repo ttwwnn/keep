@@ -125,8 +125,8 @@ pub struct Erro {
     pub quando_ms: u64,
     pub texto: String,
     pub tipo: Tipo,
-    /// No limite: quando a janela recusada recomeça (segundos unix), como o serviço disse.
-    pub recomeca: Option<f64>,
+    /// No limite: a parada, com a janela recusada e quando ela recomeça, como o serviço disse.
+    pub parada: Option<keep_ia::sessoes::ParadaNoLimite>,
 }
 
 // ------------------------------------------------------------------ transcrito
@@ -169,8 +169,8 @@ pub fn avaliar(caminho: &Path, inicio_ms: u64) -> Result<Erro, String> {
         return Err("erro anterior a esta abertura".into());
     }
     let uuid = d.get("uuid").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| quando_ms.to_string());
-    let recomeca = if tipo == Tipo::Limite { parada_no_limite(&d).and_then(|p| p.recomeca) } else { None };
-    Ok(Erro { uuid, quando_ms, texto: msg, tipo, recomeca })
+    let parada = if tipo == Tipo::Limite { parada_no_limite(&d) } else { None };
+    Ok(Erro { uuid, quando_ms, texto: msg, tipo, parada })
 }
 
 fn corta(s: &str, n: usize) -> String {
@@ -415,13 +415,19 @@ fn rede_de_volta() -> (bool, String) {
 ///   voltaria no limite e gastaria uma das tentativas, com 2 min até a próxima (aba Clinica#2 em 29/10/2026,
 ///   08:15:33 e 08:17:34).
 /// - A parada da própria conta em que a aba está: espera o recomeço que o serviço disse da janela recusada (a
-///   medição pode ter até 5 min e ainda dizer folga).
-fn porta_do_limite(vale_em: Option<u64>, erro: &Erro, agora: u64) -> Option<String> {
+///   medição pode ter até 5 min e ainda dizer folga). Num armazém de aba, é a parada de quando a conta dele já
+///   valia no Claude. Sem armazém (o login global, que muda de conta por fora), é a que tem o recomeço medido da
+///   conta de agora (`casa_com_a_conta`: a janela e o recomeço ditos); sem casar, quem decide é a medição.
+fn porta_do_limite(vale_em: Option<u64>, erro: &Erro, casa_com_a_conta: impl Fn(&str, f64) -> bool, agora: u64) -> Option<String> {
     if let Some(falta) = vale_em.and_then(|v| v.checked_sub(agora)).filter(|f| *f > 0) {
         return Some(format!("a conta nova da aba vale no Claude em {} s", falta.div_ceil(1000)));
     }
-    let da_conta_atual = vale_em.is_none_or(|v| erro.quando_ms >= v);
-    let recomeca = erro.recomeca.filter(|r| *r * 1000.0 > agora as f64)?;
+    let p = erro.parada.as_ref()?;
+    let recomeca = p.recomeca.filter(|r| *r * 1000.0 > agora as f64)?;
+    let da_conta_atual = match vale_em {
+        Some(v) => erro.quando_ms >= v,
+        None => p.janela.as_deref().is_some_and(|j| casa_com_a_conta(j, recomeca)),
+    };
     da_conta_atual.then(|| format!("a janela recusada recomeça {}", keep_ia::uso::momento(recomeca, agora as f64 / 1000.0)))
 }
 
@@ -429,16 +435,23 @@ fn porta_do_limite(vale_em: Option<u64>, erro: &Erro, agora: u64) -> Option<Stri
 /// processo roda agora (`conta_do_processo`: o armazém da aba, trocado a quente, ou a pasta fixa, ou a global); sem
 /// processo, a global.
 fn cota_livre(pid: Option<u32>, erro: Option<&Erro>) -> (bool, String) {
-    let vale_em = pid.and_then(keep_ia::quente::conta_vale_em);
-    if let Some(espera) = erro.and_then(|e| porta_do_limite(vale_em, e, crate::agora_ms())) {
-        return (false, espera);
-    }
     let linhas = keep_ia::uso::medir(false, None);
     let atual = pid.and_then(|p| keep_ia::abas::conta_do_processo(p, "claude", &keep_ia::contas::listar(false)).1);
     let da_aba = linhas.iter().find(|l| match &atual {
         Some(chave) => l.account.order_key == *chave,
         None => l.account.global(),
     });
+    if let Some(e) = erro {
+        let casa = |janela: &str, recomeca: f64| {
+            let mut ditos = json!({});
+            ditos[janela] = json!({ "resets_at": recomeca });
+            let dona = keep_ia::abas::conta_dos_limites(&ditos, &linhas);
+            da_aba.is_some_and(|l| dona.as_deref() == Some(l.account.order_key.as_str()))
+        };
+        if let Some(espera) = porta_do_limite(pid.and_then(keep_ia::quente::conta_vale_em), e, casa, crate::agora_ms()) {
+            return (false, espera);
+        }
+    }
     match da_aba {
         Some(l) if l.disponivel() => (true, "a conta da aba tem folga".into()),
         Some(_) => (false, "a conta da aba segue no limite".into()),
@@ -824,9 +837,17 @@ mod testes {
             quando_ms,
             texto: String::new(),
             tipo: Tipo::Limite,
-            recomeca,
+            parada: Some(keep_ia::sessoes::ParadaNoLimite {
+                uuid: "u".into(),
+                quando_ms,
+                janela: Some("five_hour".into()),
+                recomeca,
+                da_conta: true,
+            }),
         };
-        let porta = |vale_em: Option<u64>, e: Erro| porta_do_limite(vale_em, &e, AGORA);
+        // A conta de agora é a dona do recomeço 1_793_833_200 (5 h).
+        let dela = |janela: &str, r: f64| janela == "five_hour" && r == 1_793_833_200.0;
+        let porta = |vale_em: Option<u64>, e: Erro| porta_do_limite(vale_em, &e, dela, AGORA);
         // Logo depois da troca a quente, a conta nova ainda não vale no Claude.
         assert_eq!(porta(Some(AGORA + 12_000), parada(AGORA - 60_000, None)).as_deref(), Some("a conta nova da aba vale no Claude em 12 s"));
         assert_eq!(porta(Some(AGORA + 1), parada(AGORA - 60_000, None)).as_deref(), Some("a conta nova da aba vale no Claude em 1 s"));
@@ -836,6 +857,9 @@ mod testes {
         let espera = porta(Some(AGORA - 120_000), parada(AGORA - 60_000, Some(1_793_833_200.0))).unwrap();
         assert!(espera.starts_with("a janela recusada recomeça "), "{espera}");
         assert!(porta(None, parada(AGORA - 60_000, Some(1_793_833_200.0))).is_some());
+        // Sem armazém de aba, o login global mudou de conta: o recomeço dito não é o da conta de agora, e quem decide
+        // é a medição dela (não a espera, de dias, pela janela da conta de antes).
+        assert_eq!(porta(None, parada(AGORA - 60_000, Some(1_794_400_000.0))), None);
         // O recomeço já passou, ou o serviço não disse: a medição.
         assert_eq!(porta(Some(AGORA - 120_000), parada(AGORA - 60_000, Some(1_793_817_000.0))), None);
         assert_eq!(porta(None, parada(AGORA - 60_000, None)), None);
@@ -874,7 +898,7 @@ mod testes {
     fn a_tela_parada_e_segura_e_a_sugestao_cinza_nao_e_texto() {
         let t = ler_tela(TELA_PARADA);
         assert_eq!(t.digitado, "", "a sugestão esmaecida não conta");
-        let e = Erro { uuid: "u".into(), quando_ms: 0, texto: "Not logged in · Please run /login".into(), tipo: Tipo::Login, recomeca: None };
+        let e = Erro { uuid: "u".into(), quando_ms: 0, texto: "Not logged in · Please run /login".into(), tipo: Tipo::Login, parada: None };
         assert!(tela_segura(&t, &e).0);
         let ocupada = ler_tela(&TELA_PARADA.replace("for agents", "for agents · esc to interrupt"));
         assert!(!tela_segura(&ocupada, &e).0);
