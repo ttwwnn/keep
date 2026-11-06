@@ -2021,7 +2021,7 @@ dependencies = [
 
 [[package]]
 name = "keep-app"
-version = "0.3.23"
+version = "0.3.24"
 dependencies = [
  "anyhow",
  "keep-proto",
