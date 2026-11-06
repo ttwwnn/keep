@@ -1325,6 +1325,74 @@ mod ponta_a_ponta {
         }
     }
 
+    /// Depois da troca a quente, a ponte do Chrome é reconectada na conta nova
+    /// (`/mcp reconnect claude-in-chrome`) mesmo com a aba levada para outra
+    /// área e com um shell em segundo plano na sessão (06/11/2026: as duas
+    /// coisas faziam a rodada pular a aba para sempre, sem erro).
+    #[test]
+    fn a_ponte_do_chrome_reconecta_na_aba_que_mudou_de_area_e_tem_shell_no_fundo() {
+        let Some(falsa) = falsa() else {
+            eprintln!("sem a IA falsa (cargo build -p keep-ia --examples): pulado");
+            return;
+        };
+        let keep = falsa.parent().unwrap().parent().unwrap().join("keep");
+        assert!(keep.is_file(), "compile o launcher: cargo build -p keep -p keep-ia --examples --bins");
+        let c = casa("chrome");
+        perfis(&[("G", "u-1", "ana@x.com"), ("F", "u-2", "bia@y.com")]);
+        c.global("G", "r");
+        let _fixa = c.fixa("k-2", Some(("F", "r")), Some(("bia", "bia@y.com", "u-2")));
+        let bin = c.raiz.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::copy(&falsa, bin.join("claude")).unwrap();
+        let sock = daemon(&c.raiz);
+        let shell_antes = std::env::var_os("SHELL");
+        // SAFETY: a casa (e a trava) está de pé.
+        unsafe {
+            std::env::set_var("KEEP_IA_CLAUDE_BIN", bin.join("claude"));
+            std::env::set_var("KEEP_IA_KEEP_BIN", &keep);
+            std::env::set_var("KEEP_SOCKET", &sock);
+            std::env::set_var("SHELL", "/bin/sh");
+            std::env::set_var("PS1", "$ ");
+        }
+        let _ = contas::listar(true);
+        let tab = daemon::nova_aba("T", Some(&c.raiz.to_string_lossy()), 160, 40).unwrap();
+        assert!(tela_tem("T", tab, "$"), "o prompt do shell");
+        let p = |para: &str| Pedido { ws: "T".into(), aba: tab, para: para.into(), ..Default::default() };
+        trocar(&p("claude:ordem")).unwrap();
+        assert!(tela_tem("T", tab, "FALSO claude"));
+        assert_eq!(trocar(&p("claude:bia")).unwrap(), "passou para a IA·2 sem sair do Claude");
+        // A aba foi levada para outra área depois da troca: o registro guarda a de antes.
+        let estado = caminhos::abas().join("estado.json");
+        let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&estado).unwrap()).unwrap();
+        for r in v["abas"].as_object_mut().unwrap().values_mut().filter(|r| r["aba"] == json!(tab)) {
+            assert!(r["chromePendenteDesde"].is_u64(), "a troca marca a reconexão: {r}");
+            r["ws"] = json!("Outra");
+            r["aba"] = json!(tab + 50);
+        }
+        std::fs::write(&estado, v.to_string()).unwrap();
+        // E a sessão está ociosa, com um shell em segundo plano.
+        assert!(digita("T", tab, "/fundo", true).unwrap());
+        assert!(tela_tem("T", tab, "Rodando em segundo plano"));
+        // Antes do cache de login do Claude vencer, nada é digitado.
+        assert!(crate::quente::reconectar_chrome().is_empty());
+        std::thread::sleep(Duration::from_millis(crate::quente::CACHE_LOGIN_MS + 500));
+        let feitas = crate::quente::reconectar_chrome();
+        assert_eq!(feitas.len(), 1, "{feitas:?}");
+        assert!(tela_tem("T", tab, "Feito: /mcp reconnect claude-in-chrome"), "{}", daemon::tela("T", tab).unwrap_or_default());
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&estado).unwrap()).unwrap();
+        assert!(v["abas"].as_object().unwrap().values().all(|r| r.get("chromePendenteDesde").is_none_or(Value::is_null)), "{v}");
+        assert!(crate::quente::reconectar_chrome().is_empty(), "uma vez só");
+
+        // SAFETY: a casa (e a trava) está de pé.
+        unsafe {
+            match shell_antes {
+                Some(s) => std::env::set_var("SHELL", s),
+                None => std::env::remove_var("SHELL"),
+            }
+            std::env::remove_var("PS1");
+        }
+    }
+
     #[test]
     fn a_aba_aberta_para_o_login_fecha_quando_ele_da_certo() {
         let c = casa("fecha-login");

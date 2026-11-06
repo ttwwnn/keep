@@ -20,7 +20,8 @@
 //! tela e, no fim do transcrito, a fala de erro como o Claude Code 2.1.318 a
 //! grava (`error: rate_limit` e a recusa da janela de 5 h, com o recomeço em
 //! segundos unix). Com `-` no recomeço, só a frase, como as versões antigas. `/espera` mostra a espera do
-//! limite no rodapé ("continuing automatically"), sem gravar nada; `/limpar` limpa a tela.
+//! limite no rodapé ("continuing automatically"), sem gravar nada; `/limpar` limpa a tela; `/fundo`
+//! deixa a sessão ociosa com um shell em segundo plano (status "shell").
 
 #[cfg(unix)]
 fn main() {
@@ -249,6 +250,11 @@ mod falsa {
                                 "\r\n{linha}\r\n{marca} \r\n{linha}\r\n⚠ Usage limit reached · resets 5pm\r\ncontinuing automatically · esc to cancel"
                             );
                             let _ = out.flush();
+                        }
+                        // Ocioso com um shell em segundo plano: a sessão diz "shell", como o 2.1.318.
+                        "/fundo" if !codex => {
+                            anota("shell");
+                            caixa(&mut out, "\r\n● Rodando em segundo plano · 1 shell");
                         }
                         // Limpa a tela (o que estava à vista some; o transcrito fica).
                         "/limpar" => {
