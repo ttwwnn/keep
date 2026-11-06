@@ -184,7 +184,13 @@ pub fn rodada() -> Value {
         // frase muda de uma versão do Claude Code para outra, e a tela da conta
         // que parou segue à vista depois da troca a quente para a próxima,
         // mesmo depois que a conversa andou nela.
-        let (culpada, marca, recomeca) = match claude_aberto.then(|| transcrito_da_aba(&i)).flatten() {
+        let leitura = match claude_aberto.then(|| transcrito_da_aba(&i)).flatten() {
+            // O diálogo do limite e a espera dele ("continuing automatically") só ficam à vista enquanto o Claude
+            // espera, ao contrário da frase de uma parada antiga: valem mesmo com o transcrito sem a parada.
+            Some(None) if tela::espera_limite(&linhas_tela) => None,
+            outra => outra,
+        };
+        let (culpada, marca, recomeca) = match leitura {
             Some(Some(p)) => {
                 let marca = format!("parada|{}", p.uuid);
                 let culpada = (!culpas.contains_key(&marca))

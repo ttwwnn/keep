@@ -19,7 +19,8 @@
 //! `/limite <recomeço> <frase>` finge a parada no limite de uso: a frase na
 //! tela e, no fim do transcrito, a fala de erro como o Claude Code 2.1.318 a
 //! grava (`error: rate_limit` e a recusa da janela de 5 h, com o recomeço em
-//! segundos unix). Com `-` no recomeço, só a frase, como as versões antigas.
+//! segundos unix). Com `-` no recomeço, só a frase, como as versões antigas. `/espera` mostra a espera do
+//! limite no rodapé ("continuing automatically"), sem gravar nada; `/limpar` limpa a tela.
 
 #[cfg(unix)]
 fn main() {
@@ -240,6 +241,15 @@ mod falsa {
                             caixa(&mut out, "\r\n✻ Pensando… (esc to interrupt)");
                         }
                         outro if codex => caixa(&mut out, &format!("\r\n> {outro}\r\n● Feito.")),
+                        // A espera do limite no rodapé, como o 2.1.31x a mostra, sem nada no transcrito.
+                        "/espera" if !codex => {
+                            let linha = "─".repeat(30);
+                            let _ = write!(
+                                out,
+                                "\r\n{linha}\r\n{marca} \r\n{linha}\r\n⚠ Usage limit reached · resets 5pm\r\ncontinuing automatically · esc to cancel"
+                            );
+                            let _ = out.flush();
+                        }
                         // Limpa a tela (o que estava à vista some; o transcrito fica).
                         "/limpar" => {
                             let _ = write!(out, "\x1b[2J\x1b[H");

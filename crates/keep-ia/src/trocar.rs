@@ -1305,6 +1305,16 @@ mod ponta_a_ponta {
         assert_eq!(rodada("formato novo"), (Some("claude:ana".into()), 1, vec![]));
         assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:ana"));
 
+        // 6. A conversa andou (o fim do transcrito não é parada), mas o Claude espera o limite na tela, no rodapé:
+        // a espera só fica à vista enquanto ele espera, e vale; a Ana parou, e a aba passa à Bia.
+        sem_bloqueios();
+        assert!(digita("T", tab, "segue", true).unwrap());
+        assert!(tela_tem("T", tab, "Feito: segue"));
+        assert!(digita("T", tab, "/espera", true).unwrap());
+        assert!(tela_tem("T", tab, "continuing automatically"));
+        assert_eq!(rodada("espera na tela"), (Some("claude:bia".into()), 1, vec![]));
+        assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:bia"));
+
         // SAFETY: a casa (e a trava) está de pé.
         unsafe {
             match shell_antes {
