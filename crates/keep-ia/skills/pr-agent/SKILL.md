@@ -21,7 +21,7 @@ Rode na pasta do repositório, com prazo de 15 minutos (`timeout` de 900000 no B
 - `descrever`: título e descrição para o PR.
 - `melhorar`: sugestões de código.
 - `perguntar "texto"`: uma pergunta sobre as mudanças.
-- Opções: `--base <ref>`, `--modelo <id>` (`claude-fable-5-1`, `claude-sonnet-5-5`…) e
+- Opções: `--base <ref>`, `--modelo <id>` (`claude-sonnet-5-5`…; o Fable só se o usuário pedir) e
   `--esforco low|medium|high|xhigh|max`.
 
 ## Antes do merge
