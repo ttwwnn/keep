@@ -251,6 +251,10 @@ parou." quando a causa volta.
   que não a gravam, a frase "You've hit your … limit".
 - A tela só confirma que é seguro: caixa vazia (ou já com a mensagem, faltando
   o Enter), nada rodando, nenhuma tarefa do rodapé selecionada, o erro à vista.
+  Trabalhando, quem diz é a sessão do Claude (`status: "busy"`): o 2.1.312+ não
+  escreve mais "esc to interrupt", e um Claude que pensava havia 14 min, com a
+  parada ainda como última fala principal, recebia o "continue" na caixa, sem
+  Enter, dobrado na rodada seguinte (Brokerfy#1, 06/11/2026).
   Vista desviada (modo transcrito, painel de agentes, diálogo do limite,
   conversa rolada) volta à conversa só com a pessoa longe do teclado há 2 min.
 - No máximo 3 vezes seguidas sem a conversa andar, 2 min entre elas; a mensagem
