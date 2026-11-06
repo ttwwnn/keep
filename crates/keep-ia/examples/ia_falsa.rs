@@ -240,6 +240,11 @@ mod falsa {
                             caixa(&mut out, "\r\n✻ Pensando… (esc to interrupt)");
                         }
                         outro if codex => caixa(&mut out, &format!("\r\n> {outro}\r\n● Feito.")),
+                        // Limpa a tela (o que estava à vista some; o transcrito fica).
+                        "/limpar" => {
+                            let _ = write!(out, "\x1b[2J\x1b[H");
+                            caixa(&mut out, "● Pronto.");
+                        }
                         outro if outro.starts_with("/limite ") => {
                             let (recomeco, frase) = outro["/limite ".len()..].split_once(' ').unwrap_or(("-", ""));
                             let mut fala = serde_json::json!({

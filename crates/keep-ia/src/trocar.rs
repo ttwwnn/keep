@@ -1217,9 +1217,14 @@ mod ponta_a_ponta {
         // A mesma tela, ainda à vista na Bia, é a da parada da Ana: a Bia não leva a culpa e a aba fica.
         assert_eq!(rodada("tela, 2ª"), (Some("claude:bia".into()), 0, vec![]));
 
-        // 2. O que o serviço disse, numa frase que a tela não conhece: a parada é da Bia, pelo recomeço dela,
-        // e a aba volta à Ana (sem os bloqueios da parte 1).
+        // 2. O que o serviço disse, numa frase que a tela não conhece (e sem a frase antiga à vista): a parada é
+        // da Bia, pelo recomeço dela, e a aba volta à Ana (sem os bloqueios da parte 1).
         let _ = std::fs::remove_file(caminhos::estado().join("ia-prioridade.json"));
+        assert!(digita("T", tab, "/limpar", true).unwrap());
+        let limpa = daemon::espera(Duration::from_secs(15), Duration::from_millis(100), || {
+            daemon::tela("T", tab).ok().filter(|t| !t.contains("You've hit") && t.contains("Pronto")).map(|_| ())
+        });
+        assert!(limpa.is_some(), "{}", daemon::tela("T", tab).unwrap_or_default());
         limite(&RECOMECO_BIA.to_string(), "Session allowance used up");
         assert_eq!(rodada("serviço, 1ª"), (Some("claude:ana".into()), 1, vec![]));
         assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:ana"));
