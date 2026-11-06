@@ -294,7 +294,7 @@ pub fn ler() -> Result<(Retrato, Vec<IaAba>), String> {
 }
 
 #[cfg(test)]
-mod testes {
+pub(crate) mod testes {
     use super::*;
 
     #[test]
@@ -329,7 +329,7 @@ mod testes {
         assert!(!respondeu_depois(&dir.path().join("nao-existe"), 0));
     }
 
-    fn linha(motor: Motor, ordem: &str, janelas: &[(&str, f64)]) -> Linha {
+    pub(crate) fn linha(motor: Motor, ordem: &str, janelas: &[(&str, f64)]) -> Linha {
         Linha {
             account: Conta {
                 engine: motor,

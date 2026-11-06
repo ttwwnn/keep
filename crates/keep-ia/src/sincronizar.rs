@@ -25,10 +25,12 @@ use crate::abas::{self, SEGUIR_ORDEM};
 use crate::contas::{self, Conta};
 use crate::tela::{self, Estado};
 use crate::trocar::{self, Pedido};
-use crate::{caminhos, daemon, historico, uso};
+use crate::{caminhos, daemon, historico, processos, quente, sessoes, uso};
 
 const POR_RODADA: usize = 3;
 const OCIOSA_MS: u64 = 120_000;
+/// Quanto tempo uma parada que já culpou uma conta é lembrada (s).
+const CULPAS_POR: f64 = 12.0 * 3600.0;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 struct Bloqueio {
@@ -52,6 +54,12 @@ struct Registro {
     limites: BTreeMap<String, Bloqueio>,
     esperas: BTreeMap<String, Espera>,
     alvo: Option<String>,
+    /// As paradas no limite (do transcrito ou da tela) que já culparam uma
+    /// conta (a marca, e quando). Uma parada culpa uma vez: a mesma, ainda no
+    /// fim do transcrito ou à vista, não culpa a conta nova depois de uma troca
+    /// nem bloqueia de novo a mesma conta quando o bloqueio vence (aí quem diz
+    /// é a medição).
+    culpas: BTreeMap<String, f64>,
 }
 
 fn arquivo() -> PathBuf {
@@ -60,6 +68,66 @@ fn arquivo() -> PathBuf {
 
 fn agora() -> f64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
+}
+
+/// O que o transcrito da conversa do Claude da aba diz do limite.
+/// - `Some(Some(parada))`: a conversa parou no limite da conta (a última fala, desta abertura).
+/// - `Some(None)`: a conversa não está parada no limite (andou depois, parou noutra coisa, ou a parada é de uma
+///   abertura anterior) — e aí a tela, mesmo com a frase de uma parada antiga à vista, não conta.
+/// - `None`: quem diz é a tela, como antes. O transcrito não pode ser lido (sem conversa ou sem arquivo), ou a
+///   conversa parou num limite que ele não diz se é da conta: a frase genérica de versões antigas ("You've hit
+///   your limit", que só o diálogo do limite na tela confirma), um formato novo.
+fn transcrito_da_aba(i: &abas::IaAba) -> Option<Option<sessoes::ParadaNoLimite>> {
+    let caminho = sessoes::transcrito_claude(i.conversa.as_deref()?)?;
+    let nasceu = processos::inicio_ms(i.pid)?;
+    o_que_a_fala_diz(sessoes::ultima_fala(&caminho).as_ref(), nasceu)
+}
+
+/// `transcrito_da_aba` sem o disco: a última fala da conversa e quando o processo abriu (ms). Sem fala (o
+/// transcrito ainda sem a conversa, ou num formato que não se lê) ou sem carimbo na parada, a tela decide.
+fn o_que_a_fala_diz(fala: Option<&Value>, nasceu: u64) -> Option<Option<sessoes::ParadaNoLimite>> {
+    let fala = fala?;
+    if fala.get("error").and_then(Value::as_str) != Some("rate_limit") {
+        return Some(None);
+    }
+    match sessoes::carimbo_ms(fala) {
+        0 => None,
+        quando if quando < nasceu => Some(None),
+        _ => sessoes::parada_no_limite(fala).filter(|p| p.da_conta).map(Some),
+    }
+}
+
+/// A conta que parou no limite. A parada cuja janela já recomeçou (`agora`,
+/// em segundos) acabou: de nenhuma. Depois que a conta da aba passou a valer
+/// no Claude (`vale_em`), o pedido que parou saiu por ela (`atual`). Logo
+/// depois de uma troca a quente (ou sem armazém de aba, quando a conta muda
+/// com o login global), quem diz é o recomeço da janela recusada, se casa com
+/// o medido de uma conta só; sem casar, depois da troca nenhuma leva a culpa
+/// (a medição seguinte diz) e sem armazém de aba vale a da aba.
+fn conta_que_parou(
+    p: &sessoes::ParadaNoLimite,
+    linhas: &[uso::Linha],
+    atual: Option<&str>,
+    vale_em: Option<u64>,
+    agora: f64,
+) -> Option<String> {
+    if p.recomeca.is_some_and(|fim| fim <= agora) {
+        return None;
+    }
+    if vale_em.is_some_and(|v| p.quando_ms >= v) {
+        return atual.map(str::to_string);
+    }
+    if let (Some(janela), Some(recomeca)) = (&p.janela, p.recomeca) {
+        let mut ditos = json!({});
+        ditos[janela.as_str()] = json!({ "resets_at": recomeca });
+        if let Some(c) = abas::conta_dos_limites(&ditos, linhas) {
+            return Some(c);
+        }
+    }
+    if vale_em.is_some() {
+        return None;
+    }
+    atual.map(str::to_string)
 }
 
 /// Uma rodada. Devolve o objeto da resposta (sem `versao`).
@@ -88,13 +156,19 @@ pub fn rodada() -> Value {
     let anterior: Registro = std::fs::read_to_string(arquivo()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     let mut bloqueios = anterior.limites.clone();
     bloqueios.retain(|_, b| b.ate > t);
+    let mut culpas = anterior.culpas.clone();
+    culpas.retain(|_, em| t - *em < CULPAS_POR);
     let ia = abas::das_abas(&r, &contas);
 
     // As abas que seguem a ordem, e o que as telas delas dizem.
     struct Seguidora {
         ia: abas::IaAba,
         estado: Estado,
+        /// A tela mostra o limite.
         limite: bool,
+        /// Quem parou no limite foi a conta em que a aba está (e não a de
+        /// antes de uma troca, cuja tela ainda está à vista).
+        limite_da_atual: bool,
         ociosa: bool,
         claude_aberto: bool,
         /// O Claude roda num armazém de aba: troca a quente.
@@ -107,20 +181,54 @@ pub fn rodada() -> Value {
         let (linhas_tela, limpas) = trocar::tela_de(&i.workspace, i.aba);
         let (estado, _) = tela::situacao(&prog, &linhas_tela, &limpas);
         let limite = estado != Estado::Digitado && tela::limite_na_tela(&linhas_tela);
-        if limite {
-            if let Some(atual) = i.atual.as_deref().and_then(|k| contas::achar(&contas, k)) {
+        let claude_aberto = prog == tela::Programa::Claude;
+        let vale_em = if claude_aberto { quente::conta_vale_em(i.pid) } else { None };
+        let atual = i.atual.as_deref().and_then(|k| contas::achar(&contas, k));
+        // Quem parou no limite. O transcrito, quando há, vale antes da tela: a
+        // frase muda de uma versão do Claude Code para outra, e a tela da conta
+        // que parou segue à vista depois da troca a quente para a próxima,
+        // mesmo depois que a conversa andou nela.
+        let leitura = match claude_aberto.then(|| transcrito_da_aba(&i)).flatten() {
+            // O diálogo do limite e a espera dele ("continuing automatically") só ficam à vista enquanto o Claude
+            // espera, ao contrário da frase de uma parada antiga: valem mesmo com o transcrito sem a parada.
+            Some(None) if tela::espera_limite(&linhas_tela) => None,
+            outra => outra,
+        };
+        let (culpada, marca, recomeca) = match leitura {
+            Some(Some(p)) => {
+                let marca = format!("parada|{}", p.uuid);
+                let culpada = (!culpas.contains_key(&marca))
+                    .then(|| conta_que_parou(&p, &linhas, i.atual.as_deref(), vale_em, t))
+                    .flatten()
+                    .and_then(|k| contas::achar(&contas, &k));
+                (culpada, marca, p.recomeca)
+            }
+            // A conversa andou depois da parada (o "continue", a resposta da conta nova) ou não parou no limite.
+            Some(None) => (None, String::new(), None),
+            // Sem o transcrito, a tela.
+            None if limite => {
                 let marca = format!("{}|{}|{}", historico::nascimento(&r), i.pid, tela::impressao(&linhas_tela));
-                // A mesma tela antiga não prorroga o bloqueio.
-                if bloqueios.get(&atual.key).is_none_or(|b| b.marca != marca) {
-                    bloqueios.insert(atual.key.clone(), Bloqueio { em: t, ate: t + 300.0, marca });
-                }
+                // A tela que já culpou uma conta é a de antes da troca: não culpa a conta nova, nem depois
+                // que o bloqueio da antiga venceu (a tela segue à vista enquanto ninguém digita).
+                let nova = !culpas.contains_key(&marca) && !bloqueios.values().any(|b| b.marca == marca);
+                (atual.filter(|_| nova), marca, None)
+            }
+            None => (None, String::new(), None),
+        };
+        if let Some(c) = culpada {
+            // Lembrada só quando culpou alguém: a conta da aba ainda não reconhecida culpa depois.
+            culpas.insert(marca.clone(), t);
+            // A mesma parada não prorroga o bloqueio, que acaba no máximo quando a janela recusada recomeça.
+            if bloqueios.get(&c.key).is_none_or(|b| b.marca != marca) {
+                let ate = recomeca.map_or(t + 300.0, |fim| fim.min(t + 300.0));
+                bloqueios.insert(c.key.clone(), Bloqueio { em: t, ate, marca });
             }
         }
+        let limite_da_atual = culpada.is_some_and(|c| atual.is_some_and(|a| a.key == c.key));
         let ociosa = a.info.last_active != 0
             && crate::contas::donos::agora_ms().saturating_sub(a.info.last_active) >= OCIOSA_MS;
-        let claude_aberto = prog == tela::Programa::Claude;
-        let armazem_proprio = claude_aberto && crate::quente::registro_do_processo(i.pid).is_some();
-        seguidoras.push(Seguidora { ia: i, estado, limite, ociosa, claude_aberto, armazem_proprio });
+        let armazem_proprio = vale_em.is_some();
+        seguidoras.push(Seguidora { ia: i, estado, limite, limite_da_atual, ociosa, claude_aberto, armazem_proprio });
     }
 
     let livre = |c: &Conta| -> bool {
@@ -142,7 +250,7 @@ pub fn rodada() -> Value {
         let i = &s.ia;
         let refe = |motivo: &str, detalhe: &str| json!({ "ws": i.workspace, "aba": i.aba, "motivo": motivo, "detalhe": detalhe });
         let atual = i.atual.as_deref().and_then(|k| contas::achar(&contas, k));
-        let atual_livre = atual.is_some_and(|c| livre(c)) && !s.limite;
+        let atual_livre = atual.is_some_and(|c| livre(c)) && !s.limite_da_atual;
         let Some(alvo) = alvo else {
             if !atual_livre {
                 pendentes.push(refe("todas-no-limite", ""));
@@ -218,7 +326,7 @@ pub fn rodada() -> Value {
             }
         }
     }
-    let novo = Registro { limites: bloqueios, esperas, alvo: alvo.map(|c| c.order_key.clone()) };
+    let novo = Registro { limites: bloqueios, esperas, alvo: alvo.map(|c| c.order_key.clone()), culpas };
     if let Ok(texto) = serde_json::to_vec_pretty(&novo) {
         let tmp = arquivo().with_extension("json.tmp");
         if std::fs::write(&tmp, texto).is_ok() {
@@ -238,4 +346,81 @@ pub fn rodada() -> Value {
 /// `keep ia sincronizar`.
 pub fn cli() -> i32 {
     crate::cli::responde(rodada())
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+    use crate::abas::testes::linha;
+    use crate::contas::Motor;
+
+    #[test]
+    fn o_transcrito_cala_a_tela_so_quando_a_conversa_nao_esta_parada() {
+        let fala = |erro: Option<&str>, texto: &str, cota: Option<&str>| {
+            let mut v = json!({ "type": "assistant", "uuid": "u", "timestamp": "2026-11-04T18:00:00Z",
+                "message": { "content": [{ "type": "text", "text": texto }] } });
+            if let Some(e) = erro {
+                v["error"] = json!(e);
+            }
+            if let Some(tipo) = cota {
+                v["quotaLimits"] = json!({ "status": "rejected", "resetsAt": 1_793_833_200, "rateLimitType": tipo });
+            }
+            v
+        };
+        let abriu = sessoes::carimbo_ms(&json!({ "timestamp": "2026-11-04T17:00:00Z" }));
+        let diz = |v: &Value| o_que_a_fala_diz(Some(v), abriu).map(|p| p.map(|p| p.janela));
+        // Parada no limite da conta: o transcrito diz.
+        assert_eq!(diz(&fala(Some("rate_limit"), "x", Some("five_hour"))), Some(Some(Some("five_hour".into()))));
+        assert_eq!(diz(&fala(Some("rate_limit"), "You've hit your weekly limit · resets 8pm", None)), Some(Some(None)));
+        // A conversa não está parada no limite: a tela não conta.
+        assert_eq!(diz(&fala(None, "Feito.", None)), Some(None));
+        assert_eq!(diz(&fala(Some("server_error"), "API Error: Connection error.", None)), Some(None));
+        let depois = sessoes::carimbo_ms(&json!({ "timestamp": "2026-11-04T19:00:00Z" }));
+        assert_eq!(o_que_a_fala_diz(Some(&fala(Some("rate_limit"), "x", Some("five_hour"))), depois), Some(None), "de outra abertura");
+        // Parada num limite que o transcrito não diz se é da conta: a tela decide, como antes.
+        assert_eq!(diz(&fala(Some("rate_limit"), "You've hit your limit · resets 5pm", None)), None);
+        assert_eq!(diz(&fala(Some("rate_limit"), "Usage limit reached · resets 5pm", None)), None);
+        assert_eq!(diz(&fala(Some("rate_limit"), "You've hit your Opus limit · resets 8pm", Some("seven_day_opus"))), None);
+        // Sem fala, ou a parada sem carimbo (não se sabe de que abertura): a tela decide.
+        assert_eq!(o_que_a_fala_diz(None, abriu), None);
+        let mut sem_carimbo = fala(Some("rate_limit"), "x", Some("five_hour"));
+        sem_carimbo.as_object_mut().unwrap().remove("timestamp");
+        assert_eq!(o_que_a_fala_diz(Some(&sem_carimbo), abriu), None);
+    }
+
+    #[test]
+    fn a_culpa_e_da_conta_que_parou() {
+        let linhas = vec![
+            linha(Motor::Claude, "claude:ana", &[("5h", 1_900_000_000.0)]),
+            linha(Motor::Claude, "claude:bia", &[("5h", 1_900_003_600.0)]),
+        ];
+        let parada = |recomeca: Option<f64>, quando_ms: u64| sessoes::ParadaNoLimite {
+            uuid: "u".into(),
+            quando_ms,
+            janela: Some("five_hour".into()),
+            recomeca,
+            da_conta: true,
+        };
+        const ANTES: f64 = 1_700_000_000.0; // antes de todos os recomeços
+        const DA_ANA: Option<f64> = Some(1_900_000_060.0);
+        // A aba está na Bia; a conta dela vale no Claude desde 50_000 ms.
+        let culpa = |p: sessoes::ParadaNoLimite, vale_em: Option<u64>, agora: f64| {
+            conta_que_parou(&p, &linhas, Some("claude:bia"), vale_em, agora)
+        };
+        // Depois que a conta da aba vale, a parada é dela, diga o recomeço o que disser.
+        assert_eq!(culpa(parada(DA_ANA, 90_000), Some(50_000), ANTES).as_deref(), Some("claude:bia"));
+        assert_eq!(culpa(parada(None, 50_000), Some(50_000), ANTES).as_deref(), Some("claude:bia"));
+        // Logo depois da troca: o recomeço dito casa com o medido de uma conta, e é ela.
+        assert_eq!(culpa(parada(DA_ANA, 10_000), Some(50_000), ANTES).as_deref(), Some("claude:ana"));
+        // ...e sem casar, nenhuma: o pedido pode ter saído pela conta de antes.
+        assert_eq!(culpa(parada(None, 49_999), Some(50_000), ANTES), None);
+        assert_eq!(culpa(parada(Some(1_800_000_000.0), 10_000), Some(50_000), ANTES), None);
+        // Sem armazém de aba (a conta muda com o login global): o recomeço, senão a da aba.
+        assert_eq!(culpa(parada(DA_ANA, 90_000), None, ANTES).as_deref(), Some("claude:ana"));
+        assert_eq!(culpa(parada(None, 90_000), None, ANTES).as_deref(), Some("claude:bia"));
+        // A janela recusada já recomeçou: a parada acabou, de nenhuma.
+        assert_eq!(culpa(parada(DA_ANA, 90_000), None, 1_900_000_060.0), None);
+        assert_eq!(culpa(parada(DA_ANA, 90_000), Some(50_000), 1_900_000_061.0), None);
+        assert_eq!(culpa(parada(DA_ANA, 90_000), None, 1_900_000_059.0).as_deref(), Some("claude:ana"));
+    }
 }

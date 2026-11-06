@@ -4,6 +4,7 @@
 //! digitar e confirmar com Enter vira fala da pessoa no transcrito, seguida de uma resposta sem erro.
 //!
 //!   FALSO_ERRO=login|rede|limite   a queda (login, se nada)
+//!   FALSO_RECOMECO=<segundos unix>  no limite, a recusa da janela de 5 h como o 2.1.318 a grava (quotaLimits)
 //!   FALSO_RASCUNHO=<texto>         a caixa já começa com isto digitado
 //!   FALSO_OCUPADO=1                o rodapé diz "esc to interrupt"
 
@@ -103,6 +104,9 @@ mod parado {
             if let Some(e) = erro {
                 v["error"] = serde_json::json!(e);
                 v["isApiErrorMessage"] = serde_json::json!(true);
+                if let Some(r) = std::env::var("FALSO_RECOMECO").ok().and_then(|r| r.parse::<f64>().ok()) {
+                    v["quotaLimits"] = serde_json::json!({ "status": "rejected", "resetsAt": r, "rateLimitType": "five_hour" });
+                }
             }
             let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&arq).unwrap();
             let _ = writeln!(f, "{v}");

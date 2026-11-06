@@ -134,7 +134,7 @@ pub fn importar(p: &Pedido) -> Result<Value, String> {
                 notas.push(format!("conversa do {} não vem: volta como shell", if ia.agente.is_empty() { "?" } else { &ia.agente }));
             } else if vivas.contains(id) {
                 notas.push(format!("{} já aberta aqui: o Keep não a duplica", curto(id)));
-            } else if !p.disponiveis.contains(id) && crate::continuar::transcrito(id).is_none() {
+            } else if !p.disponiveis.contains(id) && keep_ia::sessoes::transcrito_claude(id).is_none() {
                 b.ia = None;
                 notas.push(format!("{} sem transcrito aqui: volta como shell", curto(id)));
             } else if !ia.conta.is_empty() && ia.conta != "claude:ordem" {

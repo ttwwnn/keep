@@ -395,6 +395,14 @@ pub fn espera_limite(linhas: &[String]) -> bool {
         && texto.contains("continuing automatically")
 }
 
+/// As últimas `n` linhas até a última com texto: numa conversa curta numa aba
+/// alta, o fim da conversa fica no alto da tela, acima de linhas em branco.
+/// As em branco do meio contam, como sempre.
+fn fim_da_conversa(linhas: &[String], n: usize) -> &[String] {
+    let fim = linhas.iter().rposition(|l| !l.trim().is_empty()).map_or(0, |i| i + 1);
+    &linhas[fim.saturating_sub(n)..fim]
+}
+
 /// Os avisos de limite do CLI no rodapé (nunca uma menção qualquer a
 /// "limit" na conversa).
 pub fn limite_na_tela(linhas: &[String]) -> bool {
@@ -403,14 +411,14 @@ pub fn limite_na_tela(linhas: &[String]) -> bool {
         r"^\s*(?:[■⎿●⚠]\s*)?(?:You've hit your (?:usage|session|weekly) limit|Usage limit reached)\b",
         &R,
     );
-    linhas[linhas.len().saturating_sub(12)..].iter().any(|l| aviso.is_match(l)) || espera_limite(linhas)
+    fim_da_conversa(linhas, 12).iter().any(|l| aviso.is_match(l)) || espera_limite(linhas)
 }
 
 /// Uma impressão das últimas linhas, para não contar a mesma tela de
 /// limite duas vezes.
 pub fn impressao(linhas: &[String]) -> String {
     use sha2::{Digest, Sha256};
-    let fim = linhas[linhas.len().saturating_sub(12)..].join("\n");
+    let fim = fim_da_conversa(linhas, 12).join("\n");
     Sha256::digest(fim.as_bytes()).iter().take(12).map(|b| format!("{b:02x}")).collect()
 }
 
@@ -498,5 +506,23 @@ mod testes {
         let r = l("● ok\n⚠ Usage limit reached · resets 3am\ncontinuing automatically · esc to cancel");
         assert!(espera_limite(&r));
         assert!(!limite_na_tela(&l("● falamos do limit da conta\n❯ ")));
+    }
+
+    #[test]
+    fn o_limite_no_alto_de_uma_aba_alta() {
+        // Conversa curta numa aba de 40 linhas: o aviso fica no alto, e o fim da tela é branco.
+        let alta = |aviso: &str| {
+            let mut t = l(&format!("● Rodei.\n  ⎿  {aviso}\n──────\n❯ \n──────\n  ? for shortcuts"));
+            t.extend(std::iter::repeat_n(String::new(), 34));
+            t
+        };
+        assert!(limite_na_tela(&alta("You've hit your session limit · resets 5pm")));
+        assert!(!limite_na_tela(&alta("Pronto.")));
+        // E duas paradas diferentes nunca dão a mesma impressão (a do branco).
+        assert_ne!(impressao(&alta("You've hit your session limit · resets 5pm")), impressao(&alta("You've hit your weekly limit · resets 8pm")));
+        // As linhas em branco do meio contam: a frase 13 linhas acima do fim da conversa já saiu da janela.
+        let andou = l("  ⎿  You've hit your session limit · resets 5pm\n\n> continue: o limite de uso já liberou\n\n● Feito.\n\nlinha\n\nlinha\n\n──────\n❯ \n──────");
+        assert_eq!(andou.len(), 13);
+        assert!(!limite_na_tela(&andou));
     }
 }

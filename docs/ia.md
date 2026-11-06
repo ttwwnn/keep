@@ -391,6 +391,31 @@ para ela depois de 2 min sem uso. Com o kit, a sincronização não faz nada, e 
 de armazém próprio que seguem a ordem para a conta da `.ativa`. No máximo 3 abas por rodada; uma aba que recusou espera 30 s (5 min se for trabalho em
 segundo plano). Uma janela cheia cujo recomeço já passou não conta.
 
+Quem parou no limite (o que bloqueia uma conta por 5 min, ou até a janela recusada recomeçar, ou até uma medição
+mais nova):
+
+- O transcrito manda, quando ele existe: a última fala da conversa principal (depois da abertura do processo) é a
+  de erro, `"error": "rate_limit"`, com o que o serviço disse em `quotaLimits` (`status: "rejected"`, a janela da
+  conta recusada, `five_hour` ou `seven_day`, e `resetsAt`, quando ela recomeça; Claude Code 2.1.318) ou, nas
+  versões que não gravam isso, com a frase de sessão, semana ou uso. A frase da tela muda de uma versão para
+  outra; o limite de um modelo só (`seven_day_opus`, o do Fable) não tira a conta da fila e fica de fora, como
+  antes. A conversa que andou depois da parada (o "continue", a resposta da conta nova) não está parada: a frase
+  antiga, ainda à vista, não conta. A parada num limite que o transcrito não diz se é da conta (a frase genérica
+  "You've hit your limit" das versões antigas, que só o diálogo do limite confirma; um formato novo) fica com a
+  tela, como antes. E o diálogo do limite ou a espera dele no rodapé ("continuing automatically"), que só ficam à
+  vista enquanto o Claude espera, valem mesmo com o fim do transcrito sem a parada.
+- A culpa: a parada cuja janela já recomeçou acabou, e não é de nenhuma. A de quando a conta da aba já valia no
+  Claude (`quente::conta_vale_em`: um cache de login, 32 s, depois da última gravação do armazém com o Claude
+  aberto; desde a abertura, se a gravação veio antes) é dela. Logo depois da troca a quente, o pedido pode ter
+  saído pela conta de antes: decide o recomeço dito, se casa com o medido no `uso` de uma conta só (a mesma regra
+  da `provada`); sem casar, nenhuma leva a culpa e a medição seguinte diz. A aba que parou na conta de antes da
+  troca já saiu dela: fica onde está, e o `keep continuar` a retoma.
+- Uma parada culpa uma vez só (lembrada por 12 h, em `ia-prioridade.json`): a mesma, ainda no fim do transcrito
+  ou à vista, não culpa a conta nova depois de uma troca, nem bloqueia de novo a mesma conta quando o bloqueio
+  vence; daí em diante, quem diz é a medição.
+- Sem o transcrito, quem diz é a tela, como antes, com a mesma regra. A tela conta as 12 últimas linhas até o fim
+  da conversa: numa conversa curta numa aba alta, o aviso fica no alto, acima de linhas em branco.
+
 ## Lixeira de worktrees
 
 Ao fechar uma aba, as worktrees git que a conversa dela criou vão para a Lixeira (Lixeira do Windows),

@@ -125,10 +125,10 @@ pub fn vista(texto: &str) -> Option<(String, u32)> {
 /// aba (o app a redesenha) nem o arquivo (o Remote Control grava nele sem conversa nenhuma) dizem isso; sem
 /// fala com hora, vale o arquivo.
 fn ultima_fala_ms(conversa: &str) -> u64 {
-    let Some(caminho) = crate::continuar::transcrito(conversa) else { return 0 };
+    let Some(caminho) = keep_ia::sessoes::transcrito_claude(conversa) else { return 0 };
     let mut quando = 0;
-    crate::continuar::falas_de_tras(&caminho, |d| {
-        quando = crate::continuar::carimbo_ms(d);
+    keep_ia::sessoes::falas_de_tras(&caminho, |d| {
+        quando = keep_ia::sessoes::carimbo_ms(d);
         false
     });
     if quando == 0 {

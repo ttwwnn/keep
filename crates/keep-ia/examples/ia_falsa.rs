@@ -15,6 +15,12 @@
 //! (que guarda o que leu por 30 s), e diz o token de acesso que achou
 //! (`conta=<token>`): é como os testes veem a troca de conta a quente. Só
 //! tokens de teste aparecem inteiros; um comprido sai pela impressão.
+//!
+//! `/limite <recomeço> <frase>` finge a parada no limite de uso: a frase na
+//! tela e, no fim do transcrito, a fala de erro como o Claude Code 2.1.318 a
+//! grava (`error: rate_limit` e a recusa da janela de 5 h, com o recomeço em
+//! segundos unix). Com `-` no recomeço, só a frase, como as versões antigas. `/espera` mostra a espera do
+//! limite no rodapé ("continuing automatically"), sem gravar nada; `/limpar` limpa a tela.
 
 #[cfg(unix)]
 fn main() {
@@ -159,6 +165,7 @@ mod falsa {
             );
         };
         anota("idle");
+        let transcrito = casa().join(".claude/projects/-falso").join(format!("{id}.jsonl"));
         // A conversa, com um pedido, onde cada um a guarda.
         if codex {
             let home = std::env::var("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|_| casa().join(".codex"));
@@ -172,12 +179,10 @@ mod falsa {
                 );
             }
         } else {
-            let dir = casa().join(".claude/projects/-falso");
-            let _ = std::fs::create_dir_all(&dir);
-            let arq = dir.join(format!("{id}.jsonl"));
-            if !arq.exists() {
+            let _ = std::fs::create_dir_all(transcrito.parent().unwrap());
+            if !transcrito.exists() {
                 let _ = std::fs::write(
-                    &arq,
+                    &transcrito,
                     "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"pedido feito no claude\"}}\n",
                 );
             }
@@ -236,8 +241,48 @@ mod falsa {
                             caixa(&mut out, "\r\n✻ Pensando… (esc to interrupt)");
                         }
                         outro if codex => caixa(&mut out, &format!("\r\n> {outro}\r\n● Feito.")),
-                        // A resposta diz o pedido: cada uma se acha na tela.
-                        outro => caixa(&mut out, &format!("\r\n> {outro}\r\n● Feito: {outro}, conta={}", conta_no_armazem())),
+                        // A espera do limite no rodapé, como o 2.1.31x a mostra, sem nada no transcrito.
+                        "/espera" if !codex => {
+                            let linha = "─".repeat(30);
+                            let _ = write!(
+                                out,
+                                "\r\n{linha}\r\n{marca} \r\n{linha}\r\n⚠ Usage limit reached · resets 5pm\r\ncontinuing automatically · esc to cancel"
+                            );
+                            let _ = out.flush();
+                        }
+                        // Limpa a tela (o que estava à vista some; o transcrito fica).
+                        "/limpar" => {
+                            let _ = write!(out, "\x1b[2J\x1b[H");
+                            caixa(&mut out, "● Pronto.");
+                        }
+                        outro if outro.starts_with("/limite ") => {
+                            let (recomeco, frase) = outro["/limite ".len()..].split_once(' ').unwrap_or(("-", ""));
+                            let mut fala = serde_json::json!({
+                                "type": "assistant", "uuid": uuid_novo(), "isApiErrorMessage": true, "error": "rate_limit",
+                                "timestamp": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                                "message": {"role": "assistant", "content": [{"type": "text", "text": frase}]}
+                            });
+                            if let Ok(r) = recomeco.parse::<f64>() {
+                                fala["quotaLimits"] = serde_json::json!({"status": "rejected", "resetsAt": r, "rateLimitType": "five_hour"});
+                            }
+                            if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&transcrito) {
+                                let _ = writeln!(f, "{fala}");
+                            }
+                            caixa(&mut out, &format!("\r\n  ⎿  {frase}"));
+                        }
+                        // A resposta diz o pedido: cada uma se acha na tela. A conversa anda também no
+                        // transcrito, como o de verdade grava: a fala da pessoa e a resposta.
+                        outro => {
+                            let conta = conta_no_armazem();
+                            if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&transcrito) {
+                                let quando = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                                let pessoa = serde_json::json!({"type": "user", "timestamp": quando, "message": {"role": "user", "content": outro}});
+                                let resposta = serde_json::json!({"type": "assistant", "timestamp": quando,
+                                    "message": {"role": "assistant", "content": [{"type": "text", "text": format!("Feito: {outro}")}]}});
+                                let _ = writeln!(f, "{pessoa}\n{resposta}");
+                            }
+                            caixa(&mut out, &format!("\r\n> {outro}\r\n● Feito: {outro}, conta={conta}"));
+                        }
                     }
                 }
                 b => {
