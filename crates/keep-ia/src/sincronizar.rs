@@ -73,13 +73,19 @@ fn parada_da_aba(i: &abas::IaAba) -> Option<sessoes::ParadaNoLimite> {
 /// janela recusada casa com o medido de uma conta só. Senão, a da aba (`atual`)
 /// — salvo quando o armazém dela foi regravado menos de um cache de login
 /// antes da parada (`vale_em`): o pedido pode ter saído ainda pela conta de
-/// antes, e nenhuma leva a culpa (a medição seguinte diz).
+/// antes, e nenhuma leva a culpa (a medição seguinte diz). A parada cuja
+/// janela já recomeçou (`agora`, em segundos) acabou: de nenhuma, e a tela
+/// dela, ainda à vista, não conta.
 fn conta_que_parou(
     p: &sessoes::ParadaNoLimite,
     linhas: &[uso::Linha],
     atual: Option<&str>,
     vale_em: Option<u64>,
+    agora: f64,
 ) -> Option<String> {
+    if p.recomeca.is_some_and(|fim| fim <= agora) {
+        return None;
+    }
     if let (Some(janela), Some(recomeca)) = (&p.janela, p.recomeca) {
         let mut ditos = json!({});
         ditos[janela.as_str()] = json!({ "resets_at": recomeca });
@@ -151,7 +157,7 @@ pub fn rodada() -> Value {
         // depois da troca a quente para a próxima.
         let (culpada, marca, recomeca) = match claude_aberto.then(|| parada_da_aba(&i)).flatten() {
             Some(p) => (
-                conta_que_parou(&p, &linhas, i.atual.as_deref(), vale_em).and_then(|k| contas::achar(&contas, &k)),
+                conta_que_parou(&p, &linhas, i.atual.as_deref(), vale_em, t).and_then(|k| contas::achar(&contas, &k)),
                 format!("parada|{}", p.uuid),
                 p.recomeca,
             ),
@@ -311,15 +317,21 @@ mod testes {
             janela: Some("five_hour".into()),
             recomeca,
         };
-        let culpa = |p: sessoes::ParadaNoLimite, vale_em: Option<u64>| conta_que_parou(&p, &linhas, Some("claude:bia"), vale_em);
+        const ANTES: f64 = 1_700_000_000.0; // antes de todos os recomeços
+        let culpa = |p: sessoes::ParadaNoLimite, vale_em: Option<u64>, agora: f64| {
+            conta_que_parou(&p, &linhas, Some("claude:bia"), vale_em, agora)
+        };
         // O recomeço dito casa com o medido de uma conta: é ela, mesmo com a aba noutra e logo depois da troca.
-        assert_eq!(culpa(parada(Some(1_900_000_060.0), 10_000), Some(50_000)).as_deref(), Some("claude:ana"));
+        assert_eq!(culpa(parada(Some(1_900_000_060.0), 10_000), Some(50_000), ANTES).as_deref(), Some("claude:ana"));
         // Sem recomeço que case, a conta da aba...
-        assert_eq!(culpa(parada(Some(1_800_000_000.0), 90_000), Some(50_000)).as_deref(), Some("claude:bia"));
-        assert_eq!(culpa(parada(None, 90_000), None).as_deref(), Some("claude:bia"));
-        assert_eq!(culpa(parada(None, 50_000), Some(50_000)).as_deref(), Some("claude:bia"));
+        assert_eq!(culpa(parada(Some(1_800_000_000.0), 90_000), Some(50_000), ANTES).as_deref(), Some("claude:bia"));
+        assert_eq!(culpa(parada(None, 90_000), None, ANTES).as_deref(), Some("claude:bia"));
+        assert_eq!(culpa(parada(None, 50_000), Some(50_000), ANTES).as_deref(), Some("claude:bia"));
         // ...salvo a parada de antes de o Claude pedir pela conta nova (o cache de login): de nenhuma.
-        assert_eq!(culpa(parada(None, 49_999), Some(50_000)), None);
-        assert_eq!(culpa(parada(Some(1_800_000_000.0), 10_000), Some(50_000)), None);
+        assert_eq!(culpa(parada(None, 49_999), Some(50_000), ANTES), None);
+        assert_eq!(culpa(parada(Some(1_800_000_000.0), 10_000), Some(50_000), ANTES), None);
+        // A janela recusada já recomeçou: a parada acabou, de nenhuma (nem da que o recomeço diz).
+        assert_eq!(culpa(parada(Some(1_900_000_060.0), 90_000), None, 1_900_000_060.0), None);
+        assert_eq!(culpa(parada(Some(1_900_000_060.0), 90_000), None, 1_900_000_059.0).as_deref(), Some("claude:ana"));
     }
 }
