@@ -680,6 +680,15 @@ pub fn rodada(seco: bool, status: bool) -> Result<Value, String> {
             vistas.push(json!({ "aba": c.rotulo, "situacao": texto }));
             continue;
         }
+        // O Claude Code 2.1.312+ não escreve mais "esc to interrupt": quem diz que ele trabalha é a sessão dele.
+        // Sem isto, o "continue" ia para a caixa de um Claude trabalhando (cuja última fala principal ainda era a
+        // parada) e ficava lá sem Enter, dobrado na rodada seguinte (Brokerfy#1, 06/11/2026).
+        if keep_ia::sessoes::sessao_claude(c.pid).is_some_and(|s| s.status == "busy") {
+            let texto = "parada no transcrito, mas a sessão diz que o Claude trabalha";
+            aviso(r, "trabalhando", texto.to_string());
+            vistas.push(json!({ "aba": c.rotulo, "situacao": texto }));
+            continue;
+        }
         let (pode, motivo, so_enter) = tela_segura(&tela, &erro);
         if !pode {
             aviso(r, &format!("tela:{motivo}"), format!("parada, mas não digito: {motivo}"));
