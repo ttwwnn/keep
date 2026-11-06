@@ -184,10 +184,12 @@ pub fn rodada() -> Value {
                 // A tela que já culpou uma conta é a de antes da troca: não culpa a conta nova, nem depois
                 // que o bloqueio da antiga venceu (a tela segue à vista enquanto ninguém digita).
                 let nova = !telas.contains_key(&marca) && !bloqueios.values().any(|b| b.marca == marca);
-                if nova {
+                let culpada = atual.filter(|_| nova);
+                // Lembrada só quando culpou alguém: a conta da aba ainda não reconhecida culpa depois.
+                if culpada.is_some() {
                     telas.insert(marca.clone(), t);
                 }
-                (atual.filter(|_| nova), marca, None)
+                (culpada, marca, None)
             }
             None => (None, String::new(), None),
         };

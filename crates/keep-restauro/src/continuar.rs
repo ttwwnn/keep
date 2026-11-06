@@ -630,7 +630,12 @@ pub fn rodada(seco: bool, status: bool) -> Result<Value, String> {
             vistas.push(json!({ "aba": c.rotulo, "situacao": "aba presa a uma conta: o login dela só volta pelo menu da aba" }));
             continue;
         }
-        let chave = (erro.tipo, if erro.tipo == Tipo::Rede { None } else { fixa.clone() });
+        // A porta do limite é de cada conversa (o processo e a parada dele); a do login, de cada armazém; a da rede, uma.
+        let chave = (erro.tipo, match erro.tipo {
+            Tipo::Rede => None,
+            Tipo::Limite => Some(format!("pid:{}", c.pid)),
+            Tipo::Login => fixa.clone(),
+        });
         let (boa, porque) = portas
             .entry(chave)
             .or_insert_with(|| match erro.tipo {

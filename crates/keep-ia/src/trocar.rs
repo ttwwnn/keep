@@ -1265,6 +1265,19 @@ mod ponta_a_ponta {
         std::fs::remove_file(crate::sessoes::transcrito_claude(&conversa).expect("o transcrito")).unwrap();
         limpa_a_tela();
         limite("-", "You've hit your session limit - resets 5pm");
+        // Com a conta da aba ainda não reconhecida, a tela não culpa ninguém, e não fica lembrada por isso.
+        let estado = caminhos::abas().join("estado.json");
+        let original = std::fs::read_to_string(&estado).unwrap();
+        let mut sumida: Value = serde_json::from_str(&original).unwrap();
+        for r in sumida["abas"].as_object_mut().unwrap().values_mut().filter(|r| r["aba"] == json!(tab)) {
+            r["conta"] = json!("claude:sumida");
+            r["dono"] = json!("u-sumida");
+        }
+        std::fs::write(&estado, sumida.to_string()).unwrap();
+        assert_eq!(rodada("tela, conta desconhecida").0, Some("claude:ana".into()));
+        std::fs::write(&estado, &original).unwrap();
+        assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:ana"));
+        // Reconhecida a conta, a mesma tela culpa a Ana, e a aba passa à Bia.
         assert_eq!(rodada("tela, 1ª"), (Some("claude:bia".into()), 1, vec![]));
         assert_eq!(rodada("tela, 2ª"), (Some("claude:bia".into()), 0, vec![]));
         // Nem depois que o bloqueio da Ana venceu: a tela que já culpou uma conta fica lembrada.

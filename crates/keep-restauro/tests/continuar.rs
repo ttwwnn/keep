@@ -1,9 +1,10 @@
 //! O `keep continuar` de verdade, num daemon do próprio teste, com o Claude parado de mentira
-//! (`cargo build -p keep-restauro --examples`) em cinco abas: duas paradas que podem receber o
-//! "continue" (login, rede), uma com rascunho na caixa, uma ocupada e uma parada no limite logo depois
-//! de a conta dela trocar a quente. Enquanto o login e a rede não voltam, nada é digitado; quando
-//! voltam, só as duas recebem, a mensagem entra no transcrito, e a rodada seguinte não digita de novo.
-//! A do limite espera o Claude passar a pedir pela conta nova (o cache de login dele).
+//! (`cargo build -p keep-restauro --examples`) em sete abas: duas paradas que podem receber o
+//! "continue" (login, rede), uma com rascunho na caixa, uma ocupada e três paradas no limite. Enquanto o
+//! login e a rede não voltam, nada é digitado; quando voltam, só as duas recebem, a mensagem entra no
+//! transcrito, e a rodada seguinte não digita de novo. No limite: a que acabou de trocar de conta a
+//! quente espera o Claude passar a pedir pela conta nova (o cache de login dele); a que o serviço disse
+//! quando recomeça espera o recomeço; e a porta de uma não vale para a outra.
 #![cfg(unix)]
 
 use std::io::{Read, Write};
@@ -56,6 +57,22 @@ fn api_falsa() -> String {
     format!("http://127.0.0.1:{porta}/api/hello")
 }
 
+/// O consumo do Claude de mentira: a sessão de 5 h cheia, em toda conta.
+fn uso_cheio() -> String {
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let porta = l.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for c in l.incoming().flatten() {
+            let mut c = c;
+            let mut buf = [0u8; 4096];
+            let _ = c.read(&mut buf);
+            let corpo = r#"{"five_hour":{"utilization":100,"resets_at":"2099-01-01T00:00:00+00:00"},"seven_day":{"utilization":10}}"#;
+            let _ = write!(c, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{corpo}", corpo.len());
+        }
+    });
+    format!("http://127.0.0.1:{porta}/claude")
+}
+
 fn situacao<'a>(r: &'a Value, aba: &str) -> &'a str {
     r["conversas"].as_array().unwrap().iter().find(|c| c["aba"] == aba).and_then(|c| c["situacao"].as_str()).unwrap_or("(não vista)")
 }
@@ -87,6 +104,8 @@ fn so_a_aba_parada_e_segura_recebe_o_continue_quando_a_causa_volta() {
         std::env::set_var("KEEP_CONTINUAR_OCIOSO_S", "0");
         // a rede "caída": nada escuta nesta porta
         std::env::set_var("KEEP_CONTINUAR_SONDA", "http://127.0.0.1:9/api/hello");
+        // o consumo nunca vai à rede de verdade
+        std::env::set_var("KEEP_IA_CLAUDE_URL", uso_cheio());
         std::env::set_var("SHELL", "/bin/sh");
         // A conta da aba de quem roda os testes (o Claude dela num armazém de
         // login próprio) não passa para as abas e IAs falsas do teste.
@@ -122,6 +141,10 @@ fn so_a_aba_parada_e_segura_recebe_o_continue_quando_a_causa_volta() {
         "pasta": armazem, "conta": "claude:outra", "dono": "u-outra", "escolha": "claude:ordem", "ws": "C", "aba": limite,
         "em": keep_restauro::agora_ms() + 600_000 } } });
     std::fs::write(abas.join("estado.json"), estado.to_string()).unwrap();
+    // No limite no login global: uma com o recomeço que o serviço disse (daqui a 1 h), outra sem.
+    let ate = keep_restauro::agora_ms() / 1000 + 3600;
+    let limite_ate = abre(&format!("FALSO_ERRO=limite FALSO_RECOMECO={ate}"));
+    let limite_sem = abre("FALSO_ERRO=limite");
     let rot = |a: u32| format!("C#{a}");
     // o erro precisa de 5 s de idade
     std::thread::sleep(Duration::from_millis(5500));
@@ -132,6 +155,8 @@ fn so_a_aba_parada_e_segura_recebe_o_continue_quando_a_causa_volta() {
     assert!(situacao(&r, &rot(login)).contains("o login ainda não voltou"), "{r:#}");
     assert!(situacao(&r, &rot(rede)).contains("a rede ainda não voltou"), "{r:#}");
     assert!(situacao(&r, &rot(limite)).contains("a conta nova da aba vale no Claude em"), "{r:#}");
+    assert!(situacao(&r, &rot(limite_ate)).contains("a janela recusada recomeça"), "{r:#}");
+    assert!(situacao(&r, &rot(limite_sem)).contains("não sei qual conta a aba usa"), "a porta da outra não vale aqui: {r:#}");
 
     // ---- voltaram: no seco, diz o que faria e não digita
     std::fs::write(
@@ -157,6 +182,8 @@ fn so_a_aba_parada_e_segura_recebe_o_continue_quando_a_causa_volta() {
     assert!(!tela_tem("C", rascunho, "Retomado", 1));
     assert!(!tela_tem("C", ocupada, "Retomado", 1));
     assert!(!tela_tem("C", limite, "Retomado", 1), "o continue sairia pela conta de antes");
+    assert!(situacao(&r, &rot(limite_ate)).contains("a janela recusada recomeça"), "{r:#}");
+    assert!(situacao(&r, &rot(limite_sem)).contains("a conta da aba segue no limite"), "{r:#}");
 
     // ---- a conversa andou: nada em dobro
     let r = continuar::rodada(false, false).unwrap();
