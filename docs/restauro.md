@@ -242,6 +242,9 @@ parou." quando a causa volta.
   de uma troca a quente, o cache de login dele (32 s desde a gravação do
   armazém da aba). Antes disso o "continue" sairia pela conta anterior, voltaria
   no limite e gastaria uma das tentativas, com 2 min até a próxima (29/10/2026).
+  A parada da própria conta em que a aba está espera, antes, o recomeço que o
+  serviço disse da janela recusada: a medição pode ter até 5 min e ainda dizer
+  folga.
 - O limite é a recusa de uma janela da conta como o serviço a gravou junto da
   fala de erro (`quotaLimits`, docs/ia.md "Seguir a ordem"), ou, nas versões
   que não a gravam, a frase "You've hit your … limit".

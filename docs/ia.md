@@ -394,17 +394,23 @@ segundo plano). Uma janela cheia cujo recomeço já passou não conta.
 Quem parou no limite (o que bloqueia uma conta por 5 min, ou até a janela recusada recomeçar, ou até uma medição
 mais nova):
 
-- Vale primeiro o que o serviço disse, gravado no transcrito junto da fala de erro: `"error": "rate_limit"` com
-  `quotaLimits` (`status: "rejected"`, a janela da conta recusada, `five_hour` ou `seven_day`, e `resetsAt`, quando
-  ela recomeça; Claude Code 2.1.318). A frase da tela muda de uma versão para outra; o limite de um modelo só
-  (`seven_day_opus`, o do Fable) não tira a conta da fila e fica de fora, como antes.
-- A culpa é da conta cujo recomeço medido no `uso` casa com o dito (a mesma regra da `provada`); sem casar, da
-  conta da aba — salvo a parada de menos de um cache de login (32 s) depois da última gravação do armazém dela, que
-  pode ter saído ainda pela conta anterior: nenhuma leva a culpa, e a medição seguinte diz. A aba que parou na conta
-  de antes da troca a quente já saiu dela: fica onde está, e o `keep continuar` a retoma.
-- Sem a recusa gravada (versões que não a gravam), quem diz é a tela, como antes; a tela que já bloqueou uma conta,
-  ainda à vista depois da troca a quente, não culpa a conta nova. A tela conta pelas linhas com texto: numa conversa
-  curta numa aba alta, o aviso fica no alto, acima de linhas em branco.
+- O transcrito manda, quando ele existe: a última fala da conversa principal (depois da abertura do processo) é a
+  de erro, `"error": "rate_limit"`, com o que o serviço disse em `quotaLimits` (`status: "rejected"`, a janela da
+  conta recusada, `five_hour` ou `seven_day`, e `resetsAt`, quando ela recomeça; Claude Code 2.1.318) ou, nas
+  versões que não gravam isso, com a frase de sessão, semana ou uso. A frase da tela muda de uma versão para
+  outra; o limite de um modelo só (`seven_day_opus`, o do Fable) não tira a conta da fila e fica de fora, como
+  antes. A conversa que andou depois da parada (o "continue", a resposta da conta nova) não está parada: a frase
+  antiga, ainda à vista, não conta.
+- A culpa: a parada cuja janela já recomeçou acabou, e não é de nenhuma. A de quando a conta da aba já valia no
+  Claude (`quente::conta_vale_em`: um cache de login, 32 s, depois da última gravação do armazém com o Claude
+  aberto; desde a abertura, se a gravação veio antes) é dela. Logo depois da troca a quente, o pedido pode ter
+  saído pela conta de antes: decide o recomeço dito, se casa com o medido no `uso` de uma conta só (a mesma regra
+  da `provada`); sem casar, nenhuma leva a culpa e a medição seguinte diz. A aba que parou na conta de antes da
+  troca já saiu dela: fica onde está, e o `keep continuar` a retoma.
+- Sem o transcrito, quem diz é a tela, como antes; a tela que já culpou uma conta fica lembrada por 12 h (o
+  bloqueio vence em 5 min, e ela segue à vista enquanto ninguém digita) e não culpa a conta nova. A tela conta as
+  12 últimas linhas até o fim da conversa: numa conversa curta numa aba alta, o aviso fica no alto, acima de
+  linhas em branco.
 
 ## Lixeira de worktrees
 
