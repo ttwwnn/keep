@@ -74,9 +74,9 @@ export async function clipSteps(step: StepRunner, { waitFor, workspace, windows 
       if (paths.length !== 1 || !paths[0].endsWith("keep e2e clip.txt")) {
         throw new Error(`o comando devolveu ${JSON.stringify(paths)}; a tela:\n${tail(view.allText())}`);
       }
-      // Pasted as the app pastes when asked for it: PowerShell reads a blank in a name inside double quotes.
+      // Pasted as the app pastes when asked for it: PowerShell reads a blank in a name inside single quotes (a quote typographic or not closes a double-quoted string early).
       await view.pasteFromSystem();
-      await until('o caminho entre aspas no prompt', () => flat().includes('keep e2e clip.txt"'));
+      await until('o caminho entre aspas no prompt', () => flat().includes("keep e2e clip.txt'"));
       view.term.input("\x03", true);
       await until("o prompt depois de descartar a linha", atPrompt);
 
