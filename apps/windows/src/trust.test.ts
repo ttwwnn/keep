@@ -6,7 +6,7 @@ import { TrustAnswerer, TrustWatch, trustKey, trustMarker, trustPointer, type Tr
 
 const OLD = ` Accessing workspace:
 
- /Users/thiago/projetos/novo
+ /Users/ana/projetos/novo
 
  Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your
  team). If not, take a moment to review what's in this folder first.
@@ -17,8 +17,9 @@ const OLD = ` Accessing workspace:
  Enter to confirm · Esc to cancel
 `;
 const OLD_ON_YES = OLD.replace("❯ No, exit", "  No, exit").replace("  Yes, I trust", "❯ Yes, I trust");
-const NUMBERED_ON_YES = "Do you trust the files in this folder?\n ❯ 1. Yes, I trust this folder\n   2. No, exit\n";
-const NUMBERED_ON_NO = "Do you trust the files in this folder?\n   1. Yes, I trust this folder\n ❯ 2. No, exit\n";
+const FOOTER = "\n Enter to confirm · Esc to cancel\n";
+const NUMBERED_ON_YES = "Do you trust the files in this folder?\n ❯ 1. Yes, I trust this folder\n   2. No, exit\n" + FOOTER;
+const NUMBERED_ON_NO = "Do you trust the files in this folder?\n   1. Yes, I trust this folder\n ❯ 2. No, exit\n" + FOOTER;
 
 describe("the question on the screen", () => {
   it("is read where the pointer is", () => {
@@ -34,6 +35,15 @@ describe("the question on the screen", () => {
     expect(trustPointer(screen)).toBeUndefined();
     expect(trustPointer("")).toBeUndefined();
     expect(trustPointer("Yes, I trust this folder\nNo, exit\n")).toBeUndefined();
+  });
+
+  it("is not the question when printed inside a conversation, or without its header and footer", () => {
+    const rule = "─".repeat(40);
+    // The same lines, over the prompt box every conversation draws.
+    expect(trustPointer(`● Li o arquivo:\n${OLD}\n${rule}\n❯ \n${rule}\n  ⏵⏵ bypass permissions on\n`)).toBeUndefined();
+    expect(trustPointer(" ❯ No, exit\n   Yes, I trust this folder\n")).toBeUndefined();
+    const crowded = Array.from({ length: 30 }, (_, i) => `linha ${i}`).join("\n") + "\n" + OLD;
+    expect(trustPointer(crowded)).toBeUndefined();
   });
 });
 

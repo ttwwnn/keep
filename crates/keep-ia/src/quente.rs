@@ -93,7 +93,8 @@ fn arquivo_estado() -> PathBuf {
 }
 
 fn cria_pasta(p: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(p)?;
+    // A árvore inteira 0700 desde a criação (`contas/`, `abas/`): numa instalação limpa `create_dir_all` a deixava 0755.
+    crate::worktrees::estado::cria_pasta(p)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -447,8 +448,25 @@ fn tira_o_refresh(t: &TravasDaPasta, pasta: &Path, lista: &[Conta], meta: Option
     Ok(Some(dono))
 }
 
+/// A pasta de um registro só é um armazém do Keep se for filha direta de `abas/` (ou de `fixas/`, nos legados) e
+/// não um link. O `estado.json` mora em `~/.claude`, que a IA presa grava: sem esta conferência um registro com
+/// `"pasta": "~/Documents"` faria o Keep (fora do sandbox) apagar a pasta, a cada rodada.
+fn pasta_de_armazem(p: &Path) -> bool {
+    let Ok(real) = std::fs::canonicalize(p) else { return false };
+    if std::fs::symlink_metadata(p).map(|m| m.file_type().is_symlink()).unwrap_or(true) {
+        return false;
+    }
+    [caminhos::abas(), caminhos::fixas()]
+        .iter()
+        .filter_map(|base| std::fs::canonicalize(base).ok())
+        .any(|base| real.parent() == Some(base.as_path()))
+}
+
 /// Apaga o armazém de uma aba que acabou: o item e a pasta.
 fn apaga(r: &Registro) -> Result<(), String> {
+    if !pasta_de_armazem(&r.pasta) {
+        return Err(format!("{} não é um armazém do Keep; não apago", r.pasta.display()));
+    }
     credencial::apagar(&credencial::local_fixa(&r.pasta))?;
     // O CLI deixa ao lado a trava antiga da renovação (`<pasta>.lock`).
     let _ = std::fs::remove_dir_all(PathBuf::from(format!("{}.lock", r.pasta.display())));
@@ -1029,6 +1047,12 @@ pub fn espalhar(lista: &[Conta]) -> Espalhado {
     for chave in chaves {
         let mut r = estado.abas[&chave].clone();
         if !r.pasta.is_dir() {
+            estado.abas.remove(&chave);
+            continue;
+        }
+        if !pasta_de_armazem(&r.pasta) {
+            // Nem apaga, nem grava: o registro de uma pasta que não é do Keep sai do estado.
+            saida.falhas.push((chave.clone(), format!("{} não é um armazém do Keep; tirei o registro", r.pasta.display())));
             estado.abas.remove(&chave);
             continue;
         }

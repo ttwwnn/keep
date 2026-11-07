@@ -9,7 +9,7 @@ describe("pasting with files on the clipboard", () => {
   });
 
   it("says them the way the pane's shell reads them", () => {
-    expect(pasteContent(["C:\\Users\\t\\a b.txt"], "", "powershell")).toBe('"C:\\Users\\t\\a b.txt" ');
+    expect(pasteContent(["C:\\Users\\t\\a b.txt"], "", "powershell")).toBe("'C:\\Users\\t\\a b.txt' ");
     expect(pasteContent(["C:\\Users\\t\\$x.txt"], "", "powershell")).toBe("'C:\\Users\\t\\$x.txt' ");
     expect(pasteContent(["C:\\Users\\t\\a b.txt"], "", "wsl")).toBe("/mnt/c/Users/t/a\\ b.txt ");
   });

@@ -46,10 +46,14 @@ export function escapePosix(path: string): string {
   return out;
 }
 
-/** A path as PowerShell reads it: bare when it is plain, double-quoted when it has blanks, single-quoted when it has a `$` or a backtick. */
+/**
+ * A path as PowerShell reads it: bare when it is plain (letters, digits and path punctuation), otherwise single-quoted
+ * with every quote PowerShell reads as a single one doubled (`'` and the typographic `‘ ’ ‚ ‛`) — never double-quoted:
+ * a `”` in a file name closes a double-quoted string early, and what follows it runs.
+ */
 function powershell(path: string): string {
-  if (/[$`']/.test(path)) return `'${path.replace(/'/g, "''")}'`;
-  return quotePaths([path]);
+  if (/^[\p{L}\p{N}_\-.:\\/]+$/u.test(path)) return path;
+  return `'${path.replace(/['\u2018\u2019\u201A\u201B]/g, (quote) => quote + quote)}'`;
 }
 
 /** What is typed for the dropped paths: one after another, said the way the pane's shell reads them. */

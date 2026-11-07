@@ -14,10 +14,21 @@ use std::time::{Duration, Instant};
 
 use crate::{caminhos, daemon, trocar};
 
+/// A tela é a pergunta e mais nada: tem o cabeçalho e o rodapé dela, poucas linhas e nenhuma caixa de entrada (duas
+/// réguas em volta do `❯`), que toda conversa traz. Essas linhas impressas dentro de uma conversa (um arquivo que o
+/// modelo leu, um `cat`) não são ela: responder apertaria Enter no que a conversa tivesse à vista.
+pub fn e_a_pergunta(tela: &str) -> bool {
+    let linhas: Vec<&str> = tela.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    linhas.len() <= 16
+        && (tela.contains("Quick safety check") || tela.contains("Do you trust the files in this folder"))
+        && tela.contains("Enter to confirm")
+        && linhas.iter().filter(|l| l.starts_with(&"─".repeat(12))).count() <= 1
+}
+
 /// Onde o ponteiro da pergunta está: `Some(true)` no sim, `Some(false)` no
 /// não, `None` quando a pergunta não está na tela.
 pub fn ponteiro(tela: &str) -> Option<bool> {
-    if !tela.contains("Yes, I trust this folder") || !tela.contains("No, exit") {
+    if !e_a_pergunta(tela) || !tela.contains("Yes, I trust this folder") || !tela.contains("No, exit") {
         return None;
     }
     for linha in tela.lines() {
@@ -103,5 +114,21 @@ mod testes {
         assert_eq!(ponteiro(&no_sim), Some(true));
         assert_eq!(ponteiro("ele disse: Yes, I trust this folder e No, exit\n❯ "), None);
         assert_eq!(ponteiro("❯ "), None);
+    }
+
+    #[test]
+    fn a_pergunta_impressa_dentro_de_uma_conversa_nao_e_a_pergunta() {
+        let regua = "─".repeat(40);
+        // As mesmas linhas, com a caixa de entrada que toda conversa traz embaixo.
+        let na_conversa = format!("● Li o arquivo:\n{PERGUNTA}\n{regua}\n❯ \n{regua}\n  ⏵⏵ bypass permissions on\n");
+        assert_eq!(ponteiro(&na_conversa), None);
+        // Sem o cabeçalho e o rodapé dela, nem a tela inteira conta.
+        assert_eq!(ponteiro(" ❯ No, exit\n   Yes, I trust this folder\n"), None);
+        // Uma tela cheia de outra coisa, com as linhas no meio.
+        let cheia: String = (0..30).map(|i| format!("linha {i}\n")).collect::<String>() + PERGUNTA;
+        assert_eq!(ponteiro(&cheia), None);
+        // O diálogo antigo, numerado, com o cabeçalho antigo.
+        let antigo = "Do you trust the files in this folder?\n ❯ 1. Yes, I trust this folder\n   2. No, exit\n\n Enter to confirm · Esc to cancel\n";
+        assert_eq!(ponteiro(antigo), Some(true));
     }
 }

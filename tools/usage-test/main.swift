@@ -58,7 +58,7 @@ let respostaDoNucleo = """
 {"ok":true,"versao":1,"medidoEm":1791084861.4,"gerenteExterno":true,
  "ordem":["claude:reserva","gpt:principal","claude:principal"],
  "linhas":[
-  {"account":{"engine":"claude","key":"4f35c383-uuid","alias":"reserva","aliases":["reserva"],
+  {"account":{"engine":"claude","key":"aaaa1111-uuid","alias":"reserva","aliases":["reserva"],
               "email":"ds@x.com","plan":"Max 20x","isActive":true,"isPreferred":true,"warning":null,
               "orderKey":"claude:reserva","hasToken":true,"roda":true,
               "armazens":[{"tipo":"cofre","arquivo":"/x"},{"tipo":"global"}]},
@@ -70,7 +70,7 @@ let respostaDoNucleo = """
               "plan":"Pro","isActive":true,"isPreferred":false,"warning":null,"orderKey":"gpt:principal",
               "hasToken":true,"roda":true,"armazens":[]},
    "reading":null,"measuredAt":null,"problem":"consultas demais (HTTP 429); tenta de novo hoje às 01:50"},
-  {"account":{"engine":"claude","key":"d32da84e","alias":"principal","aliases":["principal","assinaturas"],
+  {"account":{"engine":"claude","key":"bbbb2222","alias":"principal","aliases":["principal","assinaturas"],
               "email":"a@y.com","plan":null,"isActive":false,"isPreferred":false,
               "warning":"login recusado: entre de novo com /login","orderKey":"claude:principal",
               "hasToken":false,"roda":false,"armazens":[]},
@@ -181,8 +181,8 @@ muda("um slot do cofre do kit") { try! "{}".write(to: cofre.appendingPathCompone
 muda("uma pasta de login do Keep nova") { try! fm.createDirectory(at: cofre.appendingPathComponent("fixas/k-0001"), withIntermediateDirectories: true) }
 muda("o keep.json dela") { try! "{}".write(to: cofre.appendingPathComponent("fixas/k-0001/keep.json"), atomically: true, encoding: .utf8) }
 muda("o conta.json de uma pasta do kit") {
-    try! fm.createDirectory(at: cofre.appendingPathComponent("fixas/4f35c383"), withIntermediateDirectories: true)
-    try! "{}".write(to: cofre.appendingPathComponent("fixas/4f35c383/conta.json"), atomically: true, encoding: .utf8)
+    try! fm.createDirectory(at: cofre.appendingPathComponent("fixas/aaaa1111"), withIntermediateDirectories: true)
+    try! "{}".write(to: cofre.appendingPathComponent("fixas/aaaa1111/conta.json"), atomically: true, encoding: .utf8)
 }
 muda("o login do Codex") {
     try! fm.createDirectory(at: casa.appendingPathComponent(".codex"), withIntermediateDirectories: true)

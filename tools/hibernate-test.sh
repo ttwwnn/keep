@@ -142,7 +142,7 @@ while True:
             f.write(raw.decode("utf-8", "replace").replace("\r", "<CR>"))
     if not asked and os.path.exists(ask):
         asked = True
-        write("\x1b[2J\x1b[H\r\n Accessing workspace:\r\n\r\n /Users/thiago/projetos/novo\r\n\r\n")
+        write("\x1b[2J\x1b[H\r\n Accessing workspace:\r\n\r\n /Users/ana/projetos/novo\r\n\r\n")
         write(" Quick safety check: is this a project you created or one you trust?\r\n\r\n")
         write(" ❯ 1. Yes, I trust this folder\r\n   2. No, exit\r\n\r\n Enter to confirm · Esc to cancel\r\n")
 PY

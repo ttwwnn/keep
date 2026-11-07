@@ -135,17 +135,7 @@ pub fn ler<T: for<'de> Deserialize<'de>>(caminho: &std::path::Path) -> Option<T>
 
 /// Grava um JSON por inteiro ou nada (arquivo temporário e troca), só para o dono.
 pub fn gravar<T: Serialize>(caminho: &std::path::Path, valor: &T) -> std::io::Result<()> {
-    if let Some(p) = caminho.parent() {
-        std::fs::create_dir_all(p)?;
-    }
-    let tmp = caminho.with_extension(format!("tmp{}", std::process::id()));
-    std::fs::write(&tmp, serde_json::to_vec_pretty(valor).map_err(std::io::Error::other)?)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
-    }
-    std::fs::rename(&tmp, caminho)
+    keep_ia::caminhos::grava_privado(caminho, &serde_json::to_vec_pretty(valor).map_err(std::io::Error::other)?)
 }
 
 /// Dá nome a abas no app (`names.json` da pasta de estado dele, do keepd cujo socket nasceu em `nasceu`), sob a

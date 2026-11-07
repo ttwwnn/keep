@@ -725,3 +725,30 @@ fn the_third_list_names_the_processes_and_the_daemon() {
     assert!(daemon.started_ms > 0);
     assert_eq!(tab.pid, tab.shell_pid, "a shell at its prompt holds its own terminal");
 }
+
+#[cfg(unix)]
+#[test]
+fn the_socket_is_closed_to_everyone_but_its_owner_and_its_folder_too() {
+    use std::os::unix::fs::PermissionsExt;
+    common::use_test_shell();
+    let base = std::env::temp_dir().join(format!("keep-test-modes-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    // A folder the daemon has to create, under a permissive umask: it comes out the owner's alone.
+    let dir = base.join("novo");
+    let path = dir.join("keep.sock");
+    // SAFETY: only this test changes the umask, and it puts it back.
+    let before = unsafe { libc::umask(0o000) };
+    let server = Server::bind(&path).expect("bind");
+    unsafe { libc::umask(before) };
+    let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(&path), 0o600, "the socket");
+    assert_eq!(mode(&dir), 0o700, "the folder the daemon made");
+    // A log beside the socket that is a link goes nowhere: the entries are not appended to what it points at.
+    let target = base.join("alvo.txt");
+    std::fs::write(&target, "intacto\n").unwrap();
+    let log = server.path().with_extension("abas.log");
+    std::os::unix::fs::symlink(&target, &log).unwrap();
+    drop(server);
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "intacto\n");
+    let _ = std::fs::remove_dir_all(&base);
+}

@@ -421,3 +421,56 @@ fn a_decisao_usa_o_nascimento_do_acesso() {
     let mut m = Marca::default();
     assert_eq!(decide(&Oauth::default(), &mut m, agora, true), None);
 }
+
+#[test]
+fn trava_velha_que_e_arquivo_nao_prende_o_laco() {
+    let c = casa("renova-trava-arquivo");
+    let pasta = c.raiz.join("armazem");
+    std::fs::create_dir_all(&pasta).unwrap();
+    // Um arquivo com o nome da trava, parado há 5 min: `remove_dir` não o tira, e o laço não podia ficar girando.
+    let arq = pasta.join(".oauth_refresh.lock");
+    std::fs::write(&arq, "x").unwrap();
+    let velho = std::time::SystemTime::now() - Duration::from_secs(300);
+    std::fs::File::options().write(true).open(&arq).unwrap().set_modified(velho).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let p = pasta.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(TravaDoCli::pega(&p, TRAVA_RENOVAR, Duration::from_millis(600)).is_none());
+    });
+    assert_eq!(rx.recv_timeout(Duration::from_secs(5)), Ok(true), "a trava presa devolve None no prazo");
+}
+
+#[test]
+fn a_renovacao_que_nao_coube_no_armazem_e_regravada_na_rodada_seguinte() {
+    let c = casa("renova-pendente");
+    perfis(&[]);
+    let s = Servidor::sobe();
+    s.gira("R1", "A2", "R2");
+    let local = poe(&c, Some("k-1"), &login("A1", "R1", donos::agora_ms() + 10 * 60_000));
+    // SAFETY: `casa` guarda o ambiente para um teste por vez.
+    unsafe { std::env::set_var("KEEP_IA_ESPERA_GRAVAR_MS", "300") };
+    // O Claude Code segura a trava de escrita: o servidor gira o refresh e a gravação não cabe.
+    let trava = caminhos::fixas().join("k-1").join(".storage-write.lock");
+    std::fs::create_dir(&trava).unwrap();
+    let r = rodada(false);
+    unsafe { std::env::remove_var("KEEP_IA_ESPERA_GRAVAR_MS") };
+    assert!(r.falhas[0].2.contains("guardei a renovação"), "{r:?}");
+    assert_eq!(oauth(&local).refresh.as_deref(), Some("R1"), "o armazém ficou como estava");
+    assert!(arquivo_pendentes().is_file());
+    // A trava solta: a rodada seguinte regrava o que o servidor já deu, sem pedir de novo (o R1 morreu).
+    std::fs::remove_dir(&trava).unwrap();
+    let r = rodada(false);
+    assert_eq!(r.renovados.len(), 1, "{r:?}");
+    assert_eq!(r.renovados[0].2, Motivo::Recuperada);
+    let o = oauth(&local);
+    assert_eq!((o.acesso.as_deref(), o.refresh.as_deref()), (Some("A2"), Some("R2")));
+    assert_eq!(s.quantos(), 1, "nenhum pedido a mais ao servidor");
+    assert!(!arquivo_pendentes().exists());
+    // Um login novo no meio tempo descarta a pendência em vez de pisar nele.
+    s.gira("R5", "A6", "R6");
+    escreve(&c, &local, &login("A5", "R5", donos::agora_ms() + 10 * 60_000));
+    guarda_pendente(&format!("fixa:{}", caminhos::fixas().join("k-1").to_string_lossy()), "R-velho", &json!({"accessToken":"X","refreshToken":"Y"}));
+    let _ = rodada(false);
+    assert_ne!(oauth(&local).refresh.as_deref(), Some("Y"));
+    assert!(!arquivo_pendentes().exists());
+}

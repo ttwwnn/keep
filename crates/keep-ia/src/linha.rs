@@ -51,8 +51,21 @@ fn fish(s: &str) -> String {
     if simples(s) { s.to_string() } else { format!("'{}'", s.replace('\\', r"\\").replace('\'', r"\'")) }
 }
 
+/// O PowerShell lê como aspa simples também U+2018, U+2019, U+201A e U+201B (e `Escape...` as dobra todas): um nome
+/// com `’` fecharia a cadeia no meio.
+const ASPAS_SIMPLES_DO_POWERSHELL: [char; 5] = ['\'', '\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'];
+
 fn powershell(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "''"))
+    let mut fora = String::with_capacity(s.len() + 2);
+    fora.push('\'');
+    for c in s.chars() {
+        fora.push(c);
+        if ASPAS_SIMPLES_DO_POWERSHELL.contains(&c) {
+            fora.push(c);
+        }
+    }
+    fora.push('\'');
+    fora
 }
 
 fn cmd(s: &str) -> String {
@@ -103,6 +116,17 @@ pub fn linha(sx: Sintaxe, s: &Subida) -> String {
             partes.join("; ")
         }
         Sintaxe::Cmd => {
+            // No cmd.exe `%VAR%` expande até entre aspas, uma quebra de linha termina o comando, e a aspa fecha a
+            // cadeia de `cd` e de `set`: com isso no dado, a linha não sai (o que se digita é só um aviso).
+            let perigoso = |t: &str, aspas: bool| t.chars().any(|c| matches!(c, '%' | '\r' | '\n') || (aspas && c == '"'));
+            if s.pasta.iter().any(|p| perigoso(p, true))
+                || s.definir.iter().any(|(n, v)| perigoso(n, true) || perigoso(v, true))
+                || tirar.iter().any(|t| perigoso(t, true))
+                || perigoso(&s.programa, false)
+                || s.args.iter().any(|a| perigoso(a, false))
+            {
+                return "echo keep: nome com aspas, % ou quebra de linha - nao monto a linha".into();
+            }
             let mut partes: Vec<String> = s.pasta.iter().map(|p| format!("cd /d \"{p}\"")).collect();
             partes.extend(s.definir.iter().map(|(n, v)| format!("set \"{n}={v}\"")));
             partes.extend(tirar.iter().map(|t| format!("set \"{t}=\"")));
@@ -395,5 +419,24 @@ mod testes {
             parametros("codex", &argv),
             v(&["--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=high"])
         );
+    }
+
+    #[test]
+    fn o_powershell_dobra_as_cinco_aspas_simples_e_o_cmd_nao_monta_linha_com_o_que_o_quebra() {
+        let mut sub = subida();
+        sub.pasta = Some("C:\\proj\\Ana\u{2019}s;calc;\u{2018}x".into());
+        let linha_ps = linha(Sintaxe::PowerShell, &sub);
+        assert!(linha_ps.contains("'C:\\proj\\Ana\u{2019}\u{2019}s;calc;\u{2018}\u{2018}x'"), "{linha_ps}");
+        assert_eq!(powershell("a'b"), "'a''b'");
+        // cmd: aspas, % e quebra de linha no dado, nada de linha com ele.
+        for ruim in ["C:\\a\"&calc&\"b", "C:\\a%PATH%", "C:\\a\r\nb"] {
+            let mut sub = subida();
+            sub.pasta = Some(ruim.into());
+            let l = linha(Sintaxe::Cmd, &sub);
+            assert!(l.starts_with("echo keep:") && !l.contains("calc") && !l.contains("PATH"), "{l}");
+        }
+        let mut sub = subida();
+        sub.pasta = Some("C:\\Users\\a b\\proj".into());
+        assert!(linha(Sintaxe::Cmd, &sub).starts_with("cd /d \"C:\\Users\\a b\\proj\" & set"));
     }
 }

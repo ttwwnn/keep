@@ -12,7 +12,6 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use keep_proto::net::Stream;
 use keep_proto::{ClientMsg, ServerMsg, TAB_ANY, WorkspaceInfo};
 
 fn main() {
@@ -57,7 +56,7 @@ fn run() -> Result<()> {
         Some("new") => {
             let name = args.get(1).context("usage: keep new <workspace>")?;
             ensure_daemon(&socket)?;
-            let mut sock = Stream::connect(&socket)?;
+            let mut sock = keep_proto::net::connect(socket.as_ref())?;
             ClientMsg::NewTab {
                 workspace: name.clone(),
                 // Where it is run from. `keep <name>` has always opened a
@@ -84,7 +83,7 @@ fn run() -> Result<()> {
         Some("kill") => {
             let name = args.get(1).context("usage: keep kill <name>")?;
             ensure_daemon(&socket)?;
-            let mut sock = Stream::connect(&socket)?;
+            let mut sock = keep_proto::net::connect(socket.as_ref())?;
             ClientMsg::Kill { workspace: name.clone() }.write(&mut sock)?;
             match ServerMsg::read(&mut sock)? {
                 Some(ServerMsg::Ok) => {
@@ -155,13 +154,20 @@ fn list(socket: &Path) -> Result<Vec<WorkspaceInfo>> {
 }
 
 fn ask(socket: &Path, question: ClientMsg) -> Result<Vec<WorkspaceInfo>> {
-    let mut sock = Stream::connect(socket).context("connect to daemon")?;
+    let mut sock = keep_proto::net::connect(socket.as_ref()).context("connect to daemon")?;
     question.write(&mut sock)?;
     match ServerMsg::read(&mut sock)? {
         Some(ServerMsg::Workspaces(list) | ServerMsg::Workspaces2(list)) => Ok(list),
         Some(ServerMsg::Error(e)) => anyhow::bail!(e),
         _ => anyhow::bail!("unexpected reply from daemon"),
     }
+}
+
+/// A name or title as text and nothing else: a workspace is named by whoever asks (`keep new "$(basename $PWD)"`) and
+/// a title is written by the program in the tab, and either could carry escapes — an OSC 52 that swaps the clipboard of
+/// whoever runs `keep ls`, a title, a cursor move. Control characters (the C1 ones included) become `?`.
+pub(crate) fn plain(text: &str) -> String {
+    text.chars().map(|c| if c.is_control() { '?' } else { c }).collect()
 }
 
 fn print_list(workspaces: &[WorkspaceInfo]) {
@@ -178,7 +184,7 @@ fn print_list(workspaces: &[WorkspaceInfo]) {
         } else {
             "idle"
         };
-        println!("{:<24} {:>2} tab(s)  {}", s.name, live, state);
+        println!("{:<24} {:>2} tab(s)  {}", plain(&s.name), live, state);
         for t in &s.tabs {
             // How many are watching, once that can be more than one: two
             // windows on one tab is a thing you do on purpose, and a thing
@@ -197,7 +203,7 @@ fn print_list(workspaces: &[WorkspaceInfo]) {
             let mut label = if t.title.is_empty() {
                 format!("tab {}", t.id)
             } else {
-                format!("tab {} · {}", t.id, t.title)
+                format!("tab {} · {}", t.id, plain(&t.title))
             };
             if t.split_of != TAB_ANY {
                 label = format!("{label} (pane of {})", t.split_of);
@@ -212,7 +218,7 @@ fn print_list(workspaces: &[WorkspaceInfo]) {
 /// The daemon is deliberately not a child of this process: it must outlive
 /// every client, including the one that happened to start it.
 fn ensure_daemon(socket: &Path) -> Result<()> {
-    if Stream::connect(socket).is_ok() {
+    if keep_proto::net::connect(socket.as_ref()).is_ok() {
         return Ok(());
     }
 
@@ -221,7 +227,7 @@ fn ensure_daemon(socket: &Path) -> Result<()> {
 
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
-        if Stream::connect(socket).is_ok() {
+        if keep_proto::net::connect(socket.as_ref()).is_ok() {
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(25));
@@ -439,5 +445,17 @@ mod embedded {
         let dir = scratch("empty");
         std::fs::remove_file(dir.join(TARGET_FILE)).ok();
         assert!(embedded_target_in(&dir).is_none());
+    }
+}
+
+#[cfg(test)]
+mod plain_tests {
+    use super::plain;
+
+    #[test]
+    fn escapes_in_a_name_do_not_reach_the_terminal() {
+        assert_eq!(plain("x\u{1b}]52;c;AAAA\u{7}y"), "x?]52;c;AAAA?y");
+        assert_eq!(plain("a\u{9b}31mb\nc"), "a?31mb?c");
+        assert_eq!(plain("normal ação 日本"), "normal ação 日本");
     }
 }

@@ -76,7 +76,7 @@ out = sys.stdout
 pointer = 0   # 0: on "No, exit" (where Claude Code starts), 1: on "Yes, I trust this folder"
 def trust():
     out.write("\x1b]2;✳ teste\x07\x1b[2J\x1b[H")
-    out.write("\r\n Accessing workspace:\r\n\r\n /Users/thiago/projetos/novo\r\n\r\n")
+    out.write("\r\n Accessing workspace:\r\n\r\n /Users/ana/projetos/novo\r\n\r\n")
     out.write(" Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your\r\n team). If not, take a moment to review what's in this folder first.\r\n\r\n")
     out.write((" ❯ " if pointer == 0 else "   ") + "No, exit\r\n" + (" ❯ " if pointer == 1 else "   ") + "Yes, I trust this folder\r\n\r\n Enter to confirm · Esc to cancel\r\n")
     out.flush()

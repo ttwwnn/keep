@@ -55,7 +55,7 @@ check("an empty coloured box",
 let trust = """
  Accessing workspace:
 
- /Users/thiago/projetos/novo
+ /Users/ana/projetos/novo
 
  Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your
  team). If not, take a moment to review what's in this folder first.

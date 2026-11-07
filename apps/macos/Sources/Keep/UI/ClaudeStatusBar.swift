@@ -360,3 +360,38 @@ enum ClaudePickerDriver {
         }
     }
 }
+
+/// Puts a tab's name on the Claude Code conversation running in it, with
+/// Claude Code's own `/rename`, so the conversation is called the same
+/// wherever it is listed — Remote Control on claude.ai and the phone,
+/// `claude -r`.
+///
+/// Typed through the daemon, which reaches any tab, on view or not. The
+/// caller waits for the turn to be over; a draft in the prompt is set aside
+/// (Ctrl+S) and given back, as the bar does for `/model`.
+enum ClaudeSessionName {
+    /// `/rename <name>` on one line, or nil for a name with nothing in it.
+    static func command(for name: String) -> String? {
+        let line = name.components(separatedBy: .newlines).joined(separator: " ")
+            .unicodeScalars.filter { $0.value >= 0x20 && $0.value != 0x7F }
+            .map(String.init).joined()
+            .trimmingCharacters(in: .whitespaces)
+        return line.isEmpty ? nil : "/rename " + line
+    }
+
+    static func apply(_ name: String, to id: TabID) {
+        guard let command = command(for: name) else { return }
+        DispatchQueue.global(qos: .utility).async {
+            func type(_ text: String) { try? Daemon.sendInput(Array(text.utf8), workspace: id.workspace, tab: id.root) }
+            if ClaudePickerDriver.hasDraft(workspace: id.workspace, tab: id.root) {
+                type("\u{13}")
+                usleep(400_000)
+            }
+            type(command)
+            // Apart from the text, or Claude Code takes the Return for part of a paste.
+            usleep(300_000)
+            type("\r")
+            Trace.log("claude", "rename: \(command)")
+        }
+    }
+}

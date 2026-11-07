@@ -2204,37 +2204,65 @@ final class TerminalSurfaceView: NSView {
         }
     }
 
+    /// What the clipboard question is about: a paste that would run itself, a program reading the clipboard (OSC 52),
+    /// or a program replacing it.
+    enum ClipboardQuestion {
+        case paste, read, write
+
+        /// Whether this answer lets it through. For a paste the first button is "Paste"; for a program reading or
+        /// writing the clipboard it is "Don't allow" — the default one, so a Return typed as the question appears
+        /// (the program picks the moment) answers no.
+        func allows(_ response: NSApplication.ModalResponse) -> Bool {
+            self == .paste ? response == .alertFirstButtonReturn : response == .alertSecondButtonReturn
+        }
+    }
+
     /// The question asked before the clipboard goes to the program: a paste
     /// that would run itself, or a program reading the clipboard where the
     /// config says to ask — here, and for a kept pane (`KeeperWatch`). Four
     /// hundred characters of it can be four hundred lines: they go in a box
     /// that scrolls (`NSAlert.say`), on the window it is to hang from.
-    static func pasteQuestion(_ text: String, on window: NSWindow?) -> NSAlert {
+    static func pasteQuestion(_ text: String, on window: NSWindow?, kind: ClipboardQuestion = .paste) -> NSAlert {
         let alert = NSAlert()
-        alert.messageText = "Paste this?"
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Paste")
-        alert.addButton(withTitle: "Cancel")
-        alert.say("What you are pasting has line breaks in it, "
-            + "and the program running here reads those as return: it will run "
-            + "as soon as it lands.\n\n" + String(text.prefix(400)), on: window)
+        switch kind {
+        case .paste:
+            alert.messageText = "Paste this?"
+            alert.addButton(withTitle: "Paste")
+            alert.addButton(withTitle: "Cancel")
+            alert.say("What you are pasting has line breaks in it, "
+                + "and the program running here reads those as return: it will run "
+                + "as soon as it lands.\n\n" + String(text.prefix(400)), on: window)
+        case .read:
+            alert.messageText = "A program in this terminal wants to read your clipboard"
+            alert.addButton(withTitle: "Don't allow")
+            alert.addButton(withTitle: "Allow")
+            alert.say("It would receive what you copied, a password or a token among it:\n\n"
+                + String(text.prefix(400)), on: window)
+        case .write:
+            alert.messageText = "A program in this terminal wants to replace your clipboard"
+            alert.addButton(withTitle: "Don't allow")
+            alert.addButton(withTitle: "Allow")
+            alert.say("It would put this where what you copied is — and what you paste next would be it:\n\n"
+                + String(text.prefix(400)), on: window)
+        }
         return alert
     }
 
-    /// Ask before pasting something that would run itself.
-    func confirmPaste(_ text: String, state: UnsafeMutableRawPointer?) {
-        let alert = Self.pasteQuestion(text, on: window)
+    /// Ask before pasting something that would run itself, or before a program reads or replaces the clipboard.
+    func confirmPaste(_ text: String, state: UnsafeMutableRawPointer?, kind: ClipboardQuestion = .paste) {
+        let alert = Self.pasteQuestion(text, on: window, kind: kind)
         // A sheet on this surface's own window: the question is about this
         // terminal, and the other window has no business being frozen by it.
         // The answer is allowed to arrive later — this is already a turn of
         // the run loop after the runtime asked, and the request stays open
         // until it is completed.
         guard let window else {
-            let go = alert.runModal() == .alertFirstButtonReturn
+            let go = kind.allows(alert.runModal())
             return completeClipboardRequest(go ? text : "", state: state, confirmed: true)
         }
         alert.beginSheetModal(for: window) { [weak self] response in
-            let go = response == .alertFirstButtonReturn
+            let go = kind.allows(response)
             self?.completeClipboardRequest(go ? text : "", state: state, confirmed: true)
         }
     }

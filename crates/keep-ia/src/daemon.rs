@@ -38,7 +38,7 @@ pub fn socket() -> PathBuf {
 }
 
 fn conecta() -> Result<Stream, String> {
-    Stream::connect(socket()).map_err(|e| format!("o Keep não respondeu ({e})"))
+    keep_proto::net::connect(&socket()).map_err(|e| format!("o Keep não respondeu ({e})"))
 }
 
 fn pergunta(msg: ClientMsg) -> Result<ServerMsg, String> {
@@ -84,7 +84,7 @@ pub fn listar_em(endereco: &Path, espera: Option<Duration>) -> Result<Retrato, S
 
 /// Uma pergunta numa conexão própria; com a resposta, quem respondeu.
 fn pergunta_em(endereco: &Path, msg: ClientMsg, espera: Option<Duration>) -> Result<(ServerMsg, Option<u32>), String> {
-    let mut s = Stream::connect(endereco).map_err(|e| format!("o Keep não respondeu ({e})"))?;
+    let mut s = keep_proto::net::connect(endereco.as_ref()).map_err(|e| format!("o Keep não respondeu ({e})"))?;
     s.set_read_timeout(espera).map_err(|e| e.to_string())?;
     msg.write(&mut s).map_err(|e| e.to_string())?;
     let pid = pid_do_servidor(&s);

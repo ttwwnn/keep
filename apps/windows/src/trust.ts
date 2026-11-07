@@ -22,8 +22,23 @@ const NO = "No, exit";
  * when it is not the question — the words quoted in a conversation, say, have
  * no pointer in front of them.
  */
+/**
+ * Whether the screen is the question itself and nothing else: its header and its footer, a handful of lines, and no
+ * prompt box (two rules around `❯`), which any conversation brings. Those lines printed inside a conversation (a file
+ * the model read, a `cat`) are not it: answering them would press Enter on whatever the conversation had up.
+ */
+export function isTheQuestion(screen: string): boolean {
+  const lines = screen.split("\n").map((line) => line.trim()).filter((line) => line !== "");
+  return (
+    lines.length <= 16 &&
+    (screen.includes("Quick safety check") || screen.includes("Do you trust the files in this folder")) &&
+    screen.includes("Enter to confirm") &&
+    lines.filter((line) => line.startsWith("─".repeat(12))).length <= 1
+  );
+}
+
 export function trustPointer(screen: string): Pointer | undefined {
-  if (!screen.includes(YES) || !screen.includes(NO)) return undefined;
+  if (!isTheQuestion(screen) || !screen.includes(YES) || !screen.includes(NO)) return undefined;
   const lines = screen.split("\n").filter((line) => line.trim() !== "");
   const yes = lines.findIndex((line) => line.includes(YES));
   for (let at = 0; at < lines.length; at++) {

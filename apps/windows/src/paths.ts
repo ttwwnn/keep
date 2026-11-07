@@ -483,11 +483,23 @@ const RUNS_WHEN_OPENED = new Set([
   "zsh", "ps1", "psm1", "psd1", "ps1xml", "reg", "inf", "gadget", "appref-ms", "application",
   "settingcontent-ms", "scf", "sct", "shs", "chm", "msc", "xll", "wll", "ocx", "command", "app", "dll",
   "sys", "appx", "msix", "appxbundle", "msixbundle",
+  // Open a remote session, load a theme or a library, mount an image, run a diagnostic or an installer, or hand over a
+  // web page of the program's choosing.
+  "rdp", "library-ms", "search-ms", "searchconnector-ms", "theme", "themepack", "diagcab", "diagpkg", "appinstaller",
+  "wsb", "psc1", "xbap", "iso", "vhd", "vhdx", "img", "gadget", "mht", "mhtml", "website", "xnk", "glk", "cer", "crt",
+  "jse", "vb", "wsc", "docm", "xlsm", "pptm", "dotm", "xltm", "potm", "ppam", "xlam", "slk", "iqy", "rtf",
 ]);
 
-/** Whether opening this file would run it, or leave the shell to guess (no extension). A folder is opened, never run. */
+/**
+ * Whether opening this file would run it, or leave the shell to guess (no extension). A folder is opened, never run.
+ * The name is read as Windows reads it: trailing dots and spaces are dropped (`app.exe.` is `app.exe`), and an
+ * alternate data stream (`a.txt:evil.exe`) is never opened.
+ */
 export function runsWhenOpened(path: string): boolean {
-  const name = path.split(/[\\/]/).pop() ?? "";
+  const last = path.split(/[\\/]/).pop() ?? "";
+  // A name with a `:` in it is a file's alternate data stream (`a.txt:evil.exe`): not something to open on a click.
+  if (last.includes(":")) return true;
+  const name = last.replace(/[. ]+$/, "");
   const dot = name.lastIndexOf(".");
   if (dot <= 0) return true;
   return RUNS_WHEN_OPENED.has(name.slice(dot + 1).toLowerCase());

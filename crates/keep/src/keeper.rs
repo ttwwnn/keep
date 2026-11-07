@@ -135,7 +135,12 @@ impl Options {
                 "grapheme" => options.grapheme = value == "1",
                 "blink" => options.blink = value == "1",
                 "cursor" => options.cursor = CursorStyle::from_config(value),
-                "take" => options.take = Some(PathBuf::from(value)).filter(|p| !value.is_empty() && p.is_absolute()),
+                "take" => {
+                    // Only a directory the app made for a surface: the attach file may be one lying in whatever
+                    // folder somebody ran `keep` in, and `take=` names a socket whose descriptor becomes the daemon
+                    // connection (every key typed goes through it).
+                    options.take = Some(PathBuf::from(value)).filter(|p| !value.is_empty() && p.is_absolute() && is_attach_dir(p))
+                }
                 "app" => options.app = value.parse().ok().filter(|&p: &i32| p > 0),
                 _ => {}
             }
@@ -603,7 +608,15 @@ pub fn take(dir: &Path, cols: u16, rows: u16) -> io::Result<(UnixStream, Vec<u8>
     taken
 }
 
+/// The most a keeper may say it hands over: a screen and what the mirror holds, nowhere near this.
+const SNAPSHOT_LIMIT: usize = 256 << 20;
+
 fn try_take(dir: &Path, cols: u16, rows: u16) -> io::Result<(UnixStream, Vec<u8>)> {
+    use std::os::unix::fs::MetadataExt;
+    // The keeper is this user's: a directory (and so a socket) made by anybody else is not handed a connection.
+    if !is_attach_dir(dir) || std::fs::metadata(dir)?.uid() != unsafe { libc::geteuid() } {
+        return Err(io::Error::other("not a keeper directory of this user"));
+    }
     // The app may have let go of the surface a moment ago, its client still
     // on its way to keeping and not yet listening: worth waiting for while
     // the app still says it means the pane to be kept.
@@ -628,6 +641,9 @@ fn try_take(dir: &Path, cols: u16, rows: u16) -> io::Result<(UnixStream, Vec<u8>
         return Err(io::Error::other("the keeper said something else"));
     }
     let len = u32::from_be_bytes(header[4..8].try_into().unwrap()) as usize;
+    if len > SNAPSHOT_LIMIT {
+        return Err(io::Error::other("the keeper's snapshot is larger than any screen"));
+    }
     let mut snapshot = vec![0u8; len];
     conn.read_exact(&mut snapshot)?;
     daemon.set_read_timeout(None)?;
@@ -1350,5 +1366,19 @@ mod tests {
         received.read_exact(&mut got).unwrap();
         assert_eq!(&got, b"hello");
         theirs.write_all(b"x").unwrap();
+    }
+}
+
+#[cfg(test)]
+mod take_tests {
+    use super::*;
+
+    #[test]
+    fn take_names_only_a_directory_the_app_made() {
+        let parse = |line: &str| Options::parse([line].into_iter()).take;
+        assert_eq!(parse("take=/tmp/keep-attach/abc"), Some(PathBuf::from("/tmp/keep-attach/abc")));
+        assert_eq!(parse("take=/tmp/x"), None, "a folder somebody ran keep in");
+        assert_eq!(parse("take=relative/keep-attach/abc"), None);
+        assert_eq!(parse("take="), None);
     }
 }

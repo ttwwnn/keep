@@ -605,3 +605,33 @@ fn com_o_kit_o_login_global_nao_conta_como_outro_dono() {
     assert_eq!(o.refresh.as_deref(), Some("rF"));
     assert_eq!(refresh_global().as_deref(), Some("rG"), "o global é do kit: intocado");
 }
+
+#[test]
+fn um_registro_que_aponta_para_fora_de_abas_nao_faz_o_keep_apagar_nada() {
+    let c = casa("registro-fora");
+    duas_contas(&c);
+    // O estado.json fica em ~/.claude, que a IA presa grava: um registro com a pasta de outro projeto.
+    let vitima = c.raiz.join("projetos/importante");
+    std::fs::create_dir_all(&vitima).unwrap();
+    std::fs::write(vitima.join("dados.txt"), "meus dados").unwrap();
+    let mut est = le_estado();
+    est.abas.insert(
+        "999999-1".into(),
+        Registro { pasta: vitima.clone(), shell: 999_999, nascimento: 1, ..Default::default() },
+    );
+    grava_estado(&est).unwrap();
+    let r = espalhar(&contas::listar(false));
+    assert!(r.apagadas.is_empty(), "{r:?}");
+    assert!(vitima.join("dados.txt").is_file(), "a pasta de fora foi apagada");
+    assert!(r.falhas.iter().any(|(k, m)| k == "999999-1" && m.contains("não é um armazém")), "{r:?}");
+    assert!(le_estado().abas.get("999999-1").is_none(), "o registro estranho sai do estado");
+    // Um link para fora, dentro de abas/, também não vale.
+    let link = caminhos::abas().join("1-1");
+    std::fs::create_dir_all(caminhos::abas()).unwrap();
+    std::os::unix::fs::symlink(&vitima, &link).unwrap();
+    let mut est = le_estado();
+    est.abas.insert("1-1".into(), Registro { pasta: link.clone(), shell: 999_999, nascimento: 1, ..Default::default() });
+    grava_estado(&est).unwrap();
+    let r = espalhar(&contas::listar(false));
+    assert!(r.apagadas.is_empty() && vitima.join("dados.txt").is_file(), "{r:?}");
+}

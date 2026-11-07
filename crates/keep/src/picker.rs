@@ -75,14 +75,14 @@ fn run(stdout: &mut std::io::Stdout, workspaces: &[WorkspaceInfo]) -> Result<Cho
         let room = (rows as usize).saturating_sub(3).max(1);
 
         execute!(stdout, terminal::Clear(terminal::ClearType::All), cursor::MoveTo(0, 0))?;
-        writeln!(stdout, "\r  keep \x1b[90m—\x1b[0m {}\x1b[7m \x1b[0m", query)?;
+        writeln!(stdout, "\r  keep \x1b[90m—\x1b[0m {}\x1b[7m \x1b[0m", crate::plain(&query))?;
         writeln!(stdout, "\r  \x1b[90m{}\x1b[0m", "─".repeat(40))?;
 
         if matches.is_empty() {
             let label = if query.is_empty() {
                 "no workspaces yet — type a name to start one".to_string()
             } else {
-                format!("enter to start a new workspace named \"{query}\"")
+                format!("enter to start a new workspace named \"{}\"", crate::plain(&query))
             };
             writeln!(stdout, "\r  \x1b[90m{label}\x1b[0m")?;
         }
@@ -100,9 +100,9 @@ fn run(stdout: &mut std::io::Stdout, workspaces: &[WorkspaceInfo]) -> Result<Cho
                 "\x1b[90midle\x1b[0m".to_string()
             };
             let name = if i == selected {
-                format!("\x1b[1m{}\x1b[0m", s.name)
+                format!("\x1b[1m{}\x1b[0m", crate::plain(&s.name))
             } else {
-                s.name.clone()
+                crate::plain(&s.name)
             };
             let tabs = if live == 1 { "1 tab".into() } else { format!("{live} tabs") };
             writeln!(stdout, "\r{marker} {name}  \x1b[90m{tabs}\x1b[0m  {state}")?;

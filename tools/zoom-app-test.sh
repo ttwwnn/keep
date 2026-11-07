@@ -423,7 +423,7 @@ AT300=$(grid_settles 1)
 # test nothing: typed text does, to the shell's command line.
 "$SENDKEY" "$APP_PID" text "zoomprobe"; sleep 1
 # Looked for in the screen's rows run together: at 300% the pane has some
-# thirty columns, and after a prompt such as "thiago@MacBook-de-Thiago ~ % "
+# thirty columns, and after a prompt such as "ana@MacBook-de-Ana ~ % "
 # the probe wraps onto the next row.
 check "what is typed reaches the terminal" yes \
     "$(screen 1 | tr -d '\r\n' | grep -q zoomprobe && echo yes || echo no)"

@@ -205,6 +205,12 @@ pub fn tela_de(ws: &str, tab: u32) -> (Vec<String>, Vec<String>) {
 
 /// Digita `texto`; só aperta Enter se ele aparecer na tela. `true` se mandou.
 pub fn digita(ws: &str, tab: u32, texto: &str, enter: bool) -> Result<bool, Recusa> {
+    // Antes de qualquer coisa: o texto vai como TECLAS para o editor de linha do shell, e um caractere de controle
+    // (^U apaga a linha, ^C a cancela, ^J executa) anula as aspas de quem montou o comando e deixa solto o resto
+    // (um nome de pasta com `\x15` no meio já executou um segundo comando). Nenhum dado legítimo precisa deles.
+    if let Some(c) = texto.chars().find(|c| c.is_control()) {
+        return Err(erro(format!("o texto tem um caractere de controle (U+{:04X}); não o digito", c as u32)));
+    }
     let (_, a) = aba_viva(ws, tab)?;
     let mut t = Teclado::liga(&a).map_err(erro)?;
     t.manda(texto.as_bytes()).map_err(erro)?;
@@ -1503,5 +1509,19 @@ mod nomes {
         contas::mover("claude:ana", true).unwrap();
         let l = contas::listar(false);
         assert_eq!((rotulo_em(&l, "claude:ana"), rotulo_em(&l, "gpt:principal")), ("IA·2".into(), "IA·3".into()));
+    }
+}
+
+#[cfg(test)]
+mod controles {
+    use super::*;
+
+    #[test]
+    fn o_texto_com_caractere_de_controle_nao_e_digitado() {
+        // Antes de olhar a aba: a recusa não depende de daemon. ^U apaga a linha do shell e solta o resto do comando.
+        for ruim in ["cd '\u{15}true;touch PWNED;echo '", "a\u{3}b", "x\ny", "t\tz", "\u{1b}[200~"] {
+            let e = digita("qualquer", 1, ruim, true).expect_err(ruim);
+            assert!(format!("{e:?}").contains("controle"), "{e:?}");
+        }
     }
 }

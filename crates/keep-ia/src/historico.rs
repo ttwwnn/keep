@@ -71,14 +71,7 @@ pub fn anota(chave: &str, muda: impl FnOnce(&mut Entrada)) {
     let e = t.entry(chave.to_string()).or_default();
     muda(e);
     e.em = crate::contas::donos::agora_ms();
-    let caminho = arquivo();
-    if let Some(dir) = caminho.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
     if let Ok(texto) = serde_json::to_vec_pretty(&t) {
-        let tmp = caminho.with_extension(format!("json.{}.tmp", std::process::id()));
-        if std::fs::write(&tmp, texto).is_ok() {
-            let _ = std::fs::rename(&tmp, &caminho);
-        }
+        let _ = crate::caminhos::grava_privado(&arquivo(), &texto);
     }
 }

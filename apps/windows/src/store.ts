@@ -1648,8 +1648,8 @@ export async function start(options: StartOptions): Promise<api.WindowBoot> {
           message: q.message,
           preview: q.preview,
           buttons: [
-            { label: q.no, value: "no" },
-            { label: q.yes, value: "yes", primary: true },
+            { label: q.no, value: "no", primary: q.denyByDefault === true },
+            { label: q.yes, value: "yes", primary: q.denyByDefault !== true },
           ],
         });
         return answered?.button === "yes";

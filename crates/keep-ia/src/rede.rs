@@ -69,7 +69,11 @@ pub fn url_de_teste(variaveis: &[&str], real: &str) -> String {
     for nome in variaveis {
         if let Ok(valor) = std::env::var(nome) {
             if let Some(resto) = valor.strip_prefix("http://127.0.0.1") {
-                if resto.is_empty() || resto.starts_with(':') || resto.starts_with('/') {
+                // Depois do endereço, só a porta (dígitos) e o caminho: `127.0.0.1:80@outro/` tem outro host.
+                let (autoridade, _) = resto.split_once('/').unwrap_or((resto, ""));
+                let porta_ok = autoridade.is_empty()
+                    || autoridade.strip_prefix(':').is_some_and(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+                if porta_ok {
                     return valor;
                 }
             }
@@ -94,5 +98,12 @@ mod testes {
         assert_eq!(url_de_teste(&["KEEP_IA_TESTE_URL_B"], "https://real"), "https://real");
         assert_eq!(url_de_teste(&["KEEP_IA_TESTE_URL_C"], "https://real"), "https://real");
         assert_eq!(url_de_teste(&["NAO_EXISTE"], "https://real"), "https://real");
+        // O endereço antes de um `@` é usuário e senha; o host de verdade vem depois.
+        for hostil in ["http://127.0.0.1:80@evil.example/v1", "http://127.0.0.1@evil.example/", "http://127.0.0.1:/x", "http://127.0.0.1:8a/x"] {
+            unsafe { std::env::set_var("KEEP_IA_TESTE_URL_D", hostil) };
+            assert_eq!(url_de_teste(&["KEEP_IA_TESTE_URL_D"], "https://real"), "https://real", "{hostil}");
+        }
+        unsafe { std::env::set_var("KEEP_IA_TESTE_URL_D", "http://127.0.0.1") };
+        assert_eq!(url_de_teste(&["KEEP_IA_TESTE_URL_D"], "https://real"), "http://127.0.0.1");
     }
 }
