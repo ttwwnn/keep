@@ -259,17 +259,29 @@ mod sistema {
     use std::path::PathBuf;
     use std::sync::OnceLock;
 
-    /// O boot, em ms unix, e quantos tiques o relógio dá por segundo.
+    /// O boot, em ms unix, e quantos tiques o relógio dá por segundo. O boot é o agora menos o tempo ligado, lido
+    /// a cada vez: o `btime` do /proc/stat acompanha os saltos do relógio (31 s no CI), e o início dos processos
+    /// sairia deslocado em relação ao agora.
     fn relogio() -> (u64, u64) {
-        static R: OnceLock<(u64, u64)> = OnceLock::new();
-        *R.get_or_init(|| {
-            let boot = std::fs::read_to_string("/proc/stat")
+        static TIQUES: OnceLock<u64> = OnceLock::new();
+        let tiques = *TIQUES.get_or_init(|| {
+            let t = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+            if t > 0 { t as u64 } else { 100 }
+        });
+        let ligado_ms = std::fs::read_to_string("/proc/uptime")
+            .ok()
+            .and_then(|t| t.split_whitespace().next()?.parse::<f64>().ok())
+            .map(|s| (s * 1000.0) as u64);
+        let agora_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_millis() as u64);
+        let boot = match (agora_ms, ligado_ms) {
+            (Some(a), Some(l)) if a > l => a - l,
+            _ => std::fs::read_to_string("/proc/stat")
                 .ok()
                 .and_then(|t| t.lines().find_map(|l| l.strip_prefix("btime ").and_then(|v| v.trim().parse::<u64>().ok())))
-                .unwrap_or(0);
-            let tiques = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
-            (boot * 1000, if tiques > 0 { tiques as u64 } else { 100 })
-        })
+                .unwrap_or(0)
+                * 1000,
+        };
+        (boot, tiques)
     }
 
     pub fn um(pid: u32) -> Option<Processo> {
