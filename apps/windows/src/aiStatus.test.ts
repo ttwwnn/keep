@@ -4,11 +4,13 @@
 import { describe, expect, it } from "vitest";
 import {
   CANNOT_TYPE_NOTE,
+  CANNOT_TYPE_NOTE_CLAUDE,
   CLAUDE_EFFORTS,
   CODEX_EFFORTS,
   PICKING_NOTE,
   agentsLabel,
   claudePromptIsEmpty,
+  claudeRenameCommand,
   claudeStatus,
   codexEffortFor,
   codexModelNamed,
@@ -147,16 +149,23 @@ describe("the status of a Claude Code pane", () => {
       effort: "high",
       agents: 1,
       canType: true,
+      hasDraft: false,
     });
   });
 
-  it("can be typed into only with the turn over and the prompt empty", () => {
+  it("can be typed into with the turn over, a draft set aside", () => {
     expect(claudeStatus(file, claudeScreen("❯"), "done")?.canType).toBe(true);
     expect(claudeStatus(file, claudeScreen("❯"), "working")?.canType).toBe(false);
     expect(claudeStatus(file, claudeScreen("❯"), "waitingForYou")?.canType).toBe(false);
     expect(claudeStatus(file, claudeScreen("❯"), "waitingForWorkflow")?.canType).toBe(false);
     expect(claudeStatus(file, claudeScreen("❯"), undefined)?.canType).toBe(false);
-    expect(claudeStatus(file, claudeScreen("❯ half a thought"), "done")?.canType).toBe(false);
+    expect(claudeStatus(file, claudeScreen("❯ half a thought"), "working")?.canType).toBe(false);
+    expect(claudeStatus(file, claudeScreen("❯ half a thought"), "done")).toMatchObject({
+      canType: true,
+      hasDraft: true,
+    });
+    expect(claudeStatus(file, claudeScreen("❯"), "done")?.hasDraft).toBe(false);
+    expect(claudeStatus(file, claudeScreen("❯ half a thought"), "working")?.hasDraft).toBe(false);
   });
 });
 
@@ -275,6 +284,7 @@ describe("the status of a Codex pane", () => {
       effort: "high",
       agents: null,
       canType: true,
+      hasDraft: false,
     });
   });
 
@@ -481,7 +491,9 @@ describe("the menus", () => {
 
   it("the note appears only when typing is off, or a pick is under way", () => {
     expect(menuNote(claude)).toBeNull();
-    expect(menuNote({ ...claude, canType: false })).toBe(CANNOT_TYPE_NOTE);
+    expect(menuNote({ ...claude, canType: false })).toBe(CANNOT_TYPE_NOTE_CLAUDE);
+    expect(CANNOT_TYPE_NOTE_CLAUDE).toBe("Disponível com o turno terminado");
+    expect(menuNote({ ...claude, program: "codex", canType: false })).toBe(CANNOT_TYPE_NOTE);
     expect(CANNOT_TYPE_NOTE).toBe("Disponível com o turno terminado e o prompt vazio");
     expect(menuNote(claude, true)).toBe(PICKING_NOTE);
     expect(menuNote({ ...claude, canType: false }, true)).toBe(PICKING_NOTE);
@@ -528,5 +540,13 @@ describe("Codex 0.162.1 as it was on screen (12/10)", () => {
   });
   it("reads Ultra", () => {
     expect(readCodexModel(idle.replace("max ·", "ultra ·"))?.effort).toBe("ultra");
+  });
+});
+
+describe("naming the conversation after the tab", () => {
+  it("is Claude Code's /rename on one line", () => {
+    expect(claudeRenameCommand("Clínica")).toBe("/rename Clínica");
+    expect(claudeRenameCommand("  a\nb\tc  ")).toBe("/rename a b c");
+    expect(claudeRenameCommand("   ")).toBeNull();
   });
 });

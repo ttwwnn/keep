@@ -26,6 +26,7 @@ SOCKET=/tmp/keep-bar-$$.sock
 WORK=$(mktemp -d /tmp/keep-bar-XXXXXX)
 MOUSE=$WORK/mousedrag
 AXPRESS=$WORK/axpress
+SENDKEY=$WORK/sendkey
 PASSED=0
 FAILED=0
 
@@ -53,6 +54,7 @@ check() {  # check <what> <wanted> <got>
 say "building $APP_NAME, the client, the daemon and the tools (yours is left alone)"
 ./tools/build-dev.sh >/dev/null || { say "could not build $APP_NAME — run tools/build-dev.sh"; exit 1; }
 swiftc -O tools/axpress.swift -o "$AXPRESS" 2>/dev/null || { say "could not build axpress"; exit 1; }
+swiftc -O tools/sendkey.swift -o "$SENDKEY" 2>/dev/null || { say "could not build sendkey"; exit 1; }
 
 export KEEP_SOCKET=$SOCKET
 export KEEP_STATE_DIR=$WORK/state
@@ -85,6 +87,7 @@ MODELS = [("Default (recommended)", None), ("Opus 5.5", ("claude-opus-5-5", "Opu
 effort = os.environ.get("BAR_EFFORT", "xhigh")
 model = ("claude-opus-5-5[1m]", "Opus 5.5 (1M context)")
 screen, typed, pointer, marker = "box", "", 1, LEVELS.index(effort)
+stash = ""
 def status():
     # For the tab's shell, which is the program above this one (see below).
     import subprocess
@@ -146,9 +149,13 @@ while True:
         ch = text[i]
         i += 1
         if ch == "\x1b":
-            screen, typed = "box", ""
+            # Backing out of a picker gives the stashed draft back.
+            screen, typed, stash = "box", stash, ""
         elif screen == "box":
-            if ch == "\r":
+            if ch == "\x13":
+                # Ctrl+S: the draft is set aside, the box left empty.
+                stash, typed = typed, ""
+            elif ch == "\r":
                 if typed == "/model":
                     screen = "models"
                 elif typed == "/effort":
@@ -157,15 +164,21 @@ while True:
                     model = (typed[7:], typed[7:])
                     status()
                 typed = ""
+                if screen == "box":
+                    typed, stash = stash, ""
             else:
                 typed += ch
         elif ch == "s" and screen == "models" and MODELS[pointer][1]:
             model, screen = MODELS[pointer][1], "box"
+            typed, stash = stash, ""
             status()
         elif ch == "s" and screen == "effort":
             effort, screen = LEVELS[marker], "box"
+            typed, stash = stash, ""
             status()
     draw()
+    with open(os.path.join(WORK, "box"), "w") as f:
+        f.write(typed)
 PY
 chmod +x "$WORK/printer"
 export KEEP_BAR_WORK=$WORK
@@ -259,6 +272,22 @@ done
 "$AXPRESS" "$APP_NAME" pick "Opus 5.5 (1M)" >/dev/null 2>&1
 for _ in $(seq 20); do [ "$(bar claude-model title)" = "claude-opus-5-5[1m] ▾" ] && break; sleep 1; done
 check "it is asked for by its id" "/model claude-opus-5-5[1m]<CR>" "$(cat "$WORK/bytes" 2>/dev/null)"
+
+say ""
+say "with a draft in the prompt"
+: > "$WORK/bytes"
+"$SENDKEY" "$APP_PID" text "rascunho" >/dev/null 2>&1
+for _ in $(seq 20); do [ "$(cat "$WORK/box" 2>/dev/null)" = "rascunho" ] && break; sleep 1; done
+check "the draft is in the box" "rascunho" "$(cat "$WORK/box" 2>/dev/null)"
+for _ in $(seq 10); do sleep 1; "$AXPRESS" "$APP_NAME" open claude-effort >/dev/null 2>&1; sleep 1
+    ITEMS=$("$AXPRESS" "$APP_NAME" items 2>/dev/null | cut -f3 | tr '\n' '|'); [ -n "$ITEMS" ] && break; done
+check "the effort menu is open to a draft" "low|medium|high|xhigh|max|" "$ITEMS"
+: > "$WORK/bytes"
+"$AXPRESS" "$APP_NAME" pick high >/dev/null 2>&1
+for _ in $(seq 20); do [ "$(bar claude-effort title)" = "esforço high ▾" ] && break; sleep 1; done
+check "the draft is set aside (Ctrl+S) before the picker" "<C-S>/effort<CR>" "$(sed 's/\x13/<C-S>/' "$WORK/bytes" 2>/dev/null | cut -c1-16)"
+check "the effort changed" "esforço high ▾" "$(bar claude-effort title)"
+check "the draft is back" "rascunho" "$(cat "$WORK/box" 2>/dev/null)"
 
 stop_app
 say ""

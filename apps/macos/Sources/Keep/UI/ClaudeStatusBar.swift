@@ -6,8 +6,9 @@ import AppKit
 ///
 /// Changing one types into the conversation — the slash command in Claude
 /// Code, Codex's own picker in Codex — so it only offers to when the turn is
-/// over and the prompt is empty: typing into a draft, a dialog or a running
-/// turn would spoil it.
+/// over and nothing is in the way: a dialog or a running turn would be
+/// spoiled by it, and so would a draft in Codex (Claude Code sets the draft
+/// aside, Ctrl+S, and gives it back).
 @MainActor
 final class ClaudeStatusBar: NSView {
     /// Tall enough for its text at the terminal's zoom.
@@ -150,7 +151,10 @@ final class ClaudeStatusBar: NSView {
         menu.autoenablesItems = false
         if status?.canType == false {
             let note = NSMenuItem(
-                title: "Disponível com o turno terminado e o prompt vazio", action: nil, keyEquivalent: "")
+                title: status?.program == "codex"
+                    ? "Disponível com o turno terminado e o prompt vazio"
+                    : "Disponível com o turno terminado",
+                action: nil, keyEquivalent: "")
             note.isEnabled = false
             menu.addItem(note)
             menu.addItem(.separator())
@@ -298,6 +302,23 @@ enum ClaudePickerDriver {
         }
     }
 
+    /// Whether the prompt holds a draft right now (the screen read afresh:
+    /// the bar's own reading is up to a second old).
+    static func hasDraft(workspace: String, tab: UInt32) -> Bool {
+        guard let screen = try? Daemon.preview(workspace: workspace, tab: tab) else { return false }
+        return ClaudeStatusReader.promptHoldsDraft(
+            onScreen: screen, coloured: { try? Daemon.colouredPreview(workspace: workspace, tab: tab) })
+    }
+
+    /// Ctrl+S sets the draft aside — Claude Code says "stashed" — and gives it
+    /// back once the command is through, or the picker backed out of.
+    static func setDraftAside(workspace: String, tab: UInt32, key: (String) -> Void) {
+        guard hasDraft(workspace: workspace, tab: tab) else { return }
+        key("\u{13}")
+        Trace.log("claude", "picker: draft set aside")
+        usleep(400_000)
+    }
+
     private static func run(
         workspace: String, tab: UInt32, send: @escaping @MainActor (String) -> Void,
         _ steps: @escaping (
@@ -307,6 +328,7 @@ enum ClaudePickerDriver {
     ) {
         DispatchQueue.global(qos: .userInitiated).async {
             func key(_ keys: String) { DispatchQueue.main.sync { send(keys) } }
+            setDraftAside(workspace: workspace, tab: tab, key: key)
             func screen(showing text: String) -> String? {
                 for _ in 0..<50 {
                     if let shown = try? Daemon.preview(workspace: workspace, tab: tab), shown.contains(text) {
