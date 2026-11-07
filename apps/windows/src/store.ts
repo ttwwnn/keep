@@ -23,6 +23,8 @@ import {
   type ClaudeMode,
 } from "./claude";
 import {
+  claudePromptIsEmpty,
+  claudeRenameCommand,
   claudeStatus,
   codexStatus,
   ENTER_DELAY_MS,
@@ -704,6 +706,7 @@ function readScreensFrom(unseen: ReadonlyMap<string, string>): void {
   const nextActivities = new Map<string, ClaudeActivity>();
   const nextModes = new Map<string, ClaudeMode | null>();
   const forBar: BarInput[] = [];
+  const claudeNow = new Map<string, { workspace: string; pane: number }>();
   const previousActivities = activities.value;
   const previousModes = modes.value;
   for (const w of workspaces.value) {
@@ -730,8 +733,19 @@ function readScreensFrom(unseen: ReadonlyMap<string, string>): void {
       const kept = a ?? previousActivities.get(key);
       if (kept) nextActivities.set(key, kept);
       forBar.push({ key, program: "claude", shellPid: pane.shellPid, screen: text, activity: kept });
+      claudeNow.set(key, { workspace: w.name, pane: pane.id });
     }
   }
+  // Claude Code opened in a tab that already has a name of its own is called by it.
+  if (knownClaude) {
+    for (const [key, at] of claudeNow) {
+      const name = gui.value.tabNames[tabKey(at.workspace, at.pane)];
+      if (!knownClaude.has(key) && name) pendingClaudeNames.set(key, { ...at, name });
+    }
+  }
+  knownClaude = new Set(claudeNow.keys());
+  for (const key of [...pendingClaudeNames.keys()]) if (!claudeNow.has(key)) pendingClaudeNames.delete(key);
+  flushClaudeNames(nextActivities);
   void readBars(forBar);
   // Claude Code asking whether to trust a folder is answered for the person who typed `claude` there.
   void trustWatch.look(claudePanes, {
@@ -859,6 +873,12 @@ export async function runChoice(workspace: string, pane: number, choice: Choice)
   picking.value = new Set([...picking.value, key]);
   const action = choice.action;
   try {
+    // Claude Code sets a draft aside for the command and gives it back.
+    if (statuses.value.get(key)?.program === "claude" && !claudePromptIsEmpty(view.screenText())) {
+      await view.type("\x13");
+      log(`claude ${workspace}/${pane}: draft set aside`);
+      await sleep(400);
+    }
     switch (action.kind) {
       case "claudeModel":
         await chooseClaudeModel(pickerIO(view, "claude"), action.label);
@@ -1238,6 +1258,42 @@ export function renameTab(workspace: string, tab: number, name: string): void {
   });
 }
 
+/** A tab named by the person: a Claude Code conversation running in it is called the same (`flushClaudeNames`). */
+function nameTab(workspace: string, tab: number, name: string): void {
+  renameTab(workspace, tab, name);
+  const key = viewKey(workspace, tab);
+  if (name.trim() && statuses.value.get(key)?.program === "claude") {
+    pendingClaudeNames.set(key, { workspace, pane: tab, name });
+    flushClaudeNames(activities.value);
+  }
+}
+
+/** Names waiting for the turn of the conversation they are for to be over. */
+const pendingClaudeNames = new Map<string, { workspace: string; pane: number; name: string }>();
+/** The panes running Claude Code at the last look; null before the first, so conversations open at start are left alone. */
+let knownClaude: ReadonlySet<string> | null = null;
+
+function flushClaudeNames(done: ReadonlyMap<string, ClaudeActivity>): void {
+  for (const [key, pending] of [...pendingClaudeNames]) {
+    if (done.get(key) !== "done") continue;
+    const view = terminals.existing(pending.workspace, pending.pane);
+    const command = claudeRenameCommand(pending.name);
+    pendingClaudeNames.delete(key);
+    if (!view || !command) continue;
+    void (async () => {
+      // A draft is set aside for the command and given back, as the bar does.
+      if (!claudePromptIsEmpty(view.screenText())) {
+        await view.type("\x13");
+        await sleep(400);
+      }
+      await view.type(command);
+      await sleep(ENTER_DELAY_MS);
+      await view.type("\r");
+      log(`claude ${pending.workspace}/${pending.pane}: ${command}`);
+    })().catch((error) => log(`rename ${key}: ${String(error)}`));
+  }
+}
+
 /** Keep a tab called `title` while its AI is switched (`null` lets it go). */
 export function holdTabName(workspace: string, tab: number, title: string | null): void {
   const key = tabKey(workspace, tab);
@@ -1305,7 +1361,7 @@ async function renameByQuestion(workspace: string, tab: number): Promise<void> {
     ],
   });
   // A name that comes back as it went out is no new name (see `finishTabName`).
-  if (result?.button === "rename" && result.values.name.trim() !== seed.trim()) renameTab(workspace, tab, result.values.name);
+  if (result?.button === "rename" && result.values.name.trim() !== seed.trim()) nameTab(workspace, tab, result.values.name);
   requestAnimationFrame(() => focusActive());
 }
 
@@ -1318,7 +1374,7 @@ async function renameByQuestion(workspace: string, tab: number): Promise<void> {
  */
 export function finishTabName(workspace: string, tab: number, value: string | null, keyboard: "back" | "elsewhere"): void {
   editing.value = null;
-  if (value !== null) renameTab(workspace, tab, value);
+  if (value !== null) nameTab(workspace, tab, value);
   giveKeyboardBack(keyboard);
 }
 

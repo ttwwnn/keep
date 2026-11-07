@@ -748,6 +748,11 @@ final class Session {
 
         case .renameTab(let id, let name):
             nameStore.setTab(id, to: Self.chosenName(name))
+            // A conversation running in the tab is called what the tab is.
+            if let chosen = Self.chosenName(name), claudeTabs().contains(id) {
+                pendingClaudeNames[id] = chosen
+                sendPendingClaudeNames(claudeActivities)
+            }
             refreshOpenLists()
             publish()
             // Wherever the name was typed, the keyboard goes back to the work.
@@ -1763,6 +1768,22 @@ final class Session {
         }
     }
 
+    /// Names to put on the conversation of a tab, waiting for its turn to be
+    /// over (`ClaudeSessionName`).
+    private var pendingClaudeNames: [TabID: String] = [:]
+    /// The tabs running Claude Code at the last look; nil before the first, so
+    /// the conversations already open when Keep starts are not renamed.
+    private var knownClaudeTabs: Set<TabID>?
+
+    private func sendPendingClaudeNames(_ activities: [TabID: ClaudeActivity]) {
+        let running = Set(claudeTabs())
+        pendingClaudeNames = pendingClaudeNames.filter { running.contains($0.key) }
+        for (id, name) in pendingClaudeNames where activities[id] == .done {
+            pendingClaudeNames[id] = nil
+            ClaudeSessionName.apply(name, to: id)
+        }
+    }
+
     /// What the screens said. `.some(nil)` is a footer naming no mode —
     /// manual — and clears the colour; a tab missing from `modes` could not
     /// be read this time, and keeps what it had.
@@ -1771,6 +1792,15 @@ final class Session {
         for (id, mode) in modes { next[id] = mode }
         var nextActivities = claudeActivities
         for (id, activity) in activities { nextActivities[id] = activity }
+        // Claude Code opened in a tab that already has a name of its own.
+        let nowClaude = Set(claudeTabs())
+        if let known = knownClaudeTabs {
+            for id in nowClaude.subtracting(known) {
+                if let name = nameStore.tab(id) { pendingClaudeNames[id] = name }
+            }
+        }
+        knownClaudeTabs = nowClaude
+        sendPendingClaudeNames(nextActivities)
         // Tabs that are gone, or have stopped running Claude Code, lose it.
         let running = Set(claudeTabs())
         next = next.filter { running.contains($0.key) }

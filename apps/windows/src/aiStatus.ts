@@ -37,12 +37,16 @@ export interface AiStatus {
   effort: string | null;
   /** How many agents run; null where they are not counted (Codex). */
   agents: number | null;
-  /** Whether a command can be typed into the prompt now: the turn is over and nothing is in the way. */
+  /** Whether a command can be typed into the prompt now: the turn is over and nothing is in the way (in Codex, a draft is). */
   canType: boolean;
+  /** The prompt holds text being written. Claude Code sets it aside (Ctrl+S) for the command and gives it back; Codex has no such thing. */
+  hasDraft: boolean;
 }
 
 /** Said in a menu whose items are off. */
 export const CANNOT_TYPE_NOTE = "Disponível com o turno terminado e o prompt vazio";
+/** The same in Claude Code, which keeps a draft out of the way. */
+export const CANNOT_TYPE_NOTE_CLAUDE = "Disponível com o turno terminado";
 /** Said in a menu while a pick is being walked through the program's picker. */
 export const PICKING_NOTE = "Trocando pelo seletor do programa…";
 
@@ -140,8 +144,20 @@ export function claudeStatus(
     modelName: file.modelName,
     effort: file.effort,
     agents: countAgents(screen),
-    canType: activity === "done" && claudePromptIsEmpty(screen),
+    canType: activity === "done",
+    hasDraft: activity === "done" && !claudePromptIsEmpty(screen),
   };
+}
+
+/**
+ * `/rename <name>` on one line — Claude Code's own command, which calls the
+ * conversation what the tab is called wherever it is listed (Remote Control,
+ * `claude -r`) — or null for a name with nothing in it.
+ */
+export function claudeRenameCommand(name: string): string | null {
+  // eslint-disable-next-line no-control-regex
+  const line = name.replace(/\s+/g, " ").replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  return line === "" ? null : `/rename ${line}`;
 }
 
 /** The efforts `/effort` takes, lowest first. */
@@ -294,6 +310,7 @@ export function codexStatus(
     effort: said.effort,
     agents: null,
     canType: activity === "done" && codexPromptIsEmpty(screen),
+    hasDraft: false,
   };
 }
 
@@ -306,7 +323,8 @@ export function sameStatus(a: AiStatus | undefined, b: AiStatus | undefined): bo
     a.modelName === b.modelName &&
     a.effort === b.effort &&
     a.agents === b.agents &&
-    a.canType === b.canType
+    a.canType === b.canType &&
+    a.hasDraft === b.hasDraft
   );
 }
 
@@ -401,7 +419,8 @@ export function codexEffortFor(model: CodexModel, effort: string | null): string
 /** The note a menu opens with when its items are off, or null when they are on. */
 export function menuNote(status: AiStatus, picking = false): string | null {
   if (picking) return PICKING_NOTE;
-  return status.canType ? null : CANNOT_TYPE_NOTE;
+  if (status.canType) return null;
+  return status.program === "codex" ? CANNOT_TYPE_NOTE : CANNOT_TYPE_NOTE_CLAUDE;
 }
 
 /** `esforço high` — the chip's text. */

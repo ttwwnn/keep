@@ -22,8 +22,12 @@ struct ClaudeStatus: Hashable {
     /// says nothing about them.
     var agents: Int?
     /// Whether a command can be typed into the prompt now: the turn is over
-    /// and nothing — a draft, a dialog — is in the way.
+    /// and nothing — a dialog, in Codex also a draft — is in the way.
     var canType: Bool
+    /// The prompt holds text being written. Claude Code can set it aside
+    /// (Ctrl+S) while a command runs and gives it back after, so a draft does
+    /// not keep its bar shut; Codex has no such thing.
+    var hasDraft: Bool = false
 }
 
 enum ClaudeStatusReader {
@@ -74,6 +78,14 @@ enum ClaudeStatusReader {
             counted = max(counted, Int(line[match].prefix(while: \.isNumber)) ?? 0)
         }
         return max(listed, counted)
+    }
+
+    /// Whether the prompt box holds a draft: it is there (`❯`), and not empty,
+    /// the dim suggestion of an empty box apart. `coloured` is asked for only
+    /// when the plain screen shows text.
+    static func promptHoldsDraft(onScreen text: String, coloured: () -> String?) -> Bool {
+        guard !promptIsEmpty(onScreen: text) else { return false }
+        return !(coloured().map(promptIsEmpty(onColouredScreen:)) ?? false)
     }
 
     /// Whether the prompt box holds nothing: `❯` and no text after it.
@@ -429,5 +441,40 @@ enum ClaudeTrustDialog {
             if t.contains("No, exit") { return .onNo }
         }
         return nil
+    }
+}
+
+/// Puts a tab's name on the Claude Code conversation running in it, with
+/// Claude Code's own `/rename`, so the conversation is called the same
+/// wherever it is listed — Remote Control on claude.ai and the phone,
+/// `claude -r`.
+///
+/// Typed through the daemon, which reaches any tab, on view or not. The
+/// caller waits for the turn to be over; a draft in the prompt is set aside
+/// (Ctrl+S) and given back, as the bar does for `/model`.
+enum ClaudeSessionName {
+    /// `/rename <name>` on one line, or nil for a name with nothing in it.
+    static func command(for name: String) -> String? {
+        let line = name.components(separatedBy: .newlines).joined(separator: " ")
+            .unicodeScalars.filter { $0.value >= 0x20 && $0.value != 0x7F }
+            .map(String.init).joined()
+            .trimmingCharacters(in: .whitespaces)
+        return line.isEmpty ? nil : "/rename " + line
+    }
+
+    static func apply(_ name: String, to id: TabID) {
+        guard let command = command(for: name) else { return }
+        DispatchQueue.global(qos: .utility).async {
+            func type(_ text: String) { try? Daemon.sendInput(Array(text.utf8), workspace: id.workspace, tab: id.root) }
+            if ClaudePickerDriver.hasDraft(workspace: id.workspace, tab: id.root) {
+                type("\u{13}")
+                usleep(400_000)
+            }
+            type(command)
+            // Apart from the text, or Claude Code takes the Return for part of a paste.
+            usleep(300_000)
+            type("\r")
+            Trace.log("claude", "rename: \(command)")
+        }
     }
 }

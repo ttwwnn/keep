@@ -387,7 +387,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             // 1M-context Opus, which the picker does not list: `/model` with
             // its id, and the default it saves put back.
             guard let label = ClaudePicker.label(forModel: id) else {
-                typeKeepingDefaults("/model \(id)")
+                typeKeepingDefaults("/model \(id)", draftAside: status.hasDraft)
                 return
             }
             pickInClaude { workspace, tab, send in
@@ -412,9 +412,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// written them.
     private static let defaultKeys = ["model", "effortLevel", "modelSettings"]
 
-    private func typeKeepingDefaults(_ command: String) {
+    private func typeKeepingDefaults(_ command: String, draftAside: Bool = false) {
         let before = Self.settingsDefaults()
-        typeIntoActive(command)
+        if draftAside, let id = container.visibleTab,
+            let surface = container.hosts[id]?.surface(for: id.root),
+            ClaudePickerDriver.hasDraft(workspace: id.workspace, tab: id.root)
+        {
+            _ = surface.perform(CutSelection.action(for: "\u{13}"))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.typeIntoActive(command) }
+        } else {
+            typeIntoActive(command)
+        }
         for delay in [2.0, 5.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 if Self.settingsDefaults() != before { Self.restoreSettingsDefaults(before) }
@@ -464,7 +472,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// Type a slash command and send it, into the root pane of the tab on
-    /// view. The bar only offers this when the prompt is empty.
+    /// view. The bar only offers this when the turn is over.
     private func typeIntoActive(_ command: String) {
         guard let id = container.visibleTab,
             let surface = container.hosts[id]?.surface(for: id.root)
