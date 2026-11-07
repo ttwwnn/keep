@@ -1275,7 +1275,9 @@ let knownClaude: ReadonlySet<string> | null = null;
 
 function flushClaudeNames(done: ReadonlyMap<string, ClaudeActivity>): void {
   for (const [key, pending] of [...pendingClaudeNames]) {
-    if (done.get(key) !== "done") continue;
+    // O turno acabou, com ou sem tarefa em segundo plano (agentes, shells): /rename é comando local.
+    const activity = done.get(key);
+    if (activity !== "done" && activity !== "waitingForWorkflow") continue;
     const view = terminals.existing(pending.workspace, pending.pane);
     const command = claudeRenameCommand(pending.name);
     pendingClaudeNames.delete(key);
