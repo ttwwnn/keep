@@ -1778,7 +1778,8 @@ final class Session {
     private func sendPendingClaudeNames(_ activities: [TabID: ClaudeActivity]) {
         let running = Set(claudeTabs())
         pendingClaudeNames = pendingClaudeNames.filter { running.contains($0.key) }
-        for (id, name) in pendingClaudeNames where activities[id] == .done {
+        // O turno acabou, com ou sem tarefa em segundo plano (agentes, shells): /rename é comando local.
+        for (id, name) in pendingClaudeNames where activities[id] == .done || activities[id] == .waitingForWorkflow {
             pendingClaudeNames[id] = nil
             ClaudeSessionName.apply(name, to: id)
         }

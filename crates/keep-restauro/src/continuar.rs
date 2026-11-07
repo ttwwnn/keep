@@ -19,7 +19,9 @@
 //! só se a pessoa está longe do teclado há 2 min.
 //!
 //! A porta de cada causa: login — a credencial da aba (a global, ou a da pasta
-//! fixa dela) tem acesso válido; rede — a API responde; limite — a conta da aba
+//! fixa dela) tem acesso válido, e a de quem roda num armazém só de acesso (todo
+//! Claude que o Keep abre) foi regravada depois do erro e o Claude já a relê;
+//! rede — a API responde; limite — a conta da aba
 //! saiu do limite (a medição do rodapé "Consumo de IA"). No máximo 3 vezes
 //! seguidas sem a conversa andar, com 2 min entre elas; a contagem recomeça
 //! quando a conversa anda ou depois de 1 h. A mensagem tem de aparecer no
@@ -400,6 +402,31 @@ fn credencial_boa(fixa: Option<&str>) -> (bool, String) {
     (true, format!("ok (expira em {} min)", falta / 60_000))
 }
 
+/// O login de quem roda num armazém de aba (`quente`: só o acesso; o refresh fica com o dono da conta e o Keep
+/// espalha o acesso novo): voltou quando o armazém foi regravado DEPOIS do erro e o Claude já o relê
+/// (`vale_em`: a regravação mais o cache de login dele). Um erro de depois disso é do acesso que a aba tem
+/// (revogado ou vencido), e só uma renovação do Keep o cura. Não há refresh a exigir: a pergunta "o login caiu?" é
+/// "o acesso daqui é outro e vale?".
+fn porta_do_login_da_aba(vale_em: u64, erro_ms: u64, agora: u64, expira_em: Option<u64>) -> (bool, String) {
+    if agora < vale_em {
+        return (false, format!("o login da aba foi regravado há pouco; o Claude o relê em {} s", (vale_em - agora).div_ceil(1000)));
+    }
+    if erro_ms >= vale_em {
+        return (false, "o acesso que a aba tem é o que falhou; espero o Keep renová-lo".into());
+    }
+    match expira_em {
+        Some(e) if e > agora => (true, format!("ok (acesso novo, expira em {} min)", (e - agora) / 60_000)),
+        _ => (false, "o acesso do armazém da aba está vencido".into()),
+    }
+}
+
+/// Quando vence o acesso que a pasta guarda.
+fn acesso_expira_em(pasta: &str) -> Option<u64> {
+    use keep_ia::contas::credencial::{self, Lido, Oauth};
+    let Lido::Ok(v) = credencial::fixa(Path::new(pasta)) else { return None };
+    Oauth::de(&v)?.expira_em
+}
+
 /// A API responde? Qualquer resposta HTTP prova DNS, conexão e TLS.
 fn rede_de_volta() -> (bool, String) {
     let url = std::env::var("KEEP_CONTINUAR_SONDA").unwrap_or_else(|_| "https://api.anthropic.com/api/hello".into());
@@ -636,10 +663,6 @@ pub fn rodada(seco: bool, status: bool) -> Result<Value, String> {
             continue;
         }
         let fixa = c.fixa.clone();
-        if erro.tipo == Tipo::Login && fixa.is_some() {
-            vistas.push(json!({ "aba": c.rotulo, "situacao": "aba presa a uma conta: o login dela só volta pelo menu da aba" }));
-            continue;
-        }
         // A porta do limite é de cada conversa (o processo e a parada dele); a do login, de cada armazém; a da rede, uma.
         let chave = (erro.tipo, match erro.tipo {
             Tipo::Rede => None,
@@ -649,7 +672,12 @@ pub fn rodada(seco: bool, status: bool) -> Result<Value, String> {
         let (boa, porque) = portas
             .entry(chave)
             .or_insert_with(|| match erro.tipo {
-                Tipo::Login => credencial_boa(fixa.as_deref()),
+                Tipo::Login => match (fixa.as_deref(), keep_ia::quente::conta_vale_em(c.pid)) {
+                    (Some(pasta), Some(vale_em)) => {
+                        porta_do_login_da_aba(vale_em, erro.quando_ms, crate::agora_ms(), acesso_expira_em(pasta))
+                    }
+                    _ => credencial_boa(fixa.as_deref()),
+                },
                 Tipo::Rede => rede_de_volta(),
                 Tipo::Limite => cota_livre(Some(c.pid), Some(&erro)),
             })
@@ -810,6 +838,21 @@ mod testes {
         assert!(avaliar(f.path(), carimbo_ms(&json!({ "timestamp": "2026-10-13T01:00:06Z" }))).is_err(), "erro anterior à abertura");
         let mencao = transcrito_com(&[fala("assistant", "o erro Not logged in aparece quando…", "2026-10-13T01:00:00Z")]);
         assert!(avaliar(mencao.path(), 0).is_err(), "só mencionar a frase não é parar");
+    }
+
+    #[test]
+    fn o_login_da_aba_volta_quando_o_armazem_foi_regravado_depois_do_erro() {
+        let (erro, vale, agora, expira) = (1_000_000u64, 1_030_000u64, 1_040_000u64, Some(1_040_000 + 7 * 3_600_000));
+        // Regravado depois do erro (a janela de 3-5 s da renovação), o Claude já o relê: continua.
+        let (boa, porque) = porta_do_login_da_aba(vale, erro, agora, expira);
+        assert!(boa, "{porque}");
+        // O cache de 30 s do Claude ainda não passou: espera.
+        assert!(!porta_do_login_da_aba(vale, erro, vale - 5_000, expira).0);
+        // O erro é mais novo que a regravação: o acesso daqui é o que falhou, só uma renovação do Keep o cura.
+        assert!(!porta_do_login_da_aba(vale, vale + 1, agora + 10_000, expira).0);
+        // Regravado, mas com o acesso já vencido: não adianta.
+        assert!(!porta_do_login_da_aba(vale, erro, agora, Some(agora - 1)).0);
+        assert!(!porta_do_login_da_aba(vale, erro, agora, None).0);
     }
 
     #[test]

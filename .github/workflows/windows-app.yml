@@ -23,6 +23,8 @@ env:
   # Windows Terminal's own console host, from Microsoft's package: newer VT
   # handling than the one a given Windows ships (MIT).
   CONPTY_VERSION: 1.25.260930003
+  # sha256 do .nupkg dessa versão: o que o instalador leva de OpenConsole.exe e conpty.dll tem de ser este.
+  CONPTY_SHA256: 02b07b349af66d801159bdf9e440d4a1ce78bb951f37fc8609731665afdae7ee
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -35,6 +37,8 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Cache do libghostty-vt
         id: vt
@@ -68,6 +72,7 @@ jobs:
           mkdir -p "$bin"
           cp target/release/keep.exe target/release/keepd.exe "$bin/"
           curl -fsSL -o conpty.nupkg "https://api.nuget.org/v3-flatcontainer/microsoft.windows.console.conpty/${CONPTY_VERSION}/microsoft.windows.console.conpty.${CONPTY_VERSION}.nupkg"
+          echo "$CONPTY_SHA256  conpty.nupkg" | sha256sum -c -
           unzip -j -o conpty.nupkg runtimes/win-x64/native/conpty.dll build/native/runtimes/x64/OpenConsole.exe -d "$bin"
           ls -la "$bin"
 
@@ -118,8 +123,13 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      # Atestado de procedência: `gh attestation verify <arquivo> -R ttwwnn/keep` prova que o arquivo saiu deste fluxo.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: Keep-Windows-instalador
@@ -137,3 +147,7 @@ jobs:
             sleep 10
           done
           exit 1
+      # Depois do envio: se o atestado falhar, a release já está publicada e o fluxo acusa a falha.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
