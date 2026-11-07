@@ -733,13 +733,11 @@ fn the_socket_is_closed_to_everyone_but_its_owner_and_its_folder_too() {
     common::use_test_shell();
     let base = std::env::temp_dir().join(format!("keep-test-modes-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
-    // A folder the daemon has to create, under a permissive umask: it comes out the owner's alone.
+    // A folder the daemon has to create: it comes out the owner's alone (whatever the umask, which is the process's
+    // and not touched here: other tests bind at the same time).
     let dir = base.join("novo");
     let path = dir.join("keep.sock");
-    // SAFETY: only this test changes the umask, and it puts it back.
-    let before = unsafe { libc::umask(0o000) };
     let server = Server::bind(&path).expect("bind");
-    unsafe { libc::umask(before) };
     let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode(&path), 0o600, "the socket");
     assert_eq!(mode(&dir), 0o700, "the folder the daemon made");

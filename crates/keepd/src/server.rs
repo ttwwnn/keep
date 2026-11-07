@@ -47,16 +47,9 @@ impl Server {
             use std::os::unix::fs::DirBuilderExt;
             std::fs::DirBuilder::new().recursive(true).mode(0o700).create(parent).ok();
         }
-        // Born closed: no window, between `bind` and a chmod, in which the socket takes whatever the umask says.
-        #[cfg(unix)]
-        let umask = unsafe { libc::umask(0o177) };
-        let listener =
-            Listener::bind(path).with_context(|| format!("bind {}", path.display()));
-        #[cfg(unix)]
-        unsafe {
-            libc::umask(umask);
-        }
-        let listener = listener?;
+        // Closed to everyone but its owner right after the bind (the daemon's `main` also binds under a closed umask,
+        // so there is no moment in which it is not; the umask is the process's, so a library cannot juggle it).
+        let listener = Listener::bind(path).with_context(|| format!("bind {}", path.display()))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
