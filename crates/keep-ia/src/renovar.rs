@@ -4,9 +4,10 @@
 //! renovarTokenSePossivel` + o `ia:healthcheck`), e o kit faz com o login
 //! global (`claude-conectado`), aqui para todo armazém que o Keep cuida:
 //!
-//! - perto de vencer (acesso com menos de [`FOLGA_MS`]): renova antes do
-//!   próprio Claude Code, que só tenta nos 5 min finais — é nesses minutos
-//!   que várias abas cruzam o limiar juntas e uma derruba a outra;
+//! - perto de vencer (acesso com menos de [`FOLGA_MS`], ou seja, a cada meia
+//!   hora): renova muito antes do próprio Claude Code, que só tenta nos 5 min
+//!   finais — é nesses minutos que várias abas cruzam o limiar juntas e uma
+//!   derruba a outra — e deixa o acesso fresco para o sono do Mac;
 //! - parada (refresh sem girar há mais de [`PARADA_MS`]): renova para o
 //!   refresh token, que vive umas quatro semanas, não morrer em silêncio — a
 //!   conta parada é a que tem de estar viva na hora do aperto.
@@ -46,8 +47,10 @@ use crate::contas::credencial::{self, Lido, Local, Oauth};
 use crate::contas::{self, Armazem, donos};
 use crate::{caminhos, programas, rede};
 
-/// Renova o acesso que vence antes disto.
-pub const FOLGA_MS: u64 = 60 * 60_000;
+/// Renova o acesso que vence antes disto: com 8 h de vida, a cada meia hora, como o `ia:healthcheck` da Clínica.
+/// O Mac que dorme não renova, e o acesso que o sono pega vencido derruba todas as abas até a próxima rodada;
+/// renovado a cada 30 min, o sono de até 7 h30 acorda com o acesso ainda valendo.
+pub const FOLGA_MS: u64 = DURACAO_ACESSO_MS - 30 * 60_000;
 /// Renova o login cujo refresh não gira há mais disto.
 pub const PARADA_MS: u64 = 7 * 24 * 3_600_000;
 /// Conta em espera no servidor: a próxima tentativa.

@@ -187,7 +187,7 @@ fn nao_renova_o_que_ainda_tem_folga() {
     perfis(&[]);
     let s = Servidor::sobe();
     s.gira("R1", "A2", "R2");
-    let local = poe(&c, Some("k-1"), &login("A1", "R1", donos::agora_ms() + 3 * HORA));
+    let local = poe(&c, Some("k-1"), &login("A1", "R1", donos::agora_ms() + 7 * HORA + 45 * 60_000));
     let r = rodada(false);
     assert!(r.renovados.is_empty() && r.falhas.is_empty(), "{r:?}");
     assert_eq!(s.quantos(), 0);
@@ -207,13 +207,13 @@ fn renova_a_conta_parada_ha_mais_de_sete_dias_e_deixa_a_recente() {
     let agora = donos::agora_ms();
     // Venceu há 7 dias: girou há 7 dias e 8 h.
     let velha = poe(&c, Some("k-velha"), &login("AV", "RV", agora - 7 * 24 * HORA));
-    // Vence em 3 h: girou há 5 h.
-    let nova = poe(&c, Some("k-nova"), &login("AN", "RN", agora + 3 * HORA));
+    // Vence em 7 h 45 min: girou há 15 min.
+    let nova = poe(&c, Some("k-nova"), &login("AN", "RN", agora + 7 * HORA + 45 * 60_000));
     let r = rodada(false);
     assert_eq!(r.renovados.len(), 1, "{r:?}");
     assert_eq!(r.renovados[0].2, Motivo::Parada);
     assert_eq!(oauth(&velha).refresh.as_deref(), Some("RV2"));
-    assert_eq!(oauth(&nova).refresh.as_deref(), Some("RN"), "a que girou há 5 h espera");
+    assert_eq!(oauth(&nova).refresh.as_deref(), Some("RN"), "a que girou há 15 min espera");
 }
 
 #[test]
@@ -408,7 +408,10 @@ fn a_decisao_usa_o_nascimento_do_acesso() {
     let mut m = Marca::default();
     assert_eq!(decide(&o(agora + 30 * 60_000), &mut m, agora, false), Some(Motivo::PertoDeVencer));
     let mut m = Marca::default();
-    assert_eq!(decide(&o(agora + 2 * HORA), &mut m, agora, false), None);
+    // A cada meia hora: com 7 h até vencer o acesso tem 1 h, e com 7 h 45 min, 15 min.
+    assert_eq!(decide(&o(agora + 7 * HORA), &mut m, agora, false), Some(Motivo::PertoDeVencer));
+    let mut m = Marca::default();
+    assert_eq!(decide(&o(agora + 7 * HORA + 45 * 60_000), &mut m, agora, false), None);
     let mut m = Marca::default();
     assert_eq!(decide(&o(agora - 7 * 24 * HORA), &mut m, agora, false), Some(Motivo::Parada));
     let mut m = Marca::default();
