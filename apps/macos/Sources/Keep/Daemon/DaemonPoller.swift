@@ -182,6 +182,17 @@ final class AIChores {
         timers = all
         // A login that ran out while the app was closed is renewed at once.
         renew()
+        // And one that ran out while the Mac slept, as soon as it wakes: the network may take a few seconds,
+        // so the round is tried again (a round already going is not doubled).
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                for delay in [0.0, 4, 12, 30] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) { MainActor.assumeIsolated { self?.renew() } }
+                }
+            }
+        }
         // The conversations of a restart come back now, not in 30 s.
         restore(always: true)
         // The first round soon after opening, once the daemon has answered, not in 5 min.
