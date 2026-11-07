@@ -111,6 +111,7 @@ fn conta_que_parou(
     vale_em: Option<u64>,
     agora: f64,
 ) -> Option<String> {
+    eprintln!("DIAG quando={} vale_em={vale_em:?} atual={atual:?} recomeca={:?} janela={:?} agora={agora}", p.quando_ms, p.recomeca, p.janela);
     if p.recomeca.is_some_and(|fim| fim <= agora) {
         return None;
     }

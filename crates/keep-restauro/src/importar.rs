@@ -53,7 +53,10 @@ fn casa() -> String {
 /// A pasta de lá, no HOME daqui.
 pub fn traduz(cwd: &str, home_origem: &str, home: &str) -> String {
     if !cwd.is_empty() && !home_origem.is_empty() && (cwd == home_origem || cwd.starts_with(&format!("{home_origem}/"))) {
-        format!("{home}{}", &cwd[home_origem.len()..])
+        // Por componente: em `\\?\C:\…` (o HOME canonizado do Windows) uma `/` não separa nada.
+        let mut destino = PathBuf::from(home);
+        destino.extend(cwd[home_origem.len()..].split('/').filter(|parte| !parte.is_empty()));
+        destino.to_string_lossy().into_owned()
     } else {
         cwd.to_string()
     }
@@ -353,7 +356,7 @@ mod testes {
         assert_eq!(ant.keepd, la(), "o keepd de lá fica (é outro, não o daqui)");
         assert!(ant.gravado_ms < 1_792_530_000_000, "mais velho que o retrato daqui: um reinício prefere as abas deste computador");
         let por = |ws: &str, n: u32| ant.abas.iter().find(|a| a.workspace == ws && a.aba == n).unwrap().clone();
-        assert_eq!(por("W1", 1).cwd, format!("{}/Projetos/foo", c.home()), "pasta traduzida para este HOME");
+        assert_eq!(por("W1", 1).cwd, c.raiz.join("home/Projetos/foo").to_string_lossy(), "pasta traduzida para este HOME");
         assert_eq!(por("W1", 1).nome.as_deref(), Some("W1#1"));
         assert_eq!(por("W1", 2).cwd, c.home(), "pasta inexistente cai para o HOME");
         assert_eq!(por("W1", 2).ia.unwrap().conversa, ABERTA, "conversa aberta aqui fica: o Keep não a duplica");

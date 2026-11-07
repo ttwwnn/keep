@@ -185,7 +185,7 @@ mod testes {
         let aberta = nova("T", Some(&c.raiz.to_string_lossy()), 100, 30);
         let id = aberta["aba"].as_u64().expect("o número da aba nova") as u32;
         let l = lista();
-        assert_eq!(l["socket"], sock.to_string_lossy().as_ref());
+        assert_eq!(l["socket"], keep_proto::socket_path().to_string_lossy().as_ref());
         let aba = l["abas"].as_array().unwrap().iter().find(|a| a["ws"] == "T" && a["id"] == id).cloned().expect("a aba na lista");
         assert_eq!((aba["cols"].as_u64(), aba["rows"].as_u64(), aba["finished"].as_bool()), (Some(100), Some(30), Some(false)));
 
