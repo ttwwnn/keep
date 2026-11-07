@@ -255,13 +255,13 @@ fn sem_kit_o_global_as_fixas_e_o_codex_viram_contas() {
 #[test]
 fn com_o_kit_os_apelidos_e_a_ordem_dele_valem() {
     let c = casa("kit");
-    perfis(&[("G", "4f35c383-0000", "ds@x.com"), ("F", "4f35c383-0000", "ds@x.com")]);
-    c.slot("principal", "d32da84e-0000", "assinaturas@y.com", "S1");
-    c.slot("reserva", "4f35c383-0000", "ds@x.com", "S2");
+    perfis(&[("G", "aaaa1111-0000", "ds@x.com"), ("F", "aaaa1111-0000", "ds@x.com")]);
+    c.slot("principal", "bbbb2222-0000", "assinaturas@y.com", "S1");
+    c.slot("reserva", "aaaa1111-0000", "ds@x.com", "S2");
     std::fs::write(c.raiz.join(".claude/contas/.ativa"), "reserva\n").unwrap();
     c.global("G", "r");
     // A pasta do kit, com o nome dos 8 primeiros do uuid e sem keep.json.
-    c.fixa("4f35c383", Some(("F", "r")), None);
+    c.fixa("aaaa1111", Some(("F", "r")), None);
     c.codex(&c.raiz.join(".codex"), "ds@x.com", "acct-1");
     c.ordem(&["# fila", "claude:reserva", "gpt:principal", "claude:principal"]);
 

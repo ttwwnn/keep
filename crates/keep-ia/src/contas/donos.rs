@@ -52,7 +52,7 @@ fn arquivo() -> PathBuf {
 }
 
 fn le(caminho: &PathBuf) -> BTreeMap<String, Entrada> {
-    std::fs::read_to_string(caminho)
+    caminhos::ler_texto_ate(caminho, caminhos::LEITURA_MAXIMA)
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default()

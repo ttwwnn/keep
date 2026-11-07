@@ -220,13 +220,14 @@ final class KeeperWatch {
         case .ask:
             // On the pane's own window, as a surface asks on its own.
             let window = self.window ?? NSApp.keyWindow ?? NSApp.mainWindow
-            let alert = TerminalSurfaceView.pasteQuestion(text, on: window)
+            // A program reading the clipboard, not a paste: its default answer is no.
+            let alert = TerminalSurfaceView.pasteQuestion(text, on: window, kind: .read)
             guard let window else {
-                reply(alert.runModal() == .alertFirstButtonReturn ? text : "")
+                reply(TerminalSurfaceView.ClipboardQuestion.read.allows(alert.runModal()) ? text : "")
                 return
             }
             alert.beginSheetModal(for: window) { response in
-                reply(response == .alertFirstButtonReturn ? text : "")
+                reply(TerminalSurfaceView.ClipboardQuestion.read.allows(response) ? text : "")
             }
         }
     }

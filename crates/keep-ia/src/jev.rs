@@ -405,6 +405,10 @@ struct Chamada {
 /// Linha que não se lê, de outra chave ou sem custo fica de fora.
 fn chamadas(id: &str, desde: f64) -> Vec<Chamada> {
     use std::io::{Read, Seek, SeekFrom};
+    // Só um arquivo comum: um link para `/dev/zero` ou uma FIFO no lugar do livro prenderia o `keep ia jev` do app.
+    if !std::fs::metadata(livro()).is_ok_and(|m| m.is_file()) {
+        return Vec::new();
+    }
     let Ok(mut arquivo) = std::fs::File::open(livro()) else { return Vec::new() };
     let tamanho = arquivo.metadata().map(|m| m.len()).unwrap_or(0);
     let pulo = tamanho.saturating_sub(LIVRO_MAXIMO);
@@ -412,7 +416,7 @@ fn chamadas(id: &str, desde: f64) -> Vec<Chamada> {
         return Vec::new();
     }
     let mut bruto = Vec::new();
-    if arquivo.read_to_end(&mut bruto).is_err() {
+    if arquivo.take(LIVRO_MAXIMO + 4096).read_to_end(&mut bruto).is_err() {
         return Vec::new();
     }
     let texto = String::from_utf8_lossy(&bruto);
@@ -750,8 +754,10 @@ pub fn login() -> Result<String, String> {
         };
         let _ = conexao.set_nonblocking(false);
         let _ = conexao.set_read_timeout(Some(Duration::from_secs(10)));
+        // A primeira linha de um pedido do navegador tem poucas centenas de bytes: sem teto, quem conectasse e não
+        // mandasse `\n` faria o `String` crescer e prenderia o laço do login.
         let mut primeira = String::new();
-        if BufReader::new(&conexao).read_line(&mut primeira).is_err() {
+        if BufReader::new(std::io::Read::take(&conexao, 8 * 1024)).read_line(&mut primeira).is_err() {
             continue;
         }
         let (caminho, pares) = le_pedido(&primeira);
@@ -761,7 +767,10 @@ pub fn login() -> Result<String, String> {
         }
         let valor = |k: &str| pares.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
         let resultado = if valor("state").as_deref() != Some(estado.as_str()) {
-            Err("A volta do navegador não é a deste pedido; nenhuma chave foi guardada.".to_string())
+            // Outra volta (um processo qualquer, uma página que varre portas): recusa essa e segue esperando a do
+            // navegador, em vez de derrubar o login.
+            let _ = write!(conexao, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            continue;
         } else if let Some(codigo) = valor("code").filter(|c| !c.is_empty()) {
             troca_o_codigo(&codigo, &verificador).and_then(|chave| {
                 let teto = confere_a_chave(&chave)?;
@@ -1167,15 +1176,11 @@ mod testes {
 
         let fio = std::thread::spawn(login);
         let url = endereco_aberto(&aberto);
+        // Uma volta de outro pedido é recusada (400), mas não derruba o login: a do navegador ainda chega.
         let pagina = volta(&parametro(&url, "callback_url"), "code=codigo&state=de-outro-pedido");
-        assert!(pagina.contains("Não deu certo"), "{pagina}");
-        assert!(fio.join().unwrap().unwrap_err().contains("não é a deste pedido"));
+        assert!(pagina.contains("400"), "{pagina}");
         assert!(pedidos.lock().unwrap().is_empty(), "nem trocou o código");
         assert!(chave_guardada().is_none());
-
-        let _ = std::fs::remove_file(&aberto);
-        let fio = std::thread::spawn(login);
-        let url = endereco_aberto(&aberto);
         volta(&parametro(&url, "callback_url"), &format!("error=access_denied&state={}", parametro(&url, "state")));
         assert!(fio.join().unwrap().unwrap_err().contains("access_denied"));
         assert!(chave_guardada().is_none());

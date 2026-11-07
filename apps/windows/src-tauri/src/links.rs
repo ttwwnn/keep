@@ -35,9 +35,29 @@ fn is_device_name(path: &str) -> bool {
     matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL") || numbered("COM") || numbered("LPT")
 }
 
+/// A path on another machine (`\\servidor\share`, `//servidor/share`, `\\?\UNC\…`, a device `\\.\`): asking Windows
+/// whether it exists makes it connect and sign in to that server with the user's credentials (NTLM), which hands the
+/// server a hash to crack or relay — and `kind` is asked of every path-looking word under the pointer, no click needed.
+/// WSL's own shares are the machine's.
+fn is_network_path(path: &str) -> bool {
+    let p = path.replace('/', "\\");
+    let lower = p.to_ascii_lowercase();
+    if !lower.starts_with("\\\\") {
+        return false;
+    }
+    !(lower.starts_with("\\\\wsl$\\") || lower.starts_with("\\\\wsl.localhost\\") || lower.starts_with("\\\\?\\wsl"))
+        && !is_verbatim_local(&lower)
+}
+
+/// `\\?\C:\…`: the verbatim form of a local drive path.
+fn is_verbatim_local(lower: &str) -> bool {
+    let b = lower.as_bytes();
+    lower.starts_with("\\\\?\\") && b.len() >= 6 && b[4].is_ascii_alphabetic() && b[5] == b':'
+}
+
 /// `Some(true)` for a folder, `Some(false)` for a file, `None` for neither.
 fn kind(path: &str) -> Option<bool> {
-    if path.is_empty() || (cfg!(windows) && is_device_name(path)) {
+    if path.is_empty() || is_network_path(path) || (cfg!(windows) && is_device_name(path)) {
         return None;
     }
     let meta = std::fs::metadata(path).ok()?;
@@ -117,6 +137,30 @@ pub fn open_url(url: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_path_on_another_machine_is_never_asked_about() {
+        for net in [
+            "\\\\10.0.0.66\\share\\relatorio.pdf",
+            "//10.0.0.66/share/relatorio.pdf",
+            "\\\\?\\UNC\\servidor\\share\\x",
+            "\\\\.\\pipe\\x",
+            "\\\\SERVIDOR\\c$\\x",
+        ] {
+            assert!(is_network_path(net), "{net}");
+            assert_eq!(kind(net), None, "{net}");
+        }
+        for local in [
+            "C:\\Users\\a\\x.txt",
+            "\\\\?\\C:\\Users\\a",
+            "\\\\wsl$\\Ubuntu\\home\\a",
+            "\\\\wsl.localhost\\Ubuntu\\home",
+            "/home/a/x",
+            "relative\\path",
+        ] {
+            assert!(!is_network_path(local), "{local}");
+        }
+    }
 
     #[test]
     fn devices_are_not_files() {

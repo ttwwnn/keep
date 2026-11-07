@@ -236,12 +236,49 @@ fn note(log: &Path, lines: &[String]) {
     if let Some(dir) = log.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(log) else { return };
+    // Never through a link planted beside the socket (it would append to whatever it points at), only for the
+    // owner, and one line per entry: a workspace name with a newline in it cannot forge another.
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    let Ok(mut file) = options.open(log) else { return };
     let at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
     for line in lines {
+        let line: String = line.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
         let _ = writeln!(file, "{at} {line}");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod note_tests {
+    use super::note;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn the_log_is_private_one_line_per_entry_and_never_written_through_a_link() {
+        let dir = std::env::temp_dir().join(format!("keep-note-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("k.abas.log");
+        note(&log, &["w/1: morreu\nw/9: forjada".to_string()]);
+        let text = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(text.lines().count(), 1, "{text}");
+        assert!(text.contains("w/1: morreu w/9: forjada"));
+        assert_eq!(std::fs::metadata(&log).unwrap().permissions().mode() & 0o777, 0o600);
+        // A link planted where the log goes: what it points at stays as it was.
+        let alvo = dir.join("zshrc");
+        std::fs::write(&alvo, "export A=1\n").unwrap();
+        let ligado = dir.join("l.abas.log");
+        std::os::unix::fs::symlink(&alvo, &ligado).unwrap();
+        note(&ligado, &["w/2: morreu".to_string()]);
+        assert_eq!(std::fs::read_to_string(&alvo).unwrap(), "export A=1\n");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

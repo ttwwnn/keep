@@ -2021,7 +2021,7 @@ dependencies = [
 
 [[package]]
 name = "keep-app"
-version = "0.3.28"
+version = "0.3.29"
 dependencies = [
  "anyhow",
  "keep-proto",
@@ -2043,6 +2043,7 @@ dependencies = [
 name = "keep-proto"
 version = "0.0.1"
 dependencies = [
+ "libc",
  "windows-sys 0.61.2",
 ]
 

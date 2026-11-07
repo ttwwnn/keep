@@ -299,4 +299,12 @@ describe("opening", () => {
       expect(runsWhenOpened(file), file).toBe(false);
     }
   });
+
+  it("reads the name as Windows does: trailing dots and spaces, and alternate streams, do not hide an extension", () => {
+    // "Binário gravado em target\\release\\app.exe." is a path with a full stop after it.
+    for (const file of ["C:\\x\\app.exe.", "C:\\x\\app.exe ", "C:\\x\\app.exe. .", "C:\\x\\a.txt:evil.exe", "suporte.rdp", "Atualizar.theme", "x.diagcab", "d.iso"]) {
+      expect(runsWhenOpened(file), file).toBe(true);
+    }
+    expect(runsWhenOpened("C:\\x\\notes.txt."), "a full stop after a harmless name").toBe(false);
+  });
 });

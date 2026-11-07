@@ -6,7 +6,16 @@ use anyhow::Result;
 
 fn main() -> Result<()> {
     let path = keep_proto::socket_path();
-    let server = match keepd::Server::bind(&path) {
+    // The socket is born closed to everyone but its owner, and the umask goes back before any shell is started: the
+    // shells of the tabs inherit it, and a user's files are not to come out 0600 because of the daemon.
+    #[cfg(unix)]
+    let umask = unsafe { libc::umask(0o177) };
+    let bound = keepd::Server::bind(&path);
+    #[cfg(unix)]
+    unsafe {
+        libc::umask(umask);
+    }
+    let server = match bound {
         Ok(server) => server,
         Err(e) => {
             log_failure(&e);

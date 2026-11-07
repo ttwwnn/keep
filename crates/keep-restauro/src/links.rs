@@ -55,10 +55,39 @@ fn registra(texto: &str) {
     if let Some(p) = arq.parent() {
         let _ = std::fs::create_dir_all(p);
     }
+    // Um log de links é pequeno; passando de 256 KiB, o começo vai embora.
+    if std::fs::metadata(&arq).is_ok_and(|m| m.len() > 256 * 1024) {
+        let _ = std::fs::rename(&arq, arq.with_extension("log.antigo"));
+    }
     use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(arq) {
+    let mut abre = std::fs::OpenOptions::new();
+    abre.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        abre.mode(0o600);
+    }
+    if let Ok(mut f) = abre.open(arq) {
         let _ = writeln!(f, "{} {texto}", crate::agora_ms());
     }
+}
+
+/// Os argumentos que o Claude Code monta para o terminal de um link (os mesmos de `deeplink::argumentos_do_claude`).
+/// Qualquer outro, vindo de quem chamou o desvio, não vai ao `claude`: `-e x --dangerously-skip-permissions` abriria
+/// uma conversa sem permissões numa pasta à escolha.
+fn argumento_de_link(a: &str) -> bool {
+    a == "--deep-link-origin" || ["--deep-link-repo=", "--deep-link-cwd-b64=", "--prefill-b64="].iter().any(|p| a.starts_with(p))
+}
+
+/// Só os nomes das opções e o tamanho do que vem depois: o texto de um link é da pessoa, e o log não o guarda.
+fn resumo_dos_argumentos(args: &[String]) -> String {
+    args.iter()
+        .map(|a| match a.split_once('=') {
+            Some((nome, valor)) => format!("{nome}=<{} caracteres>", valor.chars().count()),
+            None => a.chars().take(40).collect(),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn abre_o_keep() {
@@ -69,7 +98,11 @@ fn abre_o_keep() {
 pub fn desvio(args: &[String]) -> i32 {
     let (pasta, resto) = ler_chamada(args);
     let pasta = pasta.filter(|p| Path::new(p).is_dir()).map(PathBuf::from).unwrap_or_else(keep_ia::caminhos::casa);
-    registra(&format!("link: pasta={} args={resto:?}", pasta.display()));
+    let (resto, recusados): (Vec<String>, Vec<String>) = resto.into_iter().partition(|a| argumento_de_link(a));
+    registra(&format!("link: pasta={} args={}", pasta.display(), resumo_dos_argumentos(&resto)));
+    if !recusados.is_empty() {
+        registra(&format!("recusados (não são de um link): {}", resumo_dos_argumentos(&recusados)));
+    }
     if resto.is_empty() {
         abre_o_keep();
         return 0;
@@ -271,5 +304,18 @@ mod testes {
         std::fs::create_dir_all(d.path().join("Contents")).unwrap();
         std::fs::write(d.path().join("Contents/Info.plist"), info_plist()).unwrap();
         assert_eq!(identidade_instalada(d.path()).as_deref(), Some(IDENTIDADE));
+    }
+
+    #[test]
+    fn so_os_argumentos_de_um_link_vao_ao_claude_e_o_log_nao_guarda_o_texto() {
+        for bom in ["--deep-link-origin", "--deep-link-repo=a/b", "--deep-link-cwd-b64=L3A", "--prefill-b64=b2k"] {
+            assert!(argumento_de_link(bom), "{bom}");
+        }
+        for ruim in ["--dangerously-skip-permissions", "--settings", "/tmp/s.json", "x", "--deep-link-origin-x=1"] {
+            assert!(!argumento_de_link(ruim), "{ruim}");
+        }
+        let resumo = resumo_dos_argumentos(&["--deep-link-origin".into(), "--prefill-b64=c2VnZWRvOiBzZW5oYQ".into()]);
+        assert_eq!(resumo, "--deep-link-origin --prefill-b64=<18 caracteres>");
+        assert!(!resumo.contains("c2Vn"));
     }
 }

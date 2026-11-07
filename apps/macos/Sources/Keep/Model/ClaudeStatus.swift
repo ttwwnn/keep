@@ -429,10 +429,24 @@ enum CodexPicker {
 enum ClaudeTrustDialog {
     enum Pointer { case onYes, onNo }
 
+    /// Whether the screen is the question itself and nothing else: it has its header and its footer, a handful of
+    /// lines, and no prompt box (two rules around `❯`), which any conversation brings. Those four lines printed
+    /// inside a conversation (a file the model read, a `cat`) are not it: answering them would press Enter on
+    /// whatever the conversation had up.
+    static func isTheQuestion(_ text: String) -> Bool {
+        let lines = text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard lines.count <= 16,
+            text.contains("Quick safety check") || text.contains("Do you trust the files in this folder"),
+            text.contains("Enter to confirm")
+        else { return false }
+        return lines.filter { $0.hasPrefix(String(repeating: "─", count: 12)) }.count <= 1
+    }
+
     /// Whether the question is on the screen, and which choice the pointer
     /// (`❯`) is on. Nil when it is not the question — the words quoted in a
     /// conversation, say, have no pointer in front of them.
     static func pointer(onScreen text: String) -> Pointer? {
+        guard isTheQuestion(text) else { return nil }
         guard text.contains("Yes, I trust this folder"), text.contains("No, exit") else { return nil }
         for line in text.split(separator: "\n") {
             let t = line.trimmingCharacters(in: .whitespaces)
@@ -441,40 +455,5 @@ enum ClaudeTrustDialog {
             if t.contains("No, exit") { return .onNo }
         }
         return nil
-    }
-}
-
-/// Puts a tab's name on the Claude Code conversation running in it, with
-/// Claude Code's own `/rename`, so the conversation is called the same
-/// wherever it is listed — Remote Control on claude.ai and the phone,
-/// `claude -r`.
-///
-/// Typed through the daemon, which reaches any tab, on view or not. The
-/// caller waits for the turn to be over; a draft in the prompt is set aside
-/// (Ctrl+S) and given back, as the bar does for `/model`.
-enum ClaudeSessionName {
-    /// `/rename <name>` on one line, or nil for a name with nothing in it.
-    static func command(for name: String) -> String? {
-        let line = name.components(separatedBy: .newlines).joined(separator: " ")
-            .unicodeScalars.filter { $0.value >= 0x20 && $0.value != 0x7F }
-            .map(String.init).joined()
-            .trimmingCharacters(in: .whitespaces)
-        return line.isEmpty ? nil : "/rename " + line
-    }
-
-    static func apply(_ name: String, to id: TabID) {
-        guard let command = command(for: name) else { return }
-        DispatchQueue.global(qos: .utility).async {
-            func type(_ text: String) { try? Daemon.sendInput(Array(text.utf8), workspace: id.workspace, tab: id.root) }
-            if ClaudePickerDriver.hasDraft(workspace: id.workspace, tab: id.root) {
-                type("\u{13}")
-                usleep(400_000)
-            }
-            type(command)
-            // Apart from the text, or Claude Code takes the Return for part of a paste.
-            usleep(300_000)
-            type("\r")
-            Trace.log("claude", "rename: \(command)")
-        }
     }
 }

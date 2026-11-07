@@ -70,6 +70,8 @@ export function readQuestion(text: string): Question {
     preview: preview(text),
     yes: "Permitir",
     no: "Negar",
+    // O programa escolhe a hora: um Enter digitado quando a pergunta aparece não pode entregar o que se copiou.
+    denyByDefault: true,
   };
 }
 

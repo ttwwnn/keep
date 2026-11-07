@@ -373,7 +373,7 @@ enum AIChoices {
     /// reserva, deve ser só a posição das contas na lista").
     static func name(number: Int) -> String { "IA·\(number)" }
 
-    /// "IA·2 · ds.lw.tm@… — no limite": the account's place in the list, the
+    /// "IA·2 · ana@… — no limite": the account's place in the list, the
     /// address the service knows it by, and — when it cannot take work now —
     /// why.
     static func title(_ line: AccountUsage, number: Int) -> String {

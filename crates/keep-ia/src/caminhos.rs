@@ -108,3 +108,68 @@ mod testes {
         assert_eq!(p(r"\\?\"), PathBuf::from(r"\\?\"));
     }
 }
+
+/// Grava `dados` por inteiro ou nada, só para o dono: pasta 0700 e temporário 0600 criados assim (não ajustados
+/// depois: entre o `write` e o `chmod` o conteúdo ficaria legível a outros usuários), trocados por `rename`.
+pub fn grava_privado(caminho: &std::path::Path, dados: &[u8]) -> std::io::Result<()> {
+    crate::worktrees::estado::grava_json(caminho, dados)
+}
+
+#[cfg(all(test, unix))]
+mod testes_privado {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn grava_privado_cria_a_arvore_0700_e_o_arquivo_0600() {
+        let d = tempfile::tempdir().unwrap();
+        let alvo = d.path().join("contas/abas/estado.json");
+        grava_privado(&alvo, b"{}").unwrap();
+        let modo = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(modo(&d.path().join("contas")), 0o700);
+        assert_eq!(modo(&d.path().join("contas/abas")), 0o700);
+        assert_eq!(modo(&alvo), 0o600);
+        assert_eq!(std::fs::read(&alvo).unwrap(), b"{}");
+        // Regravar troca por inteiro e mantém o modo.
+        grava_privado(&alvo, b"{\"a\":1}").unwrap();
+        assert_eq!((modo(&alvo), std::fs::read(&alvo).unwrap()), (0o600, b"{\"a\":1}".to_vec()));
+    }
+
+    #[test]
+    fn so_um_arquivo_comum_e_com_teto_e_lido() {
+        let d = tempfile::tempdir().unwrap();
+        let bom = d.path().join("ordem");
+        std::fs::write(&bom, "claude:ana\nclaude:bia\n").unwrap();
+        assert_eq!(ler_texto_ate(&bom, LEITURA_MAXIMA).unwrap(), "claude:ana\nclaude:bia\n");
+        assert_eq!(ler_texto_ate(&bom, 10).unwrap(), "claude:ana");
+        // Um link para um dispositivo infinito, uma pasta, uma FIFO: recusados sem abrir nem ler.
+        let zero = d.path().join("zero");
+        std::os::unix::fs::symlink("/dev/zero", &zero).unwrap();
+        assert!(ler_texto_ate(&zero, LEITURA_MAXIMA).is_err());
+        assert!(ler_texto_ate(d.path(), LEITURA_MAXIMA).is_err());
+        let fifo = d.path().join("fifo");
+        let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        assert!(ler_texto_ate(&fifo, LEITURA_MAXIMA).is_err());
+        assert!(ler_texto_ate(&d.path().join("nao-existe"), LEITURA_MAXIMA).is_err());
+    }
+
+}
+
+/// O que o Keep aceita ler de um arquivo de texto de uma pasta que outro processo grava (`~/.claude`, a que a IA
+/// presa alcança): 1 MiB.
+pub const LEITURA_MAXIMA: u64 = 1 << 20;
+
+/// Lê um arquivo de texto só se for um arquivo comum, e no máximo `max` bytes. Sem isto, um link para `/dev/zero`
+/// (ou uma FIFO, que prende quem a abre) no lugar de `.ordem` ou `chamadas.jsonl` esgotaria a memória, ou travaria, o
+/// `keep ia ...` que o app chama a cada poucos segundos.
+pub fn ler_texto_ate(caminho: &std::path::Path, max: u64) -> std::io::Result<String> {
+    use std::io::Read;
+    // Antes de abrir: abrir uma FIFO espera por quem escreva nela.
+    if !std::fs::metadata(caminho)?.is_file() {
+        return Err(std::io::Error::other("não é um arquivo comum"));
+    }
+    let mut bruto = Vec::new();
+    std::fs::File::open(caminho)?.take(max).read_to_end(&mut bruto)?;
+    String::from_utf8(bruto).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+}

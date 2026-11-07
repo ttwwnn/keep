@@ -185,7 +185,37 @@ enum LinkOpener {
         return NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.QuickTimePlayerX")
     }
 
+    /// Extensions that run, install or load something when they are opened (the Terminal runs a `.command`, the Script
+    /// Editor a `.scpt`, an `.inetloc` or a `.webloc` goes to any address, …).
+    private static let activeExtensions: Set<String> = [
+        "app", "command", "tool", "terminal", "workflow", "action", "scpt", "scptd", "applescript", "jar", "pkg", "mpkg",
+        "dmg", "webloc", "inetloc", "fileloc", "sh", "bash", "zsh", "csh", "ksh", "py", "rb", "pl",
+        "dylib", "bundle", "plugin", "kext", "prefpane", "saver", "service", "workflow", "wflow", "shortcut",
+        "mobileconfig", "configprofile", "ovpn", "rdp", "vncloc", "afploc", "ftploc", "scriptsuite",
+    ]
+
+    /// Whether opening this file would run it (or install, mount or load it) rather than show it: an application, a
+    /// script or anything with the execute bit, a disk image, a configuration profile. A click on its name in a
+    /// program's output is not a decision to run it — the terminal's output is anybody's — so it is shown in the
+    /// Finder instead, where opening it is the person's own act.
+    static func runsWhenOpened(_ url: URL) -> Bool {
+        guard url.isFileURL else { return false }
+        let ext = url.pathExtension.lowercased()
+        if activeExtensions.contains(ext) { return true }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return false }
+        if isDirectory.boolValue {
+            // A folder is shown. A package that is an application (`Contents/MacOS`) is run.
+            return (try? url.resourceValues(forKeys: [.isApplicationKey]).isApplication) == true
+        }
+        return FileManager.default.isExecutableFile(atPath: url.path)
+    }
+
     private static func hand(_ url: URL) -> Bool {
+        if runsWhenOpened(url) {
+            Trace.log("link", "not opened, it would run: \(url.path)")
+            return reveal(url)
+        }
         guard let logPath else {
             if let player = audioPlayer(for: url) {
                 NSWorkspace.shared.open([url], withApplicationAt: player, configuration: NSWorkspace.OpenConfiguration())
@@ -292,8 +322,21 @@ enum LinkOpener {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("keep-coladas")
         let url = folder.appendingPathComponent(UUID().uuidString + ".png")
         do {
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            try data.write(to: url)
+            try FileManager.default.createDirectory(
+                at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            // A picture may hold a password manager or a token: kept for an hour, enough to be opened, then gone.
+            let cutoff = Date().addingTimeInterval(-3600)
+            for old in (try? FileManager.default.contentsOfDirectory(
+                at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+            {
+                if let when = try? old.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+                    when < cutoff
+                {
+                    try? FileManager.default.removeItem(at: old)
+                }
+            }
+            try data.write(to: url, options: [.atomic])
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         } catch {
             Trace.log("link", "could not keep the pasted picture: \(error)")
             return nil
@@ -335,6 +378,14 @@ enum LinkOpener {
             if url.isFileURL {
                 return open(url.path, from: directory)
             }
+            // Only the schemes a person means by a link in a terminal: any other (smb://, vnc://, ssh://, an app's own)
+            // would be handed to whatever app is registered for it, with an address the program chose and a text it
+            // could make say anything.
+            guard openableSchemes.contains(scheme.lowercased()) else {
+                Trace.log("link", "scheme not opened: \(scheme)")
+                NSSound.beep()
+                return false
+            }
             if !whole, let longer = webAddress(around: text, in: screen, near: row, columns: columns) {
                 return hand(longer)
             }
@@ -348,6 +399,9 @@ enum LinkOpener {
         }
         return hand(file)
     }
+
+    /// The schemes that open from the terminal. `claude-cli` is Claude Code's own (its links open a conversation).
+    static let openableSchemes: Set<String> = ["http", "https", "mailto", "ftp", "claude-cli"]
 
     // MARK: - web addresses
 

@@ -224,7 +224,7 @@ pub struct Metadados {
 }
 
 pub fn ler_metadados(pasta: &Path) -> Option<Metadados> {
-    serde_json::from_str(&std::fs::read_to_string(pasta.join("keep.json")).ok()?).ok()
+    serde_json::from_str(&caminhos::ler_texto_ate(&pasta.join("keep.json"), caminhos::LEITURA_MAXIMA).ok()?).ok()
 }
 
 /// Uma pasta fixa que virou o armazém de uma aba: não é conta, e a
@@ -271,7 +271,7 @@ fn slots_do_kit() -> Vec<Achado> {
         .collect();
     arquivos.sort();
     for arquivo in arquivos {
-        let Some(slot) = std::fs::read_to_string(&arquivo).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        let Some(slot) = caminhos::ler_texto_ate(&arquivo, caminhos::LEITURA_MAXIMA).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok())
         else {
             continue;
         };
@@ -300,7 +300,7 @@ fn slots_do_kit() -> Vec<Achado> {
 
 /// O slot que o kit diz estar no login global (`.ativa`), se houver kit.
 pub fn ativa_do_kit() -> Option<String> {
-    std::fs::read_to_string(caminhos::contas().join(".ativa"))
+    caminhos::ler_texto_ate(&caminhos::contas().join(".ativa"), 4096)
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
@@ -412,7 +412,7 @@ pub fn jwt(token: &str) -> Option<Value> {
 }
 
 fn achado_codex(home: &Path, apelido: &str, principal: bool) -> Option<Achado> {
-    let arquivo: Value = serde_json::from_str(&std::fs::read_to_string(home.join("auth.json")).ok()?).ok()?;
+    let arquivo: Value = serde_json::from_str(&caminhos::ler_texto_ate(&home.join("auth.json"), caminhos::LEITURA_MAXIMA).ok()?).ok()?;
     let tokens = arquivo.get("tokens")?;
     let acesso = texto(tokens, "access_token")?;
     let declaracoes = jwt(&acesso);
@@ -577,7 +577,7 @@ fn juntar(achados: Vec<Achado>, ativa: Option<&str>) -> Vec<Conta> {
 
 /// A ordem como está no arquivo: uma chave por linha.
 pub fn ler_ordem() -> Vec<String> {
-    let Ok(texto) = std::fs::read_to_string(caminhos::ordem()) else { return Vec::new() };
+    let Ok(texto) = caminhos::ler_texto_ate(&caminhos::ordem(), caminhos::LEITURA_MAXIMA) else { return Vec::new() };
     let mut vistos = BTreeSet::new();
     texto
         .lines()
@@ -690,7 +690,7 @@ pub fn acrescentar_na_ordem(chave: &str) -> std::io::Result<()> {
 /// Só com o agente de renovação do kit ligado (o plist do
 /// `br.ttwwnn.kit.claude-conectado`): um kit instalado pela metade tem o
 /// cofre e os scripts, mas ninguém renova o login global, e o Keep, calado,
-/// deixava o Claude cair na tela de login (MacBook de Emília, 20/10/2026).
+/// deixava o Claude cair na tela de login (um MacBook, 20/10/2026).
 pub fn gerente_externo() -> bool {
     match std::env::var("KEEP_IA_GERENTE_EXTERNO").as_deref() {
         Ok("1") => return true,

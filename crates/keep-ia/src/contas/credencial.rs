@@ -326,18 +326,7 @@ pub(crate) fn grava_chaveiro(servico: &str, texto: &str) -> Result<(), String> {
 /// Grava um `.credentials.json` de uma vez (arquivo ao lado e troca), só
 /// para o dono ler.
 fn grava_arquivo(arq: &Path, texto: &str) -> Result<(), String> {
-    let pasta = arq.parent().ok_or("arquivo sem pasta")?;
-    let tmp = pasta.join(format!(".credentials.json.keep-{}", std::process::id()));
-    std::fs::write(&tmp, texto).map_err(|e| e.to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
-    }
-    std::fs::rename(&tmp, arq).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        e.to_string()
-    })
+    crate::caminhos::grava_privado(arq, texto.as_bytes()).map_err(|e| e.to_string())
 }
 
 /// O login global: o que uma aba usa sem variável nenhuma.
@@ -366,9 +355,9 @@ mod testes {
 
     #[test]
     fn o_servico_de_uma_pasta_e_o_do_cli() {
-        // sha256("/Users/thiago/.claude/contas/fixas/4f35c383")[:8], o item
+        // sha256("/Users/ana/.claude/contas/fixas/aaaa1111")[:8], o item
         // que o kit e o CLI usam para a aba fixa dessa conta.
-        let s = servico_de("/Users/thiago/.claude/contas/fixas/4f35c383");
+        let s = servico_de("/Users/ana/.claude/contas/fixas/aaaa1111");
         assert!(s.starts_with("Claude Code-credentials-"));
         assert_eq!(s.len(), "Claude Code-credentials-".len() + 8);
         // NFC: a mesma pasta escrita decomposta dá o mesmo item.

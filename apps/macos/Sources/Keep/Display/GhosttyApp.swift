@@ -868,14 +868,19 @@ final class GhosttyApp {
             view.completeClipboardRequest(text, state: state, confirmed: false)
             return true
         }
-        runtime.confirm_read_clipboard_cb = { userdata, string, state, _ in
+        runtime.confirm_read_clipboard_cb = { userdata, string, state, request in
             guard let userdata, let string else { return }
             let view = Unmanaged<TerminalSurfaceView>
                 .fromOpaque(userdata).takeUnretainedValue()
             let text = String(cString: string)
-            DispatchQueue.main.async { view.confirmPaste(text, state: state) }
+            // A program asking to read or replace the clipboard is not a paste: the question says so, and its default
+            // answer is no.
+            let kind: TerminalSurfaceView.ClipboardQuestion =
+                request == GHOSTTY_CLIPBOARD_REQUEST_OSC_52_READ ? .read
+                : request == GHOSTTY_CLIPBOARD_REQUEST_OSC_52_WRITE ? .write : .paste
+            DispatchQueue.main.async { view.confirmPaste(text, state: state, kind: kind) }
         }
-        runtime.write_clipboard_cb = { _, location, contents, count, _ in
+        runtime.write_clipboard_cb = { userdata, location, contents, count, confirm in
             guard count > 0, let contents else { return }
             guard location == GHOSTTY_CLIPBOARD_STANDARD else { return }
             // Find something to write before touching the pasteboard.
@@ -889,9 +894,25 @@ final class GhosttyApp {
                 if !candidate.isEmpty { text = candidate; break }
             }
             guard let text else { return }
-            let board = NSPasteboard.general
-            board.clearContents()
-            board.setString(text, forType: .string)
+            let put = {
+                let board = NSPasteboard.general
+                board.clearContents()
+                board.setString(text, forType: .string)
+            }
+            // `clipboard-write = ask` in the person's own Ghostty config: the question they asked for.
+            guard confirm else { return put() }
+            let window = userdata.map { Unmanaged<TerminalSurfaceView>.fromOpaque($0).takeUnretainedValue().window }
+                ?? nil
+            DispatchQueue.main.async {
+                let alert = TerminalSurfaceView.pasteQuestion(text, on: window, kind: .write)
+                if let window {
+                    alert.beginSheetModal(for: window) { response in
+                        if TerminalSurfaceView.ClipboardQuestion.write.allows(response) { put() }
+                    }
+                } else if TerminalSurfaceView.ClipboardQuestion.write.allows(alert.runModal()) {
+                    put()
+                }
+            }
         }
         runtime.close_surface_cb = { _, _ in }
 

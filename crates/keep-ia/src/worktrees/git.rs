@@ -79,6 +79,10 @@ pub fn git(bin: &Path, args: &[&str], prazo: f64) -> Result<Saida, Estourou> {
 /// `git`, com variáveis a mais no ambiente dele (`GIT_INDEX_FILE`…).
 pub fn git_com(bin: &Path, args: &[&str], vars: &[(&str, &str)], prazo: f64) -> Result<Saida, Estourou> {
     let mut cmd = Command::new(bin);
+    // Nada do `.git/config` nem dos hooks de uma pasta alheia roda daqui: `core.fsmonitor` é um comando que o
+    // `status` e o `add` executam, e a pasta pode ter vindo num zip ou ter sido mexida por uma IA presa.
+    let sem_hooks = if cfg!(windows) { "core.hooksPath=NUL" } else { "core.hooksPath=/dev/null" };
+    cmd.args(["-c", "core.fsmonitor=false", "-c", sem_hooks]);
     cmd.args(args).envs(vars.iter().copied());
     cmd.env("LC_ALL", "C")
         .env("GIT_OPTIONAL_LOCKS", "0")
@@ -166,4 +170,48 @@ pub fn padrao() -> std::path::PathBuf {
         }
     }
     "git".into()
+}
+
+#[cfg(all(test, unix))]
+mod testes {
+    use super::*;
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    #[test]
+    fn o_git_do_keep_nao_roda_o_fsmonitor_nem_os_hooks_da_pasta() {
+        let Ok(git_bin) = which_git() else { return };
+        let d = tempfile::tempdir().unwrap();
+        let repo = d.path().join("r");
+        std::fs::create_dir_all(&repo).unwrap();
+        let rodou = d.path().join("rodou");
+        let sh = |args: &[&str]| {
+            let s = Command::new(&git_bin).args(args).current_dir(&repo).output().unwrap();
+            assert!(s.status.success(), "{args:?}: {}", String::from_utf8_lossy(&s.stderr));
+        };
+        sh(&["init", "-q"]);
+        // O que uma pasta alheia (um zip, uma IA presa) pode trazer: um comando no config e um hook.
+        sh(&["config", "core.fsmonitor", &format!("touch {}", rodou.display())]);
+        let hook = repo.join(".git/hooks/reference-transaction");
+        std::fs::write(&hook, format!("#!/bin/sh\ntouch {}\n", rodou.display())).unwrap();
+        std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        let cam = repo.to_string_lossy().into_owned();
+        let s = git(&git_bin, &["-C", &cam, "status", "--porcelain=v2", "--branch"], 20.0).unwrap();
+        assert_eq!(s.codigo, 0, "{}", s.erro);
+        let s = git(&git_bin, &["-C", &cam, "update-ref", "refs/keep/teste", "HEAD"], 20.0).unwrap();
+        let _ = s;
+        assert!(!rodou.exists(), "o git do Keep executou código da pasta");
+        // O mesmo git, sem a proteção, o executaria (o teste prova o que protege).
+        let s = Command::new(&git_bin).args(["-C", &cam, "status", "--porcelain=v2"]).output().unwrap();
+        assert!(s.status.success());
+        assert!(rodou.exists(), "o fsmonitor de exemplo não rodou nem sem a proteção: o teste não prova nada");
+    }
+
+    fn which_git() -> Result<PathBuf, ()> {
+        ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"]
+            .iter()
+            .map(PathBuf::from)
+            .find(|p| p.is_file())
+            .ok_or(())
+    }
 }

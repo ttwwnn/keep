@@ -46,7 +46,13 @@ describe("what is typed for the paths", () => {
   });
 
   it("keeps a PowerShell string from expanding what a path has in it", () => {
-    expect(dropText(["C:\\a b\\c.txt"], "powershell")).toBe('"C:\\a b\\c.txt"');
+    expect(dropText(["C:\\a b\\c.txt"], "powershell")).toBe("'C:\\a b\\c.txt'");
+    // Typographic quotes close a string just as the ASCII ones do: single-quoted, each one doubled.
+    expect(dropText(["C:\\x\\a\u201D;calc;\u201Cb.txt"], "powershell")).toBe("'C:\\x\\a\u201D;calc;\u201Cb.txt'");
+    expect(dropText(["C:\\x\\Ana\u2019s.txt", "C:\\x\\\u2018y.txt"], "powershell")).toBe(
+      "'C:\\x\\Ana\u2019\u2019s.txt' 'C:\\x\\\u2018\u2018y.txt'",
+    );
+    expect(dropText(["C:\\Users\\t\\relatório.pdf"], "powershell")).toBe("C:\\Users\\t\\relatório.pdf");
     expect(dropText(["C:\\Users\\t\\$Recycle.Bin\\x"], "powershell")).toBe("'C:\\Users\\t\\$Recycle.Bin\\x'");
     expect(dropText(["C:\\a\\it's.txt"], "powershell")).toBe("'C:\\a\\it''s.txt'");
     expect(dropText(["C:\\plain.txt"], "powershell")).toBe("C:\\plain.txt");

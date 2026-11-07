@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use crossterm::terminal;
+#[cfg(not(unix))]
 use keep_proto::net::Stream;
 use keep_proto::{ClientMsg, ServerMsg};
 #[cfg(unix)]
@@ -166,7 +167,7 @@ pub fn attach(
     let (mut sock, handed_screen) = match handed {
         Some((sock, screen)) => (sock, Some(screen)),
         None => {
-            let mut sock = Stream::connect(socket).context("connect to daemon")?;
+            let mut sock = keep_proto::net::connect(socket.as_ref()).context("connect to daemon")?;
             ClientMsg::Attach { workspace: name.to_string(), tab, cols, rows }.write(&mut sock)?;
             (sock, None)
         }

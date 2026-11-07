@@ -42,14 +42,7 @@ pub fn cli() -> i32 {
         return 0;
     }
     let Some(shell) = shell_da_aba(std::process::id()) else { return 0 };
-    let dir = pasta();
-    if std::fs::create_dir_all(&dir).is_err() {
-        return 0;
-    }
-    let tmp = dir.join(format!(".in.{}", std::process::id()));
-    if std::fs::write(&tmp, &entrada).is_ok() {
-        let _ = std::fs::rename(&tmp, dir.join(format!("{shell}.json")));
-    }
-    let _ = std::fs::remove_file(&tmp);
+    // Só para o dono: o JSON traz nomes de projetos e de conversas, e a pasta fica sob um HOME legível por outros.
+    let _ = caminhos::grava_privado(&pasta().join(format!("{shell}.json")), &entrada);
     0
 }

@@ -55,6 +55,8 @@ describe("OSC 52", () => {
     const question = readQuestion("segredo");
     expect(question.preview).toBe("segredo");
     expect([question.yes, question.no]).toEqual(["Permitir", "Negar"]);
+    // Enter, typed as the question appears, answers no.
+    expect(question.denyByDefault).toBe(true);
   });
 });
 

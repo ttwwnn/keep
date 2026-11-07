@@ -123,6 +123,10 @@ mod ws {
                             pronto = false;
                         }
                     }
+                    // Nenhuma resposta do app-server chega perto disto; um quadro maior é de quem trocou o socket.
+                    if pronto && n > 16 << 20 {
+                        return None;
+                    }
                     if pronto && self.buf.len() >= pos + n {
                         let op = self.buf[0] & 0x0f;
                         let carga = self.buf[pos..pos + n].to_vec();

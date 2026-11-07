@@ -233,6 +233,8 @@ pub enum Motivo {
     Vencido,
     Parada,
     Pedido,
+    /// A renovação que o servidor fez numa rodada anterior e não coube no armazém: regravada agora.
+    Recuperada,
 }
 
 /// A decisão de um armazém, com a marca dele atualizada para o que se vê.
@@ -299,9 +301,9 @@ impl TravaDoCli {
                         .and_then(|m| m.modified())
                         .ok()
                         .and_then(|m| m.elapsed().ok());
-                    if idade.is_some_and(|i| i > velha) {
-                        // Abandonada: o CLI faz o mesmo.
-                        let _ = std::fs::remove_dir(&caminho);
+                    // Abandonada: o CLI faz o mesmo. Só repete se a remoção deu certo: um arquivo (ou diretório cheio)
+                    // com esse nome não sai por `remove_dir` e prenderia o laço, sem dormir nem olhar o prazo.
+                    if idade.is_some_and(|i| i > velha) && std::fs::remove_dir(&caminho).is_ok() {
                         continue;
                     }
                     if std::time::Instant::now() >= fim {
@@ -425,8 +427,95 @@ fn le_oauth(local: &Local) -> Result<(Value, Oauth), String> {
     }
 }
 
+/// Quanto esperar a trava de escrita do CLI DEPOIS de o servidor ter girado o refresh: a resposta não se repete (o
+/// refresh velho morreu), então vale esperar mais que os 15 s em que a trava de quem morreu é tomada.
+fn espera_gravar() -> Duration {
+    std::env::var("KEEP_IA_ESPERA_GRAVAR_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .map_or(Duration::from_secs(20), Duration::from_millis)
+}
+
+/// A renovação que o servidor já fez e que não coube no armazém (trava de escrita presa, Chaveiro trancado): o
+/// `claudeAiOauth` novo e a impressão do refresh que ele substitui. Fica num arquivo só do dono até a rodada
+/// seguinte regravar; sem isto o armazém ficaria com o refresh velho, já morto, e pediria login.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct Pendente {
+    antigo: String,
+    novo: Value,
+}
+
+fn arquivo_pendentes() -> PathBuf {
+    caminhos::estado().join("renovar-pendentes.json")
+}
+
+fn ler_pendentes() -> BTreeMap<String, Pendente> {
+    std::fs::read_to_string(arquivo_pendentes()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+}
+
+fn gravar_pendentes(p: &BTreeMap<String, Pendente>) {
+    if p.is_empty() {
+        let _ = std::fs::remove_file(arquivo_pendentes());
+        return;
+    }
+    let _ = crate::worktrees::estado::grava_json(&arquivo_pendentes(), &serde_json::to_vec(p).unwrap_or_default());
+}
+
+fn guarda_pendente(id: &str, antigo: &str, novo: &Value) {
+    let mut todos = ler_pendentes();
+    todos.insert(id.to_string(), Pendente { antigo: impressao(antigo), novo: novo.clone() });
+    gravar_pendentes(&todos);
+}
+
+/// Regrava o que ficou pendente do armazém, se o armazém ainda tem o refresh que a pendência substitui. Sob as
+/// travas do CLI e em compare-and-swap, como a gravação normal.
+fn aplica_pendente(alvo: &Alvo, marca: &mut Marca) -> Option<Fim> {
+    let mut todos = ler_pendentes();
+    let p = todos.get(&alvo.id)?.clone();
+    let esquece = |todos: &mut BTreeMap<String, Pendente>| {
+        todos.remove(&alvo.id);
+        gravar_pendentes(todos);
+    };
+    let Ok((_, oauth)) = le_oauth(&alvo.local) else { return Some(Fim::Nada) };
+    if oauth.refresh.as_deref().map(impressao).as_deref() != Some(p.antigo.as_str()) {
+        // Outro login (ou a renovação já feita por outro caminho): a pendência não vale mais.
+        esquece(&mut todos);
+        return None;
+    }
+    let Some(_renovar) = TravaDoCli::pega(&alvo.pasta, TRAVA_RENOVAR, Duration::from_secs(5)) else {
+        return Some(Fim::Falhou("o Claude Code está renovando agora; regravo a renovação guardada depois".into()));
+    };
+    let Some(_escrita) = TravaDoCli::pega(&alvo.pasta, TRAVA_GRAVAR, Duration::from_secs(5)) else {
+        return Some(Fim::Falhou("o Claude Code está gravando o login agora; regravo a renovação guardada depois".into()));
+    };
+    let (mut atual, o) = match le_oauth(&alvo.local) {
+        Ok(x) => x,
+        Err(e) => return Some(Fim::Falhou(format!("não regravei a renovação guardada: {e}"))),
+    };
+    if o.refresh.as_deref().map(impressao).as_deref() != Some(p.antigo.as_str()) {
+        esquece(&mut todos);
+        return None;
+    }
+    if let Some(obj) = atual.as_object_mut() {
+        obj.insert("claudeAiOauth".into(), p.novo.clone());
+    }
+    if let Err(e) = credencial::gravar(&alvo.local, &atual) {
+        return Some(Fim::Falhou(format!("FALHA ao regravar a renovação guardada ({e})")));
+    }
+    let novo_refresh = p.novo.get("refreshToken").and_then(Value::as_str).unwrap_or_default();
+    marca.impressao = impressao(novo_refresh);
+    marca.girado_em = donos::agora_ms();
+    marca.morto = None;
+    marca.espera_ate = 0;
+    esquece(&mut todos);
+    Some(Fim::Renovado(Motivo::Recuperada))
+}
+
 /// Uma rodada num armazém.
 fn renova_um(alvo: &Alvo, marca: &mut Marca, forcar: bool) -> Fim {
+    if let Some(fim) = aplica_pendente(alvo, marca) {
+        return fim;
+    }
     let agora = donos::agora_ms();
     // Sem login, ou ilegível (Chaveiro trancado): nada a fazer aqui.
     let Ok((_, oauth)) = le_oauth(&alvo.local) else { return Fim::Nada };
@@ -465,8 +554,9 @@ fn renova_um(alvo: &Alvo, marca: &mut Marca, forcar: bool) -> Fim {
     let agora = donos::agora_ms();
     let novo = oauth_novo(&antigo, &resposta, agora);
     // Gravar: compare-and-swap sob a trava de escrita do CLI.
-    let Some(_escrita) = TravaDoCli::pega(&alvo.pasta, TRAVA_GRAVAR, Duration::from_secs(5)) else {
-        return Fim::Falhou("não gravei: o Claude Code está gravando o login agora".into());
+    let Some(_escrita) = TravaDoCli::pega(&alvo.pasta, TRAVA_GRAVAR, espera_gravar()) else {
+        guarda_pendente(&alvo.id, &refresh, &novo);
+        return Fim::Falhou("não gravei: o Claude Code está gravando o login agora; guardei a renovação para a próxima rodada".into());
     };
     let mut ultima = String::new();
     for _ in 0..3 {
@@ -499,7 +589,8 @@ fn renova_um(alvo: &Alvo, marca: &mut Marca, forcar: bool) -> Fim {
         }
         std::thread::sleep(Duration::from_millis(300));
     }
-    Fim::Falhou(format!("FALHA ao gravar o login renovado ({ultima})"))
+    guarda_pendente(&alvo.id, &refresh, &novo);
+    Fim::Falhou(format!("FALHA ao gravar o login renovado ({ultima}); guardei a renovação para a próxima rodada"))
 }
 
 /// O resultado de uma rodada inteira.
@@ -541,6 +632,7 @@ pub fn rodada(forcar: bool) -> Rodada {
                     Motivo::Vencido => "vencida",
                     Motivo::Parada => "parada",
                     Motivo::Pedido => "pedido",
+                    Motivo::Recuperada => "recuperada de uma gravação que falhou",
                 };
                 registra(&format!("{} ({}): renovado ({por})", alvo.conta, alvo.armazem));
                 saida.renovados.push((alvo.conta.clone(), alvo.armazem.to_string(), *m));

@@ -41,12 +41,20 @@ impl Server {
         if Stream::connect(path).is_ok() {
             anyhow::bail!("a keep daemon is already listening on {}", path.display());
         }
+        // A folder made for the socket is the user's alone; one that already exists (`/tmp`, `$TMPDIR`) is left as it is.
         #[cfg(unix)]
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).ok();
+            use std::os::unix::fs::DirBuilderExt;
+            std::fs::DirBuilder::new().recursive(true).mode(0o700).create(parent).ok();
         }
-        let listener =
-            Listener::bind(path).with_context(|| format!("bind {}", path.display()))?;
+        // Closed to everyone but its owner right after the bind (the daemon's `main` also binds under a closed umask,
+        // so there is no moment in which it is not; the umask is the process's, so a library cannot juggle it).
+        let listener = Listener::bind(path).with_context(|| format!("bind {}", path.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).ok();
+        }
 
         let registry = Registry::new().with_log(Self::deaths_log(path));
         Ok(Self { listener, path: path.to_path_buf(), registry: Arc::new(registry) })

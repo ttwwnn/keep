@@ -287,6 +287,7 @@ impl Drop for Attachment {
 
 impl Tab {
     pub fn spawn(command: CommandBuilder, cols: u16, rows: u16) -> Result<Self> {
+        let (cols, rows) = clamp_size(cols, rows);
         let pair = native_pty_system()
             .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
             .context("openpty")?;
@@ -449,6 +450,7 @@ impl Tab {
     /// Returns the screen as it stands now, plus a feed of everything after
     /// it. Both come from one locked section so no output can slip between.
     pub fn attach(&self, cols: u16, rows: u16) -> Result<(Vec<u8>, Attachment)> {
+        let (cols, rows) = clamp_size(cols, rows);
         let attachment = {
             let mut guard = self.inner.lock().map_err(|_| anyhow::anyhow!("tab poisoned"))?;
             let (tx, rx) = sync_channel(CLIENT_BACKLOG);
@@ -518,6 +520,7 @@ impl Tab {
 
     /// One viewer says how big it is now. The tab still fits the smallest.
     pub fn set_viewer_size(&self, viewer: u64, cols: u16, rows: u16) -> Result<()> {
+        let (cols, rows) = clamp_size(cols, rows);
         {
             let mut guard = self.inner.lock().map_err(|_| anyhow::anyhow!("tab poisoned"))?;
             let Some(s) = guard.subscribers.iter_mut().find(|s| s.id == viewer) else {
@@ -570,6 +573,7 @@ impl Tab {
     /// These must move together: the child draws for the size the kernel
     /// reports, while the grid interprets what it draws.
     pub fn resize(&self, cols: u16, rows: u16) -> Result<()> {
+        let (cols, rows) = clamp_size(cols, rows);
         if cols == 0 || rows == 0 {
             return Ok(());
         }
@@ -720,5 +724,27 @@ impl Tab {
         let mut c = self.child.lock().map_err(|_| anyhow::anyhow!("child poisoned"))?;
         c.kill()?;
         Ok(())
+    }
+}
+
+/// The largest grid a client may ask a tab for. The protocol carries `u16`s, and a grid costs about nine bytes a cell:
+/// 65535 x 65535 is ~37 GiB, and the daemon that dies of it takes every tab with it.
+pub const MAX_COLS: u16 = 1000;
+pub const MAX_ROWS: u16 = 500;
+
+fn clamp_size(cols: u16, rows: u16) -> (u16, u16) {
+    (cols.min(MAX_COLS), rows.min(MAX_ROWS))
+}
+
+#[cfg(test)]
+mod clamp_tests {
+    use super::*;
+
+    #[test]
+    fn a_grid_larger_than_any_screen_is_cut_to_the_ceiling() {
+        assert_eq!(clamp_size(65535, 65535), (MAX_COLS, MAX_ROWS));
+        assert_eq!(clamp_size(120, 40), (120, 40));
+        assert_eq!(clamp_size(0, 0), (0, 0), "zero stays for the callers that refuse it");
+        assert_eq!(clamp_size(MAX_COLS, MAX_ROWS), (MAX_COLS, MAX_ROWS));
     }
 }

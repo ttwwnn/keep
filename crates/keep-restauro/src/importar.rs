@@ -268,7 +268,7 @@ mod testes {
 
         /// O Keep daqui: retrato do keepd atual com uma conversa aberta, e a restauração dele feita ou não.
         fn keep_aqui(&self, feito: bool) {
-            let r = retrato(aqui(), vec![aba("emilia", 1, &self.home(), Some(("claude", ABERTA, "claude:ordem")))], 1_792_530_000_000);
+            let r = retrato(aqui(), vec![aba("ana", 1, &self.home(), Some(("claude", ABERTA, "claude:ordem")))], 1_792_530_000_000);
             crate::gravar(&self.restauro(ARQUIVO), &r).unwrap();
             crate::gravar(&self.restauro(REGISTRO), &Registro { keepd: aqui(), abas_feitas: feito, feito, ..Default::default() }).unwrap();
         }

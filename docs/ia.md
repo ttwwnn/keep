@@ -76,7 +76,7 @@ no global (`.ativa`) — as abas de armazém próprio que seguem a ordem vão pa
 seguinte, a quente —, o dono de uma conta é a pasta fixa dela (o global só por último: ele muda de
 dono), o global não é renovado pelo Keep, e `sincronizar` não faz nada (o kit tem a própria). Sem o
 kit, o Keep faz tudo. Um kit pela metade (cofre e scripts, sem o agente) não conta: até a 0.3.2 o Keep se
-calava e ninguém renovava o login global, que caía na tela de login (MacBook de Emília, 20/10/2026).
+calava e ninguém renovava o login global, que caía na tela de login (um MacBook, 20/10/2026).
 
 ## Renovação
 

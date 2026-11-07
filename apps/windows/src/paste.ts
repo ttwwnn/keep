@@ -15,6 +15,8 @@ export interface Question {
   preview?: string;
   yes: string;
   no: string;
+  /** The "no" is the button Enter takes: for a question a program chooses the moment of (a clipboard read). */
+  denyByDefault?: boolean;
 }
 
 /** The end of a bracketed paste: in the text, it lets the rest of it out of the frame. */

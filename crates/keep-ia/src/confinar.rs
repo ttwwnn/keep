@@ -94,6 +94,18 @@ pub(crate) fn pastas_do_git(pasta: &Path) -> Vec<String> {
     saida
 }
 
+/// Onde o keepd escuta, nas formas que o sandbox pode comparar: como está e com a pasta canonizada.
+fn socket_do_daemon(socket: &Path) -> Vec<String> {
+    let mut formas = vec![socket.to_string_lossy().into_owned()];
+    if let (Some(pasta), Some(nome)) = (socket.parent(), socket.file_name()) {
+        if let Ok(real) = pasta.canonicalize() {
+            formas.push(real.join(nome).to_string_lossy().into_owned());
+        }
+    }
+    formas.dedup();
+    formas
+}
+
 /// O perfil do sandbox para uma pasta: nada de /Users e /Volumes, salvo a
 /// pasta (e o git dela), a casa do Claude Code e do Codex, o estado e os
 /// caches, o Chaveiro; para ler, os programas e a configuração do git.
@@ -102,6 +114,10 @@ pub(crate) fn pastas_do_git(pasta: &Path) -> Vec<String> {
 /// permissão de `file-read*` não vence uma negação de `file-read-data`, que
 /// é mais específica, e a última regra que casa é a que vale.
 pub fn perfil(pasta: &Path) -> String {
+    perfil_com_socket(pasta, &keep_proto::socket_path())
+}
+
+fn perfil_com_socket(pasta: &Path, socket: &Path) -> String {
     let casa = caminhos::casa().to_string_lossy().into_owned();
     let mut rw = vec![pasta.to_string_lossy().into_owned()];
     rw.extend(pastas_do_git(pasta));
@@ -114,6 +130,12 @@ pub fn perfil(pasta: &Path) -> String {
         "(deny file-read-data file-write* (subpath \"/Users\"))".into(),
         "(deny file-read-data file-write* (subpath \"/Volumes\"))".into(),
     ];
+    // O socket do keepd fica fora de /Users, e o `(allow default)` deixa `connect()` passar: sem esta negação a IA presa
+    // abre uma aba nova (shell sem sandbox), digita em qualquer aba e lê as telas de todas, pelo protocolo do daemon.
+    // O sandbox casa o caminho canônico (`/private/var/...`, não `/var/...`), então as duas formas entram.
+    for socket in socket_do_daemon(socket) {
+        linhas.push(format!("(deny network-outbound (remote unix-socket (path-literal {})))", literal(&socket)));
+    }
     for p in &rw {
         linhas.push(format!("(allow file-read-data file-write* (subpath {}))", literal(p)));
     }
@@ -327,6 +349,29 @@ mod testes {
         // O que só parece com o nome não é o programa.
         assert_eq!(linha_presa(r"C:\u\claude-code.exe", &v(&["agents"])).unwrap(), v(&["agents"]));
         assert_eq!(linha_presa(r"C:\u\claude.exe.bak", &v(&["agents"])).unwrap(), v(&["agents"]));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn o_perfil_fecha_o_socket_do_daemon_para_a_ia_presa() {
+        use std::process::Command;
+        let d = tempfile::tempdir().unwrap();
+        let socket = d.path().join("k.sock");
+        let _escuta = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let perfil = perfil_com_socket(Path::new("/tmp/proj"), &socket);
+        assert!(perfil.contains("(deny network-outbound (remote unix-socket (path-literal"), "{perfil}");
+        // O perl do sistema conecta e sai com 0 se o socket atendeu (o `nc -U` ficaria esperando o outro lado).
+        let conecta = ["-MIO::Socket::UNIX", "-e", "exit(IO::Socket::UNIX->new(Peer => $ARGV[0]) ? 0 : 1)"];
+        let com_sandbox = |p: &str| {
+            Command::new("/usr/bin/sandbox-exec").args(["-p", p, "/usr/bin/perl"]).args(conecta).arg(&socket).status().unwrap().success()
+        };
+        // Sem o sandbox o socket atende; sandbox que nem se aplica (um já em volta) não prova nada.
+        assert!(Command::new("/usr/bin/perl").args(conecta).arg(&socket).status().unwrap().success());
+        if !com_sandbox("(version 1)\n(allow default)\n") {
+            eprintln!("sandbox-exec não se aplica aqui: pulado");
+            return;
+        }
+        assert!(!com_sandbox(&perfil), "a IA presa conectou ao socket do daemon");
     }
 
     #[test]
