@@ -183,7 +183,7 @@ describe("a click on a path", () => {
   });
 
   it("pieces a path back together that a program broke across two rows, from either row", () => {
-    const deep = `${root}/projetos/clinica-integrativa/app/Filament/Resources/PacienteResource/Pages/EditPaciente.php`;
+    const deep = `${root}/projetos/loja-de-ferramentas/app/Filament/Resources/PacienteResource/Pages/EditPaciente.php`;
     const full = deep;
     const cut = full.length - 9;
     const head = full.slice(0, cut);
@@ -196,7 +196,7 @@ describe("a click on a path", () => {
   });
 
   it("pieces a path over three rows", () => {
-    const full = "/tmp/keep-link/projetos/clinica-integrativa/app/Filament/EditPaciente.php";
+    const full = "/tmp/keep-link/projetos/loja-de-ferramentas/app/Filament/EditPaciente.php";
     const lines = ["  " + full.slice(0, 20), "  " + full.slice(20, 40), "  " + full.slice(40) + "."];
     expect(click(lines, 1, 6, posix, [full])?.path).toBe(full);
     expect(click(lines, 0, 6, posix, [full])?.path).toBe(full);

@@ -1,7 +1,6 @@
 //! Renovação proativa dos logins do Claude: nenhuma conta cai, nem a parada.
 //!
-//! O que a Clínica faz com as contas dela (`SetupClaudeService::
-//! renovarTokenSePossivel` + o `ia:healthcheck`), e o kit faz com o login
+//! O que o kit faz com o login
 //! global (`claude-conectado`), aqui para todo armazém que o Keep cuida:
 //!
 //! - perto de vencer (acesso com menos de [`FOLGA_MS`]): renova antes do

@@ -470,7 +470,7 @@ final class UsageMonitor: ObservableObject {
 /// Set apart by a rule and pinned under the list (DESIGN.md: "the footer is
 /// set apart by a rule"), quiet until something is near its limit: the bars
 /// are the ink of resting text, and only a window past 75% takes a colour —
-/// amber, then red from 90, the thresholds of the Clínica's panel this
+/// amber, then red from 90, the thresholds of the usage panel this
 /// mirrors. The figure is always written beside the bar, so the colour is
 /// never the only thing saying it.
 ///

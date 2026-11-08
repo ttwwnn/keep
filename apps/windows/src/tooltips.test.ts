@@ -13,7 +13,7 @@ describe("the state of a workspace", () => {
 });
 
 describe("the tooltip of a workspace", () => {
-  const base = { name: "clinica", label: "clinica", tabs: 3, state: "attached" as const, running: [] };
+  const base = { name: "vendas", label: "vendas", tabs: 3, state: "attached" as const, running: [] };
   it("counts the tabs and says the state when nothing runs", () => {
     expect(workspaceTooltip(base)).toBe("3 abas · anexado");
     expect(workspaceTooltip({ ...base, tabs: 1, state: "idle" })).toBe("1 aba · ocioso");
@@ -24,7 +24,7 @@ describe("the tooltip of a workspace", () => {
     expect(workspaceTooltip({ ...base, running: ["claude", "npm run dev"] })).toBe("2 rodando\n· claude\n· npm run dev");
   });
   it("leads with the name it answers to when it was renamed", () => {
-    expect(workspaceTooltip({ ...base, label: "Clínica" })).toBe("clinica\n3 abas · anexado");
-    expect(workspaceTooltip({ ...base, label: "Clínica", running: ["claude"] })).toBe("clinica\n1 rodando\n· claude");
+    expect(workspaceTooltip({ ...base, label: "Vendas" })).toBe("vendas\n3 abas · anexado");
+    expect(workspaceTooltip({ ...base, label: "Vendas", running: ["claude"] })).toBe("vendas\n1 rodando\n· claude");
   });
 });

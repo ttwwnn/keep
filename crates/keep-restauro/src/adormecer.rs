@@ -342,7 +342,7 @@ mod testes {
 
     #[test]
     fn a_vista_separa_o_numero_do_fim() {
-        assert_eq!(vista("Clinica/8"), Some(("Clinica".into(), 8)));
+        assert_eq!(vista("Vendas/8"), Some(("Vendas".into(), 8)));
         assert_eq!(vista("a/b/12"), Some(("a/b".into(), 12)));
         assert_eq!(vista("sem-numero"), None);
         assert_eq!(vista("W/x"), None);

@@ -40,7 +40,7 @@ check("a folder", path(root, nil), root)
 check("missing file", path("nope.txt:3", root), nil)
 check("home", path("~", nil), NSHomeDirectory())
 // What the runtime found is part of a path; the screen holds the rest.
-let deep = root + "/projetos/clinica-integrativa/app/Filament/Resources/PacienteResource/Pages"
+let deep = root + "/projetos/loja-de-ferramentas/app/Filament/Resources/PacienteResource/Pages"
 try! FileManager.default.createDirectory(atPath: deep, withIntermediateDirectories: true)
 FileManager.default.createFile(atPath: deep + "/EditPaciente.php", contents: Data())
 try! FileManager.default.createDirectory(atPath: root + "/Área de trabalho", withIntermediateDirectories: true)

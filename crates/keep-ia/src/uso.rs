@@ -2,8 +2,8 @@
 //! usam, guardado sem token, com a cadência e as pausas que os serviços
 //! pedem. Ver `docs/ia.md` ("Consumo").
 //!
-//! As regras são as do rodapé do app do macOS, que vieram do painel da
-//! Clínica: cinco minutos entre leituras de uma conta; "Medir agora" no
+//! As regras são as do rodapé do app do macOS, que vieram do painel de uso:
+//! cinco minutos entre leituras de uma conta; "Medir agora" no
 //! máximo a cada 15 s; um 429 espera o `Retry-After` (pelo menos um minuto,
 //! dez sem ele) e nem o clique pula essa espera; sem rede, tenta de novo em
 //! um minuto. Token vencido não é renovado daqui — quem renova é a

@@ -1894,8 +1894,8 @@ final class Session {
     /// The left column of a terminal row: which workspace, and where in it.
     ///
     /// The tab's directory relative to the workspace's own is the shortest
-    /// true thing that separates siblings — `777leads/api` rather than
-    /// `~/www/777leads/api`, and short enough to sit in a column. When the
+    /// true thing that separates siblings — `acmecorp/api` rather than
+    /// `~/www/acmecorp/api`, and short enough to sit in a column. When the
     /// tab is at the workspace's root, or the daemon could not say where it
     /// is, the position stands in instead, but only where there is a sibling
     /// to be told apart from.
@@ -1913,8 +1913,8 @@ final class Session {
     /// is not below it, is the directory itself, or is unknown.
     ///
     /// A tab that wandered outside its workspace keeps its last component
-    /// rather than a path nobody can read in a column: `777leads` with a tab
-    /// in `~/other/thing` reads `777leads/thing`, which is at least where it
+    /// rather than a path nobody can read in a column: `acmecorp` with a tab
+    /// in `~/other/thing` reads `acmecorp/thing`, which is at least where it
     /// is, and the preview says the rest.
     private func relativePlace(of cwd: String, in workspace: WorkspaceEntity) -> String? {
         guard !cwd.isEmpty else { return nil }

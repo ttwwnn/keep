@@ -89,13 +89,13 @@ describe("how long ago", () => {
 
 describe("a tab's place in its workspace", () => {
   it("below the workspace's folder, the part below it", () => {
-    expect(relativePlace("C:\\www\\777leads\\api", "C:\\www\\777leads", "777leads")).toBe("api");
-    expect(relativePlace("C:\\www\\777leads\\api\\v1\\", "C:\\www\\777leads", "777leads")).toBe("api/v1");
+    expect(relativePlace("C:\\www\\acmecorp\\api", "C:\\www\\acmecorp", "acmecorp")).toBe("api");
+    expect(relativePlace("C:\\www\\acmecorp\\api\\v1\\", "C:\\www\\acmecorp", "acmecorp")).toBe("api/v1");
     expect(relativePlace("/home/ana/proj/api", "/home/ana/proj", "proj")).toBe("api");
   });
   it("in the folder itself, nothing", () => {
-    expect(relativePlace("C:\\www\\777leads", "C:\\www\\777leads", "777leads")).toBeNull();
-    expect(relativePlace("c:\\WWW\\777leads\\", "C:\\www\\777leads", "777leads")).toBeNull();
+    expect(relativePlace("C:\\www\\acmecorp", "C:\\www\\acmecorp", "acmecorp")).toBeNull();
+    expect(relativePlace("c:\\WWW\\acmecorp\\", "C:\\www\\acmecorp", "acmecorp")).toBeNull();
   });
   it("Windows folders are compared as Windows does, POSIX ones as they are", () => {
     expect(relativePlace("c:\\www\\proj\\Api", "C:\\WWW\\proj", "proj")).toBe("Api");
@@ -105,9 +105,9 @@ describe("a tab's place in its workspace", () => {
     expect(relativePlace("C:\\www\\project-two", "C:\\www\\proj", "proj")).toBe("project-two");
   });
   it("outside the folder, its last component; unknown, nothing", () => {
-    expect(relativePlace("C:\\other\\thing", "C:\\www\\777leads", "777leads")).toBe("thing");
-    expect(relativePlace("", "C:\\www\\777leads", "777leads")).toBeNull();
-    expect(relativePlace("C:\\", "C:\\www\\777leads", "777leads")).toBe("C:");
+    expect(relativePlace("C:\\other\\thing", "C:\\www\\acmecorp", "acmecorp")).toBe("thing");
+    expect(relativePlace("", "C:\\www\\acmecorp", "acmecorp")).toBeNull();
+    expect(relativePlace("C:\\", "C:\\www\\acmecorp", "acmecorp")).toBe("C:");
   });
   it("without a folder to measure against, the last component says nothing when it repeats the name", () => {
     expect(relativePlace("C:\\www\\proj", "", "proj")).toBeNull();
@@ -171,9 +171,9 @@ describe("Ir para", () => {
   });
 
   it("writes the sidebar's name for the workspace, and keeps the daemon's for what it does", () => {
-    const ws = [space("proj", [tab("proj", 1, 0)], "", "Clínica")];
+    const ws = [space("proj", [tab("proj", 1, 0)], "", "Vendas")];
     const [item] = goToItems(input({ workspaces: ws }));
-    expect(item.context).toBe("Clínica");
+    expect(item.context).toBe("Vendas");
     expect(item.workspace).toBe("proj");
   });
 
@@ -198,8 +198,8 @@ describe("Ir para", () => {
   it("folders come after the tabs, minus the ones whose workspace exists", () => {
     const items = goToItems(
       input({
-        workspaces: [space("Clinica", [tab("Clinica", 1, 0)])],
-        directories: ["C:\\Users\\ana\\www\\clinica", "C:\\Users\\ana\\www\\api", "C:\\Users\\ana\\www\\api", "D:\\dados"],
+        workspaces: [space("Vendas", [tab("Vendas", 1, 0)])],
+        directories: ["C:\\Users\\ana\\www\\vendas", "C:\\Users\\ana\\www\\api", "C:\\Users\\ana\\www\\api", "D:\\dados"],
       }),
     );
     const folders = items.filter((i) => i.kind.type === "destination");
@@ -236,8 +236,8 @@ describe("what a query leaves", () => {
   const items = goToItems(
     input({
       workspaces: [
-        space("clinica", [tab("clinica", 1, 0, { title: "api", cwd: "C:\\w\\clinica\\api" }), tab("clinica", 2, 1, { title: "vim" })], "C:\\w\\clinica"),
-        space("brokerfy", [tab("brokerfy", 5, 0, { title: "clin deploy" })]),
+        space("vendas", [tab("vendas", 1, 0, { title: "api", cwd: "C:\\w\\vendas\\api" }), tab("vendas", 2, 1, { title: "vim" })], "C:\\w\\vendas"),
+        space("mercado", [tab("mercado", 5, 0, { title: "vend deploy" })]),
       ],
       directories: ["C:\\Users\\ana\\www\\acaua"],
     }),
@@ -248,18 +248,18 @@ describe("what a query leaves", () => {
   });
 
   it("the context column answers first, so a workspace's tabs gather", () => {
-    const { kept, lit } = filterItems(items, "clin");
-    // `clinica` (context) wins over the `clin deploy` title of another workspace.
-    expect(kept.map((i) => i.workspace).slice(0, 2)).toEqual(["clinica", "clinica"]);
+    const { kept, lit } = filterItems(items, "vend");
+    // `vendas` (context) wins over the `vend deploy` title of another workspace.
+    expect(kept.map((i) => i.workspace).slice(0, 2)).toEqual(["vendas", "vendas"]);
     expect(lit.get(kept[0].id)).toMatchObject({ column: "context" });
-    expect(kept.at(-1)!.title).toBe("clin deploy");
+    expect(kept.at(-1)!.title).toBe("vend deploy");
     expect(lit.get(kept.at(-1)!.id)).toMatchObject({ column: "title", ranges: [[0, 4]] });
   });
 
   it("says which letters, and on which column", () => {
-    const { lit } = filterItems(items, "bkf");
-    const row = items.find((i) => i.workspace === "brokerfy")!;
-    expect(lit.get(row.id)).toEqual({ column: "context", ranges: [[0, 1], [3, 4], [6, 7]] });
+    const { lit } = filterItems(items, "mcd");
+    const row = items.find((i) => i.workspace === "mercado")!;
+    expect(lit.get(row.id)).toEqual({ column: "context", ranges: [[0, 1], [3, 4], [5, 6]] });
   });
 
   it("a folder is found by its path", () => {
@@ -272,8 +272,8 @@ describe("what a query leaves", () => {
 
   it("what does not match is gone; rows that tie keep the list's order", () => {
     expect(filterItems(items, "zzzz").kept).toHaveLength(0);
-    const { kept } = filterItems(items, "clinica");
-    expect(kept.map((i) => i.id)).toEqual(items.filter((i) => i.workspace === "clinica").map((i) => i.id));
+    const { kept } = filterItems(items, "vendas");
+    expect(kept.map((i) => i.id)).toEqual(items.filter((i) => i.workspace === "vendas").map((i) => i.id));
   });
 });
 
@@ -638,10 +638,10 @@ describe("fitting a screen in its frame", () => {
 
 describe("a matched string, cut for drawing", () => {
   it("lit where it matched, dark between", () => {
-    expect(segments("Brokerfy", [[0, 1], [6, 8]])).toEqual([
-      { text: "B", on: true },
-      { text: "roker", on: false },
-      { text: "fy", on: true },
+    expect(segments("Mercado", [[0, 1], [5, 7]])).toEqual([
+      { text: "M", on: true },
+      { text: "erca", on: false },
+      { text: "do", on: true },
     ]);
   });
   it("nothing matched, one dark run; nothing at all, none", () => {

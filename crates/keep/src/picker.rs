@@ -181,9 +181,9 @@ mod tests {
 
     #[test]
     fn matches_subsequences_not_just_prefixes() {
-        let all = vec![s("brokerfy-agents"), s("taskfy"), s("evolve")];
-        let names: Vec<_> = filtered(&all, "bkf").iter().map(|s| s.name.clone()).collect();
-        assert_eq!(names, vec!["brokerfy-agents"], "subsequence match failed");
+        let all = vec![s("mercado-agents"), s("taskfy"), s("evolve")];
+        let names: Vec<_> = filtered(&all, "mcd").iter().map(|s| s.name.clone()).collect();
+        assert_eq!(names, vec!["mercado-agents"], "subsequence match failed");
     }
 
     #[test]

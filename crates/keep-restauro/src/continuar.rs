@@ -439,7 +439,7 @@ fn rede_de_volta() -> (bool, String) {
 /// O que segura o "continue" de uma parada no limite antes da medição, em `agora` (ms). `vale_em`: desde quando a
 /// conta do armazém da aba vale no Claude (`quente::conta_vale_em`; `None` sem armazém de aba).
 /// - Logo depois de uma troca a quente, o Claude ainda pede pela conta de antes (o cache de login): o "continue"
-///   voltaria no limite e gastaria uma das tentativas, com 2 min até a próxima (aba Clinica#2 em 29/10/2026,
+///   voltaria no limite e gastaria uma das tentativas, com 2 min até a próxima (uma aba em 29/10/2026,
 ///   08:15:33 e 08:17:34).
 /// - A parada da própria conta em que a aba está: espera o recomeço que o serviço disse da janela recusada (a
 ///   medição pode ter até 5 min e ainda dizer folga). Num armazém de aba, é a parada de quando a conta dele já
@@ -689,7 +689,7 @@ pub fn rodada(seco: bool, status: bool) -> Result<Value, String> {
         }
         // O Claude Code 2.1.312+ não escreve mais "esc to interrupt": quem diz que ele trabalha é a sessão dele.
         // Sem isto, o "continue" ia para a caixa de um Claude trabalhando (cuja última fala principal ainda era a
-        // parada) e ficava lá sem Enter, dobrado na rodada seguinte (Brokerfy#1, 06/11/2026).
+        // parada) e ficava lá sem Enter, dobrado na rodada seguinte (uma aba em 06/11/2026).
         // Antes de qualquer tecla: o Esc que volta a vista interromperia o trabalho.
         if keep_ia::sessoes::sessao_claude(c.pid).is_some_and(|s| s.status == "busy") {
             let texto = "parada no transcrito, mas a sessão diz que o Claude trabalha";

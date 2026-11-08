@@ -1151,13 +1151,13 @@ mod tests {
     fn parses_and_replays_screen_state() {
         let mut t = Terminal::new(60, 8).expect("terminal");
         t.write(b"\x1b[2J\x1b[H");
-        t.write(b"\x1b[1;32mproject\x1b[0m: ~/www/777leads\r\n");
+        t.write(b"\x1b[1;32mproject\x1b[0m: ~/www/acmecorp\r\n");
         // Cursor pushed past the last row must clamp, keeping the column.
         t.write(b"\x1b[10;5H(clamped)");
         t.write(b"\x1b[3;1Hrow three");
 
         let text = t.text().expect("text");
-        assert!(text.contains("project: ~/www/777leads"), "got: {text:?}");
+        assert!(text.contains("project: ~/www/acmecorp"), "got: {text:?}");
         assert!(text.contains("row three"), "got: {text:?}");
         assert!(text.contains("    (clamped)"), "column not preserved: {text:?}");
 
