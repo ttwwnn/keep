@@ -143,14 +143,14 @@ describe("the tabs the restore made", () => {
 
 describe("the conversations left alone", () => {
   it("spares the tab on screen in every window", () => {
-    expect(sleepArgs([{ workspace: "Clinica", tab: 8 }, { workspace: "a/b", tab: 2 }])).toEqual([
-      "restauro", "adormecer", "--vista", "Clinica/8", "--vista", "a/b/2",
+    expect(sleepArgs([{ workspace: "Vendas", tab: 8 }, { workspace: "a/b", tab: 2 }])).toEqual([
+      "restauro", "adormecer", "--vista", "Vendas/8", "--vista", "a/b/2",
     ]);
     expect(sleepArgs([])).toEqual(["restauro", "adormecer"]);
   });
 
   it("puts one tab to sleep on the person's word", () => {
-    expect(sleepTabArgs("Clinica", 8)).toEqual(["restauro", "adormecer", "--agora", "Clinica", "--aba", "8"]);
+    expect(sleepTabArgs("Vendas", 8)).toEqual(["restauro", "adormecer", "--agora", "Vendas", "--aba", "8"]);
     expect(sleepTabArgs("a/b", 2)).toEqual(["restauro", "adormecer", "--agora", "a/b", "--aba", "2"]);
   });
 

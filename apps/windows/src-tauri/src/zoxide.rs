@@ -104,10 +104,10 @@ mod tests {
 
     #[test]
     fn the_lines_become_folders() {
-        let clinica = "C:\\Users\\ana\\www\\clinica";
+        let vendas = "C:\\Users\\ana\\www\\vendas";
         let api = "C:\\Users\\ana\\www\\api";
-        let out = format!("{clinica}\r\n\r\n  {api}  \n{clinica}\n/home/ana/x\n");
-        assert_eq!(parse(&out, 10), [clinica, api, "/home/ana/x"]);
+        let out = format!("{vendas}\r\n\r\n  {api}  \n{vendas}\n/home/ana/x\n");
+        assert_eq!(parse(&out, 10), [vendas, api, "/home/ana/x"]);
         assert_eq!(parse(&out, 2).len(), 2);
         assert!(parse("", 10).is_empty());
     }

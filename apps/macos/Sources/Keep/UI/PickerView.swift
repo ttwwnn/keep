@@ -136,7 +136,7 @@ final class PickerView: NSView {
     static let rowHeight: CGFloat = 30
     /// The extra four points are the gap above the word, not around it.
     static let headingHeight: CGFloat = 34
-    /// Wide enough for `777leads/api` in the terminal face, narrow enough to
+    /// Wide enough for `acmecorp/api` in the terminal face, narrow enough to
     /// leave a title room. What overflows truncates rather than pushing the
     /// column along and taking every row's alignment with it.
     static let contextWidth: CGFloat = 132

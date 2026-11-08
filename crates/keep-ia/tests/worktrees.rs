@@ -797,11 +797,11 @@ fn t08_fronteira_de_palavra() {
 fn t09_chamada_de_outra_maquina_nao_conta() {
     // A pasta de uma chamada feita em outro computador (o transcrito veio de lá).
     let de_fora = if cfg!(target_os = "macos") {
-        "/home/ttwwnn/Projetos/777leads"
+        "/home/ttwwnn/Projetos/acmecorp"
     } else if cfg!(windows) {
-        "/home/ttwwnn/Projetos/777leads"
+        "/home/ttwwnn/Projetos/acmecorp"
     } else {
-        "/Users/ttwwnn/Projetos/777leads"
+        "/Users/ttwwnn/Projetos/acmecorp"
     };
     let m = Mundo::novo();
     let (w, t) = m.wt("wt-linux");
@@ -1089,9 +1089,9 @@ fn t14_em_uso_por_processo_de_outra_aba() {
     let outra = dorme(Some(Path::new(&w))); // o shell de outra aba, com a pasta atual dentro
     let o = outra.id();
     assert!(espera(10.0, || processos::cwd(o).is_some()));
-    let (r, _) = m.listar_com(&[&c1.sid], Op { outras: vec![o], rotulos: vec![(o, "Relatório", "Brokerfy")], ..Op::default() });
+    let (r, _) = m.listar_com(&[&c1.sid], Op { outras: vec![o], rotulos: vec![(o, "Relatório", "Mercado")], ..Op::default() });
     mata(outra);
-    assert!(r.lixeira.is_empty() && r.mantidas == vec![mantida(&w, "em uso pela aba “Relatório” (Brokerfy)")], "{r:?}");
+    assert!(r.lixeira.is_empty() && r.mantidas == vec![mantida(&w, "em uso pela aba “Relatório” (Mercado)")], "{r:?}");
     let minha = dorme(Some(Path::new(&w))); // processo da PRÓPRIA aba: morre com ela
     let p = minha.id();
     assert!(espera(10.0, || processos::cwd(p).is_some()));

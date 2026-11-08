@@ -158,7 +158,7 @@ pub fn versao_codex() -> String {
 }
 
 /// `claude-cli/<versão> (external, cli)`: sem um agente de CLI, a porta da
-/// frente do endpoint responde 403 (e, a Clínica viu, 429 para sempre).
+/// frente do endpoint responde 403 (e, já visto, 429 para sempre).
 pub fn agente_claude() -> String {
     format!("claude-cli/{} (external, cli)", versao_claude())
 }

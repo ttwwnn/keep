@@ -409,7 +409,7 @@ export function agoText(atMs: number, nowMs: number): string {
 
 export type Level = "normal" | "attention" | "critical";
 
-/** The Clínica panel's thresholds: attention from 75, critical from 90. */
+/** The usage panel's thresholds: attention from 75, critical from 90. */
 export const level = (percent: number): Level => (percent >= 90 ? "critical" : percent >= 75 ? "attention" : "normal");
 
 /** A reading older than this, or none, is shown faded. */

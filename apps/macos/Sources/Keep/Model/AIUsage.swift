@@ -205,8 +205,8 @@ struct AccountUsage: Identifiable, Equatable, Codable {
     /// Whether this account can take work now, as the core judges it: nothing
     /// known to be wrong with its login, and not at its limit. The service
     /// refuses at 100% of the five-hour or the weekly window, and only there
-    /// does an account leave the order — in the kit as in the Clínica's
-    /// panel. At 95% the kit moves on ahead of the limit, but only to an
+    /// does an account leave the order — in the kit as in the usage panel it came
+    /// from. At 95% the kit moves on ahead of the limit, but only to an
     /// account with room; one past 95% still takes work, and taking it for
     /// one at its limit sent new tabs to GPT while a Claude account still
     /// answered. One not measured yet is given the benefit of the doubt.
@@ -446,7 +446,7 @@ enum UsageText {
         return "há \(minutes / 60)h"
     }
 
-    /// The same thresholds the Clínica's panel uses: a warning from 75, and
+    /// The same thresholds as the usage panel it came from: a warning from 75, and
     /// critical from 90. The kit moves the tabs to an account with room from
     /// 95, and off an account at its limit — 100 — to the next one in the
     /// order that still answers.

@@ -109,7 +109,7 @@ const windowsPath = (path: string) => /^[a-z]:/i.test(path) || path.startsWith("
 /**
  * The part of `cwd` below the workspace's own folder, or null when it is not
  * below it, is the folder itself, or is unknown. The shortest true thing that
- * separates siblings — `777leads/api` rather than `C:\www\777leads\api`, and
+ * separates siblings — `acmecorp/api` rather than `C:\www\acmecorp\api`, and
  * short enough to sit in a column. A tab that wandered outside its workspace
  * keeps its last component rather than a path nobody can read in a column.
  */

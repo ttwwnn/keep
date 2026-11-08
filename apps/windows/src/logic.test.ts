@@ -234,17 +234,17 @@ describe("text", () => {
     expect(quotePaths(["/tmp/a&b"])).toBe('"/tmp/a&b"');
   });
   it("the picker matches in order, and a plain substring first", () => {
-    expect(fuzzyScore("clin", "Clinica")).toBeLessThan(fuzzyScore("cla", "Clinica a")!);
-    expect(fuzzyScore("xyz", "Clinica")).toBeUndefined();
+    expect(fuzzyScore("vend", "Vendas")).toBeLessThan(fuzzyScore("vea", "Vendas a")!);
+    expect(fuzzyScore("xyz", "Vendas")).toBeUndefined();
     expect(fuzzyScore("", "qualquer")).toBe(0);
-    expect(fuzzyScore("brk", "Brokerfy")).toBeDefined();
+    expect(fuzzyScore("mrc", "Mercado")).toBeDefined();
   });
   it("what matched is marked", () => {
-    expect(matchRanges("ker", "Brokerfy")).toEqual([[3, 6]]);
-    // B-r-o-k-e-r-f-y: the f and the y sit together and are one mark.
-    expect(matchRanges("bfy", "Brokerfy")).toEqual([
+    expect(matchRanges("cad", "Mercado")).toEqual([[3, 6]]);
+    // M-e-r-c-a-d-o: the d and the o sit together and are one mark.
+    expect(matchRanges("mdo", "Mercado")).toEqual([
       [0, 1],
-      [6, 8],
+      [5, 7],
     ]);
   });
 });

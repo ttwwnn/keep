@@ -10,8 +10,7 @@
 //! Claude de verdade: a statusLine passou de uma conta para a outra sem
 //! /exit, e um token inválido no armazém voltou a funcionar ao ser regravado.
 //!
-//! Um dono por conta, como a Clínica faz com as dela (`ContasClaude`,
-//! `SetupClaudeService::renovarTokenSePossivel`): a pasta fixa da conta (ou o
+//! Um dono por conta: a pasta fixa da conta (ou o
 //! login global, sem o kit) guarda a credencial inteira, e só a renovação do
 //! Keep a renova (`renovar.rs`). A cada rodada dela, o acesso de cada dono é
 //! espalhado pelos armazéns das abas da conta (`espalhar`); o refresh nunca

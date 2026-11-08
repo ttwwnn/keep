@@ -226,7 +226,7 @@ export function applyPalette(palette: Palette): void {
     "--mark-claude": palette.dark ? "oklch(0.72 0.15 48)" : "oklch(0.50 0.15 48)",
     "--mark-codex": palette.dark ? "oklch(0.78 0.11 200)" : "oklch(0.56 0.11 200)",
     "--danger": palette.dark ? "#ff453a" : "#ff3b30",
-    // The usage footer's: amber from 75%, red from 90% (the Clínica panel's
+    // The usage footer's: amber from 75%, red from 90% (the usage panel's
     // thresholds), and the attached green for the account a tab is on — a
     // step darker on a light ground, as the macOS footer's are.
     "--attention": palette.dark ? "oklch(0.82 0.15 85)" : "oklch(0.60 0.15 85)",

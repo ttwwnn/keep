@@ -102,7 +102,7 @@ same sentence. So the daemon also reports each tab's working directory — asked
 of the kernel, so it needs no shell setup and follows a `cd` rather than
 waiting for the next prompt — and when a byte last went either way through it.
 The picker shows the directory relative to the workspace's own, which is short
-enough to sit in a column: `777leads/api` rather than `~/www/777leads/api`.
+enough to sit in a column: `acmecorp/api` rather than `~/www/acmecorp/api`.
 
 One wrinkle worth knowing about: the libghostty build we link against accepts
 the per-surface `command`, `env_vars` and `initial_input` fields and then

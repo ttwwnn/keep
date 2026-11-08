@@ -545,7 +545,7 @@ describe("Codex 0.162.1 as it was on screen (12/10)", () => {
 
 describe("naming the conversation after the tab", () => {
   it("is Claude Code's /rename on one line", () => {
-    expect(claudeRenameCommand("Clínica")).toBe("/rename Clínica");
+    expect(claudeRenameCommand("Relatório")).toBe("/rename Relatório");
     expect(claudeRenameCommand("  a\nb\tc  ")).toBe("/rename a b c");
     expect(claudeRenameCommand("   ")).toBeNull();
   });

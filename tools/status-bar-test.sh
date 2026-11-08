@@ -66,7 +66,7 @@ rm -f "$SOCKET"
 
 TARGET=$WORK/nota.txt
 : >"$TARGET"
-LONG=$WORK/projetos/clinica/app/Filament/Resources/relatorio_de_atendimento_completo_do_paciente.txt
+LONG=$WORK/projetos/estoque/app/Filament/Resources/relatorio_de_atendimento_completo_do_paciente.txt
 mkdir -p "$(dirname "$LONG")"
 : >"$LONG"
 

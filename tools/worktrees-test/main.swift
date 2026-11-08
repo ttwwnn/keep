@@ -34,16 +34,16 @@ setenv("KEEP_WORKTREES_BIN", dir + "/fake-helper.py", 1)
 // listar: argumentos e texto
 let wt = dir + "/repo-wt-lixeira-\(getpid())"
 escreve("listar.json", ["versao": 1,
-    "abas": [["alvo": "Brokerfy:4,7", "pids": [999999]]],
+    "abas": [["alvo": "Mercado:4,7", "pids": [999999]]],
     "lixeira": [["caminho": wt, "ramo": "fix/x", "head": "abc1234", "alteracoes": 3, "commits_so_aqui": 1, "processos": [["pid": 1, "nome": "php"]]],
                 ["caminho": NSHomeDirectory() + "/projetos/wt-solta", "ramo": NSNull(), "head": "f00ba12", "alteracoes": 0, "commits_so_aqui": 0]],
     "mantidas": [["caminho": NSHomeDirectory() + "/projetos/wt-g", "motivo": "em uso pela aba “Relatório”"]],
     "avisos": ["não identifiquei a conversa da aba “zsh”"]])
 limpaChamadas()
-let r = Worktrees.list([.init(workspace: "Brokerfy", tabs: [4, 7]), .init(workspace: "Clinica", tabs: [2])], deadline: 2)
+let r = Worktrees.list([.init(workspace: "Mercado", tabs: [4, 7]), .init(workspace: "Vendas", tabs: [2])], deadline: 2)
 guard case .listing(let l) = r else { print("FALHA listar não leu"); exit(1) }
 let c = chamadas().first
-confere((c?["argv"] as? [String]) == ["listar", "--prazo", "2.0", "Brokerfy:4,7", "Clinica:2"], "listar: argumentos", "\(String(describing: c?["argv"]))")
+confere((c?["argv"] as? [String]) == ["listar", "--prazo", "2.0", "Mercado:4,7", "Vendas:2"], "listar: argumentos", "\(String(describing: c?["argv"]))")
 confere((c?["grupo"] as? String) == "worktrees", "listar: chamado como o keep do app, com worktrees na frente", "\(String(describing: c?["grupo"]))")
 confere((c?["socket"] as? String) == "/tmp/sock-de-teste", "listar: passa o socket do app")
 confere(l.pids == [999999], "listar: pids das abas")

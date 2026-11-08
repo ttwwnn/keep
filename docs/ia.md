@@ -80,8 +80,7 @@ calava e ninguém renovava o login global, que caía na tela de login (um MacBoo
 
 ## Renovação
 
-Nenhuma conta cai, nem a parada: o que a Clínica faz com as contas dela (`renovarTokenSePossivel` +
-`ia:healthcheck`) e o kit faz com o global (`claude-conectado`), para todo armazém do Keep.
+Nenhuma conta cai, nem a parada: o que o kit faz com o global (`claude-conectado`), para todo armazém do Keep.
 `keep ia renovar [--agora] --json`; o app chama a cada 60 s, e logo ao abrir.
 
 - Armazéns: as pastas fixas (menos as que viraram armazém de aba), sempre; o global só sem gerente
