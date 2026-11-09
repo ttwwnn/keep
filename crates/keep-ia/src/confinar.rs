@@ -229,12 +229,13 @@ fn palavras(texto: &str) -> Vec<String> {
     saida
 }
 
-/// Os caminhos dentro da casa que a configuração do Claude Code da pessoa (`~/.claude/settings.json` e
-/// `settings.local.json`) cita — o script de um gancho, o da linha de status, um ajudante —, lidos de cada texto dela
-/// como caminho absoluto, `~/` ou `$HOME/`. Um deles que caia onde a IA presa grava viraria, trocado por ela, comando
-/// da sessão seguinte. Alvo de redirecionamento de saída (`2>/dev/null`, `>> ~/.claude/log`) não conta: é onde o
-/// comando grava; o de entrada conta (`bash < ~/.claude/x.sh` executa o arquivo). Fora da casa, os programas
-/// instalados já ficam só para ler.
+/// Os caminhos que a configuração do Claude Code da pessoa (`~/.claude/settings.json` e `settings.local.json`) cita —
+/// o script de um gancho, o da linha de status, um ajudante —, achados em cada texto dela como caminho absoluto, `~/`
+/// ou `$HOME/`: pelas palavras do shell (um caminho entre aspas, com espaço) e soltos no texto (o que vai dentro de um
+/// `bash -c "…"`). Um deles que caia onde a IA presa grava viraria, trocado por ela, comando da sessão seguinte. Alvo
+/// de redirecionamento de saída (`2>/dev/null`, `>> ~/.claude/log`) não conta: é onde o comando grava; o de entrada
+/// conta (`bash < ~/.claude/x.sh` executa o arquivo). `/dev` fica de fora. É uma leitura do texto: um script chamado
+/// por outro, ou por uma variável, não é seguido.
 fn executados_pela_configuracao(claude: &Path, casa: &Path) -> Vec<PathBuf> {
     fn textos<'a>(v: &'a serde_json::Value, saida: &mut Vec<&'a str>) {
         match v {
@@ -245,6 +246,7 @@ fn executados_pela_configuracao(claude: &Path, casa: &Path) -> Vec<PathBuf> {
         }
     }
     let saida = regex::Regex::new(r#"(?:\d|&)?>>?\s*(?:"[^"]*"|'[^']*'|[^\s;|&()]+)"#).expect("regex fixa");
+    let solto = regex::Regex::new(r#"(?:~|\$HOME|\$\{HOME\})?/[^\s"'`;|&()<>]+"#).expect("regex fixa");
     let mut achados = Vec::new();
     for nome in ["settings.json", "settings.local.json"] {
         let Ok(texto) = caminhos::ler_texto_ate(&claude.join(nome), caminhos::LEITURA_MAXIMA) else { continue };
@@ -252,14 +254,17 @@ fn executados_pela_configuracao(claude: &Path, casa: &Path) -> Vec<PathBuf> {
         let mut lidos = Vec::new();
         textos(&json, &mut lidos);
         for texto in lidos {
-            for palavra in palavras(&saida.replace_all(texto, " ")) {
+            let limpo = saida.replace_all(texto, " ");
+            let mut candidatos = palavras(&limpo);
+            candidatos.extend(solto.find_iter(&limpo).map(|m| m.as_str().to_string()));
+            for palavra in candidatos {
                 let da_casa = ["~/", "$HOME/", "${HOME}/"].iter().find_map(|i| palavra.strip_prefix(i));
                 let caminho = match da_casa {
                     Some(resto) => casa.join(resto),
                     None if palavra.starts_with('/') => PathBuf::from(&palavra),
                     None => continue,
                 };
-                if caminho.starts_with(casa) && caminho != casa && !achados.contains(&caminho) {
+                if !caminho.starts_with("/dev") && caminho != casa && !achados.contains(&caminho) {
                     achados.push(caminho);
                 }
             }
@@ -390,9 +395,9 @@ fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Pat
         for p in formas(&alvo) {
             linhas.push(format!("(deny file-write* (literal {}))", literal(&p)));
         }
-        // E as pastas acima dele, até a casa, pelo caminho exato: renomear uma delas, trocar o arquivo e devolvê-la
-        // seria outro jeito de trocá-lo. Isso não impede criar nada dentro delas.
-        for acima in alvo.ancestors().skip(1).take_while(|d| *d != casa_dir && d.starts_with(casa_dir)) {
+        // E as pastas acima dele, até a casa (ou até a raiz, fora dela), pelo caminho exato: renomear uma delas,
+        // trocar o arquivo e devolvê-la seria outro jeito de trocá-lo. Isso não impede criar nada dentro delas.
+        for acima in alvo.ancestors().skip(1).take_while(|d| *d != casa_dir && d.parent().is_some()) {
             for p in formas(acima) {
                 linhas.push(format!("(deny file-write* (literal {}))", literal(&p)));
             }
@@ -940,25 +945,35 @@ mod testes {
             "hooks": {"Stop": [{"hooks": [
                 {"command": gancho},
                 {"command": r#"bash "$HOME/.claude/meus scripts/b.sh"; sh <~/.claude/c.sh 2>&1"#},
+                {"command": r#"bash -c "source ~/.claude/lib.sh; roda" && sh -c '~/.claude/x.sh --flag'"#},
+                {"command": "python3 /tmp/gancho.py && cat /dev/null"},
             ]}]},
         });
         std::fs::write(claude.join("settings.json"), config.to_string()).unwrap();
         std::fs::write(claude.join("settings.local.json"), r#"{"env":{"P":"/opt/ferramenta/bin"}}"#).unwrap();
-        let mut achados = executados_pela_configuracao(&claude, &casa);
-        achados.sort();
-        let mut esperados = vec![
+        let achados = executados_pela_configuracao(&claude, &casa);
+        // O que a entrada lê (`bash < x.sh` executa o arquivo), o caminho entre aspas com espaço, o que vai dentro de um
+        // `bash -c "…"`, e o que fica fora da casa onde se grava (`/tmp`) ou não.
+        for esperado in [
             casa.join(".claude/statusline.sh"),
             casa.join(".claude/todos/lista.json"),
             casa.join(".claude/x.env"),
             casa.join(".claude/scripts/a.sh"),
             casa.join(".claude/meus scripts/b.sh"),
             casa.join(".claude/c.sh"),
-        ];
-        esperados.sort();
-        // Dentro: o que a entrada lê (`bash < x.sh` executa o arquivo) e o caminho entre aspas, com espaço. Fora: o que
-        // fica fora da casa (`/bin/sh`, `/opt/…`), os alvos de saída (`/dev/null`, `/tmp/log`, o log do gancho) e o
-        // que não é caminho.
-        assert_eq!(achados, esperados);
+            casa.join(".claude/lib.sh"),
+            casa.join(".claude/x.sh"),
+            PathBuf::from("/tmp/gancho.py"),
+            PathBuf::from("/bin/sh"),
+            PathBuf::from("/opt/ferramenta/bin"),
+        ] {
+            assert!(achados.contains(&esperado), "{} em {achados:?}", esperado.display());
+        }
+        // Os alvos de saída (`/tmp/log`, o log do gancho), `/dev` e o que não é caminho, não.
+        for fora in [PathBuf::from("/tmp/log"), casa.join(".claude/g.log"), PathBuf::from("/dev/null")] {
+            assert!(!achados.contains(&fora), "{} em {achados:?}", fora.display());
+        }
+        assert!(!achados.iter().any(|p| p.to_string_lossy().contains("python3:")), "{achados:?}");
         assert_eq!(palavras(r#"a "b c"d 'e' X=/f g;h|i&j(k)<l"#), ["a", "b cd", "e", "/f", "X=/f", "g", "h", "i", "j", "k", "l"]);
         // Sem configuração, ou com uma que não é JSON: nada.
         std::fs::write(claude.join("settings.json"), "{").unwrap();
@@ -1007,16 +1022,25 @@ mod testes {
         std::fs::write(c.projeto.join("gancho.sh"), "").unwrap();
         std::fs::write(aba.join("ajuda.sh"), "").unwrap();
         let (pr, ab) = (c.projeto.display().to_string(), aba.display().to_string());
+        // E um fora da casa, onde a IA presa grava (como o `/tmp`).
+        let fora = tempfile::tempdir().unwrap();
+        let fo = fora.path().canonicalize().unwrap().display().to_string();
+        std::fs::write(format!("{fo}/gancho.py"), "").unwrap();
         let config = serde_json::json!({"hooks": {"Stop": [{"hooks": [
             {"type": "command", "command": format!("sh {pr}/gancho.sh")},
             {"type": "command", "command": format!("sh {ab}/ajuda.sh")},
+            {"type": "command", "command": format!("python3 {fo}/gancho.py 2>/dev/null")},
         ]}]}});
         std::fs::write(c.claude.join("settings.json"), config.to_string()).unwrap();
         let com_aba = c.perfil(Some(&aba));
         assert_eq!(preso(&com_aba, &format!("echo x >> '{pr}/gancho.sh'")), Some(false), "na pasta dos transcritos");
         assert_eq!(preso(&com_aba, &format!("echo x >> '{ab}/ajuda.sh'")), Some(false), "no armazém da aba");
-        let resto = format!("echo '{{}}' >> '{pr}/t.jsonl' && mkdir '{ab}/.trava' && rmdir '{ab}/.trava'");
-        assert_eq!(preso(&com_aba, &resto), Some(true), "o resto do armazém e dos transcritos");
+        assert_eq!(preso(&com_aba, &format!("echo x >> '{fo}/gancho.py'")), Some(false), "fora da casa");
+        let resto = format!(
+            "echo '{{}}' >> '{pr}/t.jsonl' && mkdir '{ab}/.trava' && rmdir '{ab}/.trava' && echo x > '{fo}/outro' \
+             && echo x > /dev/null"
+        );
+        assert_eq!(preso(&com_aba, &resto), Some(true), "o resto do armazém, dos transcritos e da pasta de fora");
         // Um programa instalado fora da casa (o Homebrew, um app): onde a pessoa grava sem sandbox, a IA presa não.
         for dir in ["/opt/homebrew", "/Applications", "/usr/local", "/Library"] {
             let sonda = format!("{dir}/.keep-teste-{}", std::process::id());
