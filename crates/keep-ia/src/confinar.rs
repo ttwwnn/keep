@@ -155,17 +155,29 @@ const CLAUDE_SO_LEITURA: [&str; 10] = [
 /// `/private/var`). Só para caminhos que a IA presa não altera (os que este perfil nega): seguir um link que ela
 /// mesma criou, onde grava, deixaria a subida seguinte liberar o que ela quisesse.
 fn formas(p: &Path) -> Vec<String> {
-    let mut v = vec![p.to_string_lossy().into_owned()];
     // O destino real do maior trecho que existe, com o resto do caminho: `/tmp/x` que ainda não existe é
     // `/private/tmp/x`, e é por ele que o sandbox compara quem o cria.
-    let real = p.ancestors().find_map(|a| {
-        let resto = p.strip_prefix(a).ok()?;
-        let r = a.canonicalize().ok()?;
-        Some(if resto.as_os_str().is_empty() { r } else { r.join(resto) })
-    });
-    if let Some(real) = real.map(|r| r.to_string_lossy().into_owned()) {
-        if real != v[0] {
-            v.push(real);
+    let real = |p: &Path| {
+        p.ancestors().find_map(|a| {
+            let resto = p.strip_prefix(a).ok()?;
+            let r = a.canonicalize().ok()?;
+            Some(if resto.as_os_str().is_empty() { r } else { r.join(resto) })
+        })
+    };
+    let mut caminhos = vec![p.to_path_buf()];
+    caminhos.extend(real(p));
+    // Um link quebrado: gravar por ele cria o destino, que é o caminho que o sandbox compara.
+    if p.canonicalize().is_err() {
+        if let Ok(destino) = std::fs::read_link(p) {
+            let destino = p.parent().map(|d| d.join(&destino)).unwrap_or(destino);
+            caminhos.extend(real(&destino));
+            caminhos.push(destino);
+        }
+    }
+    let mut v: Vec<String> = Vec::new();
+    for c in caminhos.iter().map(|c| c.to_string_lossy().into_owned()) {
+        if !v.contains(&c) {
+            v.push(c);
         }
     }
     v
@@ -1252,6 +1264,13 @@ mod testes {
         let r = real.display();
         let Some(criou) = preso(&p, &format!("mkdir '{r}/commands'")) else { return };
         assert!(!criou, "a IA presa criou commands/ no destino do link");
+        // Um item protegido que é um link quebrado: o destino, que gravar pelo link criaria, também é negado.
+        let solto = fora.path().canonicalize().unwrap().join("solto.json");
+        std::os::unix::fs::symlink(&solto, real.join("settings.local.json")).unwrap();
+        let com_link = c.perfil(None);
+        assert_eq!(preso(&com_link, &format!("echo '{{}}' > '{}/settings.local.json'", r)), Some(false), "pelo link");
+        assert_eq!(preso(&com_link, &format!("echo '{{}}' > '{}'", solto.display())), Some(false), "no destino");
+        std::fs::remove_file(real.join("settings.local.json")).unwrap();
         assert_eq!(preso(&p, &format!("echo '{{}}' > '{r}/settings.local.json'")), Some(false));
         assert_eq!(preso(&p, &format!("echo x > '{r}/hooks/novo.sh'")), Some(false));
         assert_eq!(preso(&p, &format!("echo '{{}}' >> '{r}/history.jsonl'")), Some(true), "o resto continua do Claude");
