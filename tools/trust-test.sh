@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 #
 # Typing `claude` in a folder Claude Code does not know: it asks whether to
-# trust the folder, and Keep answers yes.
+# trust the folder, and Keep answers yes — but not in a folder that brings what
+# Claude Code runs as it opens (a hook in `.claude/settings.json`): there the
+# question is the person's.
 #
-# The tab's program poses as Claude Code: it draws the question and writes
-# down what it is sent.
+# Each tab's program poses as Claude Code: it draws the question and writes
+# down what it is sent. One tab in a plain folder, one in a folder with a
+# hook, each in a window of its own (the app types only into a tab it shows).
+# The app asks the real core (`keep ia pode-confiar`), and nothing else of it.
 #
-#   tools/status-bar-test.sh
+#   tools/trust-test.sh
 #
 # Your app and your daemon are never touched.
 
@@ -84,13 +88,15 @@ def prompt():
     rule = "─" * 100
     out.write("\x1b[2J\x1b[H\r\n\r\n" + rule + "\r\n❯ \r\n" + rule + "\r\n  ⏵⏵ bypass permissions on\r\n")
     out.flush()
+# One of these a tab, each in a folder of its own: what it got goes in a file named after the folder.
+FOLDER = os.path.basename(os.getcwd())
 trust()
-open(os.path.join(WORK, "ready"), "w").close()
+open(os.path.join(WORK, "ready-" + FOLDER), "w").close()
 while True:
     data = os.read(0, 256)
     if not data:
         break
-    with open(os.path.join(WORK, "bytes"), "a") as f:
+    with open(os.path.join(WORK, "bytes-" + FOLDER), "a") as f:
         f.write(data.decode("utf-8", "replace").replace("\r", "<CR>").replace("\x1b", "<ESC>"))
     if data == b"\x1b[B":
         pointer = 1
@@ -112,19 +118,41 @@ cat >"$WORK/fake.c" <<C
 int main(void) { return system("$WORK/printer"); }
 C
 cc -o "$WORK/2.1.296" "$WORK/fake.c" || { say "could not build the stand-in"; exit 1; }
+# Two folders outside any home (the core reads the app's made-up one): a plain one, and one whose
+# `.claude/settings.json` has a hook, which Claude Code would run as it opens.
+mkdir -p "$WORK/limpa" "$WORK/gancho/.claude"
+printf '%s\n' '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"touch /tmp/rodou"}]}]}}' \
+    >"$WORK/gancho/.claude/settings.json"
+KEEP=$PWD/target/release/keep
 SHELL="$WORK/2.1.296" ./target/release/keepd >"$WORK/daemon.log" 2>&1 &
 DAEMON_PID=$!
 sleep 1
-./target/release/keep new link >/dev/null 2>&1 || { say "could not make a workspace"; exit 1; }
+(cd "$WORK/limpa" && "$KEEP" new link) >/dev/null 2>&1 || { say "could not make a workspace"; exit 1; }
+(cd "$WORK/gancho" && "$KEEP" new gancho) >/dev/null 2>&1 || { say "could not make a workspace"; exit 1; }
 cat >"$KEEP_STATE_DIR/windows.json" <<'JSON'
-{"0":{"x":40,"y":160,"width":1100,"height":700,"workspaces":["link"],"tab":{"workspace":"link","root":1}}}
+{"0":{"x":40,"y":160,"width":800,"height":600,"workspaces":["link"],"tab":{"workspace":"link","root":1}},
+ "1":{"x":860,"y":160,"width":800,"height":600,"workspaces":["gancho"],"tab":{"workspace":"gancho","root":1}}}
 JSON
+
+# The app asks the core about the folder before it answers. Only that question reaches the real core;
+# everything else the app would ask of it is refused here, as a question asked wrong.
+cat >"$WORK/keep-ia" <<SH
+#!/bin/sh
+[ "\$1 \$2" = "ia pode-confiar" ] && exec "$KEEP" "\$@"
+echo '{"versao":1,"ok":false,"motivo":"uso","detalhe":"fora deste teste"}'
+exit 2
+SH
+chmod +x "$WORK/keep-ia"
+export KEEP_IA_BIN=$WORK/keep-ia
 
 stop_app
 KEEP_TRACE=1 "$BIN" >"$WORK/app.log" 2>&1 &
 APP_PID=$!
 waited=0
-while [ ! -e "$WORK/ready" ] && [ "$waited" -lt 60 ]; do sleep 0.25; waited=$((waited + 1)); done
+while { [ ! -e "$WORK/ready-limpa" ] || [ ! -e "$WORK/ready-gancho" ]; } && [ "$waited" -lt 60 ]; do
+    sleep 0.25
+    waited=$((waited + 1))
+done
 sleep 3
 place_on_screen
 osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" \
@@ -143,11 +171,15 @@ done
 say ""
 say "the question on the screen"
 for _ in $(seq 20); do
-    [ -s "$WORK/bytes" ] && break
+    [ -s "$WORK/bytes-limpa" ] && break
     sleep 1
 done
 sleep 12
-check "the pointer goes down to the yes, then Enter, once each" "<ESC>[B<CR>" "$(cat "$WORK/bytes" 2>/dev/null)"
+check "the pointer goes down to the yes, then Enter, once each" "<ESC>[B<CR>" "$(cat "$WORK/bytes-limpa" 2>/dev/null)"
+check "in a folder with a hook, nothing is typed: the question is the person's" "" \
+    "$(cat "$WORK/bytes-gancho" 2>/dev/null)"
+check "and the app says why" "yes" \
+    "$(grep -q 'gancho/1 trust question left to the person: .*settings.json tem `hooks`' "$WORK/app.log" && echo yes || echo no)"
 
 stop_app
 say ""

@@ -126,9 +126,10 @@ pub fn ia(args: &[String]) -> i32 {
         "sincronizar" => crate::sincronizar::cli(),
         "renovar" => crate::renovar::cli(&a),
         "ajustar-claude" => crate::ajustar_claude::cli(&a),
+        "pode-confiar" => crate::confiar::cli_pode(&a),
         "reconectar-chrome" => responde(json!({ "ok": true, "reconectadas": crate::quente::reconectar_chrome() })),
         _ => uso_errado(
-            "keep ia contas | uso | jev | automacao | ordem [mover] | abas | trocar | preparar | entrar | login | sincronizar | renovar | rodar | aba | confinar | statusline | confiar | ajustar-claude",
+            "keep ia contas | uso | jev | automacao | ordem [mover] | abas | trocar | preparar | entrar | login | sincronizar | renovar | rodar | aba | confinar | statusline | confiar | pode-confiar | ajustar-claude",
         ),
     }
 }
