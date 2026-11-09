@@ -204,11 +204,37 @@ fn armazem_da_aba(contas: &Path, armazem: &Path) -> Vec<String> {
     formas(pai).into_iter().map(|p| Path::new(&p).join(nome).to_string_lossy().into_owned()).collect()
 }
 
+/// As palavras de um comando, à moda do shell: o que vem entre aspas faz parte da palavra (com espaço e tudo); fora
+/// delas, espaço, `;|&()` e `<` separam. Uma palavra `NOME=valor` vale também pelo valor.
+fn palavras(texto: &str) -> Vec<String> {
+    let mut saida = Vec::new();
+    let mut atual = String::new();
+    let fecha = |atual: &mut String, saida: &mut Vec<String>| {
+        if let Some((_, valor)) = atual.split_once('=') {
+            saida.push(valor.to_string());
+        }
+        if !atual.is_empty() {
+            saida.push(std::mem::take(atual));
+        }
+    };
+    let mut letras = texto.chars();
+    while let Some(c) = letras.next() {
+        match c {
+            '"' | '\'' | '`' => atual.extend(letras.by_ref().take_while(|d| *d != c)),
+            c if c.is_whitespace() || ";|&()<".contains(c) => fecha(&mut atual, &mut saida),
+            c => atual.push(c),
+        }
+    }
+    fecha(&mut atual, &mut saida);
+    saida
+}
+
 /// Os caminhos dentro da casa que a configuração do Claude Code da pessoa (`~/.claude/settings.json` e
 /// `settings.local.json`) cita — o script de um gancho, o da linha de status, um ajudante —, lidos de cada texto dela
 /// como caminho absoluto, `~/` ou `$HOME/`. Um deles que caia onde a IA presa grava viraria, trocado por ela, comando
-/// da sessão seguinte. Alvo de redirecionamento (`2>/dev/null`, `>> ~/.claude/log`) não conta: é onde o comando
-/// grava, não o que ele executa. Fora da casa, os programas instalados já ficam só para ler.
+/// da sessão seguinte. Alvo de redirecionamento de saída (`2>/dev/null`, `>> ~/.claude/log`) não conta: é onde o
+/// comando grava; o de entrada conta (`bash < ~/.claude/x.sh` executa o arquivo). Fora da casa, os programas
+/// instalados já ficam só para ler.
 fn executados_pela_configuracao(claude: &Path, casa: &Path) -> Vec<PathBuf> {
     fn textos<'a>(v: &'a serde_json::Value, saida: &mut Vec<&'a str>) {
         match v {
@@ -218,7 +244,7 @@ fn executados_pela_configuracao(claude: &Path, casa: &Path) -> Vec<PathBuf> {
             _ => {}
         }
     }
-    let redirecionamento = regex::Regex::new(r#"(?:\d|&)?(?:>>?|<)\s*(?:"[^"]*"|'[^']*'|\S+)"#).expect("regex fixa");
+    let saida = regex::Regex::new(r#"(?:\d|&)?>>?\s*(?:"[^"]*"|'[^']*'|[^\s;|&()]+)"#).expect("regex fixa");
     let mut achados = Vec::new();
     for nome in ["settings.json", "settings.local.json"] {
         let Ok(texto) = caminhos::ler_texto_ate(&claude.join(nome), caminhos::LEITURA_MAXIMA) else { continue };
@@ -226,12 +252,11 @@ fn executados_pela_configuracao(claude: &Path, casa: &Path) -> Vec<PathBuf> {
         let mut lidos = Vec::new();
         textos(&json, &mut lidos);
         for texto in lidos {
-            let sem_redirecionamento = redirecionamento.replace_all(texto, " ");
-            for palavra in sem_redirecionamento.split(|c: char| c.is_whitespace() || "\"'`;|&()=".contains(c)) {
+            for palavra in palavras(&saida.replace_all(texto, " ")) {
                 let da_casa = ["~/", "$HOME/", "${HOME}/"].iter().find_map(|i| palavra.strip_prefix(i));
                 let caminho = match da_casa {
                     Some(resto) => casa.join(resto),
-                    None if palavra.starts_with('/') => PathBuf::from(palavra),
+                    None if palavra.starts_with('/') => PathBuf::from(&palavra),
                     None => continue,
                 };
                 if caminho.starts_with(casa) && caminho != casa && !achados.contains(&caminho) {
@@ -900,18 +925,29 @@ mod testes {
         let config = serde_json::json!({
             "statusLine": {"command": "bash ~/.claude/statusline.sh 2>/dev/null < ~/.claude/todos/lista.json"},
             "permissions": {"allow": ["Bash(python3:*)"]},
-            "hooks": {"Stop": [{"hooks": [{"command": gancho}]}]},
+            "hooks": {"Stop": [{"hooks": [
+                {"command": gancho},
+                {"command": r#"bash "$HOME/.claude/meus scripts/b.sh"; sh <~/.claude/c.sh 2>&1"#},
+            ]}]},
         });
         std::fs::write(claude.join("settings.json"), config.to_string()).unwrap();
         std::fs::write(claude.join("settings.local.json"), r#"{"env":{"P":"/opt/ferramenta/bin"}}"#).unwrap();
         let mut achados = executados_pela_configuracao(&claude, &casa);
         achados.sort();
-        let mut esperados =
-            vec![casa.join(".claude/statusline.sh"), casa.join(".claude/x.env"), casa.join(".claude/scripts/a.sh")];
+        let mut esperados = vec![
+            casa.join(".claude/statusline.sh"),
+            casa.join(".claude/todos/lista.json"),
+            casa.join(".claude/x.env"),
+            casa.join(".claude/scripts/a.sh"),
+            casa.join(".claude/meus scripts/b.sh"),
+            casa.join(".claude/c.sh"),
+        ];
         esperados.sort();
-        // Fora: o que fica fora da casa (`/bin/sh`, `/opt/…`), os alvos de redirecionamento (`/dev/null`, `/tmp/log`,
-        // o log do gancho, a lista lida pela entrada) e o que não é caminho.
+        // Dentro: o que a entrada lê (`bash < x.sh` executa o arquivo) e o caminho entre aspas, com espaço. Fora: o que
+        // fica fora da casa (`/bin/sh`, `/opt/…`), os alvos de saída (`/dev/null`, `/tmp/log`, o log do gancho) e o
+        // que não é caminho.
         assert_eq!(achados, esperados);
+        assert_eq!(palavras(r#"a "b c"d 'e' X=/f g;h|i&j(k)<l"#), ["a", "b cd", "e", "/f", "X=/f", "g", "h", "i", "j", "k", "l"]);
         // Sem configuração, ou com uma que não é JSON: nada.
         std::fs::write(claude.join("settings.json"), "{").unwrap();
         std::fs::remove_file(claude.join("settings.local.json")).unwrap();
