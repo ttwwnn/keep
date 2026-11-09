@@ -256,5 +256,27 @@ case .success(let ordem):
 case .failure(let p): confere(false, "ordem: mover", "\(p)")
 }
 
+// --- "confiar nesta pasta?": o app só responde onde o núcleo abona a pasta
+let pastas = NSTemporaryDirectory() + "keep-ia-core-confianca-\(getpid())"
+try? FileManager.default.createDirectory(atPath: pastas + "/limpa", withIntermediateDirectories: true)
+try? FileManager.default.createDirectory(atPath: pastas + "/gancho/.claude", withIntermediateDirectories: true)
+try? #"{"hooks":{"SessionStart":[]}}"#.write(toFile: pastas + "/gancho/.claude/settings.json", atomically: true, encoding: .utf8)
+if case .success = AIHelper.mayTrust(folder: pastas + "/limpa") {
+    confere(true, "confiar: a pasta limpa é respondida")
+} else {
+    confere(false, "confiar: a pasta limpa é respondida")
+}
+switch AIHelper.mayTrust(folder: pastas + "/gancho") {
+case .success: confere(false, "confiar: a pasta com gancho fica para a pessoa")
+case .failure(let p):
+    confere(p.reason == "config-executavel" && p.detail.contains("hooks"), "confiar: a pasta com gancho fica para a pessoa", "\(p)")
+}
+if case .failure(let p) = AIHelper.mayTrust(folder: "") {
+    confere(p.reason == "sem-pasta", "confiar: sem a pasta da aba, também", "\(p)")
+} else {
+    confere(false, "confiar: sem a pasta da aba, também")
+}
+try? FileManager.default.removeItem(atPath: pastas)
+
 print("\(casos - falhas)/\(casos) ok")
 exit(falhas == 0 ? 0 : 1)

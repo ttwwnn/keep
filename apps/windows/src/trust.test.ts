@@ -99,25 +99,63 @@ describe("the shell's own watcher", () => {
 });
 
 describe("the panes looked at", () => {
-  function setup(markers: string[] = []) {
+  /** `refused`: the folders the core does not vouch for, and why. */
+  function setup(markers: string[] = [], refused: Record<string, string> = {}) {
     const sent: string[] = [];
     const logged: string[] = [];
+    const asked: string[] = [];
     let clock = 0;
     const io: TrustIO = {
       home: "/Users/t",
       windows: false,
       markerExists: async (path) => markers.includes(path),
+      whyNotTrust: async (folder) => {
+        asked.push(folder);
+        return refused[folder];
+      },
       log: (line) => void logged.push(line),
       now: () => clock,
     };
-    const pane = (key: string, screen: string, shellPid = 100): TrustPane => ({
+    const pane = (key: string, screen: string, shellPid = 100, folder = "/Users/t/projeto"): TrustPane => ({
       key,
       screen,
       shellPid,
+      folder: async () => folder,
       send: async (keys) => void sent.push(`${key}:${JSON.stringify(keys)}`),
     });
-    return { io, sent, logged, pane, tick: (ms: number) => (clock += ms) };
+    return { io, sent, logged, asked, pane, tick: (ms: number) => (clock += ms) };
   }
+
+  it("leaves the question to the person where the core does not vouch for the folder", async () => {
+    const hook = "/Users/t/clonado/.claude/settings.json tem `hooks`";
+    const { io, sent, logged, pane } = setup([], { "/Users/t/clonado": hook });
+    await new TrustWatch().look([pane("a", OLD, 100, "/Users/t/clonado"), pane("b", OLD, 200)], io);
+    expect(sent).toEqual(['b:"\\u001b[B"']);
+    expect(logged).toContain(`trust question in a: left to the person (${hook})`);
+  });
+
+  it("leaves it too when the daemon cannot say the folder, without asking the core", async () => {
+    const { io, sent, asked, pane } = setup();
+    await new TrustWatch().look([pane("a", OLD, 100, "")], io);
+    expect(sent).toEqual([]);
+    expect(asked).toEqual([]);
+  });
+
+  it("asks the core once for each question, and again for another folder", async () => {
+    const { io, asked, pane, tick } = setup([], { "/Users/t/clonado": "tem `hooks`" });
+    const watch = new TrustWatch();
+    await watch.look([pane("a", OLD, 100, "/Users/t/clonado")], io);
+    tick(1000);
+    await watch.look([pane("a", OLD, 100, "/Users/t/clonado")], io);
+    expect(asked).toEqual(["/Users/t/clonado"]);
+    tick(1000);
+    await watch.look([pane("a", OLD, 100, "/Users/t/outro")], io);
+    expect(asked).toEqual(["/Users/t/clonado", "/Users/t/outro"]);
+    // The question went away and came back: asked again.
+    await watch.look([pane("a", "só uma conversa\n❯ ")], io);
+    await watch.look([pane("a", OLD, 100, "/Users/t/outro")], io);
+    expect(asked).toEqual(["/Users/t/clonado", "/Users/t/outro", "/Users/t/outro"]);
+  });
 
   it("answers the pane that shows the question, and only that one", async () => {
     const { io, sent, pane, tick } = setup();

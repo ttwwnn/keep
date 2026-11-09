@@ -196,7 +196,9 @@ e o Claude fica de fora da renovação do armazém.
     `--escolha=<KEEP_IA_ESCOLHA>`), salvo com `CLAUDE_SECURESTORAGE_CONFIG_DIR` já posto; recusa ou
     falha: uma linha ("Keep: não deu para preparar o login desta aba (<motivo>); o Claude sobe como
     antes.") e o Claude sobe no login global;
-  - "confiar nesta pasta?" é respondido sim (`keep ia confiar <shell>`, solto em segundo plano);
+  - "confiar nesta pasta?" é respondido sim (`keep ia confiar <shell>`, solto em segundo plano), só onde a
+    pasta não traz o que o Claude Code executa ao abrir (`keep ia pode-confiar`, abaixo); ali a pergunta fica
+    para a pessoa;
   - o programa sobe pelo `confinar` (preso à pasta do workspace quando há uma; ver "O que a IA presa
     alcança", abaixo);
   - o que não abre conversa (`claude mcp|update|auth|doctor|plugin…`, `--version`, `--help`) roda
@@ -569,6 +571,7 @@ keep ia sincronizar --json
 keep ia renovar [--agora] --json
 keep ia automacao [jev|ponytail|pr-agent ligar|desligar] --json
 keep ia ajustar-claude [--keep=<caminho>]      (Mac; o caminho padrão é o deste keep)
+keep ia pode-confiar --pasta=<P> --json
 keep worktrees listar [--prazo SEG] <workspace>:<root>[,<painel>…]…
 keep worktrees preparar <caminho>
 keep worktrees concluir <caminho> <destino>
@@ -618,6 +621,16 @@ Toda resposta é um objeto JSON numa linha, com `"versao": 1` e `"ok"`. Recusa: 
   "alteradas": [{"ws", "aba", "feito"}], "pendentes": [{"ws", "aba", "motivo", "detalhe"?}]}`.
 - `renovar` → `{"estado": "feito"|"em-andamento", "renovados": [{"conta", "armazem"}], "falhas":
   [{"conta", "armazem", "motivo"}], "abas": {…}}` (ver "Renovação").
+- `pode-confiar` → `{}` quando o Keep pode responder sozinho "sim" à pergunta de confiança do Claude Code
+  nessa pasta; recusa `config-executavel`, com o arquivo e a chave no `detalhe`, quando ela, ou uma acima dela
+  (até a casa, que fica de fora; fora da casa, até a raiz), traz o que o Claude Code executa ao abrir: um
+  `.mcp.json`, ou um `.claude/settings.json`/`settings.local.json` com chave fora das inertes (`$schema`, `model`,
+  `outputStyle`, `language`, `includeCoAuthoredBy`, `cleanupPeriodDays`, `alwaysThinkingEnabled`, `effortLevel`,
+  `spinnerTipsEnabled`, `respectGitignore`, `disableAllHooks`; `permissions` só quando restringe: `deny`, `ask`,
+  `allow` vazio, `defaultMode` `default` ou `plan`) ou que não dá para ler. A casa é reconhecida também pelo
+  destino real. É a pergunta do `keep ia confiar` e dos apps, com a pasta do Claude que pergunta (o `cwd` da aba,
+  lido do keepd quando a pergunta aparece). Uma pasta assim pede a resposta da pessoa uma vez, como no Terminal:
+  as worktrees novas de um repositório com ganchos versionados também.
 - `worktrees orfas` → `{"lixeira": [item do listar], "registros": [item: a pasta já sumiu], "aguardando":
   [{"caminho", "motivo"}], "mantidas": [{"caminho", "motivo"}], "avisos": [texto], "ocupado"?}`. Grava
   desde quando cada uma é órfã (`--so-ler`: não grava nada). `ocupado`: outra rodada em curso.
@@ -643,6 +656,7 @@ Toda resposta é um objeto JSON numa linha, com `"versao": 1` e `"ok"`. Recusa: 
 | ao abrir, e quando o keepd volta de uma ausência, se ele não tem abas | `keep restauro restaurar --fase=abas` (a janela espera; docs/restauro.md) |
 | logo ao abrir, e a cada 30 s | `keep restauro manter` |
 | uma vez por abertura (Mac, só o app da pessoa) | `keep links instalar` e `keep ia ajustar-claude` |
+| a pergunta de confiança do Claude Code na tela de uma aba (uma vez por pergunta) | `keep ia pode-confiar --pasta=<P> --json` |
 | a cada 15 s | `keep continuar` |
 
 O app passa `KEEP_SOCKET` (o daemon dele). Um app de teste que lê uma casa falsa passa

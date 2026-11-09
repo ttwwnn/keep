@@ -724,7 +724,16 @@ function readScreensFrom(unseen: ReadonlyMap<string, string>): void {
         forBar.push({ key, program: "codex", shellPid: pane.shellPid, screen: text, activity: kept });
         continue;
       }
-      if (view) claudePanes.push({ key, screen: text, shellPid: pane.shellPid, send: (keys) => view.type(keys) });
+      if (view) {
+        claudePanes.push({
+          key,
+          screen: text,
+          shellPid: pane.shellPid,
+          folder: () =>
+            api.listAll().then((all) => all.find((x) => x.name === w.name)?.tabs.find((t) => t.id === pane.id)?.cwd ?? ""),
+          send: (keys) => view.type(keys),
+        });
+      }
       // Undefined is "cannot tell": what was known stands.
       const m = text ? declaredMode(text) : undefined;
       if (m !== undefined) nextModes.set(key, m);
@@ -752,6 +761,10 @@ function readScreensFrom(unseen: ReadonlyMap<string, string>): void {
     home: info.value?.home ?? "",
     windows: isWindows.value,
     markerExists: (path) => api.pathExists(path),
+    whyNotTrust: (folder) =>
+      api
+        .iaAsk(["ia", "pode-confiar", `--pasta=${folder}`, "--json"])
+        .then((a) => (a._saida === 0 && a.ok === true ? undefined : a.detalhe || a.motivo || `saída ${a._saida}`)),
     log,
     now: Date.now,
   });

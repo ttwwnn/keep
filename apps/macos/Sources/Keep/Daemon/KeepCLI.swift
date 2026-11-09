@@ -385,6 +385,16 @@ enum AIHelper {
         askRaw(["abas", "--json"], within: 15 * timeScale)
     }
 
+    /// Whether the app may answer Claude Code's "do you trust this folder?" for the person (`keep ia
+    /// pode-confiar`): only where the folder brings nothing Claude Code runs as it opens — a hook, the project's MCP
+    /// servers. Otherwise, with no folder to ask about or no core to ask, the question is the person's.
+    static func mayTrust(folder: String) -> Result<Void, Problem> {
+        guard folder.hasPrefix("/") else {
+            return .failure(Problem(reason: "sem-pasta", detail: "O Keep não sabe a pasta desta aba."))
+        }
+        return askRaw(["pode-confiar", "--pasta=\(folder)", "--json"], within: 10 * timeScale).map { _ in () }
+    }
+
     /// One round of the order being followed (`keep ia sincronizar`): the
     /// tabs on an account that cannot take work moved to the first one that
     /// can, when they are free. The core does nothing while another manager

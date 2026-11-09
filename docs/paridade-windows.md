@@ -274,7 +274,8 @@ caixa da linha, rolagem da lista, estado do movimento, fim do arrasto por `point
   roteiro do CI confere que o modo ligado por um programa atravessa o ConPTY até a página; não foi visto
   passar (veja o colar acima), então não se sabe se o ConPTY deixa `CSI ? 2027 h` chegar.
 - [~] Responder sozinho "Confiar nesta pasta?" do Claude Code (`trust.ts`): a seta até o "Yes, I trust this
-  folder" e, quando o próximo olhar a encontra lá, Enter; nunca Enter no "No, exit". O layout antigo e o
+  folder" e, quando o próximo olhar a encontra lá, Enter; nunca Enter no "No, exit". Só onde o núcleo abona a
+  pasta (`keep ia pode-confiar`, docs/ia.md): uma com gancho ou `.mcp.json` fica para a pessoa. O layout antigo e o
   numerado; o marcador `~/.local/state/keep/trust/<pid do shell>` do vigia do shell evita a seta dupla. Visto
   no app (Mac) com um `claude` de mentira que desenha a pergunta; o Windows (o marcador com `\`) e o Claude
   Code de verdade não.

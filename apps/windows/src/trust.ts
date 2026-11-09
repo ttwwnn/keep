@@ -9,7 +9,9 @@
 // in Daemon/DaemonPoller.swift): the pointer down to the yes and, when the
 // next look finds it there, Enter — never Enter on the no, and never a key
 // before the question is up (an early key is read as Esc, which is "No, exit"
-// too). Newer versions list the choices numbered, the yes first.
+// too). Newer versions list the choices numbered, the yes first. Only where the
+// core vouches for the folder (`keep ia pode-confiar`): nothing in it that
+// Claude Code runs as it opens.
 
 /** Where the pointer (`❯`) stands, and where the other choice is from it. */
 export type Pointer = { on: "yes" } | { on: "no"; yes: "below" | "above" };
@@ -115,6 +117,11 @@ export interface TrustPane {
   screen: string;
   /** The tab's shell, which names the marker of the shell's own watcher; 0 when unknown. */
   shellPid: number;
+  /**
+   * Where Claude Code runs in the pane, asked of the daemon this moment ("" when it cannot say): the list the page
+   * keeps may be from before `cd` and `claude` were typed together.
+   */
+  folder(): Promise<string>;
   /** Type into the pane. */
   send(keys: string): Promise<void>;
 }
@@ -123,13 +130,24 @@ export interface TrustIO {
   home: string;
   windows: boolean;
   markerExists(path: string): Promise<boolean>;
+  /**
+   * The core's word on a folder (`keep ia pode-confiar`): undefined when the app may answer for the person there —
+   * nothing in it that Claude Code runs as it opens — and otherwise why not.
+   */
+  whyNotTrust(folder: string): Promise<string | undefined>;
   log(line: string): void;
   now(): number;
 }
 
-/** Looks at the panes running Claude Code once a second and answers the question where it is up. */
+/**
+ * Looks at the panes running Claude Code once a second and answers the question where it is up — only where the core
+ * vouches for the folder: one that brings a hook in `.claude/settings.json`, or the project's MCP servers, is the very
+ * thing the question guards against, and there it is left to the person.
+ */
 export class TrustWatch {
   private readonly answerer = new TrustAnswerer();
+  /** The core's word on the folder of each pane whose question is up: asked once per question, again for another folder. */
+  private verdicts = new Map<string, { folder: string; may: boolean }>();
   private looking = false;
 
   async look(panes: TrustPane[], io: TrustIO): Promise<void> {
@@ -139,6 +157,7 @@ export class TrustWatch {
     try {
       const showing: Showing[] = [];
       const byKey = new Map<string, TrustPane>();
+      const verdicts = new Map<string, { folder: string; may: boolean }>();
       for (const pane of panes) {
         const pointer = pane.screen === "" ? undefined : trustPointer(pane.screen);
         if (!pointer) continue;
@@ -146,9 +165,21 @@ export class TrustWatch {
         const watched =
           pane.shellPid > 0 && (await io.markerExists(trustMarker(io.home, pane.shellPid, io.windows)).catch(() => false));
         if (watched) continue;
+        const folder = await pane.folder().catch(() => "");
+        let verdict = this.verdicts.get(pane.key);
+        if (!verdict || verdict.folder !== folder) {
+          const why = folder
+            ? await io.whyNotTrust(folder).catch((error: unknown) => String(error))
+            : "the daemon did not say the pane's folder";
+          if (why !== undefined) io.log(`trust question in ${pane.key.replace("\u0000", "/")}: left to the person (${why})`);
+          verdict = { folder, may: why === undefined };
+        }
+        verdicts.set(pane.key, verdict);
+        if (!verdict.may) continue;
         showing.push({ key: pane.key, pointer });
         byKey.set(pane.key, pane);
       }
+      this.verdicts = verdicts;
       for (const { key, keys } of this.answerer.step(showing, io.now())) {
         io.log(`trust question in ${key.replace("\u0000", "/")}: ${keys === "\r" ? "yes" : "pointer toward the yes"}`);
         void byKey.get(key)?.send(keys).catch(() => {});
