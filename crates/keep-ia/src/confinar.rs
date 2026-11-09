@@ -80,18 +80,34 @@ fn escapa_regex(p: &str) -> String {
 }
 
 /// As pastas do git que uma worktree usa e que ficam fora dela.
+///
+/// O `.git` da worktree é um arquivo de texto DENTRO da pasta presa: a própria IA pode reescrevê-lo, e o que ele
+/// apontar ganharia leitura e gravação na subida seguinte (com `gitdir: /`, o disco inteiro). Por isso só vale a
+/// forma de uma worktree de verdade, `<repo>/.git/worktrees/<nome>`, que aponta de volta para ESTE `.git` (o arquivo
+/// `gitdir` lá dentro, que a IA presa não alcança) e cujo `commondir` é esse `<repo>/.git`. Fora disso, nada: o git
+/// da pasta falha, o sandbox não alarga. Submódulo (`.git/modules/...`) também fica de fora.
 pub(crate) fn pastas_do_git(pasta: &Path) -> Vec<String> {
-    let mut saida = Vec::new();
-    let Ok(texto) = std::fs::read_to_string(pasta.join(".git")) else { return saida };
-    let Some(gitdir) = texto.trim().strip_prefix("gitdir:") else { return saida };
-    let gitdir = pasta.join(gitdir.trim());
-    let gitdir = gitdir.canonicalize().unwrap_or(gitdir);
-    if let Ok(comum) = std::fs::read_to_string(gitdir.join("commondir")) {
-        let c = gitdir.join(comum.trim());
-        saida.push(c.canonicalize().unwrap_or(c).to_string_lossy().into_owned());
+    let nada = Vec::new();
+    let Ok(texto) = std::fs::read_to_string(pasta.join(".git")) else { return nada };
+    let Some(gitdir) = texto.trim().strip_prefix("gitdir:") else { return nada };
+    let Ok(gitdir) = pasta.join(gitdir.trim()).canonicalize() else { return nada };
+    let Some(worktrees) = gitdir.parent() else { return nada };
+    let Some(comum) = worktrees.parent() else { return nada };
+    if worktrees.file_name() != Some(std::ffi::OsStr::new("worktrees"))
+        || comum.file_name() != Some(std::ffi::OsStr::new(".git"))
+    {
+        return nada;
     }
-    saida.insert(0, gitdir.to_string_lossy().into_owned());
-    saida
+    let volta = std::fs::read_to_string(gitdir.join("gitdir")).ok().and_then(|g| Path::new(g.trim()).canonicalize().ok());
+    if volta.is_none() || volta != pasta.join(".git").canonicalize().ok() {
+        return nada;
+    }
+    if let Ok(c) = std::fs::read_to_string(gitdir.join("commondir")) {
+        if gitdir.join(c.trim()).canonicalize().ok().as_deref() != Some(comum) {
+            return nada;
+        }
+    }
+    vec![gitdir.to_string_lossy().into_owned(), comum.to_string_lossy().into_owned()]
 }
 
 /// Onde o keepd escuta, nas formas que o sandbox pode comparar: como está e com a pasta canonizada.
@@ -286,6 +302,51 @@ pub fn cli(args: &[String]) -> i32 {
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    /// Um repositório com uma worktree de verdade: `<repo>/.git/worktrees/w`, que aponta de volta para `<wt>/.git`.
+    fn repo_com_worktree(raiz: &Path) -> (PathBuf, PathBuf) {
+        let repo = raiz.join("repo");
+        let gitdir = repo.join(".git/worktrees/w");
+        let wt = raiz.join("wt");
+        std::fs::create_dir_all(&gitdir).unwrap();
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::write(wt.join(".git"), format!("gitdir: {}\n", gitdir.display())).unwrap();
+        std::fs::write(gitdir.join("gitdir"), format!("{}\n", wt.join(".git").display())).unwrap();
+        std::fs::write(gitdir.join("commondir"), "../..\n").unwrap();
+        (wt, repo)
+    }
+
+    #[test]
+    fn a_worktree_de_verdade_leva_o_git_dela() {
+        let dir = tempfile::tempdir().unwrap();
+        let (wt, repo) = repo_com_worktree(dir.path());
+        let git = repo.join(".git").canonicalize().unwrap();
+        assert_eq!(
+            pastas_do_git(&wt),
+            vec![git.join("worktrees/w").to_string_lossy().into_owned(), git.to_string_lossy().into_owned()]
+        );
+    }
+
+    #[test]
+    fn um_git_reescrito_pela_ia_nao_alarga_o_sandbox() {
+        let dir = tempfile::tempdir().unwrap();
+        let (wt, _) = repo_com_worktree(dir.path());
+        // A raiz do disco, a casa e uma pasta qualquer: nada entra.
+        for alvo in ["/", dir.path().to_str().unwrap()] {
+            std::fs::write(wt.join(".git"), format!("gitdir: {alvo}\n")).unwrap();
+            assert!(pastas_do_git(&wt).is_empty(), "{alvo}");
+        }
+        // A worktree de OUTRO repositório: o `gitdir` de lá aponta para a pasta dele, não para esta.
+        let outro = dir.path().join("outro");
+        std::fs::create_dir_all(&outro).unwrap();
+        let (_, repo_alheio) = repo_com_worktree(&outro);
+        std::fs::write(wt.join(".git"), format!("gitdir: {}\n", repo_alheio.join(".git/worktrees/w").display())).unwrap();
+        assert!(pastas_do_git(&wt).is_empty());
+        // Um commondir que sai do repositório também derruba tudo.
+        let (wt2, repo2) = repo_com_worktree(&dir.path().join("terceiro"));
+        std::fs::write(repo2.join(".git/worktrees/w/commondir"), "/\n").unwrap();
+        assert!(pastas_do_git(&wt2).is_empty());
+    }
 
     #[test]
     fn so_prende_o_workspace_que_tem_pasta() {
