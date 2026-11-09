@@ -273,6 +273,15 @@ fn executados_pela_configuracao(claude: &Path, casa: &Path) -> Vec<PathBuf> {
     achados
 }
 
+/// Se o caminho citado é dado, não programa: um arquivo que o gancho só lê ou grava (`jq . ~/.claude.json`, `tail
+/// history.jsonl`, `tee -a x.log`), muitas vezes o próprio estado do CLI. Negá-lo tiraria do Claude preso a gravação
+/// dele, sem nada a proteger de execução.
+fn e_dado(p: &Path, casa: &Path) -> bool {
+    let ext = p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    matches!(ext.as_str(), "json" | "jsonl" | "log" | "txt" | "md" | "csv" | "lock")
+        || p.to_string_lossy().starts_with(&format!("{}/.claude.json", casa.to_string_lossy()))
+}
+
 /// Se o caminho citado é um script, que costuma levar os vizinhos (um módulo, uma biblioteca do shell) junto.
 fn e_script(p: &Path) -> bool {
     let ext = p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
@@ -389,7 +398,7 @@ fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Pat
     // script costuma levar junto. Por último, para vencer também o armazém da aba e a pasta dos transcritos. A pasta
     // presa fica de fora: é dela.
     for alvo in executados_pela_configuracao(&claude, casa_dir) {
-        if alvo.starts_with(pasta) || pasta.starts_with(&alvo) {
+        if e_dado(&alvo, casa_dir) || alvo.starts_with(pasta) || pasta.starts_with(&alvo) {
             continue;
         }
         for p in formas(&alvo) {
@@ -990,12 +999,15 @@ mod testes {
         std::fs::write(c.claude.join("scripts/a.py"), "").unwrap();
         std::fs::create_dir_all(c.claude.join("bin")).unwrap();
         std::fs::write(c.claude.join("bin/avisa"), "#!/bin/sh\n").unwrap();
+        std::fs::write(c.casa.join(".claude.json"), "{}\n").unwrap();
         let config = serde_json::json!({
-            "statusLine": {"type": "command", "command": "bash ~/.claude/statusline-command.sh 2>/dev/null"},
+            "statusLine": {"type": "command",
+                "command": "bash ~/.claude/statusline-command.sh 2>/dev/null; jq -r .x ~/.claude.json"},
             "hooks": {"Stop": [{"hooks": [
                 {"type": "command",
                     "command": "python3 $HOME/.claude/scripts/a.py $HOME/.claude/todos/lista.json >> ~/.claude/gancho.log"},
-                {"type": "command", "command": "~/.claude/bin/avisa"},
+                {"type": "command", "command": "~/.claude/bin/avisa | tee -a ~/.claude/avisos.log"},
+                {"type": "command", "command": "tail -1 ~/.claude/history.jsonl"},
             ]}]},
         });
         std::fs::write(c.claude.join("settings.json"), config.to_string()).unwrap();
@@ -1012,10 +1024,16 @@ mod testes {
         assert_eq!(std::fs::read_to_string(c.claude.join("bin/avisa")).unwrap(), "#!/bin/sh\n");
         assert_eq!(preso(&p, &format!("echo x > '{cl}/bin/outro'")), Some(true), "outro arquivo na mesma pasta");
         assert_eq!(preso(&p, &format!("echo '{{}}' >> '{cl}/history.jsonl'")), Some(true), "o resto continua do Claude");
-        // Onde a configuração grava, e a pasta de estado do CLI de um arquivo que ela só lê, continuam graváveis.
+        // Onde a configuração grava, o que ela só lê e o estado do CLI continuam graváveis.
         assert_eq!(preso(&p, "echo x > /dev/null"), Some(true), "/dev/null");
         assert_eq!(preso(&p, &format!("echo x >> '{cl}/gancho.log'")), Some(true), "o log do gancho");
+        assert_eq!(preso(&p, &format!("echo x >> '{cl}/avisos.log'")), Some(true), "o log do tee");
         assert_eq!(preso(&p, &format!("echo '[]' > '{cl}/todos/outra.json'")), Some(true), "a pasta todos/");
+        assert_eq!(preso(&p, &format!("echo '[]' > '{cl}/todos/lista.json'")), Some(true), "o dado que o gancho lê");
+        assert_eq!(preso(&p, &format!("echo '{{}}' >> '{cl}/history.jsonl'")), Some(true), "o histórico");
+        let ca = c.casa.display();
+        let json = format!("echo '{{}}' > '{ca}/.claude.json.tmp.1' && mv '{ca}/.claude.json.tmp.1' '{ca}/.claude.json'");
+        assert_eq!(preso(&p, &json), Some(true), "o ~/.claude.json, gravado por temporário");
         // Um script citado dentro do que volta depois (o armazém da aba, a pasta dos transcritos) também fica só para
         // ler; o resto dessas pastas continua do Claude preso.
         let aba = c.claude.join("contas/abas/aba");
