@@ -675,10 +675,11 @@ mod testes {
             assert!(armazem_da_aba(&contas, &nao).is_empty(), "{}", nao.display());
         }
         assert!(armazem_da_aba(&contas, Path::new("abas/aba")).is_empty());
-        assert!(armazem_da_aba(&contas, &contas.join("abas/aba/../outra")).is_empty());
-        // Um armazém trocado por um link (a IA presa grava no dela): nem o link, nem para onde ele aponta.
         #[cfg(unix)]
         {
+            // Um `..` no caminho não é o armazém de verdade (no Windows, juntar a um caminho `\\?\` já o resolve).
+            assert!(armazem_da_aba(&contas, &contas.join("abas/aba/../outra")).is_empty());
+            // Um armazém trocado por um link (a IA presa grava no dela): nem o link, nem para onde ele aponta.
             let link = contas.join("abas/link");
             std::os::unix::fs::symlink(&c.casa, &link).unwrap();
             assert!(armazem_da_aba(&contas, &link).is_empty());
