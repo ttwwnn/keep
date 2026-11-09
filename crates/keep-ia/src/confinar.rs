@@ -263,6 +263,9 @@ fn executados_pela_configuracao(claude: &Path, casa: &Path) -> Vec<PathBuf> {
             let limpo = saida.replace_all(texto, " ");
             let mut candidatos = palavras(&limpo);
             candidatos.extend(solto.find_iter(&limpo).map(|m| m.as_str().to_string()));
+            // Uma lista de pastas (`~/.claude/bin:$PATH`) vale por cada uma.
+            let candidatos: Vec<String> =
+                candidatos.iter().flat_map(|c| c.split(':').map(str::to_string).collect::<Vec<_>>()).collect();
             for palavra in candidatos {
                 let da_casa = ["~/", "$HOME/", "${HOME}/"].iter().find_map(|i| palavra.strip_prefix(i));
                 let caminho = match da_casa {
@@ -294,6 +297,9 @@ fn e_script(p: &Path) -> bool {
     matches!(ext.as_str(), "sh" | "bash" | "zsh" | "py" | "js" | "mjs" | "cjs" | "ts" | "rb" | "pl" | "php" | "lua")
 }
 
+/// O que, na casa, a IA presa lê e grava: a casa do Claude Code e do Codex, o estado, os caches e o Chaveiro.
+const AREAS_DA_CASA: [&str; 6] = [".claude", ".codex", ".local/state", ".cache", "Library/Caches", "Library/Keychains"];
+
 /// As pastas de `~/.claude` que o próprio CLI grava a toda hora, e a das contas (o armazém da aba, onde ele põe as
 /// travas do login): negar a pasta inteira de um arquivo citado nelas quebraria a sessão presa.
 const CLAUDE_ESTADO: [&str; 7] =
@@ -321,9 +327,10 @@ fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Pat
     let casa = casa_dir.to_string_lossy().into_owned();
     let mut rw = vec![pasta.to_string_lossy().into_owned()];
     rw.extend(pastas_do_git(pasta));
-    for sub in [".claude", ".codex", ".local/state", ".cache", "Library/Caches", "Library/Keychains"] {
+    for sub in AREAS_DA_CASA {
         rw.push(format!("{casa}/{sub}"));
     }
+    let rw_da_casa: Vec<PathBuf> = AREAS_DA_CASA.iter().map(|s| casa_dir.join(s)).collect();
     let mut linhas = vec![
         "(version 1)".to_string(),
         "(allow default)".into(),
@@ -417,13 +424,19 @@ fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Pat
                 linhas.push(format!("(deny file-write* (literal {}))", literal(&p)));
             }
         }
-        let pai = alvo.parent().filter(|p| {
-            e_script(&alvo)
-                && p.starts_with(&claude)
-                && *p != claude
-                && !CLAUDE_ESTADO.iter().any(|e| p.starts_with(claude.join(e)))
-        });
-        for p in pai.map(formas).unwrap_or_default() {
+        // A pasta inteira: a de um script numa subpasta de `~/.claude`, que ele costuma levar junto, e a citada ela
+        // mesma (`~/.claude/bin` no `PATH`, onde um `git` novo rodaria na sessão seguinte) dentro do que a IA presa
+        // grava na casa. Nunca uma pasta de estado do CLI nem uma dessas áreas inteira.
+        let livre = |d: &Path| {
+            rw_da_casa.iter().any(|r| d.starts_with(r) && d != r.as_path())
+                && !CLAUDE_ESTADO.iter().any(|e| d.starts_with(claude.join(e)))
+        };
+        let pasta_inteira = if alvo.is_dir() {
+            Some(alvo.as_path()).filter(|d| livre(d))
+        } else {
+            alvo.parent().filter(|p| e_script(&alvo) && p.starts_with(&claude) && livre(p))
+        };
+        for p in pasta_inteira.map(formas).unwrap_or_default() {
             linhas.push(format!("(deny file-write* (subpath {}))", literal(&p)));
         }
     }
@@ -1029,6 +1042,12 @@ mod testes {
         assert_eq!(preso(&p, &troca), Some(false), "a troca pela pasta-mãe");
         assert_eq!(std::fs::read_to_string(c.claude.join("bin/avisa")).unwrap(), "#!/bin/sh\n");
         assert_eq!(preso(&p, &format!("echo x > '{cl}/bin/outro'")), Some(true), "outro arquivo na mesma pasta");
+        // Uma pasta citada ela mesma (`~/.claude/bin` no `PATH`): nada novo dentro dela; o resto continua do Claude.
+        std::fs::write(c.claude.join("settings.local.json"), r#"{"env":{"PATH":"~/.claude/bin:/usr/bin"}}"#).unwrap();
+        let com_path = c.perfil(None);
+        assert_eq!(preso(&com_path, &format!("echo x > '{cl}/bin/git'")), Some(false), "um programa novo no PATH");
+        assert_eq!(preso(&com_path, &format!("echo x > '{cl}/solto.txt'")), Some(true), "fora da pasta citada");
+        std::fs::remove_file(c.claude.join("settings.local.json")).unwrap();
         assert_eq!(preso(&p, &format!("echo '{{}}' >> '{cl}/history.jsonl'")), Some(true), "o resto continua do Claude");
         // Onde a configuração grava, o que ela só lê e o estado do CLI continuam graváveis.
         assert_eq!(preso(&p, "echo x > /dev/null"), Some(true), "/dev/null");
