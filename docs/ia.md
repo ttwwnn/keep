@@ -261,7 +261,8 @@ abrir, sai depois:
 - só para ler: `settings.json`, `settings.local.json`, `CLAUDE.md`, `skills/`, `plugins/`, `agents/`,
   `commands/`, `hooks/`, `rules/` e `output-styles/` — o que toda sessão do Claude, presa ou não, executa ou toma
   como instrução —, também no destino quando `~/.claude` é um link; o que o `CLAUDE.md` importa (`@…`, até cinco
-  níveis); e os caminhos que essa configuração cita, dentro ou fora da casa, com as pastas acima deles: o script
+  níveis, exista ou não, de qualquer extensão); e os caminhos que essa configuração cita, dentro ou fora da casa,
+  com as pastas acima deles: o script
   da linha de status, o de um gancho e, quando é um script numa subpasta de `~/.claude` que não é de estado do
   CLI, os vizinhos dele; uma pasta de programas (o valor de um `…PATH` do `env`) fica inteira, quando está dentro
   do que a IA presa grava na casa. Ficam de fora os alvos de redirecionamento de saída, `/dev` e os dados que o
@@ -289,7 +290,10 @@ Ainda ao alcance da IA presa, por o CLI gravar ali ao abrir: o `~/.claude.json` 
 usuário gravado nele sobe em toda sessão), `shell-snapshots/` e `session-env/` (o retrato do shell e o
 ambiente que cada sessão relê a cada comando Bash), e para ler `history.jsonl`, `file-history/`, `uploads/`,
 `paste-cache/` e `plans/`, que juntam os de todos os projetos. Também o Chaveiro (os itens do Claude confiam
-no `security`) e a rede. No Windows o token restrito ainda leva `.claude` inteiro (`confinar_win.rs`).
+no `security`) e a rede. Um script que a configuração global cita e que fica dentro da pasta presa continua da IA
+presa, como o resto da pasta: ao prender uma pasta, os ganchos globais que rodam um script dela passam a rodar o
+que a IA deixar ali. Fechar tudo isso pede um `CLAUDE_CONFIG_DIR` próprio para a IA presa. No Windows o token
+restrito ainda leva `.claude` inteiro (`confinar_win.rs`).
 
 ### O gancho da conta da aba
 

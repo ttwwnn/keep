@@ -315,11 +315,13 @@ fn importados_pelo_claude_md(claude: &Path, casa: &Path) -> Vec<PathBuf> {
                 None if alvo.starts_with('/') => PathBuf::from(alvo),
                 None => pasta.join(alvo),
             };
-            if caminho.is_file() && !achados.contains(&caminho) {
-                achados.push(caminho.clone());
-                if nivel < 5 {
-                    fila.push((caminho, nivel + 1));
-                }
+            // Um importado que ainda não existe também: criado pela IA presa, viraria instrução do mesmo jeito.
+            if alvo.is_empty() || caminho.is_dir() || achados.contains(&caminho) {
+                continue;
+            }
+            achados.push(caminho.clone());
+            if nivel < 5 && caminho.is_file() {
+                fila.push((caminho, nivel + 1));
             }
         }
     }
@@ -482,12 +484,14 @@ fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Pat
     // o arquivo e, quando é um script numa subpasta de `~/.claude` que não é de estado do CLI, a pasta dele, que um
     // script costuma levar junto. Por último, para vencer também o armazém da aba e a pasta dos transcritos. A pasta
     // presa fica de fora: é dela.
-    // Os arquivos que o `CLAUDE.md` importa entram do mesmo jeito: instrução de toda sessão.
+    // Os arquivos que o `CLAUDE.md` importa entram do mesmo jeito, qualquer que seja a extensão: instrução de toda
+    // sessão.
     let citados = executados_pela_configuracao(&claude, casa_dir)
         .into_iter()
-        .chain(importados_pelo_claude_md(&claude, casa_dir).into_iter().map(|p| (p, false)));
-    for (alvo, de_programas) in citados {
-        if e_dado(&alvo, casa_dir) || alvo.starts_with(pasta) || pasta.starts_with(&alvo) {
+        .map(|(p, de_programas)| (p, de_programas, false))
+        .chain(importados_pelo_claude_md(&claude, casa_dir).into_iter().map(|p| (p, false, true)));
+    for (alvo, de_programas, instrucao) in citados {
+        if (!instrucao && e_dado(&alvo, casa_dir)) || alvo.starts_with(pasta) || pasta.starts_with(&alvo) {
             continue;
         }
         for p in formas(&alvo) {
@@ -1109,15 +1113,22 @@ mod testes {
         let casa = d.path().join("casa");
         let claude = casa.join(".claude");
         std::fs::create_dir_all(claude.join("extra")).unwrap();
-        let md = "Regras: @~/.claude/regras.md e @extra/b.md; @sumiu.md não existe; escreva para ana@exemplo.com.\n";
+        let md = "Regras: @~/.claude/regras.md e @extra/b.md; @locais.md ainda não existe; escreva para ana@exemplo.com.\n";
         std::fs::write(claude.join("CLAUDE.md"), md).unwrap();
         std::fs::write(claude.join("regras.md"), "nada\n").unwrap();
-        // O que um importado importa também vale, relativo à pasta dele.
-        std::fs::write(claude.join("extra/b.md"), "@c.md\n").unwrap();
+        // O que um importado importa também vale, relativo à pasta dele, e com extensão de dado também.
+        std::fs::write(claude.join("extra/b.md"), "@c.md @contexto.json\n").unwrap();
         std::fs::write(claude.join("extra/c.md"), "fim\n").unwrap();
         let mut achados = importados_pelo_claude_md(&claude, &casa);
         achados.sort();
-        let mut esperados = vec![claude.join("regras.md"), claude.join("extra/b.md"), claude.join("extra/c.md")];
+        // O que ainda não existe também entra: criado pela IA presa, viraria instrução.
+        let mut esperados = vec![
+            claude.join("regras.md"),
+            claude.join("extra/b.md"),
+            claude.join("locais.md"),
+            claude.join("extra/c.md"),
+            claude.join("extra/contexto.json"),
+        ];
         esperados.sort();
         assert_eq!(achados, esperados);
     }
@@ -1166,11 +1177,13 @@ mod testes {
         assert_eq!(preso(&com_path, &format!("echo x > '{ca}/.cache/uv/pacote'")), Some(true), "o cache citado");
         assert_eq!(preso(&com_path, &format!("echo x > '{cl}/solto.txt'")), Some(true), "fora da pasta citada");
         std::fs::remove_file(c.claude.join("settings.local.json")).unwrap();
-        // O que o `CLAUDE.md` importa: instrução de toda sessão, só para ler.
+        // O que o `CLAUDE.md` importa: instrução de toda sessão, só para ler, exista ou não, seja `.md` ou `.json`.
         std::fs::write(c.claude.join("regras.md"), "seja breve\n").unwrap();
-        std::fs::write(c.claude.join("CLAUDE.md"), "@~/.claude/regras.md\n").unwrap();
+        std::fs::write(c.claude.join("CLAUDE.md"), "@~/.claude/regras.md @~/.claude/locais.md @~/.claude/ctx.json\n").unwrap();
         let com_import = c.perfil(None);
         assert_eq!(preso(&com_import, &format!("echo x >> '{cl}/regras.md'")), Some(false), "o importado");
+        assert_eq!(preso(&com_import, &format!("echo x > '{cl}/locais.md'")), Some(false), "o que ainda não existe");
+        assert_eq!(preso(&com_import, &format!("echo x > '{cl}/ctx.json'")), Some(false), "o de extensão de dado");
         std::fs::write(c.claude.join("CLAUDE.md"), "{}\n").unwrap();
         assert_eq!(preso(&p, &format!("echo '{{}}' >> '{cl}/history.jsonl'")), Some(true), "o resto continua do Claude");
         // Onde a configuração grava, o que ela só lê e o estado do CLI continuam graváveis.
