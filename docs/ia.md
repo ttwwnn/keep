@@ -199,7 +199,8 @@ e o Claude fica de fora da renovação do armazém.
   - "confiar nesta pasta?" é respondido sim (`keep ia confiar <shell>`, solto em segundo plano), só onde a
     pasta não traz o que o Claude Code executa ao abrir (`keep ia pode-confiar`, abaixo); ali a pergunta fica
     para a pessoa;
-  - o programa sobe pelo `confinar` (preso à pasta do workspace quando há uma);
+  - o programa sobe pelo `confinar` (preso à pasta do workspace quando há uma; ver "O que a IA presa
+    alcança", abaixo);
   - o que não abre conversa (`claude mcp|update|auth|doctor|plugin…`, `--version`, `--help`) roda
     direto; `claude agents|attach|rc|remote-control` e o `codex` passam só pelo `confinar`.
 - Windows: o keepd põe as funções no PowerShell de cada aba (5.1 ou 7) antes do primeiro prompt
@@ -246,6 +247,53 @@ e o Claude fica de fora da renovação do armazém.
 - O que a função do Mac tem e a do Windows não: o `--effort max` e o `--allow-dangerously-skip-permissions`
   (preferências do autor, do kit), o `claude-flags-retomada`, a resposta de "confiar nesta pasta?"
   (`keep ia confiar`, fatia `terminal`).
+
+### O que a IA presa alcança (macOS)
+
+O perfil do `sandbox-exec` (`confinar::perfil`) nega `/Users` e `/Volumes` e devolve a pasta presa, o git de
+uma worktree de verdade dela, `~/.claude`, `~/.claude.json` (e o temporário com que o CLI o grava),
+`~/.codex`, `~/.local/state`, os caches e o Chaveiro; para ler, os programas e a configuração do git. Os
+programas instalados fora de `/Users` que a pessoa pode trocar (`/Applications`, `/Library`, `/opt`,
+`/usr/local`: o Keep.app, o Homebrew) ficam só para ler: trocado pela IA presa, o `keep` do app ou o `python3`
+de um gancho rodaria na sessão seguinte, fora do sandbox. De `~/.claude`, que o Claude preso lê e grava ao
+abrir, sai depois:
+
+- só para ler: `settings.json`, `settings.local.json`, `CLAUDE.md`, `skills/`, `plugins/`, `agents/`,
+  `commands/`, `hooks/`, `rules/` e `output-styles/` — o que toda sessão do Claude, presa ou não, executa ou toma
+  como instrução —, também no destino quando `~/.claude` é um link; o que o `CLAUDE.md` importa (`@…`, até cinco
+  níveis, exista ou não, de qualquer extensão); e os caminhos que essa configuração cita, dentro ou fora da casa,
+  com as pastas acima deles: o script
+  da linha de status, o de um gancho e, quando é um script numa subpasta de `~/.claude` que não é de estado do
+  CLI, os vizinhos dele; uma pasta de programas (o valor de um `…PATH` do `env`) fica inteira, quando está dentro
+  do que a IA presa grava na casa. Ficam de fora os alvos de redirecionamento de saída, `/dev` e os dados que o
+  gancho só lê ou grava (`.json`, `.jsonl`, `.log`, `.csv`, `.lock`, o `~/.claude.json`), que muitas vezes são o
+  próprio estado do CLI; um `.md` ou `.txt` citado fica só para ler, porque um gancho que o põe na conversa faz
+  dele instrução. É uma leitura do texto da configuração (as palavras do shell e os caminhos soltos, como os de um
+  `bash -c "…"`): um script chamado por outro, um arquivo que um gancho lê por conta própria ou um caminho dado por
+  variável não são seguidos. Gravar, trocar por renomeação, apagar ou criar link para eles é recusado;
+- fechado: `contas/` (o cofre do kit, os armazéns das contas e das outras abas), menos o armazém da própria
+  aba (`CLAUDE_SECURESTORAGE_CONFIG_DIR`, uma pasta de `contas/abas` ou `contas/fixas` que não seja link), onde
+  o CLI põe as travas do login;
+- dos transcritos e da memória (`projects/`), só a pasta que o Claude Code dá à pasta presa e às subpastas
+  dela (o caminho em NFC com tudo que não é letra ou algarismo ASCII trocado por `-`; pasta de outro nome que
+  comece igual seguido de `-`, como `app-velho` ao lado de `app`, entra junto; presa a uma pasta rasa, como
+  `~/Projetos`, a IA alcança os transcritos de todos os projetos abaixo dela, como já alcança os arquivos deles).
+  A lista de `projects/` fica fechada, e uma pasta de transcritos que é link não é seguida: a IA presa poderia
+  trocar a dela por um link e alargar a subida seguinte; sem ela, o Claude preso conversa, mas não guarda a
+  conversa. `projects/` nasce antes da subida, numa casa que ainda não a tem;
+- a própria `~/.claude` não se renomeia (levá-la inteira para `~/.cache`, mexer lá e devolver passaria por cima
+  de tudo), o que não impede criar nada dentro dela.
+
+Provado com o Claude Code 2.1.319 de verdade, uma negação por vez: login, conversa nova e retomada, no `-p` e
+no terminal (com a pergunta de confiança). Os ganchos globais que gravam log em `hooks/` já ignoram a falha.
+Ainda ao alcance da IA presa, por o CLI gravar ali ao abrir: o `~/.claude.json` (um servidor MCP de escopo de
+usuário gravado nele sobe em toda sessão), `shell-snapshots/` e `session-env/` (o retrato do shell e o
+ambiente que cada sessão relê a cada comando Bash), e para ler `history.jsonl`, `file-history/`, `uploads/`,
+`paste-cache/` e `plans/`, que juntam os de todos os projetos. Também o Chaveiro (os itens do Claude confiam
+no `security`) e a rede. Um script que a configuração global cita e que fica dentro da pasta presa continua da IA
+presa, como o resto da pasta: ao prender uma pasta, os ganchos globais que rodam um script dela passam a rodar o
+que a IA deixar ali. Fechar tudo isso pede um `CLAUDE_CONFIG_DIR` próprio para a IA presa. No Windows o token
+restrito ainda leva `.claude` inteiro (`confinar_win.rs`).
 
 ### O gancho da conta da aba
 
