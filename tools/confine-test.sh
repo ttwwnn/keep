@@ -40,6 +40,25 @@ check "a casa do Claude Code continua lida" "yes" "$(run presa 'head -c 1 "$HOME
 check "sobe na pasta quando a aba está fora dela" "$(cd "$WORK/permitida" && pwd -P)" "$(cd "$WORK/fora" && run presa pwd)"
 check "sabe a pasta" "$WORK/permitida" "$(run presa 'echo $KEEP_CONFINED_TO')"
 
+echo "dentro da casa do Claude Code (uma de mentira, KEEP_IA_HOME)"
+CASA=$WORK/casa
+C=$CASA/.claude
+NOME=$(cd "$WORK/permitida" && pwd -P | sed 's/[^a-zA-Z0-9]/-/g')
+mkdir -p "$C/hooks" "$C/skills" "$C/contas/abas/aba" "$C/projects/$NOME" "$C/projects/-outro"
+echo '{}' > "$C/settings.json"
+echo cofre > "$C/contas/principal.json"
+echo meu > "$C/projects/$NOME/t.jsonl"
+echo alheio > "$C/projects/-outro/t.jsonl"
+na_casa() { KEEP_IA_HOME="$CASA" CLAUDE_SECURESTORAGE_CONFIG_DIR="$C/contas/abas/aba" run presa "$1"; }
+check "lê o settings.json" "{}" "$(na_casa "cat '$C/settings.json'")"
+check "não grava o settings.json" "{}" "$(na_casa "echo '{\"hooks\":1}' > '$C/settings.json'" >/dev/null; cat "$C/settings.json")"
+check "não cria gancho nem skill" "nada" "$(na_casa "echo x > '$C/hooks/novo.sh'; mkdir '$C/skills/nova'" >/dev/null; ls "$C/hooks" "$C/skills" | grep -qE 'novo|nova' && echo criou || echo nada)"
+check "não lê o cofre das contas" "nada" "$(na_casa "cat '$C/contas/principal.json'" | grep -q cofre && echo leu || echo nada)"
+check "grava no armazém da aba" "trava" "$(na_casa "mkdir '$C/contas/abas/aba/.trava' && echo trava")"
+check "lê os transcritos do projeto preso" "meu" "$(na_casa "cat '$C/projects/$NOME/t.jsonl'")"
+check "não lê os de outro projeto" "nada" "$(na_casa "cat '$C/projects/-outro/t.jsonl'" | grep -q alheio && echo leu || echo nada)"
+check "grava o resto da casa do Claude" "ok" "$(na_casa "echo '{}' >> '$C/history.jsonl' && echo ok")"
+
 echo "um workspace sem pasta"
 check "lê onde quiser" "fora" "$(run livre "cat '$WORK/fora/b.txt'")"
 
