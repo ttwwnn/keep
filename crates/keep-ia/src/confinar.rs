@@ -181,14 +181,23 @@ fn projeto_do_claude(pasta: &Path) -> Vec<String> {
 
 /// O armazém de login da aba (`CLAUDE_SECURESTORAGE_CONFIG_DIR`), quando é uma pasta de `contas/abas` ou
 /// `contas/fixas`: o Claude preso grava nele as travas do login (`.oauth_refresh.lock`, `.storage-write.lock`). Uma
-/// pasta de verdade, não um link: a IA presa grava no armazém e poderia trocá-lo por um link para o que quisesse.
+/// pasta de verdade, não um link: a IA presa grava no armazém e poderia trocá-lo por um link para o que quisesse. A
+/// pasta de cima, que ela não alcança, vale como está ou pelo destino real (a variável pode vir num, e a casa no outro).
 fn armazem_da_aba(contas: &Path, armazem: &Path) -> Vec<String> {
     let (Some(pai), Some(std::path::Component::Normal(nome))) = (armazem.parent(), armazem.components().next_back())
     else {
         return Vec::new();
     };
-    let e_pasta = std::fs::symlink_metadata(armazem).is_ok_and(|m| m.is_dir());
-    if !armazem.is_absolute() || !e_pasta || (pai != contas.join("abas") && pai != contas.join("fixas")) {
+    // Sem `.` nem `..`: o destino real deles seria outra pasta (o armazém de outra aba).
+    let so_nomes = armazem.components().all(|c| {
+        matches!(c, std::path::Component::RootDir | std::path::Component::Prefix(_) | std::path::Component::Normal(_))
+    });
+    let e_pasta = so_nomes && std::fs::symlink_metadata(armazem).is_ok_and(|m| m.is_dir());
+    let pai_real = pai.canonicalize().ok();
+    let de_contas = [contas.join("abas"), contas.join("fixas")]
+        .iter()
+        .any(|c| c.as_path() == pai || (pai_real.is_some() && c.canonicalize().ok() == pai_real));
+    if !armazem.is_absolute() || !e_pasta || !de_contas {
         return Vec::new();
     }
     formas(pai).into_iter().map(|p| Path::new(&p).join(nome).to_string_lossy().into_owned()).collect()
@@ -249,22 +258,33 @@ fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Pat
     // Depois da permissão de `~/.claude`, para vencê-la. O resto da pasta (histórico, `todos`, `shell-snapshots`,
     // `statsig`, as travas do login global) continua do Claude preso, que grava ali ao abrir.
     let claude = casa_dir.join(".claude");
+    // Cada item dentro de `~/.claude` e, se ela for link, também no destino (a IA presa não a troca): um item que ainda
+    // não existe (`commands/`, `settings.local.json`) seria criado lá, que é o caminho que o sandbox compara.
+    let bases = formas(&claude);
+    let em_claude = |nome: &str| {
+        let mut v: Vec<String> = Vec::new();
+        for p in bases.iter().flat_map(|b| formas(&Path::new(b).join(nome))) {
+            if !v.contains(&p) {
+                v.push(p);
+            }
+        }
+        v
+    };
     for nome in CLAUDE_SO_LEITURA {
-        for p in formas(&claude.join(nome)) {
+        for p in em_claude(nome) {
             linhas.push(format!("(deny file-write* (subpath {}))", literal(&p)));
         }
     }
-    let contas = claude.join("contas");
-    for p in formas(&contas) {
+    for p in em_claude("contas") {
         linhas.push(format!("(deny file-read-data file-write* (subpath {}))", literal(&p)));
     }
-    for p in armazem.map(|a| armazem_da_aba(&contas, a)).unwrap_or_default() {
+    for p in armazem.map(|a| armazem_da_aba(&claude.join("contas"), a)).unwrap_or_default() {
         linhas.push(format!("(allow file-read-data file-write* (subpath {}))", literal(&p)));
     }
     // Os transcritos e a memória de cada projeto: os da pasta presa e das subpastas dela (`<nome>-<sub>`), nunca os
     // de outra pasta. Uma pasta de transcritos que é link não é seguida (ver `formas`): sem ela, o Claude preso
     // conversa, mas não guarda a conversa.
-    let projetos = formas(&claude.join("projects"));
+    let projetos = em_claude("projects");
     for p in &projetos {
         linhas.push(format!("(deny file-read-data file-write* (subpath {}))", literal(p)));
     }
@@ -790,5 +810,29 @@ mod testes {
         // Trocar a própria pasta por um link para a de outro projeto não dá a leitura dele.
         let troca = format!("rm -rf '{proj}' && ln -s '{outro}' '{proj}' && cat '{proj}/t.jsonl'");
         assert_eq!(preso(&p, &troca), Some(false));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn com_a_casa_do_claude_num_link_o_destino_tambem_fica_so_para_ler() {
+        let c = casa_de_mentira();
+        // `~/.claude` vira um link para uma pasta de fora (que a negação da casa de mentira não cobre), sem os itens
+        // que muitas casas ainda não têm.
+        let fora = tempfile::tempdir().unwrap();
+        let real = fora.path().canonicalize().unwrap().join("claude");
+        std::fs::rename(&c.claude, &real).unwrap();
+        std::os::unix::fs::symlink(&real, &c.claude).unwrap();
+        std::fs::remove_dir_all(real.join("commands")).unwrap();
+        std::fs::remove_file(real.join("settings.local.json")).unwrap();
+        let p = c.perfil(None);
+        let r = real.display();
+        let Some(criou) = preso(&p, &format!("mkdir '{r}/commands'")) else { return };
+        assert!(!criou, "a IA presa criou commands/ no destino do link");
+        assert_eq!(preso(&p, &format!("echo '{{}}' > '{r}/settings.local.json'")), Some(false));
+        assert_eq!(preso(&p, &format!("echo x > '{r}/hooks/novo.sh'")), Some(false));
+        assert_eq!(preso(&p, &format!("echo '{{}}' >> '{r}/history.jsonl'")), Some(true), "o resto continua do Claude");
+        // O armazém da aba dado pelo caminho real, com a casa pelo link: liberado do mesmo jeito.
+        let aba = real.join("contas").join("abas").join("aba");
+        assert!(!armazem_da_aba(&c.claude.join("contas"), &aba).is_empty());
     }
 }
