@@ -368,6 +368,13 @@ fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Pat
         for p in formas(&alvo) {
             linhas.push(format!("(deny file-write* (literal {}))", literal(&p)));
         }
+        // E as pastas acima dele, até a casa, pelo caminho exato: renomear uma delas, trocar o arquivo e devolvê-la
+        // seria outro jeito de trocá-lo. Isso não impede criar nada dentro delas.
+        for acima in alvo.ancestors().skip(1).take_while(|d| *d != casa_dir && d.starts_with(casa_dir)) {
+            for p in formas(acima) {
+                linhas.push(format!("(deny file-write* (literal {}))", literal(&p)));
+            }
+        }
         let pai = alvo.parent().filter(|p| {
             e_script(&alvo)
                 && p.starts_with(&claude)
@@ -961,10 +968,15 @@ mod testes {
         std::fs::create_dir_all(c.claude.join("scripts")).unwrap();
         std::fs::write(c.claude.join("statusline-command.sh"), "#!/bin/sh\n").unwrap();
         std::fs::write(c.claude.join("scripts/a.py"), "").unwrap();
+        std::fs::create_dir_all(c.claude.join("bin")).unwrap();
+        std::fs::write(c.claude.join("bin/avisa"), "#!/bin/sh\n").unwrap();
         let config = serde_json::json!({
             "statusLine": {"type": "command", "command": "bash ~/.claude/statusline-command.sh 2>/dev/null"},
-            "hooks": {"Stop": [{"hooks": [{"type": "command",
-                "command": "python3 $HOME/.claude/scripts/a.py $HOME/.claude/todos/lista.json >> ~/.claude/gancho.log"}]}]},
+            "hooks": {"Stop": [{"hooks": [
+                {"type": "command",
+                    "command": "python3 $HOME/.claude/scripts/a.py $HOME/.claude/todos/lista.json >> ~/.claude/gancho.log"},
+                {"type": "command", "command": "~/.claude/bin/avisa"},
+            ]}]},
         });
         std::fs::write(c.claude.join("settings.json"), config.to_string()).unwrap();
         let p = c.perfil(None);
@@ -973,6 +985,12 @@ mod testes {
         assert!(!trocou, "a IA presa trocou o script da linha de status");
         assert_eq!(preso(&p, &format!("echo x >> '{cl}/scripts/a.py'")), Some(false), "o script do gancho");
         assert_eq!(preso(&p, &format!("echo x > '{cl}/scripts/b.py'")), Some(false), "o vizinho dele");
+        // Um executável sem extensão: nem ele, nem a troca pela pasta-mãe (renomear, trocar, devolver).
+        assert_eq!(preso(&p, &format!("echo x >> '{cl}/bin/avisa'")), Some(false), "o executável");
+        let troca = format!("mv '{cl}/bin' '{cl}/bin2' && echo x > '{cl}/bin2/avisa' && mv '{cl}/bin2' '{cl}/bin'");
+        assert_eq!(preso(&p, &troca), Some(false), "a troca pela pasta-mãe");
+        assert_eq!(std::fs::read_to_string(c.claude.join("bin/avisa")).unwrap(), "#!/bin/sh\n");
+        assert_eq!(preso(&p, &format!("echo x > '{cl}/bin/outro'")), Some(true), "outro arquivo na mesma pasta");
         assert_eq!(preso(&p, &format!("echo '{{}}' >> '{cl}/history.jsonl'")), Some(true), "o resto continua do Claude");
         // Onde a configuração grava, e a pasta de estado do CLI de um arquivo que ela só lê, continuam graváveis.
         assert_eq!(preso(&p, "echo x > /dev/null"), Some(true), "/dev/null");
