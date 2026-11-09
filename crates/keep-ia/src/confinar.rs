@@ -453,6 +453,11 @@ fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Pat
             linhas.push(format!("(deny file-write* (subpath {}))", literal(&p)));
         }
     }
+    // A própria `~/.claude`, pelo caminho exato: renomeá-la para outra área que a IA presa grava (`~/.cache/c`), mexer
+    // ali no que não tem negação e devolvê-la passaria por cima de tudo. Isso não impede criar nada dentro dela.
+    for b in &bases {
+        linhas.push(format!("(deny file-write* (literal {}))", literal(b)));
+    }
     for p in em_claude("contas") {
         linhas.push(format!("(deny file-read-data file-write* (subpath {}))", literal(&p)));
     }
@@ -989,6 +994,12 @@ mod testes {
             assert_eq!(preso(&p, &format!("rm -rf {a}")), Some(false), "{nome}: a IA presa apaga");
             assert!(alvo.exists());
         }
+        assert_eq!(std::fs::read_to_string(c.claude.join("settings.json")).unwrap(), "{}\n");
+        // Nem levando `~/.claude` inteira para outra área que a IA presa grava, mexendo lá e devolvendo.
+        std::fs::create_dir_all(c.casa.join(".cache")).unwrap();
+        let (cl, ca) = (c.claude.display(), c.casa.display());
+        let troca = format!("mv '{cl}' '{ca}/.cache/c' && echo '{{\"hooks\":1}}' > '{ca}/.cache/c/settings.json' && mv '{ca}/.cache/c' '{cl}'");
+        assert_eq!(preso(&p, &troca), Some(false), "a troca de ~/.claude inteira");
         assert_eq!(std::fs::read_to_string(c.claude.join("settings.json")).unwrap(), "{}\n");
         // O resto da casa do Claude continua dele: ele grava ali ao abrir.
         let resto = format!("echo '{{}}' >> '{0}/history.jsonl' && echo n > '{0}/todos/novo.json'", c.claude.display());

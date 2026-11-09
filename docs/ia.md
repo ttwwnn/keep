@@ -275,9 +275,13 @@ abrir, sai depois:
   o CLI põe as travas do login;
 - dos transcritos e da memória (`projects/`), só a pasta que o Claude Code dá à pasta presa e às subpastas
   dela (o caminho em NFC com tudo que não é letra ou algarismo ASCII trocado por `-`; pasta de outro nome que
-  comece igual seguido de `-`, como `app-velho` ao lado de `app`, entra junto). A lista de `projects/` fica
-  fechada, e uma pasta de transcritos que é link não é seguida: a IA presa poderia trocar a dela por um link e
-  alargar a subida seguinte; sem ela, o Claude preso conversa, mas não guarda a conversa.
+  comece igual seguido de `-`, como `app-velho` ao lado de `app`, entra junto; presa a uma pasta rasa, como
+  `~/Projetos`, a IA alcança os transcritos de todos os projetos abaixo dela, como já alcança os arquivos deles).
+  A lista de `projects/` fica fechada, e uma pasta de transcritos que é link não é seguida: a IA presa poderia
+  trocar a dela por um link e alargar a subida seguinte; sem ela, o Claude preso conversa, mas não guarda a
+  conversa. `projects/` nasce antes da subida, numa casa que ainda não a tem;
+- a própria `~/.claude` não se renomeia (levá-la inteira para `~/.cache`, mexer lá e devolver passaria por cima
+  de tudo), o que não impede criar nada dentro dela.
 
 Provado com o Claude Code 2.1.319 de verdade, uma negação por vez: login, conversa nova e retomada, no `-p` e
 no terminal (com a pergunta de confiança). Os ganchos globais que gravam log em `hooks/` já ignoram a falha.
