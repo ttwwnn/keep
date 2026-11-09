@@ -146,8 +146,14 @@ const CLAUDE_SO_LEITURA: [&str; 8] =
 /// mesma criou, onde grava, deixaria a subida seguinte liberar o que ela quisesse.
 fn formas(p: &Path) -> Vec<String> {
     let mut v = vec![p.to_string_lossy().into_owned()];
-    if let Ok(real) = p.canonicalize() {
-        let real = real.to_string_lossy().into_owned();
+    // O destino real do maior trecho que existe, com o resto do caminho: `/tmp/x` que ainda não existe é
+    // `/private/tmp/x`, e é por ele que o sandbox compara quem o cria.
+    let real = p.ancestors().find_map(|a| {
+        let resto = p.strip_prefix(a).ok()?;
+        let r = a.canonicalize().ok()?;
+        Some(if resto.as_os_str().is_empty() { r } else { r.join(resto) })
+    });
+    if let Some(real) = real.map(|r| r.to_string_lossy().into_owned()) {
         if real != v[0] {
             v.push(real);
         }
@@ -1040,20 +1046,24 @@ mod testes {
         std::fs::write(c.projeto.join("gancho.sh"), "").unwrap();
         std::fs::write(aba.join("ajuda.sh"), "").unwrap();
         let (pr, ab) = (c.projeto.display().to_string(), aba.display().to_string());
-        // E um fora da casa, onde a IA presa grava (como o `/tmp`).
+        // E um fora da casa, onde a IA presa grava (como o `/tmp`), e outro que ainda não existe, citado por um link
+        // (como `/tmp`, que é `/private/tmp`): criá-lo pelo caminho real também é recusado.
         let fora = tempfile::tempdir().unwrap();
         let fo = fora.path().canonicalize().unwrap().display().to_string();
         std::fs::write(format!("{fo}/gancho.py"), "").unwrap();
+        std::fs::create_dir_all(format!("{fo}/real")).unwrap();
+        std::os::unix::fs::symlink(format!("{fo}/real"), format!("{fo}/link")).unwrap();
         let config = serde_json::json!({"hooks": {"Stop": [{"hooks": [
             {"type": "command", "command": format!("sh {pr}/gancho.sh")},
             {"type": "command", "command": format!("sh {ab}/ajuda.sh")},
-            {"type": "command", "command": format!("python3 {fo}/gancho.py 2>/dev/null")},
+            {"type": "command", "command": format!("python3 {fo}/gancho.py 2>/dev/null; python3 {fo}/link/novo.py")},
         ]}]}});
         std::fs::write(c.claude.join("settings.json"), config.to_string()).unwrap();
         let com_aba = c.perfil(Some(&aba));
         assert_eq!(preso(&com_aba, &format!("echo x >> '{pr}/gancho.sh'")), Some(false), "na pasta dos transcritos");
         assert_eq!(preso(&com_aba, &format!("echo x >> '{ab}/ajuda.sh'")), Some(false), "no armazém da aba");
         assert_eq!(preso(&com_aba, &format!("echo x >> '{fo}/gancho.py'")), Some(false), "fora da casa");
+        assert_eq!(preso(&com_aba, &format!("echo x > '{fo}/real/novo.py'")), Some(false), "o que ainda não existe");
         let resto = format!(
             "echo '{{}}' >> '{pr}/t.jsonl' && mkdir '{ab}/.trava' && rmdir '{ab}/.trava' && echo x > '{fo}/outro' \
              && echo x > /dev/null"
