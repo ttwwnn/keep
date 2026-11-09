@@ -137,9 +137,19 @@ fn socket_do_daemon(socket: &Path) -> Vec<String> {
 
 /// O que, em `~/.claude`, a IA presa lê e não grava: o que toda sessão do Claude Code, presa ou não, executa ou toma
 /// como instrução ao abrir. Gravado por ela, viraria comando numa aba sem sandbox (um gancho no `settings.json`, um
-/// plugin, uma skill, um agente) ou instrução de todas as conversas (o `CLAUDE.md`).
-const CLAUDE_SO_LEITURA: [&str; 8] =
-    ["settings.json", "settings.local.json", "CLAUDE.md", "skills", "plugins", "agents", "commands", "hooks"];
+/// plugin, uma skill, um agente) ou instrução de todas as conversas (o `CLAUDE.md`, as regras, os estilos de saída).
+const CLAUDE_SO_LEITURA: [&str; 10] = [
+    "settings.json",
+    "settings.local.json",
+    "CLAUDE.md",
+    "skills",
+    "plugins",
+    "agents",
+    "commands",
+    "hooks",
+    "rules",
+    "output-styles",
+];
 
 /// Um caminho nas formas que o sandbox compara: como está e, quando é outro, o destino real (um link, `/var` que é
 /// `/private/var`). Só para caminhos que a IA presa não altera (os que este perfil nega): seguir um link que ela
@@ -241,25 +251,27 @@ fn palavras(texto: &str) -> Vec<String> {
 /// `bash -c "…"`). Um deles que caia onde a IA presa grava viraria, trocado por ela, comando da sessão seguinte. Alvo
 /// de redirecionamento de saída (`2>/dev/null`, `>> ~/.claude/log`) não conta: é onde o comando grava; o de entrada
 /// conta (`bash < ~/.claude/x.sh` executa o arquivo). `/dev` fica de fora. É uma leitura do texto: um script chamado
-/// por outro, ou por uma variável, não é seguido.
-fn executados_pela_configuracao(claude: &Path, casa: &Path) -> Vec<PathBuf> {
-    fn textos<'a>(v: &'a serde_json::Value, saida: &mut Vec<&'a str>) {
+/// por outro, ou por uma variável, não é seguido. Cada um vem com o aviso de que é pasta de programas: o valor de uma
+/// variável `…PATH` (`PATH`, `PYTHONPATH`, `NODE_PATH`), onde um programa novo seria achado e rodado.
+fn executados_pela_configuracao(claude: &Path, casa: &Path) -> Vec<(PathBuf, bool)> {
+    fn textos<'a>(chave: &'a str, v: &'a serde_json::Value, saida: &mut Vec<(&'a str, &'a str)>) {
         match v {
-            serde_json::Value::String(s) => saida.push(s),
-            serde_json::Value::Array(a) => a.iter().for_each(|x| textos(x, saida)),
-            serde_json::Value::Object(o) => o.values().for_each(|x| textos(x, saida)),
+            serde_json::Value::String(s) => saida.push((chave, s)),
+            serde_json::Value::Array(a) => a.iter().for_each(|x| textos(chave, x, saida)),
+            serde_json::Value::Object(o) => o.iter().for_each(|(k, x)| textos(k, x, saida)),
             _ => {}
         }
     }
     let saida = regex::Regex::new(r#"(?:\d|&)?>>?\s*(?:"[^"]*"|'[^']*'|[^\s;|&()]+)"#).expect("regex fixa");
     let solto = regex::Regex::new(r#"(?:~|\$HOME|\$\{HOME\})?/[^\s"'`;|&()<>]+"#).expect("regex fixa");
-    let mut achados = Vec::new();
+    let mut achados: Vec<(PathBuf, bool)> = Vec::new();
     for nome in ["settings.json", "settings.local.json"] {
         let Ok(texto) = caminhos::ler_texto_ate(&claude.join(nome), caminhos::LEITURA_MAXIMA) else { continue };
         let Ok(json) = serde_json::from_str::<serde_json::Value>(&texto) else { continue };
         let mut lidos = Vec::new();
-        textos(&json, &mut lidos);
-        for texto in lidos {
+        textos("", &json, &mut lidos);
+        for (chave, texto) in lidos {
+            let de_programas = chave.ends_with("PATH");
             let limpo = saida.replace_all(texto, " ");
             let mut candidatos = palavras(&limpo);
             candidatos.extend(solto.find_iter(&limpo).map(|m| m.as_str().to_string()));
@@ -273,8 +285,12 @@ fn executados_pela_configuracao(claude: &Path, casa: &Path) -> Vec<PathBuf> {
                     None if palavra.starts_with('/') => PathBuf::from(&palavra),
                     None => continue,
                 };
-                if !caminho.starts_with("/dev") && caminho != casa && !achados.contains(&caminho) {
-                    achados.push(caminho);
+                if caminho.starts_with("/dev") || caminho == casa {
+                    continue;
+                }
+                match achados.iter_mut().find(|(c, _)| *c == caminho) {
+                    Some((_, p)) => *p |= de_programas,
+                    None => achados.push((caminho, de_programas)),
                 }
             }
         }
@@ -282,12 +298,41 @@ fn executados_pela_configuracao(claude: &Path, casa: &Path) -> Vec<PathBuf> {
     achados
 }
 
-/// Se o caminho citado é dado, não programa: um arquivo que o gancho só lê ou grava (`jq . ~/.claude.json`, `tail
-/// history.jsonl`, `tee -a x.log`), muitas vezes o próprio estado do CLI. Negá-lo tiraria do Claude preso a gravação
-/// dele, sem nada a proteger de execução.
+/// Os arquivos que o `~/.claude/CLAUDE.md` traz para toda conversa (`@~/caminho`, `@/caminho` ou `@caminho`, relativo
+/// à pasta de quem importa), e os que estes trazem, até cinco níveis, como o CLI: instrução de toda sessão, presa ou não.
+fn importados_pelo_claude_md(claude: &Path, casa: &Path) -> Vec<PathBuf> {
+    let import = regex::Regex::new(r"(?:^|\s)@([^\s`]+)").expect("regex fixa");
+    let mut achados: Vec<PathBuf> = Vec::new();
+    let mut fila = vec![(claude.join("CLAUDE.md"), 0)];
+    while let Some((arquivo, nivel)) = fila.pop() {
+        let Ok(texto) = caminhos::ler_texto_ate(&arquivo, caminhos::LEITURA_MAXIMA) else { continue };
+        let pasta = arquivo.parent().unwrap_or(claude).to_path_buf();
+        for c in import.captures_iter(&texto) {
+            // A pontuação da frase não faz parte do caminho (`@~/.claude/regras.md;`).
+            let alvo = c[1].trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']']);
+            let caminho = match alvo.strip_prefix("~/") {
+                Some(resto) => casa.join(resto),
+                None if alvo.starts_with('/') => PathBuf::from(alvo),
+                None => pasta.join(alvo),
+            };
+            if caminho.is_file() && !achados.contains(&caminho) {
+                achados.push(caminho.clone());
+                if nivel < 5 {
+                    fila.push((caminho, nivel + 1));
+                }
+            }
+        }
+    }
+    achados
+}
+
+/// Se o caminho citado é dado, não programa nem instrução: um arquivo que o gancho só lê ou grava (`jq .
+/// ~/.claude.json`, `tail history.jsonl`, `tee -a x.log`), muitas vezes o próprio estado do CLI. Negá-lo tiraria do
+/// Claude preso a gravação dele, sem nada a proteger de execução. Um `.md` ou `.txt` citado não é dado: um gancho que
+/// o põe na conversa faz dele instrução de toda sessão.
 fn e_dado(p: &Path, casa: &Path) -> bool {
     let ext = p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-    matches!(ext.as_str(), "json" | "jsonl" | "log" | "txt" | "md" | "csv" | "lock")
+    matches!(ext.as_str(), "json" | "jsonl" | "log" | "csv" | "lock")
         || p.to_string_lossy().starts_with(&format!("{}/.claude.json", casa.to_string_lossy()))
 }
 
@@ -300,10 +345,32 @@ fn e_script(p: &Path) -> bool {
 /// O que, na casa, a IA presa lê e grava: a casa do Claude Code e do Codex, o estado, os caches e o Chaveiro.
 const AREAS_DA_CASA: [&str; 6] = [".claude", ".codex", ".local/state", ".cache", "Library/Caches", "Library/Keychains"];
 
-/// As pastas de `~/.claude` que o próprio CLI grava a toda hora, e a das contas (o armazém da aba, onde ele põe as
-/// travas do login): negar a pasta inteira de um arquivo citado nelas quebraria a sessão presa.
-const CLAUDE_ESTADO: [&str; 7] =
-    ["projects", "todos", "shell-snapshots", "session-env", "file-history", "sessions", "contas"];
+/// As pastas de `~/.claude` que o próprio CLI grava, e a das contas (o armazém da aba, onde ele põe as travas do
+/// login): negar a pasta inteira de um arquivo citado nelas quebraria a sessão presa.
+const CLAUDE_ESTADO: [&str; 22] = [
+    "projects",
+    "todos",
+    "shell-snapshots",
+    "session-env",
+    "file-history",
+    "sessions",
+    "contas",
+    "plans",
+    "debug",
+    "statsig",
+    "paste-cache",
+    "uploads",
+    "downloads",
+    "ide",
+    "cache",
+    "telemetry",
+    "backups",
+    "jobs",
+    "daemon",
+    "state",
+    "chrome",
+    "feedback",
+];
 
 /// O perfil do sandbox para uma pasta: nada de /Users e /Volumes, salvo a
 /// pasta (e o git dela), a casa do Claude Code e do Codex, o estado e os
@@ -410,7 +477,11 @@ fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Pat
     // o arquivo e, quando é um script numa subpasta de `~/.claude` que não é de estado do CLI, a pasta dele, que um
     // script costuma levar junto. Por último, para vencer também o armazém da aba e a pasta dos transcritos. A pasta
     // presa fica de fora: é dela.
-    for alvo in executados_pela_configuracao(&claude, casa_dir) {
+    // Os arquivos que o `CLAUDE.md` importa entram do mesmo jeito: instrução de toda sessão.
+    let citados = executados_pela_configuracao(&claude, casa_dir)
+        .into_iter()
+        .chain(importados_pelo_claude_md(&claude, casa_dir).into_iter().map(|p| (p, false)));
+    for (alvo, de_programas) in citados {
         if e_dado(&alvo, casa_dir) || alvo.starts_with(pasta) || pasta.starts_with(&alvo) {
             continue;
         }
@@ -424,14 +495,14 @@ fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Pat
                 linhas.push(format!("(deny file-write* (literal {}))", literal(&p)));
             }
         }
-        // A pasta inteira: a de um script numa subpasta de `~/.claude`, que ele costuma levar junto, e a citada ela
-        // mesma (`~/.claude/bin` no `PATH`, onde um `git` novo rodaria na sessão seguinte) dentro do que a IA presa
-        // grava na casa. Nunca uma pasta de estado do CLI nem uma dessas áreas inteira.
+        // A pasta inteira: a de um script numa subpasta de `~/.claude`, que ele costuma levar junto, e a de programas
+        // (`~/.claude/bin` no `PATH`, onde um `git` novo rodaria na sessão seguinte), dentro do que a IA presa grava
+        // na casa. Nunca uma pasta de estado do CLI, uma dessas áreas inteira, nem uma pasta de dados (um cache).
         let livre = |d: &Path| {
             rw_da_casa.iter().any(|r| d.starts_with(r) && d != r.as_path())
                 && !CLAUDE_ESTADO.iter().any(|e| d.starts_with(claude.join(e)))
         };
-        let pasta_inteira = if alvo.is_dir() {
+        let pasta_inteira = if de_programas && alvo.is_dir() {
             Some(alvo.as_path()).filter(|d| livre(d))
         } else {
             alvo.parent().filter(|p| e_script(&alvo) && p.starts_with(&claude) && livre(p))
@@ -748,7 +819,7 @@ mod testes {
         for d in [&pasta, &projeto, &sub, &claude.join("projects/-outro"), &claude.join("todos")] {
             std::fs::create_dir_all(d).unwrap();
         }
-        for d in ["skills", "plugins", "agents", "commands", "hooks", "contas/abas/aba", "contas/abas/outra"] {
+        for d in ["skills", "plugins", "agents", "commands", "hooks", "rules", "output-styles", "contas/abas/aba", "contas/abas/outra"] {
             std::fs::create_dir_all(claude.join(d)).unwrap();
             std::fs::write(claude.join(d).join("x"), "dentro\n").unwrap();
         }
@@ -978,8 +1049,13 @@ mod testes {
             ]}]},
         });
         std::fs::write(claude.join("settings.json"), config.to_string()).unwrap();
-        std::fs::write(claude.join("settings.local.json"), r#"{"env":{"P":"/opt/ferramenta/bin"}}"#).unwrap();
-        let achados = executados_pela_configuracao(&claude, &casa);
+        let env = r#"{"env":{"P":"/opt/ferramenta/bin","PATH":"~/.claude/bin:$PATH","UV_CACHE_DIR":"~/.cache/uv"}}"#;
+        std::fs::write(claude.join("settings.local.json"), env).unwrap();
+        let com_marca = executados_pela_configuracao(&claude, &casa);
+        // A pasta de programas vem marcada (o valor de um `…PATH`); a de um cache, não.
+        assert!(com_marca.contains(&(casa.join(".claude/bin"), true)), "{com_marca:?}");
+        assert!(com_marca.contains(&(casa.join(".cache/uv"), false)), "{com_marca:?}");
+        let achados: Vec<PathBuf> = com_marca.into_iter().map(|(p, _)| p).collect();
         // O que a entrada lê (`bash < x.sh` executa o arquivo), o caminho entre aspas com espaço, o que vai dentro de um
         // `bash -c "…"`, e o que fica fora da casa onde se grava (`/tmp`) ou não.
         for esperado in [
@@ -1007,6 +1083,25 @@ mod testes {
         std::fs::write(claude.join("settings.json"), "{").unwrap();
         std::fs::remove_file(claude.join("settings.local.json")).unwrap();
         assert!(executados_pela_configuracao(&claude, &casa).is_empty());
+    }
+
+    #[test]
+    fn le_o_que_o_claude_md_importa() {
+        let d = tempfile::tempdir().unwrap();
+        let casa = d.path().join("casa");
+        let claude = casa.join(".claude");
+        std::fs::create_dir_all(claude.join("extra")).unwrap();
+        let md = "Regras: @~/.claude/regras.md e @extra/b.md; @sumiu.md não existe; escreva para ana@exemplo.com.\n";
+        std::fs::write(claude.join("CLAUDE.md"), md).unwrap();
+        std::fs::write(claude.join("regras.md"), "nada\n").unwrap();
+        // O que um importado importa também vale, relativo à pasta dele.
+        std::fs::write(claude.join("extra/b.md"), "@c.md\n").unwrap();
+        std::fs::write(claude.join("extra/c.md"), "fim\n").unwrap();
+        let mut achados = importados_pelo_claude_md(&claude, &casa);
+        achados.sort();
+        let mut esperados = vec![claude.join("regras.md"), claude.join("extra/b.md"), claude.join("extra/c.md")];
+        esperados.sort();
+        assert_eq!(achados, esperados);
     }
 
     #[cfg(target_os = "macos")]
@@ -1042,12 +1137,23 @@ mod testes {
         assert_eq!(preso(&p, &troca), Some(false), "a troca pela pasta-mãe");
         assert_eq!(std::fs::read_to_string(c.claude.join("bin/avisa")).unwrap(), "#!/bin/sh\n");
         assert_eq!(preso(&p, &format!("echo x > '{cl}/bin/outro'")), Some(true), "outro arquivo na mesma pasta");
-        // Uma pasta citada ela mesma (`~/.claude/bin` no `PATH`): nada novo dentro dela; o resto continua do Claude.
-        std::fs::write(c.claude.join("settings.local.json"), r#"{"env":{"PATH":"~/.claude/bin:/usr/bin"}}"#).unwrap();
+        // Uma pasta de programas (`~/.claude/bin` no `PATH`): nada novo dentro dela; a de um cache citado continua
+        // gravável por dentro; o resto continua do Claude.
+        std::fs::create_dir_all(c.casa.join(".cache/uv")).unwrap();
+        let env = r#"{"env":{"PATH":"~/.claude/bin:/usr/bin","UV_CACHE_DIR":"~/.cache/uv"}}"#;
+        std::fs::write(c.claude.join("settings.local.json"), env).unwrap();
         let com_path = c.perfil(None);
+        let ca = c.casa.display();
         assert_eq!(preso(&com_path, &format!("echo x > '{cl}/bin/git'")), Some(false), "um programa novo no PATH");
+        assert_eq!(preso(&com_path, &format!("echo x > '{ca}/.cache/uv/pacote'")), Some(true), "o cache citado");
         assert_eq!(preso(&com_path, &format!("echo x > '{cl}/solto.txt'")), Some(true), "fora da pasta citada");
         std::fs::remove_file(c.claude.join("settings.local.json")).unwrap();
+        // O que o `CLAUDE.md` importa: instrução de toda sessão, só para ler.
+        std::fs::write(c.claude.join("regras.md"), "seja breve\n").unwrap();
+        std::fs::write(c.claude.join("CLAUDE.md"), "@~/.claude/regras.md\n").unwrap();
+        let com_import = c.perfil(None);
+        assert_eq!(preso(&com_import, &format!("echo x >> '{cl}/regras.md'")), Some(false), "o importado");
+        std::fs::write(c.claude.join("CLAUDE.md"), "{}\n").unwrap();
         assert_eq!(preso(&p, &format!("echo '{{}}' >> '{cl}/history.jsonl'")), Some(true), "o resto continua do Claude");
         // Onde a configuração grava, o que ela só lê e o estado do CLI continuam graváveis.
         assert_eq!(preso(&p, "echo x > /dev/null"), Some(true), "/dev/null");
