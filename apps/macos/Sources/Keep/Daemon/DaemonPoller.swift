@@ -366,12 +366,20 @@ final class ClaudeModeWatcher {
     /// question has not taken yet is not sent again, and Enter goes once.
     private var trustAnswered: [TabID: (at: Date, sent: ClaudeTrustDialog.Pointer)] = [:]
 
+    /// The core's word on the folder of each tab whose trust question is up:
+    /// asked once per question, and again only for another folder.
+    private var trustVerdicts: [TabID: (folder: String, mayAnswer: Bool)] = [:]
+
     /// Claude Code asks whether to trust a folder the first time it opens in
     /// it, with the pointer on "No, exit". Typing `claude` there is the
     /// person saying yes: the pointer is taken down to the yes and, when the
     /// next look finds it there, Enter is sent — never Enter on the no, and
     /// never a key before the question is up (an early key is read as Esc,
-    /// which is "No, exit" too). Only through a surface the app already has.
+    /// which is "No, exit" too). Only through a surface the app already has,
+    /// and only where the core vouches for the folder (`AIHelper.mayTrust`):
+    /// a folder that brings what Claude Code runs as it opens — a hook in
+    /// `.claude/settings.json`, the project's MCP servers — is the very thing
+    /// the question guards against, and there it is left to the person.
     private func answerTrustQuestions(_ tabs: [TabID: ClaudeTrustDialog.Pointer]) {
         trustAnswered = trustAnswered.filter { tabs.keys.contains($0.key) }
         for (id, pointer) in tabs {
@@ -406,6 +414,7 @@ final class ClaudeModeWatcher {
         }
         inFlight = true
         let shells = session.aiShellPids()
+        let verdicts = trustVerdicts
         DispatchQueue.global(qos: .utility).async { [weak self] in
             var modes: [TabID: ClaudeMode?] = [:]
             var activities: [TabID: ClaudeActivity] = [:]
@@ -456,12 +465,34 @@ final class ClaudeModeWatcher {
                             coloured: { try? Daemon.colouredPreview(workspace: id.workspace, tab: id.root) }))
                 }
             }
+            // The folder the question is about is where Claude Code runs now,
+            // asked of the daemon this moment: the list the app keeps may be
+            // from before `cd` and `claude` were typed together.
+            var verdictsNow: [TabID: (folder: String, mayAnswer: Bool)] = [:]
+            if !trusting.isEmpty {
+                let now = (try? Daemon.list()) ?? []
+                for id in trusting.keys {
+                    let folder = now.first { $0.name == id.workspace }?.tabs.first { $0.id == id.root }?.cwd ?? ""
+                    if let known = verdicts[id], known.folder == folder {
+                        verdictsNow[id] = known
+                        continue
+                    }
+                    switch AIHelper.mayTrust(folder: folder) {
+                    case .success:
+                        verdictsNow[id] = (folder, true)
+                    case .failure(let why):
+                        Trace.log("trust", "\(id.workspace)/\(id.root) trust question left to the person: \(why.detail)")
+                        verdictsNow[id] = (folder, false)
+                    }
+                }
+            }
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.inFlight = false
                 self.session.noteClaudeModes(modes, activities: activities)
                 self.session.noteClaudeStatuses(statuses)
-                self.answerTrustQuestions(trusting)
+                self.trustVerdicts = verdictsNow
+                self.answerTrustQuestions(trusting.filter { verdictsNow[$0.key]?.mayAnswer == true })
             }
         }
     }

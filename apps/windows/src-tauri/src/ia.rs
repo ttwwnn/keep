@@ -102,6 +102,8 @@ pub fn deadline(args: &[String]) -> Option<Duration> {
         ("ia", "ordem") if word(2) == "mover" => 10.0,
         ("ia", "ordem") => 5.0,
         ("ia", "abas") => 5.0,
+        // Claude Code asking whether to trust a folder: the core's word on whether the page may answer it (trust.ts).
+        ("ia", "pode-confiar") => 10.0,
         ("ia", "trocar") => 40.0,
         ("ia", "entrar") => 20.0,
         ("ia", "sincronizar") => 60.0,
@@ -804,6 +806,7 @@ mod tests {
         assert_eq!(deadline(&args("ia jev --agora --json")), Some(Duration::from_secs(30)));
         assert_eq!(deadline(&args("ia automacao ponytail desligar --json")), Some(Duration::from_secs(20)));
         assert_eq!(deadline(&args("ia entrar openrouter --ws=a --json")), Some(Duration::from_secs(20)));
+        assert_eq!(deadline(&args("ia pode-confiar --pasta=C:\\x --json")), Some(Duration::from_secs(10)));
         assert_eq!(deadline(&args("ia login openrouter")), None);
         assert_eq!(deadline(&args("worktrees listar --prazo 3.0 a:1")), Some(Duration::from_secs_f64(4.5)));
         assert_eq!(deadline(&args("ia login claude")), None);

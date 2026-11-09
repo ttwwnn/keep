@@ -8,7 +8,9 @@
 //!   `CLAUDE_SECURESTORAGE_CONFIG_DIR` já posto (um Claude aberto de dentro
 //!   de outro herda o da aba; uma conta presa à mão), fica o que veio;
 //! - "confiar nesta pasta?" é respondido sim (`keep ia confiar`), em segundo
-//!   plano: quem digitou `claude` na aba já disse sim;
+//!   plano: quem digitou `claude` na aba já disse sim — salvo numa pasta que
+//!   traz o que o Claude Code executa ao abrir (um gancho, servidores MCP do
+//!   projeto), onde a pergunta fica para a pessoa;
 //! - o programa fica preso à pasta do workspace quando há uma (`keep ia
 //!   confinar`).
 //!
