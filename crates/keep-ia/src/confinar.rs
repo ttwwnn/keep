@@ -10,8 +10,9 @@
 //! Desse mínimo, `~/.claude` (que o Claude preso lê e grava ao abrir) vem
 //! aparado: o que toda sessão executa ou lê como instrução fica só para ler,
 //! o cofre e os logins das contas ficam fechados (menos o armazém da aba) e,
-//! dos transcritos, só os da pasta presa (docs/ia.md, "O que a IA presa
-//! alcança").
+//! dos transcritos, só os da pasta presa; e os programas instalados fora de
+//! /Users (o Keep.app, o Homebrew) ficam só para ler (docs/ia.md, "O que a IA
+//! presa alcança").
 //! No Windows o sandbox é um token restrito com permissões só na pasta e no
 //! mínimo de que a IA precisa (`confinar_win.rs`): o perfil do usuário fica
 //! de fora, para leitura e gravação. Sem a pasta existir, ou sem o sandbox, o
@@ -203,13 +204,48 @@ fn armazem_da_aba(contas: &Path, armazem: &Path) -> Vec<String> {
     formas(pai).into_iter().map(|p| Path::new(&p).join(nome).to_string_lossy().into_owned()).collect()
 }
 
+/// Os caminhos que a configuração do Claude Code da pessoa (`~/.claude/settings.json` e `settings.local.json`) cita —
+/// o script de um gancho, o da linha de status, um ajudante —, lidos de cada texto dela como caminho absoluto, `~/` ou
+/// `$HOME/`. Um deles que caia onde a IA presa grava viraria, trocado por ela, comando da sessão seguinte.
+fn executados_pela_configuracao(claude: &Path, casa: &Path) -> Vec<PathBuf> {
+    fn textos<'a>(v: &'a serde_json::Value, saida: &mut Vec<&'a str>) {
+        match v {
+            serde_json::Value::String(s) => saida.push(s),
+            serde_json::Value::Array(a) => a.iter().for_each(|x| textos(x, saida)),
+            serde_json::Value::Object(o) => o.values().for_each(|x| textos(x, saida)),
+            _ => {}
+        }
+    }
+    let mut achados = Vec::new();
+    for nome in ["settings.json", "settings.local.json"] {
+        let Ok(texto) = caminhos::ler_texto_ate(&claude.join(nome), caminhos::LEITURA_MAXIMA) else { continue };
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&texto) else { continue };
+        let mut lidos = Vec::new();
+        textos(&json, &mut lidos);
+        for palavra in lidos.iter().flat_map(|t| t.split(|c: char| c.is_whitespace() || "\"'`;|&()<>=".contains(c))) {
+            let da_casa = ["~/", "$HOME/", "${HOME}/"].iter().find_map(|i| palavra.strip_prefix(i));
+            let caminho = match da_casa {
+                Some(resto) => casa.join(resto),
+                None if palavra.starts_with('/') => PathBuf::from(palavra),
+                None => continue,
+            };
+            if !achados.contains(&caminho) {
+                achados.push(caminho);
+            }
+        }
+    }
+    achados
+}
+
 /// O perfil do sandbox para uma pasta: nada de /Users e /Volumes, salvo a
 /// pasta (e o git dela), a casa do Claude Code e do Codex, o estado e os
 /// caches, o Chaveiro; para ler, os programas e a configuração do git.
 ///
 /// Dentro de `~/.claude`, o que toda sessão executa ou lê como instrução fica só
-/// para ler (`CLAUDE_SO_LEITURA`), o cofre e os logins das contas ficam fechados
-/// (menos o armazém da própria aba) e, dos transcritos, só os do projeto preso.
+/// para ler (`CLAUDE_SO_LEITURA`, e os scripts que a configuração cita), o cofre
+/// e os logins das contas ficam fechados (menos o armazém da própria aba) e, dos
+/// transcritos, só os do projeto preso. Fora da casa, os programas instalados
+/// (`/Applications`, `/Library`, `/opt`, `/usr/local`) ficam só para ler.
 ///
 /// As permissões usam as MESMAS operações da negação e vêm depois dela: uma
 /// permissão de `file-read*` não vence uma negação de `file-read-data`, que
@@ -232,6 +268,12 @@ fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Pat
         "(deny file-read-data file-write* (subpath \"/Users\"))".into(),
         "(deny file-read-data file-write* (subpath \"/Volumes\"))".into(),
     ];
+    // Os programas fora de /Users que a pessoa instala e pode trocar (o Keep.app, o Homebrew): lidos e executados, nunca
+    // gravados. Trocado pela IA presa, um deles (o `keep` do app, o `python3` de um gancho) rodaria na sessão seguinte,
+    // fora do sandbox. Uma pasta presa que esteja ali vem depois e vence.
+    for p in ["/Applications", "/Library", "/opt", "/usr/local"] {
+        linhas.push(format!("(deny file-write* (subpath {}))", literal(p)));
+    }
     // O socket do keepd fica fora de /Users, e o `(allow default)` deixa `connect()` passar: sem esta negação a IA presa
     // abre uma aba nova (shell sem sandbox), digita em qualquer aba e lê as telas de todas, pelo protocolo do daemon.
     // O sandbox casa o caminho canônico (`/private/var/...`, não `/var/...`), então as duas formas entram.
@@ -272,6 +314,21 @@ fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Pat
     };
     for nome in CLAUDE_SO_LEITURA {
         for p in em_claude(nome) {
+            linhas.push(format!("(deny file-write* (subpath {}))", literal(&p)));
+        }
+    }
+    // O que a configuração da pessoa manda executar e cai onde a IA presa grava (um `~/.claude/statusline-command.sh`):
+    // o arquivo e, numa subpasta de `~/.claude` (fora `projects/`), a pasta dele, que um script costuma levar junto. A
+    // pasta presa fica de fora: é dela.
+    for alvo in executados_pela_configuracao(&claude, casa_dir) {
+        if alvo.starts_with(pasta) || pasta.starts_with(&alvo) {
+            continue;
+        }
+        for p in formas(&alvo) {
+            linhas.push(format!("(deny file-write* (literal {}))", literal(&p)));
+        }
+        let pai = alvo.parent().filter(|p| p.starts_with(&claude) && *p != claude && !p.starts_with(claude.join("projects")));
+        for p in pai.map(formas).unwrap_or_default() {
             linhas.push(format!("(deny file-write* (subpath {}))", literal(&p)));
         }
     }
@@ -810,6 +867,68 @@ mod testes {
         // Trocar a própria pasta por um link para a de outro projeto não dá a leitura dele.
         let troca = format!("rm -rf '{proj}' && ln -s '{outro}' '{proj}' && cat '{proj}/t.jsonl'");
         assert_eq!(preso(&p, &troca), Some(false));
+    }
+
+    #[test]
+    fn le_os_caminhos_que_a_configuracao_manda_executar() {
+        let d = tempfile::tempdir().unwrap();
+        let casa = d.path().join("casa");
+        let claude = casa.join(".claude");
+        std::fs::create_dir_all(&claude).unwrap();
+        let gancho = r#"X=$HOME/.claude/x.env /bin/sh '${HOME}/.claude/scripts/a.sh' > /tmp/log"#;
+        let config = serde_json::json!({
+            "statusLine": {"command": "bash ~/.claude/statusline.sh"},
+            "permissions": {"allow": ["Bash(python3:*)"]},
+            "hooks": {"Stop": [{"hooks": [{"command": gancho}]}]},
+        });
+        std::fs::write(claude.join("settings.json"), config.to_string()).unwrap();
+        std::fs::write(claude.join("settings.local.json"), r#"{"env":{"P":"/opt/ferramenta/bin"}}"#).unwrap();
+        let achados = executados_pela_configuracao(&claude, &casa);
+        for esperado in [
+            casa.join(".claude/statusline.sh"),
+            casa.join(".claude/x.env"),
+            casa.join(".claude/scripts/a.sh"),
+            PathBuf::from("/bin/sh"),
+            PathBuf::from("/tmp/log"),
+            PathBuf::from("/opt/ferramenta/bin"),
+        ] {
+            assert!(achados.contains(&esperado), "{} em {achados:?}", esperado.display());
+        }
+        assert!(!achados.iter().any(|p| p.to_string_lossy().contains("python3")), "{achados:?}");
+        // Sem configuração, ou com uma que não é JSON: nada.
+        std::fs::write(claude.join("settings.json"), "{").unwrap();
+        std::fs::remove_file(claude.join("settings.local.json")).unwrap();
+        assert!(executados_pela_configuracao(&claude, &casa).is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn os_scripts_da_configuracao_e_os_programas_fora_da_casa_ficam_so_para_ler() {
+        let c = casa_de_mentira();
+        std::fs::create_dir_all(c.claude.join("scripts")).unwrap();
+        std::fs::write(c.claude.join("statusline-command.sh"), "#!/bin/sh\n").unwrap();
+        std::fs::write(c.claude.join("scripts/a.py"), "").unwrap();
+        let config = serde_json::json!({
+            "statusLine": {"type": "command", "command": "bash ~/.claude/statusline-command.sh"},
+            "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "python3 $HOME/.claude/scripts/a.py"}]}]},
+        });
+        std::fs::write(c.claude.join("settings.json"), config.to_string()).unwrap();
+        let p = c.perfil(None);
+        let cl = c.claude.display();
+        let Some(trocou) = preso(&p, &format!("echo x >> '{cl}/statusline-command.sh'")) else { return };
+        assert!(!trocou, "a IA presa trocou o script da linha de status");
+        assert_eq!(preso(&p, &format!("echo x >> '{cl}/scripts/a.py'")), Some(false), "o script do gancho");
+        assert_eq!(preso(&p, &format!("echo x > '{cl}/scripts/b.py'")), Some(false), "o vizinho dele");
+        assert_eq!(preso(&p, &format!("echo '{{}}' >> '{cl}/history.jsonl'")), Some(true), "o resto continua do Claude");
+        // Um programa instalado fora da casa (o Homebrew, um app): onde a pessoa grava sem sandbox, a IA presa não.
+        for dir in ["/opt/homebrew", "/Applications", "/usr/local", "/Library"] {
+            let sonda = format!("{dir}/.keep-teste-{}", std::process::id());
+            let cria = format!("mkdir '{sonda}' && rmdir '{sonda}'");
+            if !std::process::Command::new("/bin/sh").args(["-c", &cria]).status().unwrap().success() {
+                continue;
+            }
+            assert_eq!(preso(&p, &cria), Some(false), "{dir}");
+        }
     }
 
     #[cfg(target_os = "macos")]

@@ -250,12 +250,17 @@ e o Claude fica de fora da renovação do armazém.
 
 O perfil do `sandbox-exec` (`confinar::perfil`) nega `/Users` e `/Volumes` e devolve a pasta presa, o git de
 uma worktree de verdade dela, `~/.claude`, `~/.claude.json` (e o temporário com que o CLI o grava),
-`~/.codex`, `~/.local/state`, os caches e o Chaveiro; para ler, os programas e a configuração do git. De
-`~/.claude`, que o Claude preso lê e grava ao abrir, sai depois:
+`~/.codex`, `~/.local/state`, os caches e o Chaveiro; para ler, os programas e a configuração do git. Os
+programas instalados fora de `/Users` que a pessoa pode trocar (`/Applications`, `/Library`, `/opt`,
+`/usr/local`: o Keep.app, o Homebrew) ficam só para ler: trocado pela IA presa, o `keep` do app ou o `python3`
+de um gancho rodaria na sessão seguinte, fora do sandbox. De `~/.claude`, que o Claude preso lê e grava ao
+abrir, sai depois:
 
 - só para ler: `settings.json`, `settings.local.json`, `CLAUDE.md`, `skills/`, `plugins/`, `agents/`,
-  `commands/` e `hooks/` — o que toda sessão do Claude, presa ou não, executa ou toma como instrução. Gravar,
-  trocar por renomeação, apagar ou criar link para eles é recusado;
+  `commands/` e `hooks/` — o que toda sessão do Claude, presa ou não, executa ou toma como instrução —, também
+  no destino quando `~/.claude` é um link, e os caminhos que essa configuração cita (o script da linha de status,
+  o de um gancho e, numa subpasta de `~/.claude`, os vizinhos dele). Gravar, trocar por renomeação, apagar ou
+  criar link para eles é recusado;
 - fechado: `contas/` (o cofre do kit, os armazéns das contas e das outras abas), menos o armazém da própria
   aba (`CLAUDE_SECURESTORAGE_CONFIG_DIR`, uma pasta de `contas/abas` ou `contas/fixas` que não seja link), onde
   o CLI põe as travas do login;
