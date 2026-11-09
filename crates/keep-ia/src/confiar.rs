@@ -26,10 +26,9 @@ use crate::{caminhos, daemon, trocar};
 
 /// As chaves de `.claude/settings.json` e `settings.local.json` que o Claude Code não executa ao abrir. Qualquer outra
 /// (`hooks`, `statusLine`, `env`, `apiKeyHelper`, `enabledPlugins`, `enableAllProjectMcpServers` e as que ainda vierem)
-/// deixa a pergunta para a pessoa.
-const CHAVES_INERTES: [&str; 12] = [
+/// deixa a pergunta para a pessoa; `permissions`, só quando restringe (`permissoes_inertes`).
+const CHAVES_INERTES: [&str; 11] = [
     "$schema",
-    "permissions",
     "model",
     "outputStyle",
     "language",
@@ -41,6 +40,20 @@ const CHAVES_INERTES: [&str; 12] = [
     "respectGitignore",
     "disableAllHooks",
 ];
+
+/// `permissions` que só restringem: negar (`deny`), perguntar (`ask`), o modo padrão ou o de plano. Liberar ferramentas
+/// (`allow`) ou pastas (`additionalDirectories`), ou um modo que dispensa a aprovação, tira da pessoa o que a pergunta
+/// de confiança guarda: o modelo, guiado pelo que a pasta traz (um `CLAUDE.md`), rodaria comandos sem ela aprovar.
+fn permissoes_inertes(p: &Value) -> bool {
+    p.as_object().is_some_and(|o| {
+        o.iter().all(|(k, v)| match k.as_str() {
+            "deny" | "ask" | "disableBypassPermissionsMode" => true,
+            "allow" | "additionalDirectories" => v.as_array().is_some_and(|a| a.is_empty()),
+            "defaultMode" => matches!(v.as_str(), Some("default" | "plan")),
+            _ => false,
+        })
+    })
+}
 
 /// Por que o Keep não responde sozinho "sim" à pergunta de confiança numa pasta: ela, ou uma acima dela, traz o que o
 /// Claude Code executa ao abrir, antes de qualquer conversa — servidores MCP (`.mcp.json`; os que a configuração da
@@ -61,13 +74,16 @@ fn por_que_nao_confiar_em(pasta: &Path, casa: &Path) -> Option<String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(e) => Err(format!("{}: {e}", p.display())),
     };
-    // A casa como o sistema a compara: no Windows, sem caixa (`C:\Users\Ana` é `c:\users\ana`).
+    // A casa como o sistema a compara: também pelo destino real (a pasta do keepd vem resolvida, e a casa pode ter um
+    // link no caminho); no Windows, sem caixa (`C:\Users\Ana` é `c:\users\ana`). Sem reconhecê-la, a subida chegaria
+    // à configuração da própria pessoa, que tem ganchos, e nada mais seria respondido.
+    let casa_real = casa.canonicalize().ok();
     let e_a_casa = |d: &Path| {
         if cfg!(windows) {
             let (d, c) = (d.to_string_lossy(), casa.to_string_lossy());
             crate::confinar_win::dentro_de(&c, &d) && crate::confinar_win::dentro_de(&d, &c)
         } else {
-            d == casa
+            d == casa || casa_real.as_deref() == Some(d)
         }
     };
     for dir in pasta.ancestors().take_while(|d| !e_a_casa(d)) {
@@ -91,7 +107,11 @@ fn por_que_nao_confiar_em(pasta: &Path, casa: &Path) -> Option<String> {
             let Some(objeto) = objeto else {
                 return Some(format!("{} não dá para ler como configuração", arquivo.display()));
             };
-            if let Some(chave) = objeto.keys().find(|k| !CHAVES_INERTES.contains(&k.as_str())) {
+            let executa = objeto.iter().find(|(k, v)| match k.as_str() {
+                "permissions" => !permissoes_inertes(v),
+                k => !CHAVES_INERTES.contains(&k),
+            });
+            if let Some((chave, _)) = executa {
                 return Some(format!("{} tem `{chave}`", arquivo.display()));
             }
         }
@@ -257,10 +277,24 @@ mod testes {
             std::fs::write(dir.join(".claude").join(nome), texto).unwrap();
         };
         std::fs::create_dir_all(&sub).unwrap();
-        // A pasta sem nada, e a que só traz o inerte (as permissões, o modelo).
+        // A pasta sem nada, e a que só traz o inerte (o modelo, permissões que só restringem).
         assert_eq!(por_que_nao_confiar_em(&sub, &casa), None);
-        config(&sub, "settings.json", r#"{"$schema":"x","permissions":{"allow":["Bash(ls:*)"]},"model":"opus"}"#);
+        let restringe = r#"{"deny":["Bash(rm:*)"],"ask":["Bash(git push:*)"],"allow":[],"defaultMode":"plan"}"#;
+        config(&sub, "settings.json", &format!(r#"{{"$schema":"x","permissions":{restringe},"model":"opus"}}"#));
         assert_eq!(por_que_nao_confiar_em(&sub, &casa), None);
+        // Permissões que liberam: o modelo rodaria, sem a pessoa aprovar, o que a pasta mandasse.
+        for libera in [
+            r#"{"allow":["Bash(*)"]}"#,
+            r#"{"defaultMode":"bypassPermissions"}"#,
+            r#"{"defaultMode":"acceptEdits"}"#,
+            r#"{"additionalDirectories":["/"]}"#,
+            r#"{"nova":true}"#,
+            r#"["Bash(*)"]"#,
+        ] {
+            config(&sub, "settings.local.json", &format!(r#"{{"permissions":{libera}}}"#));
+            let porque = por_que_nao_confiar_em(&sub, &casa).unwrap_or_else(|| panic!("{libera}"));
+            assert!(porque.contains("`permissions`"), "{porque}");
+        }
         // O que o Claude Code executa ao abrir, e a chave que ainda não existe hoje.
         for chave in ["hooks", "statusLine", "env", "apiKeyHelper", "enabledPlugins", "enableAllProjectMcpServers", "nova"] {
             config(&sub, "settings.local.json", &format!(r#"{{"model":"opus","{chave}":{{}}}}"#));
@@ -288,6 +322,13 @@ mod testes {
         config(d.path(), "settings.json", r#"{"hooks":{}}"#);
         assert_eq!(por_que_nao_confiar_em(&sub, &casa), None);
         assert_eq!(por_que_nao_confiar_em(&casa, &casa), None);
+        // A casa dada por um link e a pasta pelo caminho real (como o keepd a diz): reconhecida do mesmo jeito.
+        #[cfg(unix)]
+        {
+            let link = d.path().join("link-da-casa");
+            std::os::unix::fs::symlink(&casa, &link).unwrap();
+            assert_eq!(por_que_nao_confiar_em(&sub.canonicalize().unwrap(), &link), None);
+        }
         // Fora da casa, as de cima contam até a raiz.
         let fora = d.path().join("fora").join("x");
         std::fs::create_dir_all(&fora).unwrap();

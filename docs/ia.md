@@ -591,12 +591,13 @@ Toda resposta é um objeto JSON numa linha, com `"versao": 1` e `"ok"`. Recusa: 
 - `pode-confiar` → `{}` quando o Keep pode responder sozinho "sim" à pergunta de confiança do Claude Code
   nessa pasta; recusa `config-executavel`, com o arquivo e a chave no `detalhe`, quando ela, ou uma acima dela
   (até a casa, que fica de fora; fora da casa, até a raiz), traz o que o Claude Code executa ao abrir: um
-  `.mcp.json`, ou um `.claude/settings.json`/`settings.local.json` com chave fora das inertes (`$schema`,
-  `permissions`, `model`, `outputStyle`, `language`, `includeCoAuthoredBy`, `cleanupPeriodDays`,
-  `alwaysThinkingEnabled`, `effortLevel`, `spinnerTipsEnabled`, `respectGitignore`, `disableAllHooks`) ou que não
-  dá para ler. É a pergunta do `keep ia confiar` e dos apps, com a pasta do Claude que pergunta (o `cwd` da
-  aba, lido do keepd quando a pergunta aparece). Uma pasta assim pede a resposta da pessoa uma vez, como no
-  Terminal: as worktrees novas de um repositório com ganchos versionados também.
+  `.mcp.json`, ou um `.claude/settings.json`/`settings.local.json` com chave fora das inertes (`$schema`, `model`,
+  `outputStyle`, `language`, `includeCoAuthoredBy`, `cleanupPeriodDays`, `alwaysThinkingEnabled`, `effortLevel`,
+  `spinnerTipsEnabled`, `respectGitignore`, `disableAllHooks`; `permissions` só quando restringe: `deny`, `ask`,
+  `allow` vazio, `defaultMode` `default` ou `plan`) ou que não dá para ler. A casa é reconhecida também pelo
+  destino real. É a pergunta do `keep ia confiar` e dos apps, com a pasta do Claude que pergunta (o `cwd` da aba,
+  lido do keepd quando a pergunta aparece). Uma pasta assim pede a resposta da pessoa uma vez, como no Terminal:
+  as worktrees novas de um repositório com ganchos versionados também.
 - `worktrees orfas` → `{"lixeira": [item do listar], "registros": [item: a pasta já sumiu], "aguardando":
   [{"caminho", "motivo"}], "mantidas": [{"caminho", "motivo"}], "avisos": [texto], "ocupado"?}`. Grava
   desde quando cada uma é órfã (`--so-ler`: não grava nada). `ocupado`: outra rodada em curso.
