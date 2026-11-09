@@ -58,6 +58,10 @@ check "grava no armazém da aba" "trava" "$(na_casa "mkdir '$C/contas/abas/aba/.
 check "lê os transcritos do projeto preso" "meu" "$(na_casa "cat '$C/projects/$NOME/t.jsonl'")"
 check "não lê os de outro projeto" "nada" "$(na_casa "cat '$C/projects/-outro/t.jsonl'" | grep -q alheio && echo leu || echo nada)"
 check "grava o resto da casa do Claude" "ok" "$(na_casa "echo '{}' >> '$C/history.jsonl' && echo ok")"
+NOVA=$WORK/casa-nova
+mkdir -p "$NOVA/.claude"
+check "numa casa sem a pasta dos transcritos, cria a do projeto" "ok" \
+    "$(KEEP_IA_HOME="$NOVA" run presa "mkdir -p '$NOVA/.claude/projects/$NOME' && echo ok")"
 
 echo "um workspace sem pasta"
 check "lê onde quiser" "fora" "$(run livre "cat '$WORK/fora/b.txt'")"

@@ -274,9 +274,10 @@ fn e_script(p: &Path) -> bool {
     matches!(ext.as_str(), "sh" | "bash" | "zsh" | "py" | "js" | "mjs" | "cjs" | "ts" | "rb" | "pl" | "php" | "lua")
 }
 
-/// As pastas de `~/.claude` que o próprio CLI grava a toda hora: negar a pasta inteira de um arquivo citado nelas
-/// quebraria a sessão presa.
-const CLAUDE_ESTADO: [&str; 6] = ["projects", "todos", "shell-snapshots", "session-env", "file-history", "sessions"];
+/// As pastas de `~/.claude` que o próprio CLI grava a toda hora, e a das contas (o armazém da aba, onde ele põe as
+/// travas do login): negar a pasta inteira de um arquivo citado nelas quebraria a sessão presa.
+const CLAUDE_ESTADO: [&str; 7] =
+    ["projects", "todos", "shell-snapshots", "session-env", "file-history", "sessions", "contas"];
 
 /// O perfil do sandbox para uma pasta: nada de /Users e /Volumes, salvo a
 /// pasta (e o git dela), a casa do Claude Code e do Codex, o estado e os
@@ -358,9 +359,30 @@ fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Pat
             linhas.push(format!("(deny file-write* (subpath {}))", literal(&p)));
         }
     }
+    for p in em_claude("contas") {
+        linhas.push(format!("(deny file-read-data file-write* (subpath {}))", literal(&p)));
+    }
+    for p in armazem.map(|a| armazem_da_aba(&claude.join("contas"), a)).unwrap_or_default() {
+        linhas.push(format!("(allow file-read-data file-write* (subpath {}))", literal(&p)));
+    }
+    // Os transcritos e a memória de cada projeto: os da pasta presa e das subpastas dela (`<nome>-<sub>`), nunca os
+    // de outra pasta. Uma pasta de transcritos que é link não é seguida (ver `formas`): sem ela, o Claude preso
+    // conversa, mas não guarda a conversa.
+    let projetos = em_claude("projects");
+    for p in &projetos {
+        linhas.push(format!("(deny file-read-data file-write* (subpath {}))", literal(p)));
+    }
+    for p in &projetos {
+        for nome in projeto_do_claude(pasta) {
+            if let Some(re) = literal_regex(&regra_do_projeto(p, &nome)) {
+                linhas.push(format!("(allow file-read-data file-write* (regex {re}))"));
+            }
+        }
+    }
     // O que a configuração da pessoa manda executar e cai onde a IA presa grava (um `~/.claude/statusline-command.sh`):
     // o arquivo e, quando é um script numa subpasta de `~/.claude` que não é de estado do CLI, a pasta dele, que um
-    // script costuma levar junto. A pasta presa fica de fora: é dela.
+    // script costuma levar junto. Por último, para vencer também o armazém da aba e a pasta dos transcritos. A pasta
+    // presa fica de fora: é dela.
     for alvo in executados_pela_configuracao(&claude, casa_dir) {
         if alvo.starts_with(pasta) || pasta.starts_with(&alvo) {
             continue;
@@ -383,26 +405,6 @@ fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Pat
         });
         for p in pai.map(formas).unwrap_or_default() {
             linhas.push(format!("(deny file-write* (subpath {}))", literal(&p)));
-        }
-    }
-    for p in em_claude("contas") {
-        linhas.push(format!("(deny file-read-data file-write* (subpath {}))", literal(&p)));
-    }
-    for p in armazem.map(|a| armazem_da_aba(&claude.join("contas"), a)).unwrap_or_default() {
-        linhas.push(format!("(allow file-read-data file-write* (subpath {}))", literal(&p)));
-    }
-    // Os transcritos e a memória de cada projeto: os da pasta presa e das subpastas dela (`<nome>-<sub>`), nunca os
-    // de outra pasta. Uma pasta de transcritos que é link não é seguida (ver `formas`): sem ela, o Claude preso
-    // conversa, mas não guarda a conversa.
-    let projetos = em_claude("projects");
-    for p in &projetos {
-        linhas.push(format!("(deny file-read-data file-write* (subpath {}))", literal(p)));
-    }
-    for p in &projetos {
-        for nome in projeto_do_claude(pasta) {
-            if let Some(re) = literal_regex(&regra_do_projeto(p, &nome)) {
-                linhas.push(format!("(allow file-read-data file-write* (regex {re}))"));
-            }
         }
     }
     linhas.join("\n") + "\n"
@@ -518,6 +520,9 @@ pub fn cli(args: &[String]) -> i32 {
         eprintln!("Keep: sandbox-exec não está disponível; a IA não sobe sem a restrição.");
         return 1;
     }
+    // A pasta dos transcritos fica negada inteira, menos a do projeto preso: sem ela, o Claude preso não teria onde
+    // criar a dele. Uma casa nova ainda não a tem; ela nasce aqui, de fora do sandbox.
+    let _ = std::fs::create_dir_all(caminhos::claude().join("projects"));
     let aqui = std::env::current_dir().ok().and_then(|p| p.canonicalize().ok());
     if aqui.as_ref().is_none_or(|a| !a.starts_with(&pasta_real)) {
         let _ = std::env::set_current_dir(&pasta_real);
@@ -996,6 +1001,22 @@ mod testes {
         assert_eq!(preso(&p, "echo x > /dev/null"), Some(true), "/dev/null");
         assert_eq!(preso(&p, &format!("echo x >> '{cl}/gancho.log'")), Some(true), "o log do gancho");
         assert_eq!(preso(&p, &format!("echo '[]' > '{cl}/todos/outra.json'")), Some(true), "a pasta todos/");
+        // Um script citado dentro do que volta depois (o armazém da aba, a pasta dos transcritos) também fica só para
+        // ler; o resto dessas pastas continua do Claude preso.
+        let aba = c.claude.join("contas/abas/aba");
+        std::fs::write(c.projeto.join("gancho.sh"), "").unwrap();
+        std::fs::write(aba.join("ajuda.sh"), "").unwrap();
+        let (pr, ab) = (c.projeto.display().to_string(), aba.display().to_string());
+        let config = serde_json::json!({"hooks": {"Stop": [{"hooks": [
+            {"type": "command", "command": format!("sh {pr}/gancho.sh")},
+            {"type": "command", "command": format!("sh {ab}/ajuda.sh")},
+        ]}]}});
+        std::fs::write(c.claude.join("settings.json"), config.to_string()).unwrap();
+        let com_aba = c.perfil(Some(&aba));
+        assert_eq!(preso(&com_aba, &format!("echo x >> '{pr}/gancho.sh'")), Some(false), "na pasta dos transcritos");
+        assert_eq!(preso(&com_aba, &format!("echo x >> '{ab}/ajuda.sh'")), Some(false), "no armazém da aba");
+        let resto = format!("echo '{{}}' >> '{pr}/t.jsonl' && mkdir '{ab}/.trava' && rmdir '{ab}/.trava'");
+        assert_eq!(preso(&com_aba, &resto), Some(true), "o resto do armazém e dos transcritos");
         // Um programa instalado fora da casa (o Homebrew, um app): onde a pessoa grava sem sandbox, a IA presa não.
         for dir in ["/opt/homebrew", "/Applications", "/usr/local", "/Library"] {
             let sonda = format!("{dir}/.keep-teste-{}", std::process::id());
