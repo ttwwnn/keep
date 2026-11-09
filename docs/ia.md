@@ -260,9 +260,10 @@ abrir, sai depois:
 
 - só para ler: `settings.json`, `settings.local.json`, `CLAUDE.md`, `skills/`, `plugins/`, `agents/`,
   `commands/` e `hooks/` — o que toda sessão do Claude, presa ou não, executa ou toma como instrução —, também
-  no destino quando `~/.claude` é um link, e os caminhos que essa configuração cita (o script da linha de status,
-  o de um gancho e, numa subpasta de `~/.claude`, os vizinhos dele). Gravar, trocar por renomeação, apagar ou
-  criar link para eles é recusado;
+  no destino quando `~/.claude` é um link, e os caminhos dentro da casa que essa configuração cita, fora os alvos
+  de redirecionamento (o script da linha de status, o de um gancho e, quando é um script numa subpasta de
+  `~/.claude` que não é de estado do CLI, os vizinhos dele). Gravar, trocar por renomeação, apagar ou criar link
+  para eles é recusado;
 - fechado: `contas/` (o cofre do kit, os armazéns das contas e das outras abas), menos o armazém da própria
   aba (`CLAUDE_SECURESTORAGE_CONFIG_DIR`, uma pasta de `contas/abas` ou `contas/fixas` que não seja link), onde
   o CLI põe as travas do login;

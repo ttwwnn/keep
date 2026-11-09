@@ -204,9 +204,11 @@ fn armazem_da_aba(contas: &Path, armazem: &Path) -> Vec<String> {
     formas(pai).into_iter().map(|p| Path::new(&p).join(nome).to_string_lossy().into_owned()).collect()
 }
 
-/// Os caminhos que a configuração do Claude Code da pessoa (`~/.claude/settings.json` e `settings.local.json`) cita —
-/// o script de um gancho, o da linha de status, um ajudante —, lidos de cada texto dela como caminho absoluto, `~/` ou
-/// `$HOME/`. Um deles que caia onde a IA presa grava viraria, trocado por ela, comando da sessão seguinte.
+/// Os caminhos dentro da casa que a configuração do Claude Code da pessoa (`~/.claude/settings.json` e
+/// `settings.local.json`) cita — o script de um gancho, o da linha de status, um ajudante —, lidos de cada texto dela
+/// como caminho absoluto, `~/` ou `$HOME/`. Um deles que caia onde a IA presa grava viraria, trocado por ela, comando
+/// da sessão seguinte. Alvo de redirecionamento (`2>/dev/null`, `>> ~/.claude/log`) não conta: é onde o comando
+/// grava, não o que ele executa. Fora da casa, os programas instalados já ficam só para ler.
 fn executados_pela_configuracao(claude: &Path, casa: &Path) -> Vec<PathBuf> {
     fn textos<'a>(v: &'a serde_json::Value, saida: &mut Vec<&'a str>) {
         match v {
@@ -216,26 +218,40 @@ fn executados_pela_configuracao(claude: &Path, casa: &Path) -> Vec<PathBuf> {
             _ => {}
         }
     }
+    let redirecionamento = regex::Regex::new(r#"(?:\d|&)?(?:>>?|<)\s*(?:"[^"]*"|'[^']*'|\S+)"#).expect("regex fixa");
     let mut achados = Vec::new();
     for nome in ["settings.json", "settings.local.json"] {
         let Ok(texto) = caminhos::ler_texto_ate(&claude.join(nome), caminhos::LEITURA_MAXIMA) else { continue };
         let Ok(json) = serde_json::from_str::<serde_json::Value>(&texto) else { continue };
         let mut lidos = Vec::new();
         textos(&json, &mut lidos);
-        for palavra in lidos.iter().flat_map(|t| t.split(|c: char| c.is_whitespace() || "\"'`;|&()<>=".contains(c))) {
-            let da_casa = ["~/", "$HOME/", "${HOME}/"].iter().find_map(|i| palavra.strip_prefix(i));
-            let caminho = match da_casa {
-                Some(resto) => casa.join(resto),
-                None if palavra.starts_with('/') => PathBuf::from(palavra),
-                None => continue,
-            };
-            if !achados.contains(&caminho) {
-                achados.push(caminho);
+        for texto in lidos {
+            let sem_redirecionamento = redirecionamento.replace_all(texto, " ");
+            for palavra in sem_redirecionamento.split(|c: char| c.is_whitespace() || "\"'`;|&()=".contains(c)) {
+                let da_casa = ["~/", "$HOME/", "${HOME}/"].iter().find_map(|i| palavra.strip_prefix(i));
+                let caminho = match da_casa {
+                    Some(resto) => casa.join(resto),
+                    None if palavra.starts_with('/') => PathBuf::from(palavra),
+                    None => continue,
+                };
+                if caminho.starts_with(casa) && caminho != casa && !achados.contains(&caminho) {
+                    achados.push(caminho);
+                }
             }
         }
     }
     achados
 }
+
+/// Se o caminho citado é um script, que costuma levar os vizinhos (um módulo, uma biblioteca do shell) junto.
+fn e_script(p: &Path) -> bool {
+    let ext = p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    matches!(ext.as_str(), "sh" | "bash" | "zsh" | "py" | "js" | "mjs" | "cjs" | "ts" | "rb" | "pl" | "php" | "lua")
+}
+
+/// As pastas de `~/.claude` que o próprio CLI grava a toda hora: negar a pasta inteira de um arquivo citado nelas
+/// quebraria a sessão presa.
+const CLAUDE_ESTADO: [&str; 6] = ["projects", "todos", "shell-snapshots", "session-env", "file-history", "sessions"];
 
 /// O perfil do sandbox para uma pasta: nada de /Users e /Volumes, salvo a
 /// pasta (e o git dela), a casa do Claude Code e do Codex, o estado e os
@@ -318,8 +334,8 @@ fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Pat
         }
     }
     // O que a configuração da pessoa manda executar e cai onde a IA presa grava (um `~/.claude/statusline-command.sh`):
-    // o arquivo e, numa subpasta de `~/.claude` (fora `projects/`), a pasta dele, que um script costuma levar junto. A
-    // pasta presa fica de fora: é dela.
+    // o arquivo e, quando é um script numa subpasta de `~/.claude` que não é de estado do CLI, a pasta dele, que um
+    // script costuma levar junto. A pasta presa fica de fora: é dela.
     for alvo in executados_pela_configuracao(&claude, casa_dir) {
         if alvo.starts_with(pasta) || pasta.starts_with(&alvo) {
             continue;
@@ -327,7 +343,12 @@ fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Pat
         for p in formas(&alvo) {
             linhas.push(format!("(deny file-write* (literal {}))", literal(&p)));
         }
-        let pai = alvo.parent().filter(|p| p.starts_with(&claude) && *p != claude && !p.starts_with(claude.join("projects")));
+        let pai = alvo.parent().filter(|p| {
+            e_script(&alvo)
+                && p.starts_with(&claude)
+                && *p != claude
+                && !CLAUDE_ESTADO.iter().any(|e| p.starts_with(claude.join(e)))
+        });
         for p in pai.map(formas).unwrap_or_default() {
             linhas.push(format!("(deny file-write* (subpath {}))", literal(&p)));
         }
@@ -875,26 +896,22 @@ mod testes {
         let casa = d.path().join("casa");
         let claude = casa.join(".claude");
         std::fs::create_dir_all(&claude).unwrap();
-        let gancho = r#"X=$HOME/.claude/x.env /bin/sh '${HOME}/.claude/scripts/a.sh' > /tmp/log"#;
+        let gancho = r#"X=$HOME/.claude/x.env /bin/sh '${HOME}/.claude/scripts/a.sh' > /tmp/log 2>>~/.claude/g.log"#;
         let config = serde_json::json!({
-            "statusLine": {"command": "bash ~/.claude/statusline.sh"},
+            "statusLine": {"command": "bash ~/.claude/statusline.sh 2>/dev/null < ~/.claude/todos/lista.json"},
             "permissions": {"allow": ["Bash(python3:*)"]},
             "hooks": {"Stop": [{"hooks": [{"command": gancho}]}]},
         });
         std::fs::write(claude.join("settings.json"), config.to_string()).unwrap();
         std::fs::write(claude.join("settings.local.json"), r#"{"env":{"P":"/opt/ferramenta/bin"}}"#).unwrap();
-        let achados = executados_pela_configuracao(&claude, &casa);
-        for esperado in [
-            casa.join(".claude/statusline.sh"),
-            casa.join(".claude/x.env"),
-            casa.join(".claude/scripts/a.sh"),
-            PathBuf::from("/bin/sh"),
-            PathBuf::from("/tmp/log"),
-            PathBuf::from("/opt/ferramenta/bin"),
-        ] {
-            assert!(achados.contains(&esperado), "{} em {achados:?}", esperado.display());
-        }
-        assert!(!achados.iter().any(|p| p.to_string_lossy().contains("python3")), "{achados:?}");
+        let mut achados = executados_pela_configuracao(&claude, &casa);
+        achados.sort();
+        let mut esperados =
+            vec![casa.join(".claude/statusline.sh"), casa.join(".claude/x.env"), casa.join(".claude/scripts/a.sh")];
+        esperados.sort();
+        // Fora: o que fica fora da casa (`/bin/sh`, `/opt/…`), os alvos de redirecionamento (`/dev/null`, `/tmp/log`,
+        // o log do gancho, a lista lida pela entrada) e o que não é caminho.
+        assert_eq!(achados, esperados);
         // Sem configuração, ou com uma que não é JSON: nada.
         std::fs::write(claude.join("settings.json"), "{").unwrap();
         std::fs::remove_file(claude.join("settings.local.json")).unwrap();
@@ -909,8 +926,9 @@ mod testes {
         std::fs::write(c.claude.join("statusline-command.sh"), "#!/bin/sh\n").unwrap();
         std::fs::write(c.claude.join("scripts/a.py"), "").unwrap();
         let config = serde_json::json!({
-            "statusLine": {"type": "command", "command": "bash ~/.claude/statusline-command.sh"},
-            "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "python3 $HOME/.claude/scripts/a.py"}]}]},
+            "statusLine": {"type": "command", "command": "bash ~/.claude/statusline-command.sh 2>/dev/null"},
+            "hooks": {"Stop": [{"hooks": [{"type": "command",
+                "command": "python3 $HOME/.claude/scripts/a.py $HOME/.claude/todos/lista.json >> ~/.claude/gancho.log"}]}]},
         });
         std::fs::write(c.claude.join("settings.json"), config.to_string()).unwrap();
         let p = c.perfil(None);
@@ -920,6 +938,10 @@ mod testes {
         assert_eq!(preso(&p, &format!("echo x >> '{cl}/scripts/a.py'")), Some(false), "o script do gancho");
         assert_eq!(preso(&p, &format!("echo x > '{cl}/scripts/b.py'")), Some(false), "o vizinho dele");
         assert_eq!(preso(&p, &format!("echo '{{}}' >> '{cl}/history.jsonl'")), Some(true), "o resto continua do Claude");
+        // Onde a configuração grava, e a pasta de estado do CLI de um arquivo que ela só lê, continuam graváveis.
+        assert_eq!(preso(&p, "echo x > /dev/null"), Some(true), "/dev/null");
+        assert_eq!(preso(&p, &format!("echo x >> '{cl}/gancho.log'")), Some(true), "o log do gancho");
+        assert_eq!(preso(&p, &format!("echo '[]' > '{cl}/todos/outra.json'")), Some(true), "a pasta todos/");
         // Um programa instalado fora da casa (o Homebrew, um app): onde a pessoa grava sem sandbox, a IA presa não.
         for dir in ["/opt/homebrew", "/Applications", "/usr/local", "/Library"] {
             let sonda = format!("{dir}/.keep-teste-{}", std::process::id());
