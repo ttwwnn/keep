@@ -1001,6 +1001,10 @@ mod testes {
         let troca = format!("mv '{cl}' '{ca}/.cache/c' && echo '{{\"hooks\":1}}' > '{ca}/.cache/c/settings.json' && mv '{ca}/.cache/c' '{cl}'");
         assert_eq!(preso(&p, &troca), Some(false), "a troca de ~/.claude inteira");
         assert_eq!(std::fs::read_to_string(c.claude.join("settings.json")).unwrap(), "{}\n");
+        // Nem por um link físico criado numa área que ela grava, para escrever pelo outro nome.
+        let elo = format!("ln '{cl}/settings.json' '{ca}/.cache/s' && echo '{{\"hooks\":1}}' > '{ca}/.cache/s'");
+        assert_eq!(preso(&p, &elo), Some(false), "o link físico");
+        assert_eq!(std::fs::read_to_string(c.claude.join("settings.json")).unwrap(), "{}\n");
         // O resto da casa do Claude continua dele: ele grava ali ao abrir.
         let resto = format!("echo '{{}}' >> '{0}/history.jsonl' && echo n > '{0}/todos/novo.json'", c.claude.display());
         assert_eq!(preso(&p, &resto), Some(true));
@@ -1017,6 +1021,9 @@ mod testes {
         assert!(!cofre, "a IA presa leu o cofre");
         assert_eq!(preso(&p, &format!("ls '{cs}/abas/outra'")), Some(false), "leu o armazém de outra aba");
         assert_eq!(preso(&p, &format!("echo y > '{cs}/novo.json'")), Some(false), "gravou no cofre");
+        std::fs::create_dir_all(c.casa.join(".cache")).unwrap();
+        let elo = format!("ln '{cs}/principal.json' '{}/.cache/p' && cat '{}/.cache/p'", c.casa.display(), c.casa.display());
+        assert_eq!(preso(&p, &elo), Some(false), "leu o cofre por um link físico");
         let trava = format!("mkdir '{cs}/abas/aba/.storage-write.lock' && rmdir '{cs}/abas/aba/.storage-write.lock'");
         assert_eq!(preso(&p, &trava), Some(true), "o Claude preso grava as travas no armazém dele");
         // Sem armazém de aba (o login global), nada de contas.
