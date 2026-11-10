@@ -37,6 +37,19 @@ final class BatteryIndicator: NSView {
         NSFont.monospacedDigitSystemFont(ofSize: 11 * GhosttyApp.shared.iconScale, weight: .medium)
     }
 
+    /// The time, hours and minutes, written left of the battery.
+    private static let clock: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+    private static let clockGap: CGFloat = 8
+    private var clockText: NSAttributedString {
+        NSAttributedString(string: Self.clock.string(from: Date()), attributes: [
+            .font: Self.font, .foregroundColor: TabStripView.Palette.current.text,
+        ])
+    }
+
     init() {
         super.init(frame: .zero)
         setAccessibilityRole(.staticText)
@@ -70,6 +83,7 @@ final class BatteryIndicator: NSView {
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.refresh()
+                self?.needsDisplay = true
                 // The menu bar may have been hidden or shown by the system's setting.
                 self?.superview?.needsLayout = true
             }
@@ -169,7 +183,7 @@ final class BatteryIndicator: NSView {
     /// How wide the indicator is: the bolt while charging, the cell, its tip.
     var fittingWidth: CGFloat {
         let bolt = reading?.charging == true ? Self.boltWidth + Self.boltGap : 0
-        return bolt + bodySize.width + Self.tipWidth
+        return ceil(clockText.size().width) + Self.clockGap + bolt + bodySize.width + Self.tipWidth
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -180,6 +194,10 @@ final class BatteryIndicator: NSView {
             x: bounds.maxX - Self.tipWidth - size.width,
             y: ((bounds.height - size.height) / 2).rounded(),
             width: size.width, height: size.height)
+
+        // The time, at the left edge, centred on the cell's height.
+        let time = clockText
+        time.draw(at: NSPoint(x: 0, y: body.midY - time.size().height / 2))
 
         // The cell and its tip.
         let radius = min(4, size.height / 3)
