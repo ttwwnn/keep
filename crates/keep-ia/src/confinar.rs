@@ -280,11 +280,12 @@ fn executados_pela_configuracao_em(claude: &Path, casa: &Path, windows: bool) ->
         }
     }
     let saida = regex::Regex::new(r#"(?:\d|&)?>>?\s*(?:"[^"]*"|'[^']*'|[^\s;|&()]+)"#).expect("regex fixa");
-    // No Unix, o caminho começa por `/`, com ou sem a casa antes. No Windows, também `\` depois da casa e a unidade
+    // No Unix, o caminho começa por `/`, com ou sem a casa antes. No Windows (sem caixa nas variáveis, como no `cmd` e
+    // no PowerShell, onde `$home` é comum), também `\` depois da casa e a unidade
     // (`C:\`), mas nunca um `\` sozinho: o `\$HOME/x.sh` de um `sh -c "…"` (a expansão adiada para o shell de dentro)
     // seria lido inteiro e perdido, em vez do `$HOME/x.sh`.
     let solto = if windows {
-        r#"(?:(?:~|\$HOME|\$\{HOME\}|(?i:%USERPROFILE%|\$env:USERPROFILE))[/\\]|/|\b[A-Za-z]:[/\\])[^\s"'`;|&()<>]+"#
+        r#"(?:(?:~|(?i:\$HOME|\$\{HOME\}|%USERPROFILE%|\$env:USERPROFILE))[/\\]|/|\b[A-Za-z]:[/\\])[^\s"'`;|&()<>]+"#
     } else {
         r#"(?:~|\$HOME|\$\{HOME\})?/[^\s"'`;|&()<>]+"#
     };
@@ -1194,6 +1195,7 @@ mod testes {
         assert_eq!(w(r"%userprofile%\.claude\c.cmd"), [r"C:\Users\ana\.claude\c.cmd"]);
         assert_eq!(w(r"$Env:USERPROFILE\.claude\d.ps1"), [r"C:\Users\ana\.claude\d.ps1"]);
         assert_eq!(w("$HOME/.claude/e.sh"), [r"C:\Users\ana\.claude\e.sh"]);
+        assert_eq!(w(r"$home\.claude\e.ps1"), [r"C:\Users\ana\.claude\e.ps1"]);
         assert_eq!(w("/c/Users/ana/.claude/f.sh"), [r"C:\Users\ana\.claude\f.sh"]);
         // Uma lista à moda do Unix vale por cada pasta; o `:` da unidade não separa.
         assert_eq!(w(r"~/.claude/bin:C:\ferramentas"), [r"C:\Users\ana\.claude\bin", r"C:\ferramentas"]);
@@ -1214,6 +1216,7 @@ mod testes {
             "hooks": {"Stop": [{"hooks": [
                 {"command": r#"pwsh -c "& $env:USERPROFILE\.claude\gancho.ps1 2>> C:\Users\ana\log.txt""#},
                 {"command": r#"sh -c "exec \$HOME/.claude/adiado.sh""#},
+                {"command": r#"pwsh -c "& $home\.claude\minusculo.ps1""#},
             ]}]},
             "env": {"PATH": r"C:\Users\ana\.claude\bin;%PATH%"},
         });
@@ -1226,6 +1229,7 @@ mod testes {
             (r"C:\Users\ana\.claude\linha de status.ps1", false),
             (r"C:\Users\ana\.claude\gancho.ps1", false),
             (r"C:\Users\ana\.claude\adiado.sh", false),
+            (r"C:\Users\ana\.claude\minusculo.ps1", false),
             (r"C:\Users\ana\.claude\bin", true),
         ] {
             assert!(achados.contains(&(esperado.0.to_string(), esperado.1)), "{esperado:?} em {achados:?}");
