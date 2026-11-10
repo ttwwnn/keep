@@ -20,31 +20,51 @@ const YES = "Yes, I trust this folder";
 const NO = "No, exit";
 
 /**
- * Whether the question is on the screen, and where its pointer is. Undefined
- * when it is not the question — the words quoted in a conversation, say, have
- * no pointer in front of them.
+ * The question's lines, when it is what stands at the foot of the screen: the block after the last rule (the whole
+ * screen, with no rule), ending on its footer, with its header and a handful of lines. Claude Code draws the question
+ * under a rule, just below what the shell already showed (the command that started it; in a tab that left another
+ * Claude, the `/exit` and "Resume this session"), and that stays above it, out of it: on 10/11/2026 those lines took
+ * the whole screen past 16, and the question of a conversation resumed in the same tab went unanswered. A
+ * conversation keeps its prompt box (two rules around `❯`) and its footer at the foot: the question printed inside it
+ * (a file the model read, a `cat`) is above the last rule and is not it — answering would press Enter on whatever the
+ * conversation had up.
  */
-/**
- * Whether the screen is the question itself and nothing else: its header and its footer, a handful of lines, and no
- * prompt box (two rules around `❯`), which any conversation brings. Those lines printed inside a conversation (a file
- * the model read, a `cat`) are not it: answering them would press Enter on whatever the conversation had up.
- */
-export function isTheQuestion(screen: string): boolean {
+function questionLines(screen: string): string[] | undefined {
   const lines = screen.split("\n").map((line) => line.trim()).filter((line) => line !== "");
-  return (
-    lines.length <= 16 &&
-    (screen.includes("Quick safety check") || screen.includes("Do you trust the files in this folder")) &&
-    screen.includes("Enter to confirm") &&
-    lines.filter((line) => line.startsWith("─".repeat(12))).length <= 1
-  );
+  const rule = "─".repeat(12);
+  let start = 0;
+  for (let at = lines.length - 1; at >= 0; at--) {
+    if (lines[at].startsWith(rule)) {
+      start = at + 1;
+      break;
+    }
+  }
+  const block = lines.slice(start);
+  const isIt =
+    block.length <= 16 &&
+    (block[block.length - 1] ?? "").includes("Enter to confirm") &&
+    block.some((line) => line.includes("Quick safety check") || line.includes("Do you trust the files in this folder"));
+  return isIt ? block : undefined;
 }
 
+export function isTheQuestion(screen: string): boolean {
+  return questionLines(screen) !== undefined;
+}
+
+/**
+ * Whether the question is on the screen, and where its pointer is — in the
+ * question's own lines. Undefined when it is not the question: the words
+ * quoted in a conversation, say, have no pointer in front of them.
+ */
 export function trustPointer(screen: string): Pointer | undefined {
-  if (!isTheQuestion(screen) || !screen.includes(YES) || !screen.includes(NO)) return undefined;
-  const lines = screen.split("\n").filter((line) => line.trim() !== "");
-  const yes = lines.findIndex((line) => line.includes(YES));
-  for (let at = 0; at < lines.length; at++) {
-    const line = lines[at].trim();
+  const block = questionLines(screen);
+  if (!block || !block.some((line) => line.includes(YES)) || !block.some((line) => line.includes(NO))) return undefined;
+  // One pointer only: another question (a permission) showing these lines in a file brings its own too, and Enter
+  // would approve what it asks.
+  if (block.filter((line) => line.startsWith("❯")).length !== 1) return undefined;
+  const yes = block.findIndex((line) => line.includes(YES));
+  for (let at = 0; at < block.length; at++) {
+    const line = block[at];
     if (!line.startsWith("❯")) continue;
     if (line.includes(YES)) return { on: "yes" };
     if (line.includes(NO)) return { on: "no", yes: yes > at ? "below" : "above" };

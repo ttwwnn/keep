@@ -47,6 +47,74 @@ describe("the question on the screen", () => {
   });
 });
 
+describe("the question under what the shell already showed", () => {
+  // A tab that left another Claude (`/exit`) and resumed the conversation: Claude Code 2.1.3xx draws the question
+  // under a rule, below the shell's lines (the screen of 10/11/2026, with other names).
+  const shellBefore = [
+    "Last login: Tue Nov 10 15:50:58 on ttys004",
+    "pessoa@mac ~ % env -u CODEX_HOME KEEP_IA_ESCOLHA=claude:ana /usr/local/bin/claude --allow-dangerously-skip-permis",
+    "sions --effort max --resume 00000000-0000-4000-8000-000000000000",
+    "",
+    "Resume this session with:",
+    "claude --allow-dangerously-skip-permissions --effort max --resume 00000000-0000-4000-8000-000000000000",
+    "pessoa@mac ~ % KEEP_IA_ESCOLHA=claude:ana claude --resume 00000000-0000-4000-8000-0000000000",
+    "00",
+  ].join("\n");
+  const question = [
+    " Accessing workspace:",
+    "",
+    " /Users/ana",
+    "",
+    " Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open",
+    " source project, or work from your team). If not, take a moment to review what's in this folder first.",
+    "",
+    " Claude Code'll be able to read, edit, and execute files here.",
+    "",
+    " Security guide",
+    "",
+    " ❯ No, exit",
+    "   Yes, I trust this folder",
+    "",
+    " Enter to confirm · Esc to cancel",
+    "",
+  ].join("\n");
+  const rule = "─".repeat(100);
+  const underShell = `${shellBefore}\n${rule}\n${question}`;
+
+  it("is the question, though the whole screen is past 16 lines", () => {
+    expect(underShell.split("\n").filter((line) => line.trim() !== "").length).toBeGreaterThan(16);
+    expect(trustPointer(underShell)).toEqual({ on: "no", yes: "below" });
+    const onYes = underShell.replace("❯ No, exit", "  No, exit").replace("  Yes, I trust", "❯ Yes, I trust");
+    expect(trustPointer(onYes)).toEqual({ on: "yes" });
+  });
+
+  it("reads the question's pointer, not the words a `cat` left above", () => {
+    expect(trustPointer(`❯ Yes, I trust this folder\n${underShell}`)).toEqual({ on: "no", yes: "below" });
+  });
+
+  it("is not a permission that shows the question's lines in a file: two pointers", () => {
+    const permission = [
+      rule,
+      " Create file x.txt",
+      " Quick safety check: Is this a project you created or one you trust?",
+      " ❯ Yes, I trust this folder",
+      "   No, exit",
+      " Do you want to create x.txt?",
+      " ❯ 1. Yes",
+      "   2. No",
+      "",
+      " Enter to confirm · Esc to cancel",
+      "",
+    ].join("\n");
+    expect(trustPointer(permission)).toBeUndefined();
+  });
+
+  it("wants its footer at the foot of the screen, and no prompt box under it", () => {
+    expect(trustPointer(`${underShell} depois do rodapé\n`)).toBeUndefined();
+    expect(trustPointer(`${underShell}${rule}\n❯ \n${rule}\n`)).toBeUndefined();
+  });
+});
+
 describe("the key that answers it", () => {
   it("moves the pointer toward the yes, and presses Enter only on it", () => {
     expect(trustKey({ on: "no", yes: "below" })).toBe("\x1b[B");

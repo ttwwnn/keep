@@ -204,7 +204,11 @@ e o Claude fica de fora da renovação do armazém.
     antes.") e o Claude sobe no login global;
   - "confiar nesta pasta?" é respondido sim (`keep ia confiar <shell>`, solto em segundo plano), só onde a
     pasta não traz o que o Claude Code executa ao abrir (`keep ia pode-confiar`, abaixo); ali a pergunta fica
-    para a pessoa;
+    para a pessoa. A pergunta é o bloco no pé da tela, depois da última régua: termina no rodapé dela ("Enter
+    to confirm"), tem o cabeçalho e no máximo 16 linhas. O que o shell mostrava antes (um `/exit` na mesma aba,
+    o comando que subiu o Claude) fica acima da régua e não conta. A pergunta impressa numa conversa fica acima
+    da caixa de entrada e também não conta. A mesma regra vale no app do Mac (`ClaudeTrustDialog`) e no do
+    Windows (`trust.ts`);
   - o programa sobe pelo `confinar` (preso à pasta do workspace quando há uma; ver "O que a IA presa
     alcança", abaixo);
   - o que não abre conversa (`claude mcp|update|auth|doctor|plugin…`, `--version`, `--help`) roda
