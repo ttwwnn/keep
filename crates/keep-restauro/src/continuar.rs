@@ -499,13 +499,20 @@ pub struct Conversa {
     pub rotulo: String,
 }
 
+/// As sessões do Claude gravadas em `~/.claude/sessions` e nas configurações das IAs presas, estas só com o `cwd`
+/// dentro da pasta presa (`keep_ia::caminhos::pastas_de_sessoes`). A de `~/.claude` vem primeiro e vence.
 fn sessoes_brutas() -> HashMap<u32, Value> {
-    let pasta = keep_ia::caminhos::claude().join("sessions");
     let mut saida = HashMap::new();
-    for e in std::fs::read_dir(&pasta).into_iter().flatten().flatten() {
-        let Ok(v) = serde_json::from_slice::<Value>(&std::fs::read(e.path()).unwrap_or_default()) else { continue };
-        if let Some(pid) = v.get("pid").and_then(Value::as_u64) {
-            saida.insert(pid as u32, v);
+    for (pasta, presa) in keep_ia::caminhos::pastas_de_sessoes() {
+        for e in std::fs::read_dir(&pasta).into_iter().flatten().flatten() {
+            let Ok(v) = serde_json::from_slice::<Value>(&std::fs::read(e.path()).unwrap_or_default()) else { continue };
+            let cwd = v.get("cwd").and_then(Value::as_str).unwrap_or_default();
+            if !keep_ia::caminhos::sessao_da_pasta(cwd, presa.as_deref()) {
+                continue;
+            }
+            if let Some(pid) = v.get("pid").and_then(Value::as_u64) {
+                saida.entry(pid as u32).or_insert(v);
+            }
         }
     }
     saida

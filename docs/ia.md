@@ -285,14 +285,49 @@ abrir, sai depois:
   de tudo), o que não impede criar nada dentro dela.
 
 Provado com o Claude Code 2.1.319 de verdade, uma negação por vez: login, conversa nova e retomada, no `-p` e
-no terminal (com a pergunta de confiança). Os ganchos globais que gravam log em `hooks/` já ignoram a falha.
-Ainda ao alcance da IA presa, por o CLI gravar ali ao abrir: o `~/.claude.json` (um servidor MCP de escopo de
-usuário gravado nele sobe em toda sessão), `shell-snapshots/` e `session-env/` (o retrato do shell e o
-ambiente que cada sessão relê a cada comando Bash), e para ler `history.jsonl`, `file-history/`, `uploads/`,
-`paste-cache/` e `plans/`, que juntam os de todos os projetos. Também o Chaveiro (os itens do Claude confiam
-no `security`) e a rede. Um script que a configuração global cita e que fica dentro da pasta presa continua da IA
-presa, como o resto da pasta: ao prender uma pasta, os ganchos globais que rodam um script dela passam a rodar o
-que a IA deixar ali. Fechar tudo isso pede um `CLAUDE_CONFIG_DIR` próprio para a IA presa.
+no terminal (com a pergunta de confiança). Os ganchos globais que gravam log em `hooks/` já ignoram a falha. Um
+script que a configuração global cita e que fica dentro da pasta presa continua da IA presa, como o resto da
+pasta: ao prender uma pasta, os ganchos globais que rodam um script dela passam a rodar o que a IA deixar ali.
+
+#### A configuração própria do Claude preso
+
+O Claude preso no armazém de login da aba sobe com uma configuração própria (`CLAUDE_CONFIG_DIR` =
+`~/.claude/presas/<nome>`, uma por pasta presa: o nome que o Claude Code dá aos transcritos dela, até 80
+caracteres, e um hash do caminho; `confinar::config_da_presa`). O Keep a monta antes de subir, de fora do sandbox:
+
+- um link para cada item que toda sessão lê ao abrir (os dez acima), que seguem só para ler: a configuração da
+  pessoa vale presa e não se troca por ela;
+- um link para a pasta dos transcritos do projeto (e da subpasta em que o programa começa), que fica onde o Keep e
+  o Claude sem sandbox a acham: a retomada e a lista das conversas não mudam, e as conversas presas de antes
+  continuam lá;
+- o `.claude.json`, refeito a cada subida do `~/.claude.json` da pessoa (as preferências, a conta, os servidores
+  MCP; dos projetos, só os da pasta presa e, dos de cima dela, a raiz do repositório), com o que o Claude preso
+  gravou nos dele por cima;
+- a `.pasta`, com a pasta presa, que o Keep lê para saber de quem são as sessões gravadas ali (o estado de cada
+  aba, a restauração, as worktrees: `caminhos::pastas_de_sessoes`); uma sessão dali só vale com o `cwd` dentro da
+  pasta presa.
+
+O perfil então fecha, para ler e para gravar, o estado do CLI na `~/.claude` de verdade, que o Claude preso não
+usa mais: `shell-snapshots/` e `session-env/` (o retrato do shell e o ambiente que cada sessão relê a cada comando
+Bash), `sessions/` (com o canal de mensagens e a chave de cada sessão), `history.jsonl`, `file-history/`,
+`todos/`, `plans/`, `uploads/`, `paste-cache/`, `ide/`, as outras configurações próprias e o `~/.claude.json`, onde
+um servidor MCP gravado subiria em toda sessão. Da configuração própria, a IA presa grava tudo, menos a `.pasta` e a
+própria pasta. As pastas das ferramentas da pessoa em `~/.claude` (as que os ganchos dela usam) continuam como
+estavam. Em qualquer modo, o perfil nega conectar ao canal de mensagens entre as sessões do Claude Code
+(`/tmp/cc-socks/`), por onde a IA presa mandaria pedidos a uma sessão sem sandbox.
+
+Sem o armazém da aba (sem conta no Keep), o Claude usa o login global, que mora no item do Chaveiro da pasta de
+configuração: noutra pasta ele pediria outro login, e a IA presa fica na `~/.claude` de sempre, ainda alcançando o
+`~/.claude.json`, `shell-snapshots/`, `session-env/` e, para ler, o histórico e as sessões. Com um
+`CLAUDE_CONFIG_DIR` da pessoa, fica o dela.
+
+Provado com o Claude Code 2.1.322 de verdade no armazém de uma aba: login, conversa nova e retomada no `-p` e no
+terminal, na pasta e numa subpasta; a sessão nasce na configuração própria e o transcrito na pasta de verdade.
+Presa, a IA não lê `~/.claude/sessions`, `~/.claude.json` nem `history.jsonl`, não cria em `shell-snapshots/`, lê e
+não grava a configuração da pessoa pelos links, grava na própria, não troca a `.pasta`, não lê transcrito de outro
+projeto, não lista `contas/` e não conecta ao canal de mensagens. Ainda ao alcance dela: o Chaveiro (os itens do
+Claude confiam no `security`), a rede e as pastas das ferramentas da pessoa em `~/.claude`. No Windows, a
+configuração própria ainda não existe.
 
 ### O que a IA presa alcança (Windows)
 

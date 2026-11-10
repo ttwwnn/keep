@@ -42,6 +42,45 @@ pub fn ordem() -> PathBuf {
     contas().join(".ordem")
 }
 
+/// `~/.claude/presas`: a pasta de configuração do Claude de cada pasta presa
+/// (`CLAUDE_CONFIG_DIR`, `confinar::config_da_presa`).
+pub fn presas() -> PathBuf {
+    claude().join("presas")
+}
+
+/// As pastas `sessions` do Claude Code: a de `~/.claude` e a da configuração
+/// de cada IA presa (`presas/<nome>/sessions`), esta com a pasta a que a IA
+/// está presa (`presas/<nome>/.pasta`, que o Keep grava e a IA presa não
+/// troca). Uma configuração sem `.pasta` fica de fora.
+pub fn pastas_de_sessoes() -> Vec<(PathBuf, Option<PathBuf>)> {
+    pastas_de_sessoes_em(&claude().join("sessions"))
+}
+
+/// O mesmo, a partir de uma pasta `sessions`: as das IAs presas ficam ao lado
+/// dela, em `presas/`.
+pub fn pastas_de_sessoes_em(sessoes: &std::path::Path) -> Vec<(PathBuf, Option<PathBuf>)> {
+    let mut pastas = vec![(sessoes.to_path_buf(), None)];
+    let Some(claude) = sessoes.parent() else { return pastas };
+    let mut presas: Vec<PathBuf> =
+        std::fs::read_dir(claude.join("presas")).into_iter().flatten().flatten().map(|e| e.path()).collect();
+    presas.sort();
+    for raiz in presas {
+        let Ok(texto) = std::fs::read_to_string(raiz.join(".pasta")) else { continue };
+        let pasta = PathBuf::from(texto.trim_end_matches(['\n', '\r']));
+        if pasta.is_absolute() {
+            pastas.push((raiz.join("sessions"), Some(pasta)));
+        }
+    }
+    pastas
+}
+
+/// Se uma sessão com este `cwd` pode vir da pasta de sessões de uma IA presa
+/// a `presa`: só de dentro da pasta dela. A IA presa grava na pasta de
+/// sessões dela o que quiser, até a sessão de outro processo.
+pub fn sessao_da_pasta(cwd: &str, presa: Option<&std::path::Path>) -> bool {
+    presa.is_none_or(|p| !cwd.is_empty() && std::path::Path::new(cwd).starts_with(p))
+}
+
 /// `~/.codex`: o login principal do GPT.
 pub fn codex() -> PathBuf {
     casa().join(".codex")
@@ -119,6 +158,24 @@ pub fn grava_privado(caminho: &std::path::Path, dados: &[u8]) -> std::io::Result
 mod testes_privado {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn as_sessoes_das_ias_presas_so_valem_dentro_da_pasta_delas() {
+        let d = tempfile::tempdir().unwrap();
+        let claude = d.path().join(".claude");
+        let presa = claude.join("presas/app-1");
+        std::fs::create_dir_all(presa.join("sessions")).unwrap();
+        std::fs::create_dir_all(claude.join("presas/sem-pasta/sessions")).unwrap();
+        std::fs::write(presa.join(".pasta"), "/projetos/app\n").unwrap();
+        assert_eq!(
+            pastas_de_sessoes_em(&claude.join("sessions")),
+            vec![(claude.join("sessions"), None), (presa.join("sessions"), Some(PathBuf::from("/projetos/app")))]
+        );
+        assert!(sessao_da_pasta("/qualquer", None));
+        assert!(sessao_da_pasta("/projetos/app/sub", Some(std::path::Path::new("/projetos/app"))));
+        assert!(!sessao_da_pasta("/projetos/app-velho", Some(std::path::Path::new("/projetos/app"))));
+        assert!(!sessao_da_pasta("", Some(std::path::Path::new("/projetos/app"))));
+    }
 
     #[test]
     fn grava_privado_cria_a_arvore_0700_e_o_arquivo_0600() {
