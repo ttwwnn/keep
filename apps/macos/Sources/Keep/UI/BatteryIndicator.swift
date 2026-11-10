@@ -37,7 +37,7 @@ final class BatteryIndicator: NSView {
         NSFont.monospacedDigitSystemFont(ofSize: 11 * GhosttyApp.shared.iconScale, weight: .medium)
     }
 
-    /// The time, hours and minutes, written left of the battery.
+    /// The time, hours and minutes, written right of the battery.
     private static let clock: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
@@ -191,13 +191,13 @@ final class BatteryIndicator: NSView {
         let palette = TabStripView.Palette.current
         let size = bodySize
         let body = NSRect(
-            x: bounds.maxX - Self.tipWidth - size.width,
+            x: bounds.maxX - Self.tipWidth - size.width - Self.clockGap - ceil(clockText.size().width),
             y: ((bounds.height - size.height) / 2).rounded(),
             width: size.width, height: size.height)
 
-        // The time, at the left edge, centred on the cell's height.
+        // The time, at the right edge, centred on the cell's height.
         let time = clockText
-        time.draw(at: NSPoint(x: 0, y: body.midY - time.size().height / 2))
+        time.draw(at: NSPoint(x: bounds.maxX - time.size().width, y: body.midY - time.size().height / 2))
 
         // The cell and its tip.
         let radius = min(4, size.height / 3)
