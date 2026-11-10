@@ -604,15 +604,15 @@ pub fn plano(amb: &dyn Ambiente, e: &Entrada) -> Plano {
         // Code dá, no SID da pasta: a IA presa a outra pasta não a vê. Passando de 200, o CLI acrescenta um hash, e
         // não há como criá-la antes.
         let projetos = junta(&claude, "projects");
-        let mut nomes = crate::confinar::projeto_do_claude(Path::new(&e.pasta));
+        let mut nomes = crate::confinar::pastas_exatas_do_claude(Path::new(&e.pasta));
         if dentro_de(&e.pasta, &e.onde) {
-            for nome in crate::confinar::projeto_do_claude(Path::new(&e.onde)) {
+            for nome in crate::confinar::pastas_exatas_do_claude(Path::new(&e.onde)) {
                 if !nomes.contains(&nome) {
                     nomes.push(nome);
                 }
             }
         }
-        for nome in nomes.iter().filter(|n| n.len() < 200) {
+        for nome in &nomes {
             let p = junta(&projetos, nome);
             if !amb.existe(&p) {
                 criar.push(p.clone());
@@ -1622,6 +1622,7 @@ mod testes {
             r"C:\Users\ana\.claude\regras.md",
             r"C:\Users\ana\.claude\todos\x.sh",
             r"C:\Users\ana\ferramentas\fora.ps1",
+            r"C:\Users\ana\AppData\Local\Keep\confine\gancho.ps1",
         ])
         .com_pastas(&[r"C:\Users\ana\.claude\bin", r"C:\Users\ana\.cache"]);
         let mut e = entrada(r"C:\Users\ana\.local\bin\claude.exe");
@@ -1638,6 +1639,7 @@ mod testes {
             (r"C:\Users\ana\ferramentas\fora.ps1".into(), Citado::Executado),
             (r"D:\projetos\app\gancho.ps1".into(), Citado::Executado),
             (claude.into(), Citado::Programas),
+            (r"C:\Users\ana\AppData\Local\Keep\confine\gancho.ps1".into(), Citado::Executado),
         ];
         let p = plano(&amb, &e);
         let tem = |caminho: &str, acesso: Acesso, heranca: bool| {
@@ -1669,6 +1671,8 @@ mod testes {
         assert!(!de(&p, r"D:\projetos\app\gancho.ps1").iter().any(|c| c.acesso.nega()));
         // A própria `.claude` numa lista de programas não se nega inteira: a sessão perderia a gravação.
         assert!(!tem(claude, Acesso::NegaEscrita, true));
+        // Toda área gravável conta, dada antes ou depois de `.claude`: a privada do Keep também.
+        assert!(tem(r"C:\Users\ana\AppData\Local\Keep\confine\gancho.ps1", Acesso::NegaEscrita, false));
         // A casa não ganha negação: fora das áreas, a IA já não a renomeia.
         assert!(!de(&p, CASA).iter().any(|c| c.acesso.nega()));
     }

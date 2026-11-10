@@ -188,6 +188,24 @@ fn formas(p: &Path) -> Vec<String> {
 /// hash, que fica de fora (a regra casa o começo). Em NFC, que é como o CLI normaliza a pasta, e como está, se for
 /// outro.
 pub(crate) fn projeto_do_claude(pasta: &Path) -> Vec<String> {
+    let mut nomes = Vec::new();
+    for nome in nomes_inteiros_do_claude(pasta) {
+        let nome: String = nome.chars().take(200).collect();
+        if !nomes.contains(&nome) {
+            nomes.push(nome);
+        }
+    }
+    nomes
+}
+
+/// Os nomes da pasta dos transcritos que são o nome inteiro dela: até 200, inclusive. Os de um caminho mais longo
+/// levam o hash que o CLI acrescenta, e a pasta não tem como nascer antes de ele a criar.
+pub(crate) fn pastas_exatas_do_claude(pasta: &Path) -> Vec<String> {
+    nomes_inteiros_do_claude(pasta).into_iter().filter(|n| n.len() <= 200).collect()
+}
+
+/// O nome que o Claude Code dá à pasta dos transcritos, antes de cortar nos 200 (cada caractere é ASCII).
+fn nomes_inteiros_do_claude(pasta: &Path) -> Vec<String> {
     use unicode_normalization::UnicodeNormalization;
     let como_esta = pasta.to_string_lossy().into_owned();
     let nfc: String = como_esta.nfc().collect();
@@ -199,7 +217,6 @@ pub(crate) fn projeto_do_claude(pasta: &Path) -> Vec<String> {
                 Some(c) if c.is_ascii_alphanumeric() => c,
                 _ => '-',
             })
-            .take(200)
             .collect();
         if !nomes.contains(&nome) {
             nomes.push(nome);
@@ -937,6 +954,10 @@ mod testes {
         // Passando de 200, só o começo: o CLI põe `-<hash>` depois dos 200.
         let longo = format!("/Users/a/{}", "b".repeat(300));
         assert_eq!(um(&longo)[0].len(), 200);
+        // A pasta que dá para criar antes é a do nome inteiro, até 200 inclusive.
+        let duzentos = format!("/{}", "b".repeat(199));
+        assert_eq!(pastas_exatas_do_claude(Path::new(&duzentos)), vec![format!("-{}", "b".repeat(199))]);
+        assert!(pastas_exatas_do_claude(Path::new(&format!("/{}", "b".repeat(200)))).is_empty());
     }
 
     #[test]
