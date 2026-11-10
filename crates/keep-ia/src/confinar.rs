@@ -716,8 +716,11 @@ fn prepara_config_da_presa(presa: &Path, pasta: &Path, onde: &Path, casa: &Path)
         Err(_) => std::fs::DirBuilder::new().mode(0o700).create(&projetos)?,
     }
     let marca = format!("{}\n", pasta.to_string_lossy());
-    if std::fs::read_to_string(presa.join(".pasta")).ok().as_deref() != Some(marca.as_str()) {
-        std::fs::write(presa.join(".pasta"), &marca)?;
+    let lida = Some(presa.join(".pasta"))
+        .filter(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.is_file()))
+        .and_then(|p| caminhos::ler_texto_ate(&p, 4096).ok());
+    if lida.as_deref() != Some(marca.as_str()) {
+        grava_sem_seguir(&presa.join(".pasta"), marca.as_bytes())?;
     }
     for nome in CLAUDE_SO_LEITURA {
         liga(&claude.join(nome), &presa.join(nome))?;
@@ -851,19 +854,26 @@ fn semeia_claude_json(real: &Path, destino: &Path, pasta: &Path) -> std::io::Res
     }
     novo.insert("projects".into(), Value::Object(projetos));
     let dados = serde_json::to_vec_pretty(&Value::Object(novo)).map_err(std::io::Error::other)?;
-    // O temporário fica onde a IA presa grava o que quiser, até um link para um arquivo da pessoa (`~/.zshrc`): o que
-    // estiver ali sai, e ele nasce novo, sem seguir link (`create_new`). O `rename` troca o destino, link ou não.
-    let tmp = destino.with_file_name(".claude.json.keep");
+    grava_sem_seguir(destino, &dados)
+}
+
+/// Grava `destino` na configuração própria, onde a IA presa grava o que quiser, até um link para um arquivo da pessoa
+/// (`~/.zshrc`) no lugar do temporário ou do próprio destino: o que estiver no lugar do temporário sai, ele nasce
+/// novo, sem seguir link (`create_new`), e o `rename` troca o destino, link ou não, sem segui-lo.
+#[cfg(unix)]
+fn grava_sem_seguir(destino: &Path, dados: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let nome = destino.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let tmp = destino.with_file_name(format!("{nome}.keep"));
     match std::fs::symlink_metadata(&tmp) {
         Ok(m) if m.is_dir() => std::fs::remove_dir_all(&tmp)?,
         Ok(_) => std::fs::remove_file(&tmp)?,
         Err(_) => {}
     }
     {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
         let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
-        f.write_all(&dados)?;
+        f.write_all(dados)?;
         f.sync_all()?;
     }
     std::fs::rename(&tmp, destino)
@@ -1408,6 +1418,10 @@ mod testes {
         std::fs::write(&da_pessoa, "intocado\n").unwrap();
         std::fs::create_dir_all(&pasta_da_pessoa).unwrap();
         std::os::unix::fs::symlink(&da_pessoa, presa.join(".claude.json.keep")).unwrap();
+        // (e uma `.pasta` que é link para o mesmo arquivo, e o temporário dela)
+        std::fs::remove_file(presa.join(".pasta")).unwrap();
+        std::os::unix::fs::symlink(&da_pessoa, presa.join(".pasta")).unwrap();
+        std::os::unix::fs::symlink(&da_pessoa, presa.join(".pasta.keep")).unwrap();
         std::fs::remove_dir_all(presa.join("projects")).unwrap();
         std::os::unix::fs::symlink(&pasta_da_pessoa, presa.join("projects")).unwrap();
         prepara_config_da_presa(&presa, &c.pasta, &c.pasta, &c.casa).unwrap();
@@ -1415,6 +1429,8 @@ mod testes {
         assert_eq!(std::fs::read_dir(&pasta_da_pessoa).unwrap().count(), 0, "nada nasce na pasta da pessoa");
         assert!(std::fs::symlink_metadata(presa.join("projects")).unwrap().is_dir());
         assert!(std::fs::symlink_metadata(presa.join(".claude.json")).unwrap().is_file());
+        assert!(std::fs::symlink_metadata(presa.join(".pasta")).unwrap().is_file());
+        assert_eq!(std::fs::read_to_string(presa.join(".pasta")).unwrap(), format!("{pasta}\n"));
         // Uma pasta de transcritos de verdade na configuração própria (de um nome que não tinha como ser ligado) fica
         // com o que tem; um arquivo no lugar de um link dá lugar a ele.
         let nome = projeto_do_claude(&c.pasta).remove(0);
