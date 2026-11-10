@@ -1410,6 +1410,11 @@ mod testes {
         assert_ne!(atributos & 0x0000_0080, 0, "FILE_READ_ATTRIBUTES");
         assert_ne!(Acesso::Gravacao.mascara() & 0x0001_0000, 0, "DELETE");
         assert_eq!(Acesso::Leitura.mascara() & 0x0001_0000, 0);
+        // Nem FILE_DELETE_CHILD: com ele numa pasta (`.claude`), a IA apagaria o que está nela, mesmo com o DELETE
+        // negado no item, e o recriaria sem a negação.
+        for a in [Acesso::Leitura, Acesso::Gravacao, Acesso::Atributos] {
+            assert_eq!(a.mascara() & 0x0000_0040, 0, "FILE_DELETE_CHILD em {a:?}");
+        }
     }
 
     #[test]

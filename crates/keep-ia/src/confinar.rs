@@ -280,10 +280,15 @@ fn executados_pela_configuracao_em(claude: &Path, casa: &Path, windows: bool) ->
         }
     }
     let saida = regex::Regex::new(r#"(?:\d|&)?>>?\s*(?:"[^"]*"|'[^']*'|[^\s;|&()]+)"#).expect("regex fixa");
-    let solto = regex::Regex::new(
-        r#"(?:(?:~|\$HOME|\$\{HOME\}|(?i:%USERPROFILE%|\$env:USERPROFILE))?[/\\]|\b[A-Za-z]:[/\\])[^\s"'`;|&()<>]+"#,
-    )
-    .expect("regex fixa");
+    // No Unix, o caminho começa por `/`, com ou sem a casa antes. No Windows, também `\` depois da casa e a unidade
+    // (`C:\`), mas nunca um `\` sozinho: o `\$HOME/x.sh` de um `sh -c "…"` (a expansão adiada para o shell de dentro)
+    // seria lido inteiro e perdido, em vez do `$HOME/x.sh`.
+    let solto = if windows {
+        r#"(?:(?:~|\$HOME|\$\{HOME\}|(?i:%USERPROFILE%|\$env:USERPROFILE))[/\\]|/|\b[A-Za-z]:[/\\])[^\s"'`;|&()<>]+"#
+    } else {
+        r#"(?:~|\$HOME|\$\{HOME\})?/[^\s"'`;|&()<>]+"#
+    };
+    let solto = regex::Regex::new(solto).expect("regex fixa");
     let mut achados: Vec<(PathBuf, bool)> = Vec::new();
     for nome in ["settings.json", "settings.local.json"] {
         let Ok(texto) = caminhos::ler_texto_ate(&claude.join(nome), caminhos::LEITURA_MAXIMA) else { continue };
@@ -1133,6 +1138,7 @@ mod testes {
                 {"command": gancho},
                 {"command": r#"bash "$HOME/.claude/meus scripts/b.sh"; sh <~/.claude/c.sh 2>&1"#},
                 {"command": r#"bash -c "source ~/.claude/lib.sh; roda" && sh -c '~/.claude/x.sh --flag'"#},
+            {"command": r#"sh -c "exec \$HOME/.claude/adiado.sh""#},
                 {"command": "python3 /tmp/gancho.py && cat /dev/null"},
             ]}]},
         });
@@ -1156,6 +1162,7 @@ mod testes {
             casa.join(".claude/c.sh"),
             casa.join(".claude/lib.sh"),
             casa.join(".claude/x.sh"),
+            casa.join(".claude/adiado.sh"),
             PathBuf::from("/tmp/gancho.py"),
             PathBuf::from("/bin/sh"),
             PathBuf::from("/opt/ferramenta/bin"),
@@ -1204,7 +1211,10 @@ mod testes {
         std::fs::create_dir_all(&claude).unwrap();
         let config = serde_json::json!({
             "statusLine": {"command": r#"powershell -NoProfile -File "%USERPROFILE%\.claude\linha de status.ps1""#},
-            "hooks": {"Stop": [{"hooks": [{"command": r#"pwsh -c "& $env:USERPROFILE\.claude\gancho.ps1 2>> C:\Users\ana\log.txt""#}]}]},
+            "hooks": {"Stop": [{"hooks": [
+                {"command": r#"pwsh -c "& $env:USERPROFILE\.claude\gancho.ps1 2>> C:\Users\ana\log.txt""#},
+                {"command": r#"sh -c "exec \$HOME/.claude/adiado.sh""#},
+            ]}]},
             "env": {"PATH": r"C:\Users\ana\.claude\bin;%PATH%"},
         });
         std::fs::write(claude.join("settings.json"), config.to_string()).unwrap();
@@ -1215,6 +1225,7 @@ mod testes {
         for esperado in [
             (r"C:\Users\ana\.claude\linha de status.ps1", false),
             (r"C:\Users\ana\.claude\gancho.ps1", false),
+            (r"C:\Users\ana\.claude\adiado.sh", false),
             (r"C:\Users\ana\.claude\bin", true),
         ] {
             assert!(achados.contains(&(esperado.0.to_string(), esperado.1)), "{esperado:?} em {achados:?}");
