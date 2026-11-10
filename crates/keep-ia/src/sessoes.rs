@@ -41,7 +41,7 @@ impl SessaoClaude {
 /// O `procStart` que o Claude grava ("Sat Oct  3 22:57:57 2026", em UTC) é
 /// o do processo dono do pid agora? Um pid reaproveitado deixa o arquivo
 /// velho apontando para outro processo.
-fn mesmo_processo(d: &Value, pid: u32) -> bool {
+pub fn mesmo_processo(d: &Value, pid: u32) -> bool {
     let Some(p) = processos::um(pid) else { return false };
     if let Some(texto) = d.get("procStart").and_then(Value::as_str) {
         let normal = texto.split_whitespace().collect::<Vec<_>>().join(" ");

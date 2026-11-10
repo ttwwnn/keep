@@ -511,9 +511,12 @@ fn sessoes_brutas() -> HashMap<u32, Value> {
             if !keep_ia::caminhos::sessao_da_pasta(cwd, presa.as_deref()) {
                 continue;
             }
-            if let Some(pid) = v.get("pid").and_then(Value::as_u64) {
-                saida.entry(pid as u32).or_insert(v);
+            let Some(pid) = v.get("pid").and_then(Value::as_u64).and_then(|p| u32::try_from(p).ok()) else { continue };
+            // A IA presa grava na pasta de sessões dela o que quiser: dali, só a sessão do processo que a gravou.
+            if presa.is_some() && !keep_ia::sessoes::mesmo_processo(&v, pid) {
+                continue;
             }
+            saida.entry(pid).or_insert(v);
         }
     }
     saida

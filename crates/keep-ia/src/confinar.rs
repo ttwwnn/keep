@@ -714,17 +714,59 @@ fn prepara_config_da_presa(presa: &Path, pasta: &Path, onde: &Path, casa: &Path)
         }
     }
     // Passando de 200, o CLI acrescenta um hash ao nome, e a pasta nasce na configuração própria.
+    let mut ligacoes = Vec::new();
     for nome in &nomes {
         let real = claude.join("projects").join(nome);
         std::fs::create_dir_all(&real)?;
-        let link = presa.join("projects").join(nome);
-        // Uma pasta de verdade ali (de quando o nome não tinha como ser ligado) fica, com o que tem.
-        if std::fs::symlink_metadata(&link).is_ok_and(|m| !m.file_type().is_symlink()) {
-            continue;
-        }
-        liga(&real, &link)?;
+        ligacoes.push((nome.clone(), real));
     }
+    liga_os_projetos(&projetos, &ligacoes)?;
     semeia_claude_json(&casa.join(".claude.json"), &presa.join(".claude.json"), pasta)
+}
+
+/// Os links dos transcritos dentro de `projetos`, por um descritor da pasta aberto sem seguir link: outra aba presa à
+/// mesma pasta, rodando, que troque `projects/` por um link no meio da montagem não a leva para outro lugar. Uma
+/// pasta de verdade ali (de quando o nome não tinha como ser ligado) fica, com o que tem; o resto dá lugar ao link.
+#[cfg(unix)]
+fn liga_os_projetos(projetos: &Path, ligacoes: &[(String, PathBuf)]) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    struct Descritor(libc::c_int);
+    impl Drop for Descritor {
+        fn drop(&mut self) {
+            unsafe { libc::close(self.0) };
+        }
+    }
+    let texto = |b: &[u8]| CString::new(b).map_err(std::io::Error::other);
+    let falhou = |r: libc::c_int| if r == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) };
+    let pasta = texto(projetos.as_os_str().as_bytes())?;
+    // SAFETY: caminho terminado em zero; o descritor fecha no `Drop`.
+    let fd = unsafe { libc::open(pasta.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let fd = Descritor(fd);
+    for (nome, alvo) in ligacoes {
+        let (n, a) = (texto(nome.as_bytes())?, texto(alvo.as_os_str().as_bytes())?);
+        // SAFETY: `stat` é só dados; os caminhos terminam em zero e são relativos ao descritor aberto acima.
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::fstatat(fd.0, n.as_ptr(), &mut st, libc::AT_SYMLINK_NOFOLLOW) } == 0 {
+            match st.st_mode & libc::S_IFMT {
+                libc::S_IFDIR => continue,
+                libc::S_IFLNK => {
+                    let mut lido = vec![0u8; 4096];
+                    let n_lido = unsafe { libc::readlinkat(fd.0, n.as_ptr(), lido.as_mut_ptr().cast(), lido.len()) };
+                    if usize::try_from(n_lido).is_ok_and(|t| &lido[..t] == alvo.as_os_str().as_bytes()) {
+                        continue;
+                    }
+                    falhou(unsafe { libc::unlinkat(fd.0, n.as_ptr(), 0) })?;
+                }
+                _ => falhou(unsafe { libc::unlinkat(fd.0, n.as_ptr(), 0) })?,
+            }
+        }
+        falhou(unsafe { libc::symlinkat(a.as_ptr(), fd.0, n.as_ptr()) })?;
+    }
+    Ok(())
 }
 
 /// `link` passa a apontar para `alvo`, que existe; sem `alvo`, um link que estava ali sai, e o que a IA presa criou no
@@ -1356,6 +1398,17 @@ mod testes {
         assert_eq!(std::fs::read_dir(&pasta_da_pessoa).unwrap().count(), 0, "nada nasce na pasta da pessoa");
         assert!(std::fs::symlink_metadata(presa.join("projects")).unwrap().is_dir());
         assert!(std::fs::symlink_metadata(presa.join(".claude.json")).unwrap().is_file());
+        // Uma pasta de transcritos de verdade na configuração própria (de um nome que não tinha como ser ligado) fica
+        // com o que tem; um arquivo no lugar de um link dá lugar a ele.
+        let nome = projeto_do_claude(&c.pasta).remove(0);
+        std::fs::remove_file(presa.join("projects").join(&nome)).unwrap();
+        std::fs::create_dir_all(presa.join("projects").join(&nome)).unwrap();
+        std::fs::write(presa.join("projects").join(&nome).join("t.jsonl"), "{}\n").unwrap();
+        let sub = projeto_do_claude(&c.pasta.join("sub")).remove(0);
+        std::fs::write(presa.join("projects").join(&sub), "lixo").unwrap();
+        prepara_config_da_presa(&presa, &c.pasta, &c.pasta.join("sub"), &c.casa).unwrap();
+        assert!(presa.join("projects").join(&nome).join("t.jsonl").is_file());
+        assert_eq!(std::fs::read_link(presa.join("projects").join(&sub)).unwrap(), c.claude.join("projects").join(&sub));
         // Sem o `.claude.json` da pessoa, o dela fica.
         std::fs::remove_file(c.casa.join(".claude.json")).unwrap();
         prepara_config_da_presa(&presa, &c.pasta, &c.pasta, &c.casa).unwrap();
