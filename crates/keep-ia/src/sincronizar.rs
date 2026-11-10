@@ -269,12 +269,17 @@ pub fn rodada() -> Value {
             continue;
         }
         // Com o Claude aberto no login global, nunca: trocar a conta dele
-        // seria sair e voltar. A ordem global (o kit) é que o leva.
+        // seria sair e voltar. Com o kit, a ordem global é que o leva; sem
+        // ele, só a pessoa, saindo e retomando a conversa na aba.
         if s.claude_aberto && !s.armazem_proprio {
             if !atual_livre {
                 pendentes.push(refe(
                     "claude-global",
-                    "O Claude da aba usa o login global (aberto antes da troca a quente); a conta dele muda com a ordem global.",
+                    if contas::gerente_externo() {
+                        "O Claude da aba roda no login global; a conta dele muda com a ordem global."
+                    } else {
+                        "O Claude da aba roda no login global, sem o login próprio da aba: a conta dele só troca saindo dele (/exit) e retomando a conversa na aba (claude --resume)."
+                    },
                 ));
             }
             continue;

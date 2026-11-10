@@ -25,8 +25,13 @@
 //!   `keep.json`, deixa de ser dona da conta) e a troca é a quente; se ela
 //!   era a única dona da conta, a credencial inteira MUDA para uma pasta fixa
 //!   nova antes (nunca uma cópia: o refresh fica num lugar só);
-//! - no login global: a troca individual é recusada (a ordem global, do kit,
-//!   continua trocando todas sem sair).
+//! - no login global: a troca individual é recusada (com o kit, a ordem
+//!   global continua trocando todas sem sair; sem ele, a pessoa sai do Claude
+//!   e retoma a conversa na aba, que sobe no armazém dela).
+//!
+//! O armazém de uma aba nasce mesmo sem rede: com o acesso do dono vencido e
+//! a renovação falhando, ele leva o acesso que o dono tem, e a renovação o
+//! alimenta quando a rede volta. O Claude nunca sobe fora dele por isso.
 //!
 //! Um login feito dentro de uma aba (`/login`) cai no armazém dela, com
 //! refresh: ele é a escolha da aba, e a credencial muda para uma pasta fixa
@@ -278,6 +283,32 @@ fn tem_dono(conta: &Conta, exceto: Option<&Path>) -> bool {
             _ => {}
         }
         local_de(&a).is_some_and(|l| contas::login_roda(credencial::ler(&l), &a))
+    })
+}
+
+/// O `claudeAiOauth` do dono que roda, com o acesso vencido ou não: o que vai
+/// para o armazém de uma aba que nasce quando a renovação não trouxe o acesso
+/// novo (sem rede, ou o servidor recusando agora). O Claude sobe no armazém
+/// da aba e volta a falar quando a renovação espalhar o acesso novo nele.
+/// Subir fora dele (no login global, ou na pasta do dono) deixaria a conta
+/// do Claude sem troca enquanto ele vivesse: em 10/11/2026 a restauração das
+/// 15:51, sem rede, pôs a aba Geral no login global, presa na IA·2 com a
+/// semanal a 100% e a IA·1 livre.
+fn acesso_guardado(conta: &Conta) -> Option<Value> {
+    if conta.engine != Motor::Claude {
+        return None;
+    }
+    // Com o kit, o global não conta (como em `tem_dono`): ele muda de dono
+    // quando o kit quer, e o acesso vencido dele pode ser de outra conta.
+    let externo = contas::gerente_externo();
+    candidatos(conta).into_iter().filter(|a| !(externo && matches!(a, Armazem::Global))).find_map(|a| {
+        let local = local_de(&a)?;
+        let Lido::Ok(valor) = credencial::ler(&local) else { return None };
+        let o = Oauth::de(&valor)?;
+        if o.recusado() || o.acesso.is_none() || crate::renovar::morto(&a, &o) {
+            return None;
+        }
+        valor.get("claudeAiOauth").cloned()
     })
 }
 
@@ -611,7 +642,10 @@ pub fn preparar(ws: &str, shell: u32, escolha: Option<&str>, conta: Option<&Cont
             Recusa::nova("sem-conta", "Essa conta não está no Keep. Entre nela pelo + do rodapé.")
         }
     })?;
-    let f = fonte_renovando(alvo).ok_or_else(|| {
+    // Sem o acesso em dia (a renovação falhou agora), o armazém nasce com o
+    // que o dono tem, e a renovação o alimenta: o Claude da aba nunca sobe
+    // fora do armazém dela por falta de rede.
+    let oauth = fonte_renovando(alvo).map(|f| f.oauth).or_else(|| acesso_guardado(alvo)).ok_or_else(|| {
         Recusa::nova(
             "precisa-login",
             format!(
@@ -624,7 +658,7 @@ pub fn preparar(ws: &str, shell: u32, escolha: Option<&str>, conta: Option<&Cont
     cria_pasta(&pasta).map_err(|e| Recusa::nova("erro", e.to_string()))?;
     {
         let t = TravasDaPasta::pega(&pasta).map_err(|e| Recusa::nova("ocupada", e))?;
-        grava_travado(&t, &pasta, &so_acesso(&f.oauth)).map_err(|e| Recusa::nova("erro", e))?;
+        grava_travado(&t, &pasta, &so_acesso(&oauth)).map_err(|e| Recusa::nova("erro", e))?;
     }
     let mut estado = le_estado();
     let legada = antes.as_ref().is_some_and(|r| r.legada);
@@ -680,6 +714,20 @@ pub enum Feito {
     Trocou(String),
 }
 
+/// O caminho de um Claude que roda fora do login próprio da aba (no login
+/// global, ou numa pasta que outro Claude também usa): sair dele e retomar a
+/// conversa na aba, onde ele sobe no armazém dela (a função `claude` do
+/// shell). Quem sai é a pessoa: o Keep não tira o Claude de ninguém para
+/// trocar a conta (pedido de 12/10/2026).
+fn como_reabrir(pid: u32) -> String {
+    let retomar = crate::abas::conversa_do_processo(pid, "claude")
+        .map(|id| format!("claude --resume {id}"))
+        .unwrap_or_else(|| "claude --resume".into());
+    format!(
+        "Para trocar a conta desta aba, saia do Claude (/exit) e retome a conversa nela ({retomar}): ela volta no login próprio da aba e, daí em diante, troca de conta sem sair."
+    )
+}
+
 /// A pasta fixa de antes em que um Claude roda vira o armazém da aba dele:
 /// só se ninguém mais roda nela. O login inteiro sai dela (muda para uma
 /// pasta nova se ela era a única dona da conta), e o `keep.json` a marca.
@@ -692,9 +740,10 @@ fn converte(pasta: &Path, pid: u32, lista: &[Conta]) -> Result<Option<donos::Don
         return Err(Recusa::nova(
             "pasta-compartilhada",
             format!(
-                "O login desta aba ({}) é usado também por outro Claude (processo {}). Trocar a conta dele aqui trocaria a dos dois; escolha a conta quando só esta aba usar essa pasta.",
+                "O login desta aba ({}) é usado também por outro Claude (processo {}): trocar a conta dele aqui trocaria a dos dois. {}",
                 pasta.display(),
-                outros.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", ")
+                outros.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", "),
+                como_reabrir(pid)
             ),
         ));
     }
@@ -732,9 +781,16 @@ pub fn trocar_processo(
     lista: &[Conta],
 ) -> Result<Feito, Recusa> {
     let Some(pasta) = processos::variavel(pid, VAR).filter(|v| !v.is_empty()).map(PathBuf::from) else {
+        // Sem o kit, ninguém troca a conta do login global pela ordem: ela só
+        // muda com um /login.
+        let ordem = if contas::gerente_externo() {
+            "A conta dele muda com a ordem de prioridade, junto com a das outras abas no login global, sem sair."
+        } else {
+            "A conta dele não troca sem sair."
+        };
         return Err(Recusa::nova(
             "claude-global",
-            "O Claude desta aba usa o login global: foi aberto antes da troca a quente. A conta dele muda com a ordem de prioridade, junto com a das outras abas no login global, sem sair; para esta aba trocar sozinha, o próximo Claude aberto nela já vem pronto para isso.",
+            format!("O Claude desta aba roda no login global, sem o login próprio da aba. {ordem} {}", como_reabrir(pid)),
         ));
     };
     let registro = registro_da_pasta(&pasta);

@@ -158,7 +158,11 @@ assim que o cache de login venceu e a aba ficou livre.
   processo diz só as de quando ele subiu).
 - De onde vem o acesso: o dono da conta, com o acesso em dia (sem o kit, o global quando é dela; as
   pastas fixas dela; com o kit, o global por último). Dono com o acesso vencido: uma rodada da
-  renovação antes. Seguir a ordem = a primeira do Claude disponível da fila (pela última medição);
+  renovação antes; se ela não traz o acesso novo (sem rede, o servidor recusando agora, outra rodada
+  em curso), o armazém nasce com o acesso que o dono tem, e a renovação o alimenta quando puder. Só
+  a conta sem dono que rode (sem refresh, ou com o refresh recusado) dá `precisa-login`: um Claude
+  fora do armazém da aba não troca mais de conta sem sair (10/11/2026: a restauração sem rede subiu
+  conversas no login global e na pasta do dono, e a aba presa na IA·2 a 100% não saía dela). Seguir a ordem = a primeira do Claude disponível da fila (pela última medição);
   nenhuma disponível: com o kit, a conta que ele pôs no login global (`.ativa`), e sem ele a primeira
   que roda. O app mostra a mesma regra (`AIChoices.followed`), nunca a conta do login global.
 - A gravação num armazém de aba muda só a chave `claudeAiOauth` (os `mcpOAuth` que o Claude da aba
@@ -176,8 +180,10 @@ assim que o cache de login venceu e a aba ficou livre.
   o login inteiro sai dela — muda para uma pasta fixa nova se ela era a única dona da conta (com o
   kit, o global não conta como outra dona: ele muda de conta quando o kit quer). Pasta
   fixa usada por mais de um Claude: `pasta-compartilhada`. Claude no login global (sem variável):
-  `claude-global` — a conta dele muda com a ordem global, junto com as outras abas no global; o
-  próximo Claude aberto na aba já vem no armazém dela.
+  `claude-global` — com o kit, a conta dele muda com a ordem global, junto com as outras abas no
+  global; sem ele, nada a muda. Nos dois casos o Keep não sai do Claude: a recusa diz à pessoa que
+  saia dele (`/exit`) e retome a conversa na aba (`claude --resume <id>`, com o id), e o Claude
+  volta no armazém da aba, onde a conta troca sem sair.
 - Quem desligar o app por mais de umas 8 h deixa as abas sem acesso válido: a primeira rodada da
   renovação ao abrir renova os donos e espalha, e cada aba volta no pedido seguinte.
 
