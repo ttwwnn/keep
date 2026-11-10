@@ -131,25 +131,43 @@ pub fn cli_pode(a: &Args) -> i32 {
     }
 }
 
-/// A tela é a pergunta e mais nada: tem o cabeçalho e o rodapé dela, poucas linhas e nenhuma caixa de entrada (duas
-/// réguas em volta do `❯`), que toda conversa traz. Essas linhas impressas dentro de uma conversa (um arquivo que o
-/// modelo leu, um `cat`) não são ela: responder apertaria Enter no que a conversa tivesse à vista.
-pub fn e_a_pergunta(tela: &str) -> bool {
+/// As linhas da pergunta, quando ela é o que está no pé da tela: o bloco depois da última régua (a tela inteira, se
+/// não há régua), que termina no rodapé dela, com o cabeçalho e poucas linhas. O Claude Code desenha a pergunta sob
+/// uma régua, logo abaixo do que o shell já mostrava (o comando que o subiu; numa aba que saiu de outro Claude, o
+/// `/exit` e o "Resume this session"), e isso fica acima dela, de fora: em 10/11/2026 essas linhas passaram das 16 da
+/// tela inteira, e a pergunta de uma conversa retomada na mesma aba ficou sem resposta. Uma conversa traz no pé a
+/// caixa de entrada (duas réguas em volta do `❯`) e o rodapé dela: a pergunta impressa no meio da conversa (um
+/// arquivo que o modelo leu, um `cat`) fica acima da última régua e não é ela, e responder apertaria Enter no que a
+/// conversa tivesse à vista.
+fn bloco_da_pergunta(tela: &str) -> Option<Vec<&str>> {
     let linhas: Vec<&str> = tela.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
-    linhas.len() <= 16
-        && (tela.contains("Quick safety check") || tela.contains("Do you trust the files in this folder"))
-        && tela.contains("Enter to confirm")
-        && linhas.iter().filter(|l| l.starts_with(&"─".repeat(12))).count() <= 1
+    let regua = "─".repeat(12);
+    let inicio = linhas.iter().rposition(|l| l.starts_with(&regua)).map_or(0, |i| i + 1);
+    let bloco = linhas[inicio..].to_vec();
+    let e = bloco.len() <= 16
+        && bloco.last().is_some_and(|l| l.contains("Enter to confirm"))
+        && bloco.iter().any(|l| l.contains("Quick safety check") || l.contains("Do you trust the files in this folder"));
+    e.then_some(bloco)
+}
+
+pub fn e_a_pergunta(tela: &str) -> bool {
+    bloco_da_pergunta(tela).is_some()
 }
 
 /// Onde o ponteiro da pergunta está: `Some(true)` no sim, `Some(false)` no
-/// não, `None` quando a pergunta não está na tela.
+/// não, `None` quando a pergunta não está na tela. Só nas linhas dela.
 pub fn ponteiro(tela: &str) -> Option<bool> {
-    if !e_a_pergunta(tela) || !tela.contains("Yes, I trust this folder") || !tela.contains("No, exit") {
+    let bloco = bloco_da_pergunta(tela)?;
+    let tem = |texto: &str| bloco.iter().any(|l| l.contains(texto));
+    if !tem("Yes, I trust this folder") || !tem("No, exit") {
         return None;
     }
-    for linha in tela.lines() {
-        let t = linha.trim();
+    // Um ponteiro só: outra pergunta (uma permissão) que mostre num arquivo as linhas desta traz o dela também, e o
+    // Enter aprovaria o que ela pede.
+    if bloco.iter().filter(|l| l.starts_with('❯')).count() != 1 {
+        return None;
+    }
+    for t in bloco {
         if !t.starts_with('❯') {
             continue;
         }
@@ -161,6 +179,17 @@ pub fn ponteiro(tela: &str) -> Option<bool> {
         }
     }
     None
+}
+
+/// O Claude já está na conversa: o rodapé dele nas últimas linhas da tela. O que o shell mostrou antes (um Claude
+/// que saiu da mesma aba, um `cat`) fica acima e não conta.
+fn na_conversa(tela: &str) -> bool {
+    tela.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .rev()
+        .take(3)
+        .any(|l| l.contains("bypass permissions") || l.contains("? for shortcuts"))
 }
 
 pub fn marca(shell: u32) -> PathBuf {
@@ -204,7 +233,7 @@ fn responder(shell: u32) -> i32 {
         let Ok(tela) = daemon::tela(&ws, tab) else { return 0 };
         match ponteiro(&tela) {
             None => {
-                if tela.contains("bypass permissions") || tela.contains("? for shortcuts") {
+                if na_conversa(&tela) {
                     return 0;
                 }
             }
@@ -264,6 +293,62 @@ mod testes {
         // O diálogo antigo, numerado, com o cabeçalho antigo.
         let antigo = "Do you trust the files in this folder?\n ❯ 1. Yes, I trust this folder\n   2. No, exit\n\n Enter to confirm · Esc to cancel\n";
         assert_eq!(ponteiro(antigo), Some(true));
+    }
+
+    /// O que o shell já mostrava quando o Claude subiu, numa aba que saiu de outro Claude (`/exit`) e retomou a
+    /// conversa: o Claude Code desenha a pergunta sob uma régua, logo abaixo disso (a tela de 10/11/2026, com outros
+    /// nomes).
+    const SHELL_ANTES: &str = "Last login: Tue Nov 10 15:50:58 on ttys004\n\
+pessoa@mac ~ % env -u CODEX_HOME KEEP_IA_ESCOLHA=claude:ana /usr/local/bin/claude --allow-dangerously-skip-permis\n\
+sions --effort max --resume 00000000-0000-4000-8000-000000000000\n\
+\n\
+Resume this session with:\n\
+claude --allow-dangerously-skip-permissions --effort max --resume 00000000-0000-4000-8000-000000000000\n\
+pessoa@mac ~ % KEEP_IA_ESCOLHA=claude:ana claude --resume 00000000-0000-4000-8000-0000000000\n\
+00\n";
+
+    const PERGUNTA_NOVA: &str = " Accessing workspace:\n\n /Users/ana\n\n \
+Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open\n \
+source project, or work from your team). If not, take a moment to review what's in this folder first.\n\n \
+Claude Code'll be able to read, edit, and execute files here.\n\n Security guide\n\n \
+❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel\n";
+
+    #[test]
+    fn a_pergunta_sob_o_que_o_shell_mostrava_e_a_pergunta() {
+        let regua = "─".repeat(100);
+        let tela = format!("{SHELL_ANTES}{regua}\n{PERGUNTA_NOVA}");
+        assert!(tela.lines().filter(|l| !l.trim().is_empty()).count() > 16, "a tela inteira passa das 16 linhas");
+        assert_eq!(ponteiro(&tela), Some(false));
+        let no_sim = tela.replace(" ❯ No, exit", "   No, exit").replace("   Yes, I trust", " ❯ Yes, I trust");
+        assert_eq!(ponteiro(&no_sim), Some(true));
+        // O ponteiro é o da pergunta: as mesmas palavras mais acima, num `cat` do shell, não contam.
+        let citada = format!("❯ Yes, I trust this folder\n{tela}");
+        assert_eq!(ponteiro(&citada), Some(false));
+        // Pergunta comprida demais (a régua não separa nada): não é ela.
+        let comprida = format!("{regua}\n{}{PERGUNTA_NOVA}", "texto\n".repeat(12));
+        assert_eq!(ponteiro(&comprida), None);
+        // Uma permissão (régua, ponteiro e rodapé dela) que mostra as linhas da pergunta num arquivo: dois
+        // ponteiros, não é ela.
+        let permissao = format!(
+            "{regua}\n Create file x.txt\n Quick safety check: Is this a project you created or one you trust?\n \
+             ❯ Yes, I trust this folder\n   No, exit\n Do you want to create x.txt?\n ❯ 1. Yes\n   2. No\n\n \
+             Enter to confirm · Esc to cancel\n"
+        );
+        assert_eq!(ponteiro(&permissao), None);
+        // O rodapé dela tem de ser o pé da tela, e uma caixa de entrada embaixo não é ela.
+        assert_eq!(ponteiro(&format!("{tela} depois do rodapé\n")), None);
+        assert_eq!(ponteiro(&format!("{tela}{regua}\n❯ \n{regua}\n")), None);
+    }
+
+    #[test]
+    fn o_rodape_de_um_claude_que_ja_saiu_nao_e_a_conversa_aberta() {
+        let regua = "─".repeat(40);
+        let aberta = format!("● Pronto.\n{regua}\n❯ \n{regua}\n  ⏵⏵ bypass permissions on (shift+tab to cycle)\n");
+        assert!(na_conversa(&aberta));
+        assert!(na_conversa(&format!("{regua}\n❯ \n{regua}\n  ? for shortcuts\n")));
+        // O rodapé de antes, e o shell embaixo com o Claude novo subindo.
+        let saiu = format!("{aberta}{SHELL_ANTES}");
+        assert!(!na_conversa(&saiu));
     }
 
     #[test]

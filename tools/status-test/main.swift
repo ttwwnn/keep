@@ -73,6 +73,53 @@ check("the words quoted in a conversation",
       ClaudeTrustDialog.pointer(onScreen: "ele disse: Yes, I trust this folder e No, exit\n" + screen()) == nil, true)
 check("an ordinary screen", ClaudeTrustDialog.pointer(onScreen: screen()) == nil, true)
 
+// The question under what the shell already showed: a tab that left another Claude (`/exit`) and resumed the
+// conversation. Claude Code 2.1.3xx draws it under a rule (the screen of 10/11/2026, with other names).
+let shellBefore = """
+Last login: Tue Nov 10 15:50:58 on ttys004
+pessoa@mac ~ % env -u CODEX_HOME KEEP_IA_ESCOLHA=claude:ana /usr/local/bin/claude --allow-dangerously-skip-permis
+sions --effort max --resume 00000000-0000-4000-8000-000000000000
+
+Resume this session with:
+claude --allow-dangerously-skip-permissions --effort max --resume 00000000-0000-4000-8000-000000000000
+pessoa@mac ~ % KEEP_IA_ESCOLHA=claude:ana claude --resume 00000000-0000-4000-8000-0000000000
+00
+"""
+let underShell = shellBefore + "\n" + String(repeating: "─", count: 100) + "\n" + """
+ Accessing workspace:
+
+ /Users/ana
+
+ Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open
+ source project, or work from your team). If not, take a moment to review what's in this folder first.
+
+ Claude Code'll be able to read, edit, and execute files here.
+
+ Security guide
+
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel
+"""
+check("the whole screen is past 16 lines",
+      underShell.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count > 16, true)
+check("the question under the shell's lines, the pointer on the no",
+      ClaudeTrustDialog.pointer(onScreen: underShell) == .onNo, true)
+check("the question under the shell's lines, the pointer on the yes",
+      ClaudeTrustDialog.pointer(onScreen: underShell.replacingOccurrences(of: "❯ No, exit", with: "  No, exit")
+          .replacingOccurrences(of: "  Yes, I trust", with: "❯ Yes, I trust")) == .onYes, true)
+check("the pointer is the question's, not the words a `cat` left above",
+      ClaudeTrustDialog.pointer(onScreen: "❯ Yes, I trust this folder\n" + underShell) == .onNo, true)
+check("a permission showing the question's lines in a file brings a second pointer: not the question",
+      ClaudeTrustDialog.pointer(onScreen: rule + "\n Create file x.txt\n Quick safety check: Is this a project you created or one you trust?\n ❯ Yes, I trust this folder\n   No, exit\n Do you want to create x.txt?\n ❯ 1. Yes\n   2. No\n\n Enter to confirm · Esc to cancel\n") == nil, true)
+check("its footer has to be the foot of the screen",
+      ClaudeTrustDialog.pointer(onScreen: underShell + "\n depois do rodapé\n") == nil, true)
+check("nor is it the question under a prompt box",
+      ClaudeTrustDialog.pointer(onScreen: underShell + "\n" + rule + "\n❯ \n" + rule) == nil, true)
+check("a screen full of something else, with the question's lines last",
+      ClaudeTrustDialog.pointer(onScreen: (0..<30).map { "linha \($0)" }.joined(separator: "\n") + "\n" + trust) == nil, true)
+
 // Codex 0.162.1, as it was on screen (12/10).
 let codexIdle = """
   >_ OpenAI Codex (v0.162.1)

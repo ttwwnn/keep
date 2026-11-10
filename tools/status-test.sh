@@ -42,6 +42,24 @@ sed 's/guard t.hasPrefix("❯") else { continue }/_ = t/' "$SOURCE" > "$WORK/Sab
 build "$WORK/Sabotaged.swift" || exit 1
 if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
 
+echo "sabotage: the whole screen is the question again, the shell's lines and all"
+sed 's/let start = lines.lastIndex { $0.hasPrefix(rule) }.map { $0 + 1 } ?? 0/let start = 0/' "$SOURCE" > "$WORK/Sabotaged.swift"
+grep -q 'let start = 0' "$WORK/Sabotaged.swift" || { echo "sabotage did not apply"; exit 1; }
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
+echo "sabotage: the question's footer anywhere in it"
+sed 's/block.last?.contains("Enter to confirm") == true,/block.contains(where: { $0.contains("Enter to confirm") }),/' "$SOURCE" > "$WORK/Sabotaged.swift"
+grep -q 'block.contains(where: { $0.contains("Enter to confirm") })' "$WORK/Sabotaged.swift" || { echo "sabotage did not apply"; exit 1; }
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
+echo "sabotage: any number of pointers in the question"
+sed 's/guard block.filter({ $0.hasPrefix("❯") }).count == 1 else { return nil }/_ = 0/' "$SOURCE" > "$WORK/Sabotaged.swift"
+grep -q '^        _ = 0$' "$WORK/Sabotaged.swift" || { echo "sabotage did not apply"; exit 1; }
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
 echo "sabotage: a choice is found by the start of its name alone"
 sed 's/if rest.isEmpty || rest.first == " " || rest.first == "(" || rest.first == "…" { return n }/return n/' "$SOURCE" > "$WORK/Sabotaged.swift"
 build "$WORK/Sabotaged.swift" || exit 1

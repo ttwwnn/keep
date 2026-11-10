@@ -429,27 +429,41 @@ enum CodexPicker {
 enum ClaudeTrustDialog {
     enum Pointer { case onYes, onNo }
 
-    /// Whether the screen is the question itself and nothing else: it has its header and its footer, a handful of
-    /// lines, and no prompt box (two rules around `❯`), which any conversation brings. Those four lines printed
-    /// inside a conversation (a file the model read, a `cat`) are not it: answering them would press Enter on
-    /// whatever the conversation had up.
-    static func isTheQuestion(_ text: String) -> Bool {
+    /// The question's lines, when it is what stands at the foot of the screen: the block after the last rule (the
+    /// whole screen, with no rule), ending on its footer, with its header and a handful of lines. Claude Code draws
+    /// the question under a rule, just below what the shell already showed (the command that started it; in a tab
+    /// that left another Claude, the `/exit` and "Resume this session"), and that stays above it, out of it: on
+    /// 10/11/2026 those lines took the whole screen past 16, and the question of a conversation resumed in the same
+    /// tab went unanswered. A conversation keeps its prompt box (two rules around `❯`) and its footer at the foot:
+    /// the question printed inside it (a file the model read, a `cat`) is above the last rule and is not it —
+    /// answering would press Enter on whatever the conversation had up.
+    static func questionLines(_ text: String) -> [String]? {
         let lines = text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        guard lines.count <= 16,
-            text.contains("Quick safety check") || text.contains("Do you trust the files in this folder"),
-            text.contains("Enter to confirm")
-        else { return false }
-        return lines.filter { $0.hasPrefix(String(repeating: "─", count: 12)) }.count <= 1
+        let rule = String(repeating: "─", count: 12)
+        let start = lines.lastIndex { $0.hasPrefix(rule) }.map { $0 + 1 } ?? 0
+        let block = Array(lines[start...])
+        guard block.count <= 16,
+            block.last?.contains("Enter to confirm") == true,
+            block.contains(where: { $0.contains("Quick safety check") || $0.contains("Do you trust the files in this folder") })
+        else { return nil }
+        return block
     }
 
+    static func isTheQuestion(_ text: String) -> Bool { questionLines(text) != nil }
+
     /// Whether the question is on the screen, and which choice the pointer
-    /// (`❯`) is on. Nil when it is not the question — the words quoted in a
-    /// conversation, say, have no pointer in front of them.
+    /// (`❯`) is on — in the question's own lines. Nil when it is not the
+    /// question: the words quoted in a conversation, say, have no pointer in
+    /// front of them.
     static func pointer(onScreen text: String) -> Pointer? {
-        guard isTheQuestion(text) else { return nil }
-        guard text.contains("Yes, I trust this folder"), text.contains("No, exit") else { return nil }
-        for line in text.split(separator: "\n") {
-            let t = line.trimmingCharacters(in: .whitespaces)
+        guard let block = questionLines(text) else { return nil }
+        guard block.contains(where: { $0.contains("Yes, I trust this folder") }),
+            block.contains(where: { $0.contains("No, exit") })
+        else { return nil }
+        // One pointer only: another question (a permission) showing these lines in a file brings its own too, and
+        // Enter would approve what it asks.
+        guard block.filter({ $0.hasPrefix("❯") }).count == 1 else { return nil }
+        for t in block {
             guard t.hasPrefix("❯") else { continue }
             if t.contains("Yes, I trust this folder") { return .onYes }
             if t.contains("No, exit") { return .onNo }
