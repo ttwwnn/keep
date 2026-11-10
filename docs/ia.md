@@ -304,8 +304,9 @@ caracteres, e um hash do caminho; `confinar::config_da_presa`). O Keep a monta a
   MCP; dos projetos, só os da pasta presa e, dos de cima dela, a raiz do repositório), com o que o Claude preso
   gravou nos dele por cima;
 - a `.pasta`, com a pasta presa, que o Keep lê para saber de quem são as sessões gravadas ali (o estado de cada
-  aba, a restauração, as worktrees: `caminhos::pastas_de_sessoes`); uma sessão dali só vale com o `cwd` dentro da
-  pasta presa.
+  aba, a restauração, as worktrees: `caminhos::pastas_de_sessoes`); uma sessão dali só vale de um processo que sobe
+  com essa configuração (o `CLAUDE_CONFIG_DIR` do ambiente dele, que nenhuma IA presa troca no de outro), com o
+  `cwd` dentro da pasta presa (`caminhos::sessao_da_presa`).
 
 O perfil então fecha, para ler e para gravar, o estado do CLI na `~/.claude` de verdade, que o Claude preso não
 usa mais: `shell-snapshots/` e `session-env/` (o retrato do shell e o ambiente que cada sessão relê a cada comando

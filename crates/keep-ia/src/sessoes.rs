@@ -80,11 +80,15 @@ fn de_json(d: &Value, pid: u32) -> Option<SessaoClaude> {
 /// A sessão do processo `pid`, se ele é um Claude vivo com sessão anotada: na pasta de sessões de `~/.claude` ou na
 /// da configuração de uma IA presa (`caminhos::pastas_de_sessoes`), esta só com o `cwd` dentro da pasta dela.
 pub fn sessao_claude(pid: u32) -> Option<SessaoClaude> {
-    caminhos::pastas_de_sessoes().into_iter().find_map(|(pasta, presa)| {
+    sessao_claude_em(pid, &caminhos::pastas_de_sessoes())
+}
+
+fn sessao_claude_em(pid: u32, pastas: &[(PathBuf, Option<caminhos::Presa>)]) -> Option<SessaoClaude> {
+    pastas.iter().find_map(|(pasta, presa)| {
         let texto = caminhos::le_sessao(&pasta.join(format!("{pid}.json")))?;
         let d: Value = serde_json::from_str(&texto).ok()?;
         let cwd = d.get("cwd").and_then(Value::as_str).unwrap_or_default();
-        if !mesmo_processo(&d, pid) || !caminhos::sessao_da_pasta(cwd, presa.as_deref()) {
+        if !mesmo_processo(&d, pid) || !caminhos::sessao_da_presa(pid, cwd, presa.as_ref()) {
             return None;
         }
         de_json(&d, pid)
@@ -93,14 +97,15 @@ pub fn sessao_claude(pid: u32) -> Option<SessaoClaude> {
 
 /// Toda sessão do Claude viva, interativa ou em segundo plano.
 pub fn sessoes_vivas() -> Vec<SessaoClaude> {
-    let mut pids: Vec<u32> = caminhos::pastas_de_sessoes()
-        .into_iter()
+    let pastas = caminhos::pastas_de_sessoes();
+    let mut pids: Vec<u32> = pastas
+        .iter()
         .flat_map(|(pasta, _)| std::fs::read_dir(pasta).into_iter().flatten().flatten())
         .filter_map(|e| e.file_name().into_string().ok()?.strip_suffix(".json")?.parse().ok())
         .collect();
     pids.sort_unstable();
     pids.dedup();
-    pids.into_iter().filter_map(sessao_claude).collect()
+    pids.into_iter().filter_map(|pid| sessao_claude_em(pid, &pastas)).collect()
 }
 
 /// A sessão viva que roda a conversa `id`, de qualquer processo.

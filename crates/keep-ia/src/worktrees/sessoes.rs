@@ -63,7 +63,7 @@ pub fn vivas_em(pasta: &Path) -> Vec<SessaoViva> {
             .collect();
         nomes.sort();
         for p in nomes {
-            let Some(viva) = le_viva(&p, presa.as_deref()) else { continue };
+            let Some(viva) = le_viva(&p, presa.as_ref()) else { continue };
             if !vivas.iter().any(|v| v.pid == viva.pid) {
                 vivas.push(viva);
             }
@@ -73,13 +73,13 @@ pub fn vivas_em(pasta: &Path) -> Vec<SessaoViva> {
 }
 
 /// A sessão gravada em `arquivo`, se o processo dela é mesmo quem a gravou e, numa pasta de sessões de IA presa,
-/// se o `cwd` dela está dentro da pasta presa.
-fn le_viva(arquivo: &Path, presa: Option<&Path>) -> Option<SessaoViva> {
+/// se ele sobe com essa configuração própria, com o `cwd` dentro da pasta presa (`caminhos::sessao_da_presa`).
+fn le_viva(arquivo: &Path, presa: Option<&crate::caminhos::Presa>) -> Option<SessaoViva> {
     let v: Value = serde_json::from_str(&crate::caminhos::le_sessao(arquivo)?).ok()?;
     let pid = pid_de(&v)?;
     let id = texto_de(&v, "sessionId")?;
     let cwd = texto_de(&v, "cwd").unwrap_or_default();
-    (confere(pid, &v) && crate::caminhos::sessao_da_pasta(&cwd, presa)).then(|| SessaoViva {
+    (confere(pid, &v) && crate::caminhos::sessao_da_presa(pid, &cwd, presa)).then(|| SessaoViva {
         pid,
         id,
         kind: texto_de(&v, "kind"),
@@ -93,7 +93,7 @@ fn le_viva(arquivo: &Path, presa: Option<&Path>) -> Option<SessaoViva> {
 pub fn do_pid_em(pasta: &Path, pid: u32) -> Option<SessaoViva> {
     crate::caminhos::pastas_de_sessoes_em(pasta)
         .into_iter()
-        .find_map(|(pasta, presa)| le_viva(&pasta.join(format!("{pid}.json")), presa.as_deref()).filter(|v| v.pid == pid))
+        .find_map(|(pasta, presa)| le_viva(&pasta.join(format!("{pid}.json")), presa.as_ref()).filter(|v| v.pid == pid))
 }
 
 /// `Sat Oct  3 20:55:10 2026` (UTC) em segundos unix.
