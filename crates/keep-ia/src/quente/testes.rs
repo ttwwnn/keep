@@ -531,6 +531,78 @@ fn a_renovacao_espalha_o_acesso_novo_nas_abas_da_conta() {
     assert!(contas::listar(false).iter().any(|c| c.alias == "bia" && c.roda));
 }
 
+/// 10/11/2026: a restauração das 15:51 subiu as conversas sem rede, com o
+/// acesso das contas vencido. O `preparar` recusava (`precisa-login`), e o
+/// Claude da aba subia no login global, onde a conta dele não troca mais sem
+/// sair: a aba Geral ficou presa na IA·2, semanal a 100%, com a IA·1 livre.
+/// Agora o armazém da aba nasce com o acesso que o dono tem, a renovação o
+/// alimenta quando a rede volta, e a conta troca a quente.
+#[test]
+fn sem_rede_o_armazem_da_aba_nasce_com_o_acesso_do_dono_e_a_renovacao_o_alimenta() {
+    nos_dois("sem-rede", |c| {
+        let bia = duas_contas(c);
+        // A Ana, longe de vencer: a rodada abaixo só renova a Bia.
+        c.global_ate("G", "rG", agora() + 5 * 3_600_000);
+        // O acesso da Bia venceu, e a renovação não tem rede (o servidor de
+        // tokens da casa não ouve ninguém).
+        let vencida: Value = serde_json::from_str(&format!(
+            r#"{{"claudeAiOauth":{{"accessToken":"F","refreshToken":"rF","expiresAt":{},"scopes":["user:inference"]}}}}"#,
+            agora() - 60_000
+        ))
+        .unwrap();
+        credencial::gravar(&credencial::local_fixa(&bia), &vencida).unwrap();
+        let shell = Filho::novo(&[]);
+        let p = preparar("T", shell.pid(), Some("claude:bia"), None).unwrap();
+        assert!(p.pasta.starts_with(caminhos::abas()), "{}", p.pasta.display());
+        assert_eq!((p.conta.as_str(), p.escolha.as_str()), ("claude:bia", "claude:bia"));
+        assert_eq!(acesso(&p.pasta), "F", "o acesso que o dono tem");
+        sem_refresh_nas_abas();
+        assert_eq!(Oauth::de(&le(&bia)).and_then(|o| o.refresh).as_deref(), Some("rF"), "o refresh fica no dono");
+        // A rede volta: a renovação renova o dono e espalha o acesso novo.
+        let servidor = crate::renovar::testes::Servidor::sobe();
+        servidor.gira("rF", "F-nova", "rF-nova");
+        let r = crate::renovar::rodada(false);
+        assert!(r.renovados.iter().any(|(conta, _, _)| conta == "claude:bia"), "{r:?}");
+        assert_eq!(acesso(&p.pasta), "F-nova");
+        sem_refresh_nas_abas();
+        // O Claude que subiu nesse armazém troca de conta sem sair.
+        let claude = Filho::claude(c, &[(VAR, &p.pasta.to_string_lossy())]);
+        let lista = contas::listar(false);
+        let feito = trocar_processo(claude.pid(), shell.pid(), "T", 1, "claude:ana", None, &lista).unwrap();
+        assert_eq!(feito, Feito::Trocou("claude:ana".into()));
+        assert_eq!(acesso(&p.pasta), "G");
+        // Sem dono que rode (o refresh recusado), continua a recusa.
+        c.fixa("k-2", None, None);
+        let recusado: Value = serde_json::from_str(&format!(
+            r#"{{"claudeAiOauth":{{"accessToken":"F","refreshToken":null,"expiresAt":{}}}}}"#,
+            agora() - 60_000
+        ))
+        .unwrap();
+        credencial::gravar(&credencial::local_fixa(&bia), &recusado).unwrap();
+        let outro = Filho::novo(&[]);
+        let e = preparar("T", outro.pid(), Some("claude:bia"), None).unwrap_err();
+        assert_eq!(e.motivo, "precisa-login", "{e:?}");
+    });
+}
+
+/// Com o kit, o acesso vencido do login global não vai para a aba nova: o
+/// kit troca o dono dele quando quer, e o acesso pode ser de outra conta.
+#[test]
+fn com_o_kit_o_acesso_vencido_do_global_nao_vai_para_a_aba() {
+    let c = casa("kit-sem-rede");
+    perfis(&[("G", "u-1", "ana@x.com")]);
+    c.global("G", "rG");
+    std::fs::write(c.raiz.join(".claude/contas/.ativa"), "ana\n").unwrap();
+    // SAFETY: a casa (e a trava) está de pé.
+    unsafe { std::env::set_var("KEEP_IA_GERENTE_EXTERNO", "1") };
+    let _ = contas::listar(true); // o dono fica em cache
+    c.global_ate("G", "rG", agora() - 60_000);
+    let shell = Filho::novo(&[]);
+    let e = preparar("T", shell.pid(), Some("claude:ana"), None).unwrap_err();
+    assert_eq!(e.motivo, "precisa-login", "{e:?}");
+    assert!(le_estado().abas.is_empty(), "nenhum armazém de aba");
+}
+
 #[test]
 fn o_problema_de_um_armazem_aparece_uma_vez_e_some_quando_passa() {
     let c = casa("falha-uma-vez");
