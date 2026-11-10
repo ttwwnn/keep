@@ -347,8 +347,11 @@ fn armazens_claude(perguntar: bool) -> Vec<Achado> {
     let mut saida = Vec::new();
     if let Some(mut a) = achado_de_login(credencial::global(), Armazem::Global, perguntar, "global") {
         // Dono que o servidor não confirmou (token vencido, sem rede): o kit
-        // sabe qual slot está no global.
-        if a.dono.is_none() {
+        // sabe qual slot está no global. Sem o kit, o `.ativa` é sobra dele e
+        // não diz nada: emprestado a um global morto, punha uma segunda conta
+        // com a chave de uma viva, na frente dela (10/11: a aba presa à IA·1
+        // ficou sem acesso e caiu em "OAuth token revoked").
+        if a.dono.is_none() && gerente_externo() {
             if let Some(ativa) = ativa_do_kit() {
                 a.apelidos.push(ativa);
             }
@@ -630,9 +633,15 @@ pub fn listar(perguntar: bool) -> Vec<Conta> {
     ordenar(juntar(achados, ativa.as_deref()), &ler_ordem())
 }
 
-/// A conta que uma chave nomeia.
+/// A conta que uma chave nomeia. Duas com a mesma chave (um login sem dono
+/// confirmado que pegou o apelido de outra): vale a que roda.
 pub fn achar<'a>(contas: &'a [Conta], chave: &str) -> Option<&'a Conta> {
-    contas.iter().find(|c| c.e(chave))
+    let mut nomeadas = contas.iter().filter(|c| c.e(chave));
+    let primeira = nomeadas.next()?;
+    if primeira.roda {
+        return Some(primeira);
+    }
+    nomeadas.find(|c| c.roda).or(Some(primeira))
 }
 
 /// A ordem efetiva: a chave de cada conta, da primeira à última.
