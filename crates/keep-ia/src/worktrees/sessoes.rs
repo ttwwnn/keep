@@ -75,7 +75,7 @@ pub fn vivas_em(pasta: &Path) -> Vec<SessaoViva> {
 /// A sessão gravada em `arquivo`, se o processo dela é mesmo quem a gravou e, numa pasta de sessões de IA presa,
 /// se o `cwd` dela está dentro da pasta presa.
 fn le_viva(arquivo: &Path, presa: Option<&Path>) -> Option<SessaoViva> {
-    let v: Value = serde_json::from_slice(&std::fs::read(arquivo).ok()?).ok()?;
+    let v: Value = serde_json::from_str(&crate::caminhos::le_sessao(arquivo)?).ok()?;
     let pid = pid_de(&v)?;
     let id = texto_de(&v, "sessionId")?;
     let cwd = texto_de(&v, "cwd").unwrap_or_default();

@@ -505,7 +505,8 @@ fn sessoes_brutas() -> HashMap<u32, Value> {
     let mut saida = HashMap::new();
     for (pasta, presa) in keep_ia::caminhos::pastas_de_sessoes() {
         for e in std::fs::read_dir(&pasta).into_iter().flatten().flatten() {
-            let Ok(v) = serde_json::from_slice::<Value>(&std::fs::read(e.path()).unwrap_or_default()) else { continue };
+            let Some(texto) = keep_ia::caminhos::le_sessao(&e.path()) else { continue };
+            let Ok(v) = serde_json::from_str::<Value>(&texto) else { continue };
             let cwd = v.get("cwd").and_then(Value::as_str).unwrap_or_default();
             if !keep_ia::caminhos::sessao_da_pasta(cwd, presa.as_deref()) {
                 continue;

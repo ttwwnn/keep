@@ -686,7 +686,18 @@ fn presa_para(programa: &str, pasta: &Path) -> Option<PathBuf> {
 fn prepara_config_da_presa(presa: &Path, pasta: &Path, onde: &Path, casa: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
     let claude = casa.join(".claude");
-    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(presa.join("projects"))?;
+    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(presa)?;
+    // Daqui em diante grava-se, de fora do sandbox, onde a IA presa grava o que quiser: um link (ou um arquivo) que
+    // ela tenha posto no lugar de `projects/` sai antes, ou as ligações de baixo iriam por ele até onde ela escolheu.
+    let projetos = presa.join("projects");
+    match std::fs::symlink_metadata(&projetos) {
+        Ok(m) if m.is_dir() => {}
+        Ok(_) => {
+            std::fs::remove_file(&projetos)?;
+            std::fs::DirBuilder::new().mode(0o700).create(&projetos)?;
+        }
+        Err(_) => std::fs::DirBuilder::new().mode(0o700).create(&projetos)?,
+    }
     let marca = format!("{}\n", pasta.to_string_lossy());
     if std::fs::read_to_string(presa.join(".pasta")).ok().as_deref() != Some(marca.as_str()) {
         std::fs::write(presa.join(".pasta"), &marca)?;
@@ -752,10 +763,12 @@ fn liga(alvo: &Path, link: &Path) -> std::io::Result<()> {
 #[cfg(unix)]
 fn semeia_claude_json(real: &Path, destino: &Path, pasta: &Path) -> std::io::Result<()> {
     use serde_json::Value;
-    let Ok(texto) = std::fs::read_to_string(real) else { return Ok(()) };
+    let Ok(texto) = caminhos::ler_texto_ate(real, 64 << 20) else { return Ok(()) };
     let Ok(Value::Object(mut novo)) = serde_json::from_str::<Value>(&texto) else { return Ok(()) };
-    let do_preso = std::fs::read_to_string(destino)
-        .ok()
+    // O da IA presa, só um arquivo comum dela: não um link para um arquivo da pessoa, nem uma FIFO.
+    let do_preso = Some(destino)
+        .filter(|d| std::fs::symlink_metadata(d).is_ok_and(|m| m.is_file()))
+        .and_then(|d| caminhos::ler_texto_ate(d, 64 << 20).ok())
         .and_then(|t| serde_json::from_str::<Value>(&t).ok())
         .and_then(|v| v.get("projects").and_then(Value::as_object).cloned())
         .unwrap_or_default();
@@ -779,8 +792,21 @@ fn semeia_claude_json(real: &Path, destino: &Path, pasta: &Path) -> std::io::Res
     }
     novo.insert("projects".into(), Value::Object(projetos));
     let dados = serde_json::to_vec_pretty(&Value::Object(novo)).map_err(std::io::Error::other)?;
+    // O temporário fica onde a IA presa grava o que quiser, até um link para um arquivo da pessoa (`~/.zshrc`): o que
+    // estiver ali sai, e ele nasce novo, sem seguir link (`create_new`). O `rename` troca o destino, link ou não.
     let tmp = destino.with_file_name(".claude.json.keep");
-    caminhos::grava_privado(&tmp, &dados)?;
+    match std::fs::symlink_metadata(&tmp) {
+        Ok(m) if m.is_dir() => std::fs::remove_dir_all(&tmp)?,
+        Ok(_) => std::fs::remove_file(&tmp)?,
+        Err(_) => {}
+    }
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
+        f.write_all(&dados)?;
+        f.sync_all()?;
+    }
     std::fs::rename(&tmp, destino)
 }
 
@@ -1316,6 +1342,20 @@ mod testes {
         assert_eq!(std::fs::read_link(presa.join("settings.json")).unwrap(), c.claude.join("settings.json"));
         assert!(presa.join("output-styles").is_dir() && std::fs::read_link(presa.join("output-styles")).is_err());
         assert!(std::fs::symlink_metadata(presa.join("settings.local.json")).is_err(), "o link sem alvo sai");
+        // A IA presa pôs links no lugar do temporário e de `projects/`, para um arquivo e uma pasta da pessoa: a
+        // montagem, de fora do sandbox, não grava neles.
+        let da_pessoa = c.casa.join("arquivo-da-pessoa");
+        let pasta_da_pessoa = c.casa.join("pasta-da-pessoa");
+        std::fs::write(&da_pessoa, "intocado\n").unwrap();
+        std::fs::create_dir_all(&pasta_da_pessoa).unwrap();
+        std::os::unix::fs::symlink(&da_pessoa, presa.join(".claude.json.keep")).unwrap();
+        std::fs::remove_dir_all(presa.join("projects")).unwrap();
+        std::os::unix::fs::symlink(&pasta_da_pessoa, presa.join("projects")).unwrap();
+        prepara_config_da_presa(&presa, &c.pasta, &c.pasta, &c.casa).unwrap();
+        assert_eq!(std::fs::read_to_string(&da_pessoa).unwrap(), "intocado\n");
+        assert_eq!(std::fs::read_dir(&pasta_da_pessoa).unwrap().count(), 0, "nada nasce na pasta da pessoa");
+        assert!(std::fs::symlink_metadata(presa.join("projects")).unwrap().is_dir());
+        assert!(std::fs::symlink_metadata(presa.join(".claude.json")).unwrap().is_file());
         // Sem o `.claude.json` da pessoa, o dela fica.
         std::fs::remove_file(c.casa.join(".claude.json")).unwrap();
         prepara_config_da_presa(&presa, &c.pasta, &c.pasta, &c.casa).unwrap();

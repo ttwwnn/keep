@@ -65,20 +65,36 @@ pub fn pastas_de_sessoes_em(sessoes: &std::path::Path) -> Vec<(PathBuf, Option<P
         std::fs::read_dir(claude.join("presas")).into_iter().flatten().flatten().map(|e| e.path()).collect();
     presas.sort();
     for raiz in presas {
-        let Ok(texto) = std::fs::read_to_string(raiz.join(".pasta")) else { continue };
+        let Ok(texto) = ler_texto_ate(&raiz.join(".pasta"), 4096) else { continue };
         let pasta = PathBuf::from(texto.trim_end_matches(['\n', '\r']));
-        if pasta.is_absolute() {
-            pastas.push((raiz.join("sessions"), Some(pasta)));
+        // A pasta de sessões de verdade, não um link que a IA presa pôs no lugar.
+        let sessoes = raiz.join("sessions");
+        if pasta.is_absolute() && std::fs::symlink_metadata(&sessoes).is_ok_and(|m| m.is_dir()) {
+            pastas.push((sessoes, Some(pasta)));
         }
     }
     pastas
 }
 
 /// Se uma sessão com este `cwd` pode vir da pasta de sessões de uma IA presa
-/// a `presa`: só de dentro da pasta dela. A IA presa grava na pasta de
-/// sessões dela o que quiser, até a sessão de outro processo.
+/// a `presa`: só de dentro da pasta dela, num caminho absoluto sem `..` (que
+/// `starts_with` não resolve: `/app/../outro` começa por `/app`). A IA presa
+/// grava na pasta de sessões dela o que quiser, até a sessão de outro
+/// processo.
 pub fn sessao_da_pasta(cwd: &str, presa: Option<&std::path::Path>) -> bool {
-    presa.is_none_or(|p| !cwd.is_empty() && std::path::Path::new(cwd).starts_with(p))
+    use std::path::Component;
+    let Some(p) = presa else { return true };
+    let c = std::path::Path::new(cwd);
+    c.is_absolute()
+        && c.components().all(|x| matches!(x, Component::RootDir | Component::Prefix(_) | Component::Normal(_)))
+        && c.starts_with(p)
+}
+
+/// Uma sessão gravada em `arquivo`, só se for um arquivo comum e pequeno: a IA
+/// presa pode pôr na pasta de sessões dela uma FIFO, que travaria quem a
+/// lesse, ou um link para `/dev/zero`.
+pub fn le_sessao(arquivo: &std::path::Path) -> Option<String> {
+    ler_texto_ate(arquivo, LEITURA_MAXIMA).ok()
 }
 
 /// `~/.codex`: o login principal do GPT.
@@ -175,6 +191,19 @@ mod testes_privado {
         assert!(sessao_da_pasta("/projetos/app/sub", Some(std::path::Path::new("/projetos/app"))));
         assert!(!sessao_da_pasta("/projetos/app-velho", Some(std::path::Path::new("/projetos/app"))));
         assert!(!sessao_da_pasta("", Some(std::path::Path::new("/projetos/app"))));
+        assert!(!sessao_da_pasta("/projetos/app/../outro", Some(std::path::Path::new("/projetos/app"))));
+        assert!(!sessao_da_pasta("projetos/app/x", Some(std::path::Path::new("/projetos/app"))));
+        // Uma pasta de sessões que é link (para a de outra IA, para a de verdade) fica de fora.
+        let outra = claude.join("presas/outra");
+        std::fs::create_dir_all(&outra).unwrap();
+        std::fs::write(outra.join(".pasta"), "/projetos/outra\n").unwrap();
+        std::os::unix::fs::symlink(claude.join("sessions"), outra.join("sessions")).unwrap();
+        assert_eq!(pastas_de_sessoes_em(&claude.join("sessions")).len(), 2);
+        // Uma FIFO na pasta de sessões não trava quem lê.
+        let fifo = presa.join("sessions/1.json");
+        let c = std::ffi::CString::new(fifo.to_string_lossy().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        assert_eq!(le_sessao(&fifo), None);
     }
 
     #[test]

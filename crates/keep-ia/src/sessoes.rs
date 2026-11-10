@@ -81,7 +81,7 @@ fn de_json(d: &Value, pid: u32) -> Option<SessaoClaude> {
 /// da configuração de uma IA presa (`caminhos::pastas_de_sessoes`), esta só com o `cwd` dentro da pasta dela.
 pub fn sessao_claude(pid: u32) -> Option<SessaoClaude> {
     caminhos::pastas_de_sessoes().into_iter().find_map(|(pasta, presa)| {
-        let texto = std::fs::read_to_string(pasta.join(format!("{pid}.json"))).ok()?;
+        let texto = caminhos::le_sessao(&pasta.join(format!("{pid}.json")))?;
         let d: Value = serde_json::from_str(&texto).ok()?;
         let cwd = d.get("cwd").and_then(Value::as_str).unwrap_or_default();
         if !mesmo_processo(&d, pid) || !caminhos::sessao_da_pasta(cwd, presa.as_deref()) {
