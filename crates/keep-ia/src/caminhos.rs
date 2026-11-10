@@ -208,6 +208,8 @@ mod testes_privado {
         let mut filho = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "processos::testes::dorminhoco", "--ignored", "--test-threads=1", "-q"])
             .env("CLAUDE_CONFIG_DIR", &presa)
+            // Sem ela, o dorminhoco sai na hora, e o ambiente dele some antes de ser lido.
+            .env("KEEP_IA_TESTE_PROCESSO", "1")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
