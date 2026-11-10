@@ -593,7 +593,9 @@ pub fn plano(amb: &dyn Ambiente, e: &Entrada) -> Plano {
             poe(nega(p, Acesso::NegaEscrita, !arquivo));
         }
         poe(nega(claude.clone(), Acesso::NegaApagar, false));
-        for nome in ["contas", "projects"] {
+        // E as configurações próprias das IAs presas do macOS (`confinar::config_da_presa`), que o Keep lê: aqui ainda
+        // não há, e nenhuma IA presa as planta.
+        for nome in ["contas", "projects", "presas"] {
             let p = junta(&claude, nome);
             if !amb.existe(&p) {
                 criar.push(p.clone());
@@ -1556,8 +1558,9 @@ mod testes {
         let raiz = de(&p, claude);
         assert!(raiz.iter().any(|c| c.acesso == Acesso::NegaApagar && !c.heranca), "{raiz:?}");
         assert!(raiz.iter().any(|c| c.acesso == Acesso::Gravacao && c.heranca), "{raiz:?}");
-        // As contas e os transcritos: nem ler, nem listar; a pasta que falta nasce para levar a negação.
-        for nome in ["contas", "projects"] {
+        // As contas, os transcritos e as configurações próprias: nem ler, nem listar; a pasta que falta nasce para
+        // levar a negação.
+        for nome in ["contas", "projects", "presas"] {
             let c = de(&p, &junta(claude, nome));
             assert!(c.iter().any(|c| c.acesso == Acesso::NegaConteudo && c.heranca), "{nome}: {c:?}");
             assert!(p.criar.contains(&junta(claude, nome)), "{nome}: {:?}", p.criar);

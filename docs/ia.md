@@ -314,7 +314,11 @@ Bash), `sessions/` (com o canal de mensagens e a chave de cada sessão), `histor
 um servidor MCP gravado subiria em toda sessão. Da configuração própria, a IA presa grava tudo, menos a `.pasta` e a
 própria pasta. As pastas das ferramentas da pessoa em `~/.claude` (as que os ganchos dela usam) continuam como
 estavam. Em qualquer modo, o perfil nega conectar ao canal de mensagens entre as sessões do Claude Code
-(`/tmp/cc-socks/`), por onde a IA presa mandaria pedidos a uma sessão sem sandbox.
+(`/tmp/cc-socks/`), por onde a IA presa mandaria pedidos a uma sessão sem sandbox, e fecha `presas/`: o Keep monta
+as configurações próprias de fora do sandbox e lê as sessões delas, e uma IA presa que plantasse ali um link (para
+a própria `~/.claude`) ou uma `.pasta` faria a montagem apagar o que é da pessoa ou forjaria sessões. A montagem só
+segue pastas de verdade (um link em `presas/`, na configuração própria, em `projects/` ou no temporário do
+`.claude.json` sai antes), e o Keep lê dali só arquivos comuns e pequenos.
 
 Sem o armazém da aba (sem conta no Keep), o Claude usa o login global, que mora no item do Chaveiro da pasta de
 configuração: noutra pasta ele pediria outro login, e a IA presa fica na `~/.claude` de sempre, ainda alcançando o
@@ -354,7 +358,8 @@ deu ao SID base nessas pastas (os armazéns das abas e das contas fixas, os `COD
   se apagam nem se renomeiam. Fora das áreas o token já não grava, e a permissão dos arquivos do usuário fica como
   está;
 - fechado (sem ler nem listar; atravessar continua): `contas\` e `projects\`, menos o armazém da aba e as pastas
-  dos transcritos da pasta presa e da subpasta em que o programa começa;
+  dos transcritos da pasta presa e da subpasta em que o programa começa; e `presas\`, as configurações próprias do
+  macOS, que o Keep lê;
 - `.claude` não se apaga nem se renomeia, e criar dentro dela continua.
 
 A negação mora no próprio item, e o que não existe não tem onde pô-la: antes da subida, o Keep cria o que falta

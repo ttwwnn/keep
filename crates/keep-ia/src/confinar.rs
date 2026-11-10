@@ -562,6 +562,12 @@ fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Pat
     for p in em_claude("contas") {
         linhas.push(format!("(deny file-read-data file-write* (subpath {}))", literal(&p)));
     }
+    // As configurações próprias das IAs presas (`config_da_presa`), em qualquer modo: o Keep as monta de fora do
+    // sandbox e lê as sessões delas, e uma IA presa que plantasse ali um link (para a própria `~/.claude`) ou uma
+    // `.pasta` faria a montagem apagar o que é da pessoa ou forjaria sessões. A de quem sobe com ela volta abaixo.
+    for p in em_claude("presas") {
+        linhas.push(format!("(deny file-read-data file-write* (subpath {}))", literal(&p)));
+    }
     for p in armazem.map(|a| armazem_da_aba(&claude.join("contas"), a)).unwrap_or_default() {
         linhas.push(format!("(allow file-read-data file-write* (subpath {}))", literal(&p)));
     }
@@ -587,7 +593,7 @@ fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Pat
     // (as que os ganchos dela usam), também. Da configuração própria, tudo, menos trocar a pasta e a `.pasta` que o Keep
     // lê para saber a que pasta ela está presa (`caminhos::pastas_de_sessoes`).
     if let Some(presa) = presa {
-        for nome in CLAUDE_ESTADO.iter().copied().filter(|n| !matches!(*n, "projects" | "contas")).chain(["presas"]) {
+        for nome in CLAUDE_ESTADO.iter().copied().filter(|n| !matches!(*n, "projects" | "contas")) {
             for p in em_claude(nome) {
                 linhas.push(format!("(deny file-read-data file-write* (subpath {}))", literal(&p)));
             }
@@ -686,7 +692,18 @@ fn presa_para(programa: &str, pasta: &Path) -> Option<PathBuf> {
 fn prepara_config_da_presa(presa: &Path, pasta: &Path, onde: &Path, casa: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
     let claude = casa.join(".claude");
-    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(presa)?;
+    // `presas/` e a configuração própria, pastas de verdade: um link ali (de antes desta negação, ou de quem mais
+    // grave na casa) levaria a montagem, que apaga e liga, para dentro da `~/.claude` da pessoa.
+    for d in [presa.parent().unwrap_or(presa), presa] {
+        match std::fs::symlink_metadata(d) {
+            Ok(m) if m.is_dir() => {}
+            Ok(_) => {
+                std::fs::remove_file(d)?;
+                std::fs::DirBuilder::new().mode(0o700).create(d)?;
+            }
+            Err(_) => std::fs::DirBuilder::new().recursive(true).mode(0o700).create(d)?,
+        }
+    }
     // Daqui em diante grava-se, de fora do sandbox, onde a IA presa grava o que quiser: um link (ou um arquivo) que
     // ela tenha posto no lugar de `projects/` sai antes, ou as ligações de baixo iriam por ele até onde ela escolheu.
     let projetos = presa.join("projects");
@@ -1409,6 +1426,14 @@ mod testes {
         prepara_config_da_presa(&presa, &c.pasta, &c.pasta.join("sub"), &c.casa).unwrap();
         assert!(presa.join("projects").join(&nome).join("t.jsonl").is_file());
         assert_eq!(std::fs::read_link(presa.join("projects").join(&sub)).unwrap(), c.claude.join("projects").join(&sub));
+        // Uma configuração própria que é link (para a própria `~/.claude`) não leva a montagem até lá: sai, e a pasta
+        // nasce de verdade; o que é da pessoa fica.
+        let plantada = c.claude.join("presas/plantada");
+        std::os::unix::fs::symlink(&c.claude, &plantada).unwrap();
+        prepara_config_da_presa(&plantada, &c.pasta, &c.pasta, &c.casa).unwrap();
+        assert!(std::fs::symlink_metadata(&plantada).unwrap().is_dir());
+        assert_eq!(std::fs::read_to_string(c.claude.join("settings.json")).unwrap(), "{}\n");
+        assert!(c.claude.join("skills/x").is_file());
         // Sem o `.claude.json` da pessoa, o dela fica.
         std::fs::remove_file(c.casa.join(".claude.json")).unwrap();
         prepara_config_da_presa(&presa, &c.pasta, &c.pasta, &c.casa).unwrap();
@@ -1462,6 +1487,12 @@ mod testes {
         // O canal de mensagens entre as sessões, nos dois modos.
         let canal = "(deny network-outbound (remote unix-socket (path-regex #\"^/private/tmp/cc-socks/\")))";
         assert!(p.contains(canal) && c.perfil(Some(&armazem)).contains(canal));
+        // Sem a configuração própria, as delas ficam fechadas também: nem ler, nem plantar um link ou uma `.pasta`.
+        let sem = c.perfil(Some(&armazem));
+        assert_eq!(preso(&sem, &format!("cat '{pr}/.pasta'")), Some(false), "ler uma configuração própria");
+        let planta = format!("ln -s '{cl}' '{cl}/presas/plantada'");
+        assert_eq!(preso(&sem, &planta), Some(false), "plantar um link em presas/");
+        assert_eq!(preso(&sem, &format!("echo / > '{cl}/presas/outra/.pasta'")), Some(false), "forjar uma .pasta");
     }
 
     #[cfg(target_os = "macos")]

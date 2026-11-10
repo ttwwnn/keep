@@ -65,11 +65,14 @@ pub fn pastas_de_sessoes_em(sessoes: &std::path::Path) -> Vec<(PathBuf, Option<P
         std::fs::read_dir(claude.join("presas")).into_iter().flatten().flatten().map(|e| e.path()).collect();
     presas.sort();
     for raiz in presas {
+        // Uma configuração própria de verdade (não um link), e uma pasta presa que não seja a raiz.
+        if !std::fs::symlink_metadata(&raiz).is_ok_and(|m| m.is_dir()) {
+            continue;
+        }
         let Ok(texto) = ler_texto_ate(&raiz.join(".pasta"), 4096) else { continue };
         let pasta = PathBuf::from(texto.trim_end_matches(['\n', '\r']));
-        // A pasta de sessões de verdade, não um link que a IA presa pôs no lugar.
         let sessoes = raiz.join("sessions");
-        if pasta.is_absolute() && std::fs::symlink_metadata(&sessoes).is_ok_and(|m| m.is_dir()) {
+        if pasta.is_absolute() && pasta.parent().is_some() && std::fs::symlink_metadata(&sessoes).is_ok_and(|m| m.is_dir()) {
             pastas.push((sessoes, Some(pasta)));
         }
     }
@@ -198,6 +201,12 @@ mod testes_privado {
         std::fs::create_dir_all(&outra).unwrap();
         std::fs::write(outra.join(".pasta"), "/projetos/outra\n").unwrap();
         std::os::unix::fs::symlink(claude.join("sessions"), outra.join("sessions")).unwrap();
+        assert_eq!(pastas_de_sessoes_em(&claude.join("sessions")).len(), 2);
+        // Nem uma configuração própria que é link, nem uma presa à raiz.
+        std::os::unix::fs::symlink(&presa, claude.join("presas/link")).unwrap();
+        let raiz = claude.join("presas/raiz");
+        std::fs::create_dir_all(raiz.join("sessions")).unwrap();
+        std::fs::write(raiz.join(".pasta"), "/\n").unwrap();
         assert_eq!(pastas_de_sessoes_em(&claude.join("sessions")).len(), 2);
         // Uma FIFO na pasta de sessões não trava quem lê.
         let fifo = presa.join("sessions/1.json");
