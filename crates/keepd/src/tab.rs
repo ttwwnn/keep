@@ -720,6 +720,21 @@ impl Tab {
         self.child.lock().ok()?.try_wait().ok().flatten()
     }
 
+    /// How the shell ended, given up to `within` to be done: the terminal can
+    /// reach its end a moment before the shell has finished exiting.
+    pub fn exit_status_after_end(&self, within: Duration) -> Option<ExitStatus> {
+        let until = std::time::Instant::now() + within;
+        loop {
+            if let Some(status) = self.exit_status() {
+                return Some(status);
+            }
+            if std::time::Instant::now() >= until {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     pub fn kill(&self) -> Result<()> {
         let mut c = self.child.lock().map_err(|_| anyhow::anyhow!("child poisoned"))?;
         c.kill()?;

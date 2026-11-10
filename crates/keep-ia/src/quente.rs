@@ -174,8 +174,17 @@ pub fn registro_do_processo(pid: u32) -> Option<(String, Registro)> {
 /// não roda num armazém de aba.
 pub fn conta_vale_em(pid: u32) -> Option<u64> {
     let (_, r) = registro_do_processo(pid)?;
-    let nasceu = processos::inicio_ms(pid).unwrap_or(0);
-    Some(if r.em > nasceu { r.em + CACHE_LOGIN_MS } else { nasceu })
+    Some(vale_desde(r.em, processos::inicio_ms(pid).unwrap_or(0)))
+}
+
+/// Quanto o início de um processo pode sair adiantado em relação ao relógio: no Linux ele vem em tiques de 10 ms
+/// desde o boot, e o boot, do tempo ligado em centésimos. Sem a folga, o armazém gravado logo antes de o Claude abrir
+/// parecia gravado depois dele: uma troca a quente que não houve, e a conta da aba só valeria depois do cache de login.
+const FOLGA_DO_INICIO_MS: u64 = 50;
+
+/// `conta_vale_em` sem o processo: quando o armazém foi gravado e quando o Claude abriu (ms).
+fn vale_desde(gravado: u64, nasceu: u64) -> u64 {
+    if gravado > nasceu + FOLGA_DO_INICIO_MS { gravado + CACHE_LOGIN_MS } else { nasceu }
 }
 
 // ------------------------------------------------------------- de onde vem

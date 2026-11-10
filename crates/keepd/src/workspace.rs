@@ -139,6 +139,10 @@ fn rehome(tabs: &mut [Entry], departed: &HashMap<u32, (u32, u8)>) {
 /// (`Workspace::reap`).
 const YOUNG: Duration = Duration::from_secs(10);
 
+/// How long a finished tab's shell is given to be done, for the log to say how
+/// it ended rather than that it still runs.
+const SHELL_EXIT_GRACE: Duration = Duration::from_millis(500);
+
 /// How a shell ended, for the log: its code — in hex too, the way Windows'
 /// own codes read (0xC0000142) — the signal, or that it still runs, when the
 /// tab ended without it.
@@ -671,16 +675,10 @@ impl Workspace {
                 .map(|e| (e.id, (e.split_of, e.split_dir)))
                 .collect();
             if departed.is_empty() {
-                return young;
+                return Vec::new();
             }
             for e in guard.iter().filter(|e| departed.contains_key(&e.id) && e.tab.age() < YOUNG) {
-                young.push(format!(
-                    "{}/{}: morreu {:.1} s depois de abrir; {}",
-                    self.name,
-                    e.id,
-                    e.tab.age().as_secs_f32(),
-                    ended(e.tab.exit_status(), e.tab.shell_pid()),
-                ));
+                young.push((e.id, e.tab.age(), Arc::clone(&e.tab)));
             }
             guard.retain(|e| !departed.contains_key(&e.id));
             // The same inheritance as `close_tab`, resolved across the whole
@@ -688,7 +686,20 @@ impl Workspace {
             // below them out of the arrangement.
             rehome(&mut guard, &departed);
         }
+        // How each ended, read outside the lock: the terminal's end can come a
+        // moment before the shell's own, and the log would say it still runs.
         young
+            .into_iter()
+            .map(|(id, age, tab)| {
+                format!(
+                    "{}/{}: morreu {:.1} s depois de abrir; {}",
+                    self.name,
+                    id,
+                    age.as_secs_f32(),
+                    ended(tab.exit_status_after_end(SHELL_EXIT_GRACE), tab.shell_pid()),
+                )
+            })
+            .collect()
     }
 
     pub fn is_empty(&self) -> bool {
