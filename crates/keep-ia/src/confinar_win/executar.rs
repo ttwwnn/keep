@@ -10,9 +10,9 @@ use std::path::Path;
 
 use super::sistema::{self, Padrao, Sid};
 use super::{
-    Ambiente, Ia, ia_de, Entrada, NIVEIS, Nivel, Quem, ambiente_preso, com_variaveis, marca, marcas_de, bloco_de_ambiente, dentro_de, eh_script_do_cmd, falha_de_partida,
+    Ambiente, Citado, Ia, ia_de, Entrada, NIVEIS, Nivel, Quem, ambiente_preso, com_variaveis, marca, marcas_de, bloco_de_ambiente, dentro_de, eh_script_do_cmd, falha_de_partida,
     area_privada, junta, linha_de_comando, linha_de_script, lugar_da_isca, pasta_larga_demais, plano, procura_programa, sem_prefixo,
-    sid_base, sid_da_pasta, sids_de_restricao, sondar_fs,
+    sid_base, sid_da_pasta, sid_nega, sids_de_restricao, sondar_fs,
 };
 use crate::{caminhos, confinar};
 
@@ -50,6 +50,10 @@ impl Ambiente for Real {
 
     fn existe(&self, caminho: &str) -> bool {
         Path::new(caminho).exists()
+    }
+
+    fn e_pasta(&self, caminho: &str) -> bool {
+        Path::new(caminho).is_dir()
     }
 }
 
@@ -107,9 +111,10 @@ fn garante(c: &super::Concessao, sid: &Sid, sid_txt: &str, marcas: &mut HashSet<
         );
     }
     rastro(|| format!("concede {:?} em {} ({:?})", c.acesso, c.caminho, c.quem));
-    if c.acesso == super::Acesso::Atributos {
-        // Uma pasta de passagem (a casa do usuário): a permissão não herda, e
-        // trocar a DACL pelo nome faria o Windows percorrer o que há embaixo.
+    if c.acesso == super::Acesso::Atributos || (c.acesso.nega() && !c.heranca) {
+        // Uma pasta de passagem (a casa do usuário), ou a negação de só apagar
+        // `.claude`: não herda, e trocar a DACL pelo nome faria o Windows
+        // percorrer o que há embaixo.
         sistema::conceder_so_aqui(&c.caminho, sid, c.acesso)?;
     } else {
         sistema::conceder(&c.caminho, sid, c.acesso, c.heranca)?;
@@ -166,6 +171,16 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
         .collect();
     let git = amb.var("CLAUDE_CODE_GIT_BASH_PATH").filter(|g| Path::new(g).is_file()).or_else(|| no_path("git"));
     let node = if eh_script_do_cmd(&p.programa) { no_path("node") } else { None };
+    // O que a configuração do Claude da pessoa cita, lido como no macOS (`confinar::perfil`): o que se executa, menos
+    // os dados, e o que o `CLAUDE.md` importa, qualquer que seja a extensão.
+    let claude = Path::new(&casa).join(".claude");
+    let citados: Vec<(String, Citado)> = confinar::executados_pela_configuracao(&claude, Path::new(&casa))
+        .into_iter()
+        .filter(|(c, _)| !confinar::e_dado(c, Path::new(&casa)))
+        .map(|(c, programas)| (c, if programas { Citado::Programas } else { Citado::Executado }))
+        .chain(confinar::importados_pelo_claude_md(&claude, Path::new(&casa)).into_iter().map(|c| (c, Citado::Instrucao)))
+        .map(|(c, como)| (sem_prefixo(&c.to_string_lossy()).replace('/', "\\"), como))
+        .collect();
     let entrada = Entrada {
         pasta: p.pasta.clone(),
         pastas_git: confinar::pastas_do_git(Path::new(&p.pasta)).iter().map(|g| sem_prefixo(g)).collect(),
@@ -182,6 +197,8 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
         git,
         node,
         sistema: sistema_dirs,
+        onde: p.onde.clone(),
+        citados,
     };
     let plano = plano(&amb, &entrada);
 
@@ -195,8 +212,10 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
     let sistema_sid = Sid::de_texto(super::SID_SISTEMA)?;
     let pasta_txt = sid_da_pasta(&usuario_txt, &p.pasta);
     let base_txt = sid_base(&usuario_txt);
+    let nega_txt = sid_nega(&usuario_txt);
     let sid_pasta = Sid::de_texto(&pasta_txt)?;
     let sid_basico = Sid::de_texto(&base_txt)?;
+    let sid_negacao = Sid::de_texto(&nega_txt)?;
     let administrativos = sistema::grupos_administrativos(&token0)?;
 
     // As pastas que a IA usa e não consegue criar, e as permissões. Quem sobe
@@ -206,6 +225,20 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
             rastro(|| format!("não criou {d}: {e}"));
         }
     }
+    // Os arquivos que ganham uma negação e ainda não existem. Sem eles a negação não tem onde morar, e a falha dela
+    // (obrigatória) segura a IA.
+    for (arquivo, conteudo) in &plano.arquivos {
+        let criado = Path::new(arquivo)
+            .parent()
+            .map(std::fs::create_dir_all)
+            .transpose()
+            .and_then(|_| std::fs::OpenOptions::new().write(true).create_new(true).open(arquivo))
+            .and_then(|mut f| f.write_all(conteudo.as_bytes()));
+        match criado {
+            Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => rastro(|| format!("não criou {arquivo}: {e}")),
+            _ => {}
+        }
+    }
     {
         let _trava = sistema::pegar_trava(TRAVA, ESPERA_DA_TRAVA_MS, || {
             eprintln!("Keep: outra aba está preparando as permissões da IA; esperando ela acabar.")
@@ -213,7 +246,9 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
         let arquivo = arquivo_das_marcas(dados.as_deref(), local.as_deref(), &casa);
         let mut marcas = std::fs::read_to_string(&arquivo).map(|t| marcas_de(&t)).unwrap_or_default();
         for c in &plano.concessoes {
+            // A negação vai ao SID dela, que todo token preso leva (`sid_nega`).
             let (sid, sid_txt) = match c.quem {
+                _ if c.acesso.nega() => (&sid_negacao, &nega_txt),
                 Quem::Pasta => (&sid_pasta, &pasta_txt),
                 Quem::Base => (&sid_basico, &base_txt),
             };
@@ -265,7 +300,7 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
     let admins: Vec<&Sid> = administrativos.iter().collect();
     let mut tentativas: Vec<String> = Vec::new();
     for nivel in NIVEIS {
-        let ids = sids_de_restricao(nivel, &pasta_txt, &base_txt, &logon_txt);
+        let ids = sids_de_restricao(nivel, &pasta_txt, &base_txt, &nega_txt, &logon_txt);
         let quais = format!("{nivel:?} [{}]", ids.join(" "));
         // Cada passo que falha põe o porquê na lista e passa ao nível seguinte:
         // a mensagem de quando nenhum serve diz o que cada um encontrou.
@@ -577,6 +612,110 @@ pub fn autoteste() -> i32 {
         Ok((n, _)) => confere("o código de saída do programa volta", n == 7, &format!("voltou {n}")),
         Err(e) => confere("o código de saída do programa volta", false, &e),
     }
+
+    // As negações de `.claude` (o plano), numa cópia dentro da pasta de prova: a de verdade não se arrisca. A cópia
+    // tem o que a de verdade tem: a gravação do SID base herdando, e as negações no SID delas, que todo token preso
+    // leva. Provam que a negação vence a permissão herdada, que a permissão explícita (o armazém da aba, os
+    // transcritos do projeto) vence a negação herdada, e que a herdada sozinha, numa pasta recriada, não conta como
+    // dada (`sistema::concedido`).
+    let falsa = junta(&permitida, "claude-de-prova");
+    let so_ler = junta(&falsa, "settings.json");
+    let pasta_so_ler = junta(&falsa, "skills");
+    let antigo = junta(&pasta_so_ler, "antigo.md");
+    let cofre = junta(&falsa, "contas");
+    let segredo = junta(&cofre, "segredo.txt");
+    let liberada = junta(&cofre, "aba");
+    let recriada = junta(&cofre, "recriada");
+    let preparo = (|| -> Result<(), String> {
+        let token = sistema::token_do_processo()?;
+        let usuario = sistema::sid_do_usuario(&token)?.texto()?;
+        let (base, nega) = (Sid::de_texto(&sid_base(&usuario))?, Sid::de_texto(&sid_nega(&usuario))?);
+        for d in [&pasta_so_ler, &liberada] {
+            std::fs::create_dir_all(d).map_err(|e| format!("{d}: {e}"))?;
+        }
+        for (arquivo, texto) in [(&so_ler, "{}"), (&antigo, "antigo"), (&segredo, "segredo")] {
+            std::fs::write(arquivo, texto).map_err(|e| format!("{arquivo}: {e}"))?;
+        }
+        sistema::conceder(&falsa, &base, super::Acesso::Gravacao, true)?;
+        sistema::conceder_so_aqui(&falsa, &nega, super::Acesso::NegaApagar)?;
+        sistema::conceder_so_aqui(&so_ler, &nega, super::Acesso::NegaEscrita)?;
+        sistema::conceder(&pasta_so_ler, &nega, super::Acesso::NegaEscrita, true)?;
+        sistema::conceder(&cofre, &nega, super::Acesso::NegaConteudo, true)?;
+        sistema::conceder(&liberada, &base, super::Acesso::Gravacao, true)?;
+        std::fs::create_dir_all(&recriada).map_err(|e| format!("{recriada}: {e}"))?;
+        let lidas = [
+            sistema::concedido(&so_ler, &nega, super::Acesso::NegaEscrita, false)?,
+            sistema::concedido(&pasta_so_ler, &nega, super::Acesso::NegaEscrita, true)?,
+            sistema::concedido(&antigo, &nega, super::Acesso::NegaEscrita, false)?,
+            sistema::concedido(&falsa, &nega, super::Acesso::NegaApagar, false)?,
+            sistema::concedido(&falsa, &base, super::Acesso::Gravacao, true)?,
+            sistema::concedido(&liberada, &base, super::Acesso::Gravacao, true)?,
+            !sistema::concedido(&recriada, &base, super::Acesso::Gravacao, true)?,
+        ];
+        if lidas.iter().all(|x| *x) { Ok(()) } else { Err(format!("o que se lê das permissões não confere: {lidas:?}")) }
+    })();
+    confere("as negações se dão e se leem", preparo.is_ok(), preparo.as_ref().err().map(String::as_str).unwrap_or(""));
+    if preparo.is_ok() {
+        let conteudo = |p: &str| std::fs::read_to_string(p).unwrap_or_default();
+        let existe = |p: &str| Path::new(p).exists();
+        match roda_linha(&format!("type \"{so_ler}\""), false) {
+            Ok((0, t)) => confere("lê o que é só para ler", t.trim() == "{}", &t),
+            Ok((n, t)) => confere("lê o que é só para ler", false, &format!("saiu com {n}: {t}")),
+            Err(e) => confere("lê o que é só para ler", false, &e),
+        }
+        match roda_linha(&format!("echo x>> \"{so_ler}\""), false) {
+            Ok((n, t)) => confere("não grava o que é só para ler", conteudo(&so_ler) == "{}", &format!("saiu com {n}: {t}")),
+            Err(e) => confere("não grava o que é só para ler", false, &e),
+        }
+        match roda_linha(&format!("del /f /q \"{so_ler}\""), false) {
+            Ok((n, t)) => confere("não apaga o que é só para ler", existe(&so_ler), &format!("saiu com {n}: {t}")),
+            Err(e) => confere("não apaga o que é só para ler", false, &e),
+        }
+        let novo = junta(&pasta_so_ler, "novo.md");
+        match roda_linha(&format!("echo x> \"{novo}\""), false) {
+            Ok((n, t)) => confere("não cria numa pasta só para ler", !existe(&novo), &format!("saiu com {n}: {t}")),
+            Err(e) => confere("não cria numa pasta só para ler", false, &e),
+        }
+        match roda_linha(&format!("echo x>> \"{antigo}\""), false) {
+            Ok((n, t)) => {
+                confere("o que já estava nela herda a negação", conteudo(&antigo) == "antigo", &format!("saiu com {n}: {t}"))
+            }
+            Err(e) => confere("o que já estava nela herda a negação", false, &e),
+        }
+        match roda_linha(&format!("type \"{segredo}\""), false) {
+            Ok((n, t)) => confere("não lê o cofre", n != 0 && !t.contains("segredo"), &format!("saiu com {n}: {t}")),
+            Err(e) => confere("não lê o cofre", false, &e),
+        }
+        match roda_linha(&format!("dir /b \"{cofre}\""), false) {
+            Ok((n, t)) => confere("não lista o cofre", !t.contains("segredo"), &format!("saiu com {n}: {t}")),
+            Err(e) => confere("não lista o cofre", false, &e),
+        }
+        let nota = junta(&liberada, "nota.txt");
+        match roda_linha(&format!("echo x> \"{nota}\" && type \"{nota}\""), false) {
+            Ok((0, t)) => confere("grava no que o cofre libera, atravessando-o", t.trim() == "x", &t),
+            Ok((n, t)) => confere("grava no que o cofre libera, atravessando-o", false, &format!("saiu com {n}: {t}")),
+            Err(e) => confere("grava no que o cofre libera, atravessando-o", false, &e),
+        }
+        let herdada = junta(&recriada, "nota.txt");
+        match roda_linha(&format!("echo x> \"{herdada}\""), false) {
+            Ok((n, t)) => confere("não grava no que só herdou a permissão", !existe(&herdada), &format!("saiu com {n}: {t}")),
+            Err(e) => confere("não grava no que só herdou a permissão", false, &e),
+        }
+        let movida = junta(&permitida, "claude-movida");
+        match roda_linha(&format!("move \"{falsa}\" \"{movida}\""), false) {
+            Ok((n, t)) => confere(
+                "não leva a pasta que só não se apaga para outro lugar",
+                existe(&falsa) && !existe(&movida),
+                &format!("saiu com {n}: {t}"),
+            ),
+            Err(e) => confere("não leva a pasta que só não se apaga para outro lugar", false, &e),
+        }
+        let dentro = junta(&falsa, "todos.txt");
+        match roda_linha(&format!("echo x> \"{dentro}\""), false) {
+            Ok((n, t)) => confere("cria dentro da pasta que só não se apaga", existe(&dentro), &format!("saiu com {n}: {t}")),
+            Err(e) => confere("cria dentro da pasta que só não se apaga", false, &e),
+        }
+    }
     if sistema::tem_console() {
         match roda_linha("echo Keep: o console da aba chegou ao programa preso> CONOUT$", true) {
             Ok((n, _)) => confere("o console da aba passa ao programa preso", n == 0, &format!("saiu com {n}")),
@@ -590,7 +729,7 @@ pub fn autoteste() -> i32 {
     if falhas > 0 {
         // Antes de apagar a pasta de prova: quem pode o quê nela é o que explica a falha.
         println!();
-        for caminho in [&casa, &raiz, &permitida, &fora, &b] {
+        for caminho in [&casa, &raiz, &permitida, &fora, &b, &falsa, &so_ler, &pasta_so_ler, &cofre, &liberada, &recriada] {
             mostra_acl(caminho);
         }
         println!();
@@ -670,6 +809,7 @@ pub fn diagnostico() -> i32 {
 
     let da_pasta = sid_da_pasta(&usuario_txt, "diagnostico");
     let base = sid_base(&usuario_txt);
+    let nega = sid_nega(&usuario_txt);
     // A forma antiga do SID do Keep (autoridade 5 e cinco sub-autoridades) e
     // uma de domínio, para ver se o Windows distingue.
     let forma_nt = da_pasta.replacen("S-1-0-", "S-1-5-1262830928-", 1);
@@ -713,7 +853,7 @@ pub fn diagnostico() -> i32 {
         um(&format!("um SID: {rotulo}"), 1, &[], &so(&sid));
     }
     for nivel in NIVEIS {
-        let ids = sids_de_restricao(nivel, &da_pasta, &base, &logon_txt);
+        let ids = sids_de_restricao(nivel, &da_pasta, &base, &nega, &logon_txt);
         um(&format!("nível {nivel:?}, sem negar"), 1, &[], &ids);
         um(&format!("nível {nivel:?}, negando os administrativos"), 1, &admins, &ids);
     }
@@ -728,7 +868,7 @@ pub fn diagnostico() -> i32 {
         }
         Err(e) => println!("    não leu: {e}"),
     }
-    let ids = sids_de_restricao(NIVEIS[0], &da_pasta, &base, &logon_txt);
+    let ids = sids_de_restricao(NIVEIS[0], &da_pasta, &base, &nega, &logon_txt);
     let sids: Result<Vec<Sid>, String> = ids.iter().map(|t| Sid::de_texto(t)).collect();
     if let (Ok(sids), Ok(sistema_sid), Ok(sid_pasta)) = (sids, Sid::de_texto(super::SID_SISTEMA), Sid::de_texto(&da_pasta)) {
         let refs: Vec<&Sid> = sids.iter().collect();

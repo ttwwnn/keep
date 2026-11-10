@@ -138,7 +138,7 @@ fn socket_do_daemon(socket: &Path) -> Vec<String> {
 /// O que, em `~/.claude`, a IA presa lê e não grava: o que toda sessão do Claude Code, presa ou não, executa ou toma
 /// como instrução ao abrir. Gravado por ela, viraria comando numa aba sem sandbox (um gancho no `settings.json`, um
 /// plugin, uma skill, um agente) ou instrução de todas as conversas (o `CLAUDE.md`, as regras, os estilos de saída).
-const CLAUDE_SO_LEITURA: [&str; 10] = [
+pub(crate) const CLAUDE_SO_LEITURA: [&str; 10] = [
     "settings.json",
     "settings.local.json",
     "CLAUDE.md",
@@ -187,7 +187,7 @@ fn formas(p: &Path) -> Vec<String> {
 /// com cada unidade UTF-16 que não é letra nem algarismo ASCII trocada por `-`; passando de 200, os 200 primeiros e um
 /// hash, que fica de fora (a regra casa o começo). Em NFC, que é como o CLI normaliza a pasta, e como está, se for
 /// outro.
-fn projeto_do_claude(pasta: &Path) -> Vec<String> {
+pub(crate) fn projeto_do_claude(pasta: &Path) -> Vec<String> {
     use unicode_normalization::UnicodeNormalization;
     let como_esta = pasta.to_string_lossy().into_owned();
     let nfc: String = como_esta.nfc().collect();
@@ -259,13 +259,18 @@ fn palavras(texto: &str) -> Vec<String> {
 
 /// Os caminhos que a configuração do Claude Code da pessoa (`~/.claude/settings.json` e `settings.local.json`) cita —
 /// o script de um gancho, o da linha de status, um ajudante —, achados em cada texto dela como caminho absoluto, `~/`
-/// ou `$HOME/`: pelas palavras do shell (um caminho entre aspas, com espaço) e soltos no texto (o que vai dentro de um
-/// `bash -c "…"`). Um deles que caia onde a IA presa grava viraria, trocado por ela, comando da sessão seguinte. Alvo
-/// de redirecionamento de saída (`2>/dev/null`, `>> ~/.claude/log`) não conta: é onde o comando grava; o de entrada
-/// conta (`bash < ~/.claude/x.sh` executa o arquivo). `/dev` fica de fora. É uma leitura do texto: um script chamado
-/// por outro, ou por uma variável, não é seguido. Cada um vem com o aviso de que é pasta de programas: o valor de uma
-/// variável `…PATH` (`PATH`, `PYTHONPATH`, `NODE_PATH`), onde um programa novo seria achado e rodado.
-fn executados_pela_configuracao(claude: &Path, casa: &Path) -> Vec<(PathBuf, bool)> {
+/// ou `$HOME/` (no Windows, também `C:\`, `~\`, `%USERPROFILE%\` e `$env:USERPROFILE\`): pelas palavras do shell (um
+/// caminho entre aspas, com espaço) e soltos no texto (o que vai dentro de um `bash -c "…"`). Um deles que caia onde a
+/// IA presa grava viraria, trocado por ela, comando da sessão seguinte. Alvo de redirecionamento de saída
+/// (`2>/dev/null`, `>> ~/.claude/log`) não conta: é onde o comando grava; o de entrada conta (`bash < ~/.claude/x.sh`
+/// executa o arquivo). `/dev` fica de fora. É uma leitura do texto: um script chamado por outro, ou por uma variável,
+/// não é seguido. Cada um vem com o aviso de que é pasta de programas: o valor de uma variável `…PATH` (`PATH`,
+/// `PYTHONPATH`, `NODE_PATH`), onde um programa novo seria achado e rodado.
+pub(crate) fn executados_pela_configuracao(claude: &Path, casa: &Path) -> Vec<(PathBuf, bool)> {
+    executados_pela_configuracao_em(claude, casa, cfg!(windows))
+}
+
+fn executados_pela_configuracao_em(claude: &Path, casa: &Path, windows: bool) -> Vec<(PathBuf, bool)> {
     fn textos<'a>(chave: &'a str, v: &'a serde_json::Value, saida: &mut Vec<(&'a str, &'a str)>) {
         match v {
             serde_json::Value::String(s) => saida.push((chave, s)),
@@ -275,7 +280,10 @@ fn executados_pela_configuracao(claude: &Path, casa: &Path) -> Vec<(PathBuf, boo
         }
     }
     let saida = regex::Regex::new(r#"(?:\d|&)?>>?\s*(?:"[^"]*"|'[^']*'|[^\s;|&()]+)"#).expect("regex fixa");
-    let solto = regex::Regex::new(r#"(?:~|\$HOME|\$\{HOME\})?/[^\s"'`;|&()<>]+"#).expect("regex fixa");
+    let solto = regex::Regex::new(
+        r#"(?:(?:~|\$HOME|\$\{HOME\}|(?i:%USERPROFILE%|\$env:USERPROFILE))?[/\\]|\b[A-Za-z]:[/\\])[^\s"'`;|&()<>]+"#,
+    )
+    .expect("regex fixa");
     let mut achados: Vec<(PathBuf, bool)> = Vec::new();
     for nome in ["settings.json", "settings.local.json"] {
         let Ok(texto) = caminhos::ler_texto_ate(&claude.join(nome), caminhos::LEITURA_MAXIMA) else { continue };
@@ -287,16 +295,7 @@ fn executados_pela_configuracao(claude: &Path, casa: &Path) -> Vec<(PathBuf, boo
             let limpo = saida.replace_all(texto, " ");
             let mut candidatos = palavras(&limpo);
             candidatos.extend(solto.find_iter(&limpo).map(|m| m.as_str().to_string()));
-            // Uma lista de pastas (`~/.claude/bin:$PATH`) vale por cada uma.
-            let candidatos: Vec<String> =
-                candidatos.iter().flat_map(|c| c.split(':').map(str::to_string).collect::<Vec<_>>()).collect();
-            for palavra in candidatos {
-                let da_casa = ["~/", "$HOME/", "${HOME}/"].iter().find_map(|i| palavra.strip_prefix(i));
-                let caminho = match da_casa {
-                    Some(resto) => casa.join(resto),
-                    None if palavra.starts_with('/') => PathBuf::from(&palavra),
-                    None => continue,
-                };
+            for caminho in candidatos.iter().flat_map(|c| citados_na_palavra(c, casa, windows)) {
                 if caminho.starts_with("/dev") || caminho == casa {
                     continue;
                 }
@@ -310,9 +309,60 @@ fn executados_pela_configuracao(claude: &Path, casa: &Path) -> Vec<(PathBuf, boo
     achados
 }
 
+/// Os caminhos que uma palavra da configuração cita. Uma lista de pastas (`~/.claude/bin:$PATH`) vale por cada uma; no
+/// Windows o `:` da unidade (`C:\`) e o de `$env:` não separam.
+fn citados_na_palavra(palavra: &str, casa: &Path, windows: bool) -> Vec<PathBuf> {
+    let mut pedacos = Vec::new();
+    let mut inicio = 0;
+    for (i, c) in palavra.char_indices() {
+        if c != ':' {
+            continue;
+        }
+        let antes = &palavra[inicio..i];
+        let depois = palavra[i + 1..].chars().next();
+        let unidade = antes.len() == 1 && antes.chars().all(|l| l.is_ascii_alphabetic()) && matches!(depois, Some('/' | '\\'));
+        if !(windows && (unidade || antes.eq_ignore_ascii_case("$env"))) {
+            pedacos.push(antes);
+            inicio = i + 1;
+        }
+    }
+    pedacos.push(&palavra[inicio..]);
+    pedacos.into_iter().filter_map(|p| caminho_citado(p, casa, windows)).collect()
+}
+
+/// Um caminho, se é da casa ou absoluto: `~/`, `$HOME/`, `${HOME}/` e `/…`. No Windows, também com `\`, por
+/// `%USERPROFILE%` e `$env:USERPROFILE` (sem caixa, como no `cmd` e no PowerShell), os de unidade (`C:\`, `C:/`) e os
+/// do Git Bash (`/c/…`), sempre com `\`.
+fn caminho_citado(p: &str, casa: &Path, windows: bool) -> Option<PathBuf> {
+    if !windows {
+        return match ["~/", "$HOME/", "${HOME}/"].iter().find_map(|i| p.strip_prefix(i)) {
+            Some(resto) => Some(casa.join(resto)),
+            None if p.starts_with('/') => Some(PathBuf::from(p)),
+            None => None,
+        };
+    }
+    let barras = |t: &str| t.replace('/', "\\");
+    let minusculas = p.to_ascii_lowercase();
+    let da_casa = ["~", "$home", "${home}", "%userprofile%", "$env:userprofile"]
+        .iter()
+        .find_map(|i| minusculas.strip_prefix(i).filter(|r| r.starts_with(['/', '\\'])).map(|_| &p[i.len() + 1..]));
+    if let Some(resto) = da_casa {
+        let casa = casa.to_string_lossy();
+        return (!resto.is_empty()).then(|| PathBuf::from(format!("{}\\{}", casa.trim_end_matches(['\\', '/']), barras(resto))));
+    }
+    let b = p.as_bytes();
+    if b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && matches!(b[2], b'/' | b'\\') {
+        return Some(PathBuf::from(barras(p)));
+    }
+    if b.len() >= 3 && b[0] == b'/' && b[1].is_ascii_alphabetic() && b[2] == b'/' {
+        return Some(PathBuf::from(format!("{}:\\{}", char::from(b[1]).to_ascii_uppercase(), barras(&p[3..]))));
+    }
+    None
+}
+
 /// Os arquivos que o `~/.claude/CLAUDE.md` traz para toda conversa (`@~/caminho`, `@/caminho` ou `@caminho`, relativo
 /// à pasta de quem importa), e os que estes trazem, até cinco níveis, como o CLI: instrução de toda sessão, presa ou não.
-fn importados_pelo_claude_md(claude: &Path, casa: &Path) -> Vec<PathBuf> {
+pub(crate) fn importados_pelo_claude_md(claude: &Path, casa: &Path) -> Vec<PathBuf> {
     let import = regex::Regex::new(r"(?:^|\s)@([^\s`]+)").expect("regex fixa");
     let mut achados: Vec<PathBuf> = Vec::new();
     let mut fila = vec![(claude.join("CLAUDE.md"), 0)];
@@ -322,9 +372,10 @@ fn importados_pelo_claude_md(claude: &Path, casa: &Path) -> Vec<PathBuf> {
         for c in import.captures_iter(&texto) {
             // A pontuação da frase não faz parte do caminho (`@~/.claude/regras.md;`).
             let alvo = c[1].trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']']);
-            let caminho = match alvo.strip_prefix("~/") {
+            // Um absoluto substitui a pasta de quem importa (no Windows, também o `C:\` e o `\` da unidade dela).
+            let da_casa = alvo.strip_prefix("~/").or_else(|| alvo.strip_prefix("~\\").filter(|_| cfg!(windows)));
+            let caminho = match da_casa {
                 Some(resto) => casa.join(resto),
-                None if alvo.starts_with('/') => PathBuf::from(alvo),
                 None => pasta.join(alvo),
             };
             // Um importado que ainda não existe também: criado pela IA presa, viraria instrução do mesmo jeito.
@@ -344,16 +395,19 @@ fn importados_pelo_claude_md(claude: &Path, casa: &Path) -> Vec<PathBuf> {
 /// ~/.claude.json`, `tail history.jsonl`, `tee -a x.log`), muitas vezes o próprio estado do CLI. Negá-lo tiraria do
 /// Claude preso a gravação dele, sem nada a proteger de execução. Um `.md` ou `.txt` citado não é dado: um gancho que
 /// o põe na conversa faz dele instrução de toda sessão.
-fn e_dado(p: &Path, casa: &Path) -> bool {
+pub(crate) fn e_dado(p: &Path, casa: &Path) -> bool {
     let ext = p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-    matches!(ext.as_str(), "json" | "jsonl" | "log" | "csv" | "lock")
-        || p.to_string_lossy().starts_with(&format!("{}/.claude.json", casa.to_string_lossy()))
+    let da_casa = p.parent() == Some(casa) && p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(".claude.json"));
+    matches!(ext.as_str(), "json" | "jsonl" | "log" | "csv" | "lock") || da_casa
 }
 
 /// Se o caminho citado é um script, que costuma levar os vizinhos (um módulo, uma biblioteca do shell) junto.
-fn e_script(p: &Path) -> bool {
+pub(crate) fn e_script(p: &Path) -> bool {
     let ext = p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-    matches!(ext.as_str(), "sh" | "bash" | "zsh" | "py" | "js" | "mjs" | "cjs" | "ts" | "rb" | "pl" | "php" | "lua")
+    matches!(
+        ext.as_str(),
+        "sh" | "bash" | "zsh" | "py" | "js" | "mjs" | "cjs" | "ts" | "rb" | "pl" | "php" | "lua" | "ps1" | "psm1" | "cmd" | "bat"
+    )
 }
 
 /// O que, na casa, a IA presa lê e grava: a casa do Claude Code e do Codex, o estado, os caches e o Chaveiro.
@@ -361,7 +415,7 @@ const AREAS_DA_CASA: [&str; 6] = [".claude", ".codex", ".local/state", ".cache",
 
 /// As pastas de `~/.claude` que o próprio CLI grava, e a das contas (o armazém da aba, onde ele põe as travas do
 /// login): negar a pasta inteira de um arquivo citado nelas quebraria a sessão presa.
-const CLAUDE_ESTADO: [&str; 22] = [
+pub(crate) const CLAUDE_ESTADO: [&str; 22] = [
     "projects",
     "todos",
     "shell-snapshots",
@@ -1085,7 +1139,8 @@ mod testes {
         std::fs::write(claude.join("settings.json"), config.to_string()).unwrap();
         let env = r#"{"env":{"P":"/opt/ferramenta/bin","PATH":"~/.claude/bin:$PATH","UV_CACHE_DIR":"~/.cache/uv"}}"#;
         std::fs::write(claude.join("settings.local.json"), env).unwrap();
-        let com_marca = executados_pela_configuracao(&claude, &casa);
+        // A leitura do Unix, em qualquer sistema: a do Windows tem o teste dela.
+        let com_marca = executados_pela_configuracao_em(&claude, &casa, false);
         // A pasta de programas vem marcada (o valor de um `…PATH`); a de um cache, não.
         assert!(com_marca.contains(&(casa.join(".claude/bin"), true)), "{com_marca:?}");
         assert!(com_marca.contains(&(casa.join(".cache/uv"), false)), "{com_marca:?}");
@@ -1116,7 +1171,69 @@ mod testes {
         // Sem configuração, ou com uma que não é JSON: nada.
         std::fs::write(claude.join("settings.json"), "{").unwrap();
         std::fs::remove_file(claude.join("settings.local.json")).unwrap();
-        assert!(executados_pela_configuracao(&claude, &casa).is_empty());
+        assert!(executados_pela_configuracao_em(&claude, &casa, false).is_empty());
+    }
+
+    #[test]
+    fn no_windows_os_caminhos_citados_tem_as_formas_dele() {
+        let casa = Path::new(r"C:\Users\ana");
+        let w = |p: &str| -> Vec<String> {
+            citados_na_palavra(p, casa, true).iter().map(|c| c.to_string_lossy().into_owned()).collect()
+        };
+        assert_eq!(w(r"C:\Users\ana\.claude\s.ps1"), [r"C:\Users\ana\.claude\s.ps1"]);
+        assert_eq!(w("C:/Users/ana/.claude/s.ps1"), [r"C:\Users\ana\.claude\s.ps1"]);
+        assert_eq!(w(r"~\.claude\a.ps1"), [r"C:\Users\ana\.claude\a.ps1"]);
+        assert_eq!(w("~/.claude/b.sh"), [r"C:\Users\ana\.claude\b.sh"]);
+        assert_eq!(w(r"%userprofile%\.claude\c.cmd"), [r"C:\Users\ana\.claude\c.cmd"]);
+        assert_eq!(w(r"$Env:USERPROFILE\.claude\d.ps1"), [r"C:\Users\ana\.claude\d.ps1"]);
+        assert_eq!(w("$HOME/.claude/e.sh"), [r"C:\Users\ana\.claude\e.sh"]);
+        assert_eq!(w("/c/Users/ana/.claude/f.sh"), [r"C:\Users\ana\.claude\f.sh"]);
+        // Uma lista à moda do Unix vale por cada pasta; o `:` da unidade não separa.
+        assert_eq!(w(r"~/.claude/bin:C:\ferramentas"), [r"C:\Users\ana\.claude\bin", r"C:\ferramentas"]);
+        for nada in ["%PATH%", "$env:PATH", "~", r"relativo\x.ps1", "/tmp/x.sh"] {
+            assert!(w(nada).is_empty(), "{nada}: {:?}", w(nada));
+        }
+        // No Unix, nada disso é caminho: um `C:\…` viraria uma regra relativa, que o `sandbox-exec` recusa.
+        assert!(citados_na_palavra(r"C:\Users\ana\x.ps1", Path::new("/Users/ana"), false).is_empty());
+        assert!(citados_na_palavra(r"%USERPROFILE%\x.ps1", Path::new("/Users/ana"), false).is_empty());
+
+        // Numa configuração de verdade: a linha de status do PowerShell (entre aspas, com espaço), o gancho dentro de
+        // um `pwsh -c "…"` e o `PATH` separado por `;`. O alvo de saída fica de fora.
+        let d = tempfile::tempdir().unwrap();
+        let claude = d.path().join(".claude");
+        std::fs::create_dir_all(&claude).unwrap();
+        let config = serde_json::json!({
+            "statusLine": {"command": r#"powershell -NoProfile -File "%USERPROFILE%\.claude\linha de status.ps1""#},
+            "hooks": {"Stop": [{"hooks": [{"command": r#"pwsh -c "& $env:USERPROFILE\.claude\gancho.ps1 2>> C:\Users\ana\log.txt""#}]}]},
+            "env": {"PATH": r"C:\Users\ana\.claude\bin;%PATH%"},
+        });
+        std::fs::write(claude.join("settings.json"), config.to_string()).unwrap();
+        let achados: Vec<(String, bool)> = executados_pela_configuracao_em(&claude, casa, true)
+            .into_iter()
+            .map(|(p, b)| (p.to_string_lossy().into_owned(), b))
+            .collect();
+        for esperado in [
+            (r"C:\Users\ana\.claude\linha de status.ps1", false),
+            (r"C:\Users\ana\.claude\gancho.ps1", false),
+            (r"C:\Users\ana\.claude\bin", true),
+        ] {
+            assert!(achados.contains(&(esperado.0.to_string(), esperado.1)), "{esperado:?} em {achados:?}");
+        }
+        assert!(!achados.iter().any(|(p, _)| p.ends_with("log.txt")), "{achados:?}");
+    }
+
+    #[test]
+    fn dado_e_o_que_o_gancho_le_ou_grava_e_script_inclui_os_do_windows() {
+        let casa = Path::new("/casa");
+        assert!(e_dado(&casa.join(".claude.json"), casa));
+        assert!(e_dado(&casa.join(".claude.json.backup"), casa));
+        assert!(e_dado(&casa.join(".claude/history.jsonl"), casa));
+        assert!(!e_dado(&casa.join(".claude/regras.md"), casa));
+        assert!(!e_dado(&casa.join("outra/.claude.json.sh"), casa));
+        for script in ["a.sh", "b.py", "c.ps1", "d.CMD", "e.bat", "f.psm1"] {
+            assert!(e_script(Path::new(script)), "{script}");
+        }
+        assert!(!e_script(Path::new("g.md")));
     }
 
     #[test]

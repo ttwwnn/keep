@@ -84,6 +84,7 @@
 //! O que fala com o Windows está em `sistema` (só no Windows).
 
 use sha2::{Digest, Sha256};
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -144,6 +145,15 @@ pub fn sid_base(usuario: &str) -> String {
     sid_do_keep(usuario, "base")
 }
 
+/// O SID das negações, que todo token preso também leva. Outro que não o
+/// base: o `SetEntriesInAcl` funde a permissão e a negação de um mesmo SID
+/// (dar `Gravacao` tira da negação o que ela nega, e vice-versa), e a
+/// permissão de `.claude` voltaria a ser dada, percorrendo a pasta inteira, a
+/// cada vez que a IA sobe.
+pub fn sid_nega(usuario: &str) -> String {
+    sid_do_keep(usuario, "nega")
+}
+
 /// Quanto do sistema o token restrito enxerga além do que o Keep concede. O
 /// primeiro nível que deixa o programa partir é o que vale; a prova do token
 /// vale para os dois (o perfil do usuário fica negado em ambos).
@@ -163,14 +173,15 @@ pub enum Nivel {
 /// Os níveis, do mais fechado ao mais aberto.
 pub const NIVEIS: [Nivel; 2] = [Nivel::Compativel, Nivel::Amplo];
 
-/// Os SIDs de restrição do token de um nível: o da pasta, o base, o da sessão
-/// de logon (sem ele o processo não abre a estação de janelas) e os do
-/// sistema. O do usuário e o dos administradores nunca entram: seriam o
-/// perfil de volta.
-pub fn sids_de_restricao(nivel: Nivel, da_pasta: &str, base: &str, logon: &str) -> Vec<String> {
+/// Os SIDs de restrição do token de um nível: o da pasta, o base, o das
+/// negações, o da sessão de logon (sem ele o processo não abre a estação de
+/// janelas) e os do sistema. O do usuário e o dos administradores nunca
+/// entram: seriam o perfil de volta.
+pub fn sids_de_restricao(nivel: Nivel, da_pasta: &str, base: &str, nega: &str, logon: &str) -> Vec<String> {
     let mut v = vec![
         da_pasta.to_string(),
         base.to_string(),
+        nega.to_string(),
         logon.to_string(),
         SID_TODOS.to_string(),
         SID_RESTRITO.to_string(),
@@ -290,19 +301,43 @@ pub enum Acesso {
     /// `realpath` do Node e o `stat` do Git andam por todos os componentes do
     /// caminho, e um que nega isso derruba o programa.
     Atributos,
+    /// NEGAR a gravação, numa área que a IA grava (o que toda sessão do Claude
+    /// executa ou toma como instrução): gravar, acrescentar, criar dentro,
+    /// apagar, trocar os atributos. Ler e atravessar continuam.
+    NegaEscrita,
+    /// NEGAR o conteúdo (o cofre das contas, os transcritos de outro projeto):
+    /// o da escrita, mais ler e listar. Saber que existe e atravessar
+    /// continuam: o caminho até o que volta depois (o armazém da aba, a pasta
+    /// do projeto preso) passa por ela.
+    NegaConteudo,
+    /// NEGAR só apagar e renomear: a pasta que, levada inteira para outro lugar
+    /// que a IA grava, passaria por cima do que é negado dentro dela.
+    NegaApagar,
 }
 
 impl Acesso {
     /// A máscara de acesso a arquivo: `FILE_GENERIC_READ | FILE_GENERIC_EXECUTE`
     /// e, para gravar, `FILE_GENERIC_WRITE` e `DELETE`. Sem `WRITE_DAC` nem
-    /// `WRITE_OWNER`: a IA não reescreve permissão de ninguém.
+    /// `WRITE_OWNER`: a IA não reescreve permissão de ninguém. Nas negações, o
+    /// que é negado.
     pub fn mascara(self) -> u32 {
         match self {
             Acesso::Leitura => 0x0012_00A9,
             Acesso::Gravacao => 0x0013_01BF,
             // READ_CONTROL | SYNCHRONIZE | FILE_READ_ATTRIBUTES | FILE_TRAVERSE.
             Acesso::Atributos => 0x0012_00A0,
+            // FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_WRITE_EA | FILE_DELETE_CHILD | FILE_WRITE_ATTRIBUTES | DELETE.
+            Acesso::NegaEscrita => 0x0001_0156,
+            // O mesmo, mais FILE_READ_DATA (ler, listar) e FILE_READ_EA. Nunca FILE_TRAVERSE (0x20).
+            Acesso::NegaConteudo => 0x0001_015F,
+            // DELETE.
+            Acesso::NegaApagar => 0x0001_0000,
         }
+    }
+
+    /// Se é uma negação (uma ACE que nega, em vez de uma que permite).
+    pub fn nega(self) -> bool {
+        matches!(self, Acesso::NegaEscrita | Acesso::NegaConteudo | Acesso::NegaApagar)
     }
 }
 
@@ -352,6 +387,19 @@ pub fn ia_de(programa: &str) -> Ia {
 pub trait Ambiente {
     fn var(&self, nome: &str) -> Option<String>;
     fn existe(&self, caminho: &str) -> bool;
+    fn e_pasta(&self, caminho: &str) -> bool;
+}
+
+/// Como a configuração do Claude da pessoa cita um caminho.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Citado {
+    /// Executado: o script de um gancho, o da linha de status, um ajudante.
+    Executado,
+    /// Uma pasta de programas: o valor de um `…PATH`, onde um programa novo
+    /// seria achado e rodado.
+    Programas,
+    /// Importado pelo `CLAUDE.md`: instrução de toda sessão.
+    Instrucao,
 }
 
 /// De onde sai o plano.
@@ -376,6 +424,13 @@ pub struct Entrada {
     /// `%SystemRoot%`, `%ProgramFiles%` e afins: já legíveis, e não são do
     /// usuário para ter a permissão mexida.
     pub sistema: Vec<String>,
+    /// Onde o programa começa (a pasta presa ou uma subpasta dela): a pasta dos
+    /// transcritos do Claude é dada por ela.
+    pub onde: String,
+    /// O que a configuração do Claude da pessoa cita (o script de um gancho, o
+    /// da linha de status, uma pasta do `PATH`) e o que o `CLAUDE.md` importa,
+    /// já sem os dados (`confinar::executados_pela_configuracao`).
+    pub citados: Vec<(String, Citado)>,
 }
 
 /// O que dar a quem antes de a IA subir, e a pasta que ela usa como `%TEMP%`.
@@ -384,6 +439,10 @@ pub struct Plano {
     pub concessoes: Vec<Concessao>,
     /// Pastas a criar antes de conceder (a IA não as cria sozinha).
     pub criar: Vec<String>,
+    /// Arquivos a criar, com o conteúdo, se ainda não existem: a negação do
+    /// Windows mora na DACL do próprio arquivo, e o que não existe a IA presa
+    /// criaria.
+    pub arquivos: Vec<(String, String)>,
     pub temp: String,
 }
 
@@ -400,11 +459,19 @@ pub fn plano(amb: &dyn Ambiente, e: &Entrada) -> Plano {
     let local = e.local.clone().unwrap_or_else(|| junta(&e.casa, "AppData\\Local"));
     let sob_a_casa = |p: &str| dentro_de(&e.casa, p);
     let do_sistema = |p: &str| e.sistema.iter().any(|s| dentro_de(s, p));
-    let mut concessoes: Vec<Concessao> = Vec::new();
+    // Numa célula: a parte de `.claude` lê o que já se concedeu (onde a IA grava).
+    let concessoes: RefCell<Vec<Concessao>> = RefCell::new(Vec::new());
     let mut criar: Vec<String> = Vec::new();
-    let mut poe = |c: Concessao| {
-        if !concessoes.iter().any(|x| partes(&x.caminho) == partes(&c.caminho) && x.quem == c.quem && x.acesso == c.acesso) {
-            concessoes.push(c);
+    let poe = |c: Concessao| {
+        let mut v = concessoes.borrow_mut();
+        // Negar só apagar não se soma a outra negação no mesmo caminho: as outras já negam apagar.
+        let ja = v.iter().any(|x| {
+            partes(&x.caminho) == partes(&c.caminho)
+                && x.quem == c.quem
+                && (x.acesso == c.acesso || (c.acesso == Acesso::NegaApagar && x.acesso.nega()))
+        });
+        if !ja {
+            v.push(c);
         }
     };
     let grava = |caminho: String, quem: Quem, heranca: bool, criar: bool, obrigatoria: bool| Concessao {
@@ -481,6 +548,123 @@ pub fn plano(amb: &dyn Ambiente, e: &Entrada) -> Plano {
         }
     }
 
+    // De `.claude`, como no macOS (`confinar::perfil`): o que toda sessão do Claude, presa ou não, executa ou toma
+    // como instrução fica só para ler; o cofre e os logins das contas, fechados (o armazém da aba, dado acima pela
+    // variável, vale por cima); dos transcritos, só os do projeto preso; e a própria `.claude` não se apaga nem se
+    // renomeia. No Windows a negação mora na DACL do item e vence a permissão herdada de `.claude`; o que ainda não
+    // existe nasce antes (uma pasta vazia, um `{}`), senão a IA presa o criaria. Toda negação é obrigatória: sem ela
+    // a IA não sobe.
+    let mut arquivos: Vec<(String, String)> = Vec::new();
+    let claude = junta(&e.casa, ".claude");
+    if amb.existe(&claude) || ia == Ia::Claude {
+        let nega = |caminho: String, acesso: Acesso, heranca: bool| Concessao {
+            caminho,
+            acesso,
+            quem: Quem::Base,
+            heranca,
+            criar: false,
+            obrigatoria: true,
+        };
+        for nome in crate::confinar::CLAUDE_SO_LEITURA {
+            let p = junta(&claude, nome);
+            let arquivo = nome.contains('.');
+            if !amb.existe(&p) {
+                if arquivo {
+                    arquivos.push((p.clone(), if nome.ends_with(".json") { "{}\n".into() } else { String::new() }));
+                } else {
+                    criar.push(p.clone());
+                }
+            }
+            poe(nega(p, Acesso::NegaEscrita, !arquivo));
+        }
+        poe(nega(claude.clone(), Acesso::NegaApagar, false));
+        for nome in ["contas", "projects"] {
+            let p = junta(&claude, nome);
+            if !amb.existe(&p) {
+                criar.push(p.clone());
+            }
+            poe(nega(p, Acesso::NegaConteudo, true));
+        }
+        // A pasta dos transcritos da pasta presa e a da subpasta em que o programa começa, com o nome que o Claude
+        // Code dá; passando de 200, o CLI acrescenta um hash, e não há como criá-la antes.
+        let projetos = junta(&claude, "projects");
+        let mut nomes = crate::confinar::projeto_do_claude(Path::new(&e.pasta));
+        if dentro_de(&e.pasta, &e.onde) {
+            for nome in crate::confinar::projeto_do_claude(Path::new(&e.onde)) {
+                if !nomes.contains(&nome) {
+                    nomes.push(nome);
+                }
+            }
+        }
+        for nome in nomes.iter().filter(|n| n.len() < 200) {
+            let p = junta(&projetos, nome);
+            if !amb.existe(&p) {
+                criar.push(p.clone());
+            }
+            poe(grava(p, Quem::Base, true, false, ia == Ia::Claude));
+        }
+
+        // O que a configuração cita e cai numa área que a IA grava. Fora delas o token já não grava, e a permissão
+        // dos arquivos do usuário fica como está.
+        let areas: Vec<String> = concessoes
+            .borrow()
+            .iter()
+            .filter(|c| c.quem == Quem::Base && c.acesso == Acesso::Gravacao && c.heranca)
+            .map(|c| c.caminho.clone())
+            .collect();
+        let na_area = |p: &str| areas.iter().any(|a| dentro_de(a, p));
+        // Uma pasta que se nega inteira: dentro de uma área, sem ser ela, e fora das pastas de estado do CLI.
+        let livre = |d: &str| {
+            areas.iter().any(|a| dentro_de(a, d) && partes(a) != partes(d))
+                && !crate::confinar::CLAUDE_ESTADO.iter().any(|s| dentro_de(&junta(&claude, s), d))
+        };
+        for (p, como) in &e.citados {
+            if !na_area(p) || dentro_de(&e.pasta, p) || dentro_de(p, &e.pasta) {
+                continue;
+            }
+            let existe = amb.existe(p);
+            let pasta = existe && amb.e_pasta(p);
+            let script = crate::confinar::e_script(Path::new(p));
+            // A pasta inteira: a de programas (onde um `git` novo rodaria na sessão seguinte) e a de um script numa
+            // subpasta de `.claude`, que ele costuma levar junto. A que ainda não existe nasce vazia.
+            let inteira = match como {
+                Citado::Programas if pasta || !existe => Some(p.clone()),
+                Citado::Executado if script => pasta_de(p).filter(|d| dentro_de(&claude, d)),
+                _ => None,
+            }
+            .filter(|d| livre(d));
+            if let Some(d) = &inteira {
+                if !amb.existe(d) {
+                    criar.push(d.clone());
+                }
+                poe(nega(d.clone(), Acesso::NegaEscrita, true));
+            }
+            // O próprio caminho: uma pasta, sem apagar nem renomear (criar dentro dela continua, como no macOS); um
+            // arquivo, só para ler. Um script ou um texto importado que falta nasce vazio: criado pela IA presa,
+            // rodaria (ou instruiria) a sessão seguinte. O que falta e não é nenhum dos dois (uma pasta de cache)
+            // fica de fora: criá-lo poria um arquivo onde um programa espera outra coisa.
+            let texto = Path::new(p)
+                .extension()
+                .is_some_and(|x| matches!(x.to_string_lossy().to_ascii_lowercase().as_str(), "md" | "txt"));
+            let nasce = !existe && inteira.is_none() && ((*como == Citado::Executado && script) || (*como == Citado::Instrucao && texto));
+            if pasta {
+                poe(nega(p.clone(), Acesso::NegaApagar, false));
+            } else if existe || nasce {
+                if nasce {
+                    arquivos.push((p.clone(), String::new()));
+                }
+                poe(nega(p.clone(), Acesso::NegaEscrita, false));
+            } else if inteira.is_none() {
+                continue;
+            }
+            // As pastas acima, dentro da área: levada para outro lugar e trocada por outra, uma delas trocaria o que
+            // está dentro.
+            for a in ancestrais(p).into_iter().filter(|a| na_area(a)) {
+                poe(nega(a, Acesso::NegaApagar, false));
+            }
+        }
+    }
+
     // Só leitura: os programas, a configuração do git, o próprio Keep.
     for sub in [".local\\bin", ".local\\share\\claude", ".config\\git"] {
         let p = junta(&e.casa, sub);
@@ -532,16 +716,19 @@ pub fn plano(amb: &dyn Ambiente, e: &Entrada) -> Plano {
     // Node, o Git atrás do repositório, o `cd ..`) não passa por uma pasta cujos
     // atributos ele não pode ler. As de cima da casa (`C:\Users`) e as do
     // sistema o Windows já deixa ver; as que têm uma permissão maior já valem.
+    let mut concessoes = concessoes.into_inner();
     let mut pais: Vec<Concessao> = Vec::new();
-    for c in &concessoes {
+    for c in concessoes.iter().filter(|c| !c.acesso.nega()) {
         for a in ancestrais(&c.caminho) {
             if do_sistema(&a) || (dentro_de(&a, &e.casa) && !dentro_de(&e.casa, &a)) {
                 continue;
             }
-            let ja = concessoes
-                .iter()
-                .chain(pais.iter())
-                .any(|x| partes(&x.caminho) == partes(&a) && (x.heranca || x.acesso == Acesso::Atributos));
+            // Dentro de uma permissão que herda, a herdada já deixa ver: as negações nunca tiram atravessar.
+            let ja = concessoes.iter().chain(pais.iter()).any(|x| {
+                !x.acesso.nega()
+                    && ((x.heranca && dentro_de(&x.caminho, &a))
+                        || (x.acesso == Acesso::Atributos && partes(&x.caminho) == partes(&a)))
+            });
             if !ja {
                 pais.push(Concessao { caminho: a, acesso: Acesso::Atributos, quem: Quem::Base, heranca: false, criar: false, obrigatoria: false });
             }
@@ -549,7 +736,7 @@ pub fn plano(amb: &dyn Ambiente, e: &Entrada) -> Plano {
     }
     concessoes.extend(pais);
 
-    Plano { concessoes, criar, temp: junta(&privada, "tmp") }
+    Plano { concessoes, criar, arquivos, temp: junta(&privada, "tmp") }
 }
 
 /// A pasta de instalação do Git for Windows a que um `git.exe` ou `bash.exe`
@@ -575,7 +762,8 @@ pub fn raiz_do_git(exe: &str) -> Option<String> {
 /// ela em parte do que está dentro: só a raiz não diz que acabou. A marca é
 /// gravada quando acaba, fora do que a IA alcança.
 pub fn marca(sid: &str, acesso: Acesso, heranca: bool, caminho: &str) -> String {
-    format!("{sid}|{:08x}|{}|{}", acesso.mascara(), if heranca { "h" } else { "f" }, partes(caminho).join("\\"))
+    let nega = if acesso.nega() { "n" } else { "" };
+    format!("{sid}|{nega}{:08x}|{}|{}", acesso.mascara(), if heranca { "h" } else { "f" }, partes(caminho).join("\\"))
 }
 
 /// As marcas de um arquivo de marcas.
@@ -880,11 +1068,25 @@ mod testes {
     struct Falso {
         vars: HashMap<String, String>,
         existem: HashSet<String>,
+        pastas: HashSet<String>,
     }
 
     impl Falso {
+        /// O que existe; o que tem algo dentro na lista é pasta.
         fn novo(existem: &[&str]) -> Falso {
-            Falso { vars: HashMap::new(), existem: existem.iter().map(|s| partes(s).join("\\")).collect() }
+            let existem: HashSet<String> = existem.iter().map(|s| partes(s).join("\\")).collect();
+            let pastas = existem.iter().filter(|p| existem.iter().any(|q| q.len() > p.len() && dentro_de(p, q))).cloned().collect();
+            Falso { vars: HashMap::new(), existem, pastas }
+        }
+
+        /// E mais estas, que são pastas (vazias).
+        fn com_pastas(mut self, pastas: &[&str]) -> Falso {
+            for p in pastas {
+                let p = partes(p).join("\\");
+                self.existem.insert(p.clone());
+                self.pastas.insert(p);
+            }
+            self
         }
     }
 
@@ -894,6 +1096,9 @@ mod testes {
         }
         fn existe(&self, caminho: &str) -> bool {
             self.existem.contains(&partes(caminho).join("\\"))
+        }
+        fn e_pasta(&self, caminho: &str) -> bool {
+            self.pastas.contains(&partes(caminho).join("\\"))
         }
     }
 
@@ -911,6 +1116,8 @@ mod testes {
             git: None,
             node: None,
             sistema: vec![r"C:\Windows".into(), r"C:\Program Files".into(), r"C:\Program Files (x86)".into()],
+            onde: r"D:\projetos\app".into(),
+            citados: vec![],
         }
     }
 
@@ -925,6 +1132,7 @@ mod testes {
         assert_ne!(a, sid_da_pasta("S-1-5-21-1-2-3-1001", r"D:\Projetos\Outro"));
         assert_ne!(a, sid_da_pasta("S-1-5-21-1-2-3-1002", r"D:\Projetos\App"));
         assert_ne!(a, sid_base("S-1-5-21-1-2-3-1001"));
+        assert_ne!(sid_nega("S-1-5-21-1-2-3-1001"), sid_base("S-1-5-21-1-2-3-1001"));
         // A forma do SID aleatório de restrição do Chromium: S-1-0 e quatro de 32 bits.
         let partes: Vec<&str> = a.split('-').collect();
         assert_eq!(&partes[..3], ["S", "1", "0"]);
@@ -934,14 +1142,14 @@ mod testes {
 
     #[test]
     fn os_niveis_vao_do_compativel_ao_amplo_e_nenhum_traz_o_usuario() {
-        let c = sids_de_restricao(Nivel::Compativel, "P", "B", "L");
-        let a = sids_de_restricao(Nivel::Amplo, "P", "B", "L");
+        let c = sids_de_restricao(Nivel::Compativel, "P", "B", "N", "L");
+        let a = sids_de_restricao(Nivel::Amplo, "P", "B", "N", "L");
         for lista in [&c, &a] {
-            assert_eq!(&lista[..6], ["P", "B", "L", SID_TODOS, SID_RESTRITO, SID_USUARIOS]);
+            assert_eq!(&lista[..7], ["P", "B", "N", "L", SID_TODOS, SID_RESTRITO, SID_USUARIOS]);
         }
         // O compatível é a lista do Chromium; o amplo a acrescenta. Os pacotes
         // de aplicativo (S-1-15-2-*) não entram: o Windows os recusa (erro 87).
-        assert_eq!(c.len(), 6);
+        assert_eq!(c.len(), 7);
         assert!(a.starts_with(&c));
         for s in [SID_AUTENTICADOS, SID_INTERATIVO, SID_LOCAL, SID_CONSOLE] {
             assert!(a.contains(&s.to_string()) && !c.contains(&s.to_string()), "{s}");
@@ -1264,6 +1472,143 @@ mod testes {
         assert_eq!(lidas.len(), 2);
         assert!(lidas.contains(&m));
         assert!(marcas_de("").is_empty());
+        // A negação tem marca própria, mesmo com o mesmo SID e a mesma máscara de bits.
+        assert!(marca("S-1-5-9-1", Acesso::NegaEscrita, true, r"C:\x").contains("|n"));
+        assert!(!m.contains("|n"));
+    }
+
+    #[test]
+    fn as_negacoes_nao_dao_nada_e_nunca_negam_atravessar() {
+        for a in [Acesso::NegaEscrita, Acesso::NegaConteudo, Acesso::NegaApagar] {
+            assert!(a.nega());
+            // FILE_TRAVERSE, FILE_READ_ATTRIBUTES, READ_CONTROL e SYNCHRONIZE ficam: o caminho até o armazém da aba e
+            // até a pasta do projeto preso passa pelo que se nega.
+            assert_eq!(a.mascara() & Acesso::Atributos.mascara(), 0, "{a:?}");
+            // Nem WRITE_DAC nem WRITE_OWNER: a negação não mexe em quem manda na permissão.
+            assert_eq!(a.mascara() & 0x000C_0000, 0, "{a:?}");
+        }
+        for a in [Acesso::Leitura, Acesso::Gravacao, Acesso::Atributos] {
+            assert!(!a.nega());
+        }
+        // Negar a escrita não nega ler; negar o conteúdo nega ler e listar (FILE_READ_DATA).
+        assert_eq!(Acesso::NegaEscrita.mascara() & 0x1, 0);
+        assert_eq!(Acesso::NegaConteudo.mascara() & 0x1, 0x1);
+        // Toda negação nega apagar e renomear (DELETE), e a de escrita, o que a gravação dá.
+        for a in [Acesso::NegaEscrita, Acesso::NegaConteudo, Acesso::NegaApagar] {
+            assert_eq!(a.mascara() & 0x0001_0000, 0x0001_0000, "{a:?}");
+        }
+        assert_eq!(Acesso::Gravacao.mascara() & !Acesso::Leitura.mascara() & !Acesso::NegaEscrita.mascara(), 0);
+    }
+
+    #[test]
+    fn de_dot_claude_a_ia_so_le_o_que_toda_sessao_executa_e_nao_ve_contas_nem_outros_transcritos() {
+        let claude = r"C:\Users\ana\.claude";
+        let amb = Falso::novo(&[
+            claude,
+            r"C:\Users\ana\.claude\settings.json",
+            r"C:\Users\ana\.claude\skills",
+            r"C:\Users\ana\.claude\skills\x\SKILL.md",
+        ]);
+        let p = plano(&amb, &entrada(r"C:\Users\ana\.local\bin\claude.exe"));
+        let negacoes: Vec<&Concessao> = p.concessoes.iter().filter(|c| c.acesso.nega()).collect();
+        assert!(!negacoes.is_empty() && negacoes.iter().all(|c| c.obrigatoria && c.quem == Quem::Base), "{negacoes:?}");
+        // Cada item da lista do macOS fica só para ler; as pastas, com o que nascer nelas.
+        for nome in crate::confinar::CLAUDE_SO_LEITURA {
+            let c = de(&p, &junta(claude, nome));
+            assert!(c.iter().any(|c| c.acesso == Acesso::NegaEscrita && c.heranca == !nome.contains('.')), "{nome}: {c:?}");
+        }
+        // O que não existe nasce antes: o arquivo com o vazio que o Claude aceita, a pasta vazia. O que existe fica.
+        assert!(p.arquivos.contains(&(junta(claude, "settings.local.json"), "{}\n".into())), "{:?}", p.arquivos);
+        assert!(p.arquivos.contains(&(junta(claude, "CLAUDE.md"), String::new())), "{:?}", p.arquivos);
+        assert!(!p.arquivos.iter().any(|(a, _)| a.ends_with(r"\settings.json")), "{:?}", p.arquivos);
+        assert!(p.criar.contains(&junta(claude, "hooks")) && !p.criar.contains(&junta(claude, "skills")), "{:?}", p.criar);
+        // `.claude` não se apaga nem se renomeia, e segue gravável.
+        let raiz = de(&p, claude);
+        assert!(raiz.iter().any(|c| c.acesso == Acesso::NegaApagar && !c.heranca), "{raiz:?}");
+        assert!(raiz.iter().any(|c| c.acesso == Acesso::Gravacao && c.heranca), "{raiz:?}");
+        // As contas e os transcritos: nem ler, nem listar; a pasta que falta nasce para levar a negação.
+        for nome in ["contas", "projects"] {
+            let c = de(&p, &junta(claude, nome));
+            assert!(c.iter().any(|c| c.acesso == Acesso::NegaConteudo && c.heranca), "{nome}: {c:?}");
+            assert!(p.criar.contains(&junta(claude, nome)), "{nome}: {:?}", p.criar);
+        }
+        // Dos transcritos, os do projeto preso, com o nome que o Claude Code dá à pasta; e os da subpasta em que o
+        // programa começa, uma vez cada.
+        let mut e = entrada(r"C:\Users\ana\.local\bin\claude.exe");
+        e.onde = r"D:\projetos\app\web".into();
+        let p = plano(&amb, &e);
+        for nome in ["D--projetos-app", "D--projetos-app-web"] {
+            let proprio = junta(claude, &format!(r"projects\{nome}"));
+            assert!(de(&p, &proprio).iter().any(|c| c.acesso == Acesso::Gravacao && c.heranca), "{nome}: {:?}", p.concessoes);
+            assert_eq!(p.criar.iter().filter(|c| **c == proprio).count(), 1, "{nome}: {:?}", p.criar);
+        }
+        // O caminho até os transcritos do projeto não ganha permissão explícita: herda a de `.claude`, e a negação de
+        // `projects` deixa atravessar.
+        assert!(!de(&p, &junta(claude, "projects")).iter().any(|c| c.acesso == Acesso::Atributos), "{:?}", p.concessoes);
+        // O Codex não tem `.claude`, e o plano dele não ganha negação nenhuma.
+        let codex = plano(&Falso::novo(&[]), &entrada(r"C:\Users\ana\AppData\Roaming\npm\codex.cmd"));
+        assert!(!codex.concessoes.iter().any(|c| c.acesso.nega()) && codex.arquivos.is_empty(), "{:?}", codex.concessoes);
+    }
+
+    #[test]
+    fn o_que_a_configuracao_cita_e_cai_onde_a_ia_grava_fica_so_para_ler() {
+        let claude = r"C:\Users\ana\.claude";
+        let amb = Falso::novo(&[
+            claude,
+            r"C:\Users\ana\.claude\statusline.ps1",
+            r"C:\Users\ana\.claude\scripts\gancho.py",
+            r"C:\Users\ana\.claude\regras.md",
+            r"C:\Users\ana\.claude\todos\x.sh",
+            r"C:\Users\ana\ferramentas\fora.ps1",
+        ])
+        .com_pastas(&[r"C:\Users\ana\.claude\bin", r"C:\Users\ana\.cache"]);
+        let mut e = entrada(r"C:\Users\ana\.local\bin\claude.exe");
+        e.citados = vec![
+            (r"C:\Users\ana\.claude\statusline.ps1".into(), Citado::Executado),
+            (r"C:\Users\ana\.claude\scripts\gancho.py".into(), Citado::Executado),
+            (r"C:\Users\ana\.claude\bin".into(), Citado::Programas),
+            (r"C:\Users\ana\.claude\regras.md".into(), Citado::Instrucao),
+            (r"C:\Users\ana\.claude\falta.md".into(), Citado::Instrucao),
+            (r"C:\Users\ana\.claude\falta.ps1".into(), Citado::Executado),
+            (r"C:\Users\ana\.claude\novos\h.sh".into(), Citado::Executado),
+            (r"C:\Users\ana\.claude\todos\x.sh".into(), Citado::Executado),
+            (r"C:\Users\ana\.cache\uv".into(), Citado::Executado),
+            (r"C:\Users\ana\ferramentas\fora.ps1".into(), Citado::Executado),
+            (r"D:\projetos\app\gancho.ps1".into(), Citado::Executado),
+            (claude.into(), Citado::Programas),
+        ];
+        let p = plano(&amb, &e);
+        let tem = |caminho: &str, acesso: Acesso, heranca: bool| {
+            de(&p, caminho).iter().any(|c| c.acesso == acesso && c.heranca == heranca && c.obrigatoria)
+        };
+        // O arquivo executado e o importado: só para ler.
+        assert!(tem(r"C:\Users\ana\.claude\statusline.ps1", Acesso::NegaEscrita, false));
+        assert!(tem(r"C:\Users\ana\.claude\regras.md", Acesso::NegaEscrita, false));
+        // O script numa subpasta de `.claude` leva a pasta junto; a de programas vai inteira.
+        assert!(tem(r"C:\Users\ana\.claude\scripts", Acesso::NegaEscrita, true));
+        assert!(tem(r"C:\Users\ana\.claude\bin", Acesso::NegaEscrita, true));
+        // O que falta: o script e o texto importado nascem vazios; a pasta de um script que falta nasce para levar a
+        // negação.
+        assert!(p.arquivos.contains(&(r"C:\Users\ana\.claude\falta.md".into(), String::new())), "{:?}", p.arquivos);
+        assert!(p.arquivos.contains(&(r"C:\Users\ana\.claude\falta.ps1".into(), String::new())), "{:?}", p.arquivos);
+        assert!(tem(r"C:\Users\ana\.claude\falta.ps1", Acesso::NegaEscrita, false));
+        assert!(p.criar.contains(&r"C:\Users\ana\.claude\novos".to_string()), "{:?}", p.criar);
+        assert!(tem(r"C:\Users\ana\.claude\novos", Acesso::NegaEscrita, true));
+        assert!(!p.arquivos.iter().any(|(a, _)| a.ends_with(r"\h.sh")), "{:?}", p.arquivos);
+        // Um cache que falta não vira arquivo, e nada se nega nele.
+        assert!(!p.arquivos.iter().any(|(a, _)| a.ends_with(r"\uv")) && de(&p, r"C:\Users\ana\.cache\uv").is_empty());
+        // Numa pasta de estado do CLI, só o arquivo: a pasta inteira tiraria a gravação da sessão. As pastas acima,
+        // dentro da área, não se apagam nem se renomeiam.
+        assert!(tem(r"C:\Users\ana\.claude\todos\x.sh", Acesso::NegaEscrita, false));
+        assert!(!tem(r"C:\Users\ana\.claude\todos", Acesso::NegaEscrita, true));
+        assert!(tem(r"C:\Users\ana\.claude\todos", Acesso::NegaApagar, false));
+        // Fora das áreas que a IA grava, e na pasta presa (que é dela), nada muda.
+        assert!(de(&p, r"C:\Users\ana\ferramentas\fora.ps1").is_empty() && de(&p, r"C:\Users\ana\ferramentas").is_empty());
+        assert!(!de(&p, r"D:\projetos\app\gancho.ps1").iter().any(|c| c.acesso.nega()));
+        // A própria `.claude` numa lista de programas não se nega inteira: a sessão perderia a gravação.
+        assert!(!tem(claude, Acesso::NegaEscrita, true));
+        // A casa não ganha negação: fora das áreas, a IA já não a renomeia.
+        assert!(!de(&p, CASA).iter().any(|c| c.acesso.nega()));
     }
 
     #[test]

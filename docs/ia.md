@@ -292,8 +292,47 @@ ambiente que cada sessão relê a cada comando Bash), e para ler `history.jsonl`
 `paste-cache/` e `plans/`, que juntam os de todos os projetos. Também o Chaveiro (os itens do Claude confiam
 no `security`) e a rede. Um script que a configuração global cita e que fica dentro da pasta presa continua da IA
 presa, como o resto da pasta: ao prender uma pasta, os ganchos globais que rodam um script dela passam a rodar o
-que a IA deixar ali. Fechar tudo isso pede um `CLAUDE_CONFIG_DIR` próprio para a IA presa. No Windows o token
-restrito ainda leva `.claude` inteiro (`confinar_win.rs`).
+que a IA deixar ali. Fechar tudo isso pede um `CLAUDE_CONFIG_DIR` próprio para a IA presa.
+
+### O que a IA presa alcança (Windows)
+
+O plano do token restrito (`confinar_win::plano`) tira de `.claude` o mesmo que o perfil do macOS, com negações na
+DACL de cada item, num SID só delas (`sid_nega`) que todo token preso leva: o `SetEntriesInAcl` funde a permissão e
+a negação de um mesmo SID, e a permissão de `.claude` voltaria a ser dada, percorrendo a pasta, a cada subida. A
+negação explícita vence a permissão herdada de `.claude`, e a permissão explícita (o armazém da aba, a pasta dos
+transcritos do projeto preso) vence a negação herdada de `contas\` e de `projects\`; por isso uma permissão só
+conta como dada se for explícita (`sistema::concedido`). Toda negação é obrigatória: sem ela, a IA não sobe.
+
+- só para ler: os dez itens do macOS (as pastas, com o que nascer nelas); o que o `CLAUDE.md` importa; e o que a
+  configuração cita e cai numa área que a IA grava (`.claude`, `.codex`, `.local\state`, `.cache`, a área privada
+  do Keep e as pastas das variáveis), lido também nas formas do Windows (`C:\`, `~\`, `%USERPROFILE%\`,
+  `$env:USERPROFILE\`, o `/c/…` do Git Bash e o `PATH` separado por `;`). A pasta de um script numa subpasta de
+  `.claude` que não é de estado do CLI e uma pasta de programas vão inteiras; as pastas acima, dentro da área, não
+  se apagam nem se renomeiam. Fora das áreas o token já não grava, e a permissão dos arquivos do usuário fica como
+  está;
+- fechado (sem ler nem listar; atravessar continua): `contas\` e `projects\`, menos o armazém da aba e as pastas
+  dos transcritos da pasta presa e da subpasta em que o programa começa;
+- `.claude` não se apaga nem se renomeia, e criar dentro dela continua.
+
+A negação mora no próprio item, e o que não existe não tem onde pô-la: antes da subida, o Keep cria o que falta
+(`settings.json` e `settings.local.json` com `{}`, o `CLAUDE.md` vazio, as pastas vazias, `contas\` e
+`projects\`), o script citado que falta e o `.md` ou `.txt` importado que falta, vazios. O que falta e não é
+nenhum desses (um cache) fica de fora: criá-lo poria um arquivo onde um programa espera outra coisa. Os
+transcritos de uma subpasta que o Claude abre depois e os de um caminho que passa de 200 caracteres (o CLI
+acrescenta um hash) não têm pasta: o Claude preso conversa sem guardá-los.
+
+Limites que o macOS não tem, por a negação ser do objeto e não do caminho: um programa do usuário que troca um
+desses arquivos por outro (grava um temporário e renomeia por cima) leva a negação junto, e até a IA subir de novo
+o arquivo novo fica gravável pela IA presa que estiver rodando; uma pasta movida para dentro de `.claude` leva a
+permissão que tinha; e as negações ficam depois que a configuração deixa de citar o caminho (valem só para a IA
+presa). Fechar isso pede o mesmo `CLAUDE_CONFIG_DIR` próprio do macOS.
+
+No CI do Windows, o autoteste (`keep ia confinar --autoteste`) dá as negações numa `.claude` de prova e confere
+que o preso lê e não grava nem apaga o que é só para ler, não cria na pasta só para ler (e o que já estava nela
+herda a negação), não lê nem lista o cofre, grava no que o cofre libera, não grava no que só herdou a permissão e
+não leva para outro lugar a pasta que só não se apaga, onde continua criando. O roteiro `tools/confine-test.ps1`,
+com o Claude Code de verdade preso, confere a `.claude` do executor: lê e não grava a configuração, não cria nas
+skills, não lista `contas\` nem `projects\`. Não visto: o Claude Code logado de verdade, preso no Windows.
 
 ### O gancho da conta da aba
 

@@ -220,6 +220,40 @@ const s = net.createServer((c) => c.end("pong")).listen(0, "127.0.0.1", () => {
         }
     }
 
+    # A `.claude` do usuário (que o Claude preso de cima criou, se faltava): o
+    # preso lê a configuração e não a grava, não cria nas skills, não lista as
+    # contas nem os transcritos de outro projeto. Só com marcas que se apagam, e
+    # a configuração volta como estava se o preso a tiver mudado.
+    $dotclaude = Join-Path $env:USERPROFILE ".claude"
+    $configuracao = Join-Path $dotclaude "settings.json"
+    if (Test-Path $configuracao) {
+        Write-Host "a .claude do usuário"
+        $marca = ".keep-confine-teste-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
+        $antes = [IO.File]::ReadAllBytes($configuracao)
+        $texto = (Get-Content -Raw $configuracao) -replace '\s+', ' '
+        Confere "lê a configuração do Claude" $texto.Trim() ((Roda "presa" @("cmd.exe", "/d", "/c", "type", $configuracao)) -replace '\s+', ' ').Trim()
+        Set-Content -Path (Join-Path $permitida "grava-config.cmd") -Value "@echo off`r`necho x>> `"$configuracao`"`r`n"
+        Roda "presa" @((Join-Path $permitida "grava-config.cmd")) | Out-Null
+        $depois = [IO.File]::ReadAllBytes($configuracao)
+        $igual = [Convert]::ToBase64String($antes) -eq [Convert]::ToBase64String($depois)
+        if (-not $igual) { [IO.File]::WriteAllBytes($configuracao, $antes) }
+        Confere "não grava a configuração do Claude" "True" $igual
+        $skill = Join-Path $dotclaude "skills\$marca"
+        Set-Content -Path (Join-Path $permitida "cria-skill.cmd") -Value "@echo off`r`nmkdir `"$skill`"`r`n"
+        Roda "presa" @((Join-Path $permitida "cria-skill.cmd")) | Out-Null
+        Confere "não cria nas skills" "False" (Test-Path $skill)
+        Remove-Item -Recurse -Force $skill -ErrorAction SilentlyContinue
+        foreach ($sub in @("contas", "projects")) {
+            $pasta = Join-Path $dotclaude $sub
+            if (-not (Test-Path $pasta)) { continue }
+            $marcada = Join-Path $pasta $marca
+            New-Item -ItemType Directory -Force -Path $marcada | Out-Null
+            $lista = Roda "presa" @("cmd.exe", "/d", "/c", "dir", "/b", "/a", $pasta)
+            Confere "não lista $sub" "False" ($lista -match [regex]::Escape($marca))
+            Remove-Item -Recurse -Force $marcada -ErrorAction SilentlyContinue
+        }
+    }
+
     # O Gerenciador de Credenciais (onde o Claude Code pode guardar o login),
     # só para ver: o resultado vai para o registro, não conta. Um que o usuário
     # grava, o preso vê? Um que o preso grava, o usuário vê?
