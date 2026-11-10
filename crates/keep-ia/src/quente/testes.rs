@@ -635,3 +635,14 @@ fn um_registro_que_aponta_para_fora_de_abas_nao_faz_o_keep_apagar_nada() {
     let r = espalhar(&contas::listar(false));
     assert!(r.apagadas.is_empty() && vitima.join("dados.txt").is_file(), "{r:?}");
 }
+
+#[test]
+fn o_armazem_gravado_logo_antes_de_o_claude_abrir_nao_e_troca_a_quente() {
+    // Gravado antes de ele abrir: a conta vale desde a abertura.
+    assert_eq!(vale_desde(1_000, 2_000), 2_000);
+    // Gravado uns milissegundos "depois" do início que o Linux dá em tiques de 10 ms: ainda é antes de ele abrir.
+    assert_eq!(vale_desde(2_008, 2_000), 2_000);
+    assert_eq!(vale_desde(2_000 + FOLGA_DO_INICIO_MS, 2_000), 2_000);
+    // Gravado com ele aberto (a troca a quente): a conta só vale depois do cache de login.
+    assert_eq!(vale_desde(60_000, 2_000), 60_000 + CACHE_LOGIN_MS);
+}
