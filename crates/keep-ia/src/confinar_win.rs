@@ -145,6 +145,12 @@ pub fn sid_base(usuario: &str) -> String {
     sid_do_keep(usuario, "base")
 }
 
+/// O SID de um caminho (`Quem::Propria`): o mesmo caminho, escrito como for,
+/// dá o mesmo SID.
+pub fn sid_do_caminho(usuario: &str, caminho: &str) -> String {
+    sid_do_keep(usuario, &format!("caminho:{}", partes(caminho).join("\\")))
+}
+
 /// O SID das negações, que todo token preso também leva. Outro que não o
 /// base: o `SetEntriesInAcl` funde a permissão e a negação de um mesmo SID
 /// (dar `Gravacao` tira da negação o que ela nega, e vice-versa), e a
@@ -341,13 +347,19 @@ impl Acesso {
     }
 }
 
-/// A quem a permissão é dada.
+/// A quem a permissão é dada. A permissão fica gravada no caminho depois que
+/// a IA sai: dada a um SID que todo token preso leva, valeria para a IA presa
+/// de qualquer pasta e de qualquer aba, depois.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Quem {
     /// O SID da pasta presa: só o token dessa pasta a tem.
     Pasta,
     /// O SID base: vale para todo token do Keep deste usuário.
     Base,
+    /// O SID do próprio caminho (`sid_do_caminho`), que só o token de quem o
+    /// usa nesta subida leva: as pastas das variáveis (o armazém da aba, o
+    /// `CODEX_HOME` de uma conta extra), que são de uma aba só.
+    Propria,
 }
 
 /// Uma permissão a dar antes de a IA subir.
@@ -531,12 +543,13 @@ pub fn plano(amb: &dyn Ambiente, e: &Entrada) -> Plano {
     if amb.existe(&cache) {
         poe(grava(cache, Quem::Base, true, false, false));
     }
-    // Quem muda a casa da IA por variável (a conta da aba, o Codex extra).
+    // Quem muda a casa da IA por variável (a conta da aba, o Codex extra): no SID do próprio caminho, que só esta
+    // subida leva. O armazém de outra aba, que outra subida concedeu, fica fora do alcance desta.
     for var in ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "CLAUDE_SECURESTORAGE_CONFIG_DIR"] {
         if let Some(p) = amb.var(var).filter(|v| !v.trim().is_empty()) {
             let p = sem_prefixo(&p);
             if amb.existe(&p) && !do_sistema(&p) && !dentro_de(&e.pasta, &p) {
-                poe(grava(p, Quem::Base, true, false, false));
+                poe(grava(p, Quem::Propria, true, false, false));
             }
         }
     }
@@ -586,7 +599,8 @@ pub fn plano(amb: &dyn Ambiente, e: &Entrada) -> Plano {
             poe(nega(p, Acesso::NegaConteudo, true));
         }
         // A pasta dos transcritos da pasta presa e a da subpasta em que o programa começa, com o nome que o Claude
-        // Code dá; passando de 200, o CLI acrescenta um hash, e não há como criá-la antes.
+        // Code dá, no SID da pasta: a IA presa a outra pasta não a vê. Passando de 200, o CLI acrescenta um hash, e
+        // não há como criá-la antes.
         let projetos = junta(&claude, "projects");
         let mut nomes = crate::confinar::projeto_do_claude(Path::new(&e.pasta));
         if dentro_de(&e.pasta, &e.onde) {
@@ -601,7 +615,7 @@ pub fn plano(amb: &dyn Ambiente, e: &Entrada) -> Plano {
             if !amb.existe(&p) {
                 criar.push(p.clone());
             }
-            poe(grava(p, Quem::Base, true, false, ia == Ia::Claude));
+            poe(grava(p, Quem::Pasta, true, false, ia == Ia::Claude));
         }
 
         // O que a configuração cita e cai numa área que a IA grava. Fora delas o token já não grava, e a permissão
@@ -609,7 +623,7 @@ pub fn plano(amb: &dyn Ambiente, e: &Entrada) -> Plano {
         let areas: Vec<String> = concessoes
             .borrow()
             .iter()
-            .filter(|c| c.quem == Quem::Base && c.acesso == Acesso::Gravacao && c.heranca)
+            .filter(|c| c.quem != Quem::Pasta && c.acesso == Acesso::Gravacao && c.heranca)
             .map(|c| c.caminho.clone())
             .collect();
         let na_area = |p: &str| areas.iter().any(|a| dentro_de(a, p));
@@ -1544,7 +1558,11 @@ mod testes {
         let p = plano(&amb, &e);
         for nome in ["D--projetos-app", "D--projetos-app-web"] {
             let proprio = junta(claude, &format!(r"projects\{nome}"));
-            assert!(de(&p, &proprio).iter().any(|c| c.acesso == Acesso::Gravacao && c.heranca), "{nome}: {:?}", p.concessoes);
+            assert!(
+                de(&p, &proprio).iter().any(|c| c.acesso == Acesso::Gravacao && c.heranca && c.quem == Quem::Pasta),
+                "{nome}: {:?}",
+                p.concessoes
+            );
             assert_eq!(p.criar.iter().filter(|c| **c == proprio).count(), 1, "{nome}: {:?}", p.criar);
         }
         // O caminho até os transcritos do projeto não ganha permissão explícita: herda a de `.claude`, e a negação de
@@ -1553,6 +1571,34 @@ mod testes {
         // O Codex não tem `.claude`, e o plano dele não ganha negação nenhuma.
         let codex = plano(&Falso::novo(&[]), &entrada(r"C:\Users\ana\AppData\Roaming\npm\codex.cmd"));
         assert!(!codex.concessoes.iter().any(|c| c.acesso.nega()) && codex.arquivos.is_empty(), "{:?}", codex.concessoes);
+    }
+
+    #[test]
+    fn a_ia_presa_a_uma_pasta_nao_alcanca_o_que_outra_subida_concedeu() {
+        // A permissão fica gravada no caminho. Os transcritos de cada projeto vão ao SID da pasta, e as pastas das
+        // variáveis (o armazém da aba, o Codex extra) ao SID do próprio caminho: nunca ao base, que toda IA presa leva.
+        let armazem = r"C:\Users\ana\.claude\contas\abas\101-1";
+        let codex = r"C:\Users\ana\.codex-contas\bia";
+        let mut amb = Falso::novo(&[r"C:\Users\ana\.claude", armazem, codex]);
+        amb.vars.insert("CLAUDE_SECURESTORAGE_CONFIG_DIR".into(), armazem.into());
+        amb.vars.insert("CODEX_HOME".into(), codex.into());
+        let p = plano(&amb, &entrada(r"C:\Users\ana\.local\bin\claude.exe"));
+        for caminho in [armazem, codex] {
+            let c = de(&p, caminho);
+            assert!(c.iter().any(|c| c.quem == Quem::Propria && c.acesso == Acesso::Gravacao && c.heranca), "{caminho}: {c:?}");
+            assert!(!c.iter().any(|c| c.quem == Quem::Base && !c.acesso.nega()), "{caminho}: {c:?}");
+        }
+        let projetos = r"C:\Users\ana\.claude\projects";
+        assert!(
+            !p.concessoes.iter().any(|c| dentro_de(projetos, &c.caminho) && c.quem == Quem::Base && !c.acesso.nega()),
+            "{:?}",
+            p.concessoes
+        );
+        // O SID de um caminho não depende de como ele é escrito, e cada caminho tem o seu.
+        let u = "S-1-5-21-1-2-3-1001";
+        assert_eq!(sid_do_caminho(u, armazem), sid_do_caminho(u, &armazem.to_uppercase().replace('\\', "/")));
+        assert_ne!(sid_do_caminho(u, armazem), sid_do_caminho(u, codex));
+        assert_ne!(sid_do_caminho(u, armazem), sid_da_pasta(u, armazem));
     }
 
     #[test]

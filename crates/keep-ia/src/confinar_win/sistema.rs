@@ -18,7 +18,7 @@ use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 use windows_sys::Win32::Security::Authorization::{
-    ConvertSidToStringSidW, ConvertStringSidToSidW, DENY_ACCESS, EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW,
+    ConvertSidToStringSidW, ConvertStringSidToSidW, DENY_ACCESS, EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW, REVOKE_ACCESS,
     GetSecurityInfo, NO_MULTIPLE_TRUSTEE, SE_FILE_OBJECT, SE_KERNEL_OBJECT, SetEntriesInAclW, SetNamedSecurityInfoW,
     SetSecurityInfo, TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
 };
@@ -529,6 +529,44 @@ pub fn conceder(caminho: &str, sid: &Sid, acesso: Acesso, heranca: bool) -> Resu
     };
     if r != 0 {
         return Err(falha(&format!("não foi possível dar a permissão em {caminho}"), r));
+    }
+    Ok(())
+}
+
+/// Tira de `caminho` o que o SID tem permitido nele (as ACEs que negam
+/// ficam), refazendo a herança do que está dentro: o Windows percorre a pasta.
+/// Para a permissão que uma versão antiga deu a um SID que toda IA presa leva.
+pub fn revogar(caminho: &str, sid: &Sid) -> Result<(), String> {
+    let (dacl, sd, _guarda) = dacl_de(caminho)?;
+    if dacl.is_null() {
+        return Ok(());
+    }
+    let protegida = !nao_protegida(sd);
+    let ea = EXPLICIT_ACCESS_W {
+        grfAccessPermissions: 0,
+        grfAccessMode: REVOKE_ACCESS,
+        grfInheritance: NO_INHERITANCE,
+        Trustee: TRUSTEE_W {
+            pMultipleTrustee: null_mut(),
+            MultipleTrusteeOperation: NO_MULTIPLE_TRUSTEE,
+            TrusteeForm: TRUSTEE_IS_SID,
+            TrusteeType: TRUSTEE_IS_UNKNOWN,
+            ptstrName: sid.ptr() as PWSTR,
+        },
+    };
+    let mut nova: *mut ACL = null_mut();
+    let r = unsafe { SetEntriesInAclW(1, &ea, dacl, &mut nova) };
+    if r != 0 {
+        return Err(falha("SetEntriesInAcl", r));
+    }
+    let _nova = Local(nova as *mut c_void);
+    let w = larga(caminho);
+    let estado = if protegida { PROTECTED_DACL_SECURITY_INFORMATION } else { UNPROTECTED_DACL_SECURITY_INFORMATION };
+    let r = unsafe {
+        SetNamedSecurityInfoW(w.as_ptr(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | estado, null_mut(), null_mut(), nova, null())
+    };
+    if r != 0 {
+        return Err(falha(&format!("não foi possível tirar a permissão de {caminho}"), r));
     }
     Ok(())
 }

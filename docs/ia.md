@@ -303,6 +303,13 @@ negação explícita vence a permissão herdada de `.claude`, e a permissão exp
 transcritos do projeto preso) vence a negação herdada de `contas\` e de `projects\`; por isso uma permissão só
 conta como dada se for explícita (`sistema::concedido`). Toda negação é obrigatória: sem ela, a IA não sobe.
 
+A permissão fica gravada no caminho depois que a IA sai, então nunca vai a um SID que toda IA presa leva quando o
+caminho é de uma pasta só ou de uma aba só: as pastas dos transcritos do projeto vão ao SID da pasta presa, e as
+pastas das variáveis (o armazém da aba, o `CODEX_HOME` de uma conta extra, o `CLAUDE_CONFIG_DIR`) a um SID do
+próprio caminho (`sid_do_caminho`), que só o token da subida que as usa leva. A permissão que uma versão antiga
+deu ao SID base nessas pastas (os armazéns das abas e das contas fixas, os `CODEX_HOME` de `~\.codex-contas`) é
+revogada na subida seguinte.
+
 - só para ler: os dez itens do macOS (as pastas, com o que nascer nelas); o que o `CLAUDE.md` importa; e o que a
   configuração cita e cai numa área que a IA grava (`.claude`, `.codex`, `.local\state`, `.cache`, a área privada
   do Keep e as pastas das variáveis), lido também nas formas do Windows (`C:\`, `~\`, `%USERPROFILE%\`,
@@ -330,7 +337,8 @@ presa). Fechar isso pede o mesmo `CLAUDE_CONFIG_DIR` próprio do macOS.
 No CI do Windows, o autoteste (`keep ia confinar --autoteste`) dá as negações numa `.claude` de prova e confere
 que o preso lê e não grava nem apaga o que é só para ler, não cria na pasta só para ler (e o que já estava nela
 herda a negação), não lê nem lista o cofre, grava no que o cofre libera, não grava no que só herdou a permissão e
-não leva para outro lugar a pasta que só não se apaga, onde continua criando. O roteiro `tools/confine-test.ps1`,
+não leva para outro lugar a pasta que só não se apaga, onde continua criando; e que a pasta de uma variável só vale
+para a subida que a usa, com a permissão antiga do SID base revogada. O roteiro `tools/confine-test.ps1`,
 com o Claude Code de verdade preso, confere a `.claude` do executor: lê e não grava a configuração, não cria nas
 skills, não lista `contas\` nem `projects\`. Não visto: o Claude Code logado de verdade, preso no Windows.
 

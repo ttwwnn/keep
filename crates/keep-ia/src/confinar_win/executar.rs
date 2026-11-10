@@ -12,7 +12,7 @@ use super::sistema::{self, Padrao, Sid};
 use super::{
     Ambiente, Citado, Ia, ia_de, Entrada, NIVEIS, Nivel, Quem, ambiente_preso, com_variaveis, marca, marcas_de, bloco_de_ambiente, dentro_de, eh_script_do_cmd, falha_de_partida,
     area_privada, junta, linha_de_comando, linha_de_script, lugar_da_isca, pasta_larga_demais, plano, procura_programa, sem_prefixo,
-    sid_base, sid_da_pasta, sid_nega, sids_de_restricao, sondar_fs,
+    sid_base, sid_da_pasta, sid_do_caminho, sid_nega, sids_de_restricao, sondar_fs,
 };
 use crate::{caminhos, confinar};
 
@@ -216,6 +216,12 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
     let sid_pasta = Sid::de_texto(&pasta_txt)?;
     let sid_basico = Sid::de_texto(&base_txt)?;
     let sid_negacao = Sid::de_texto(&nega_txt)?;
+    // O SID de cada pasta das variáveis (o armazém da aba, o Codex extra): só este token o leva (`Quem::Propria`).
+    let mut proprias: Vec<(String, Sid, String)> = Vec::new();
+    for c in plano.concessoes.iter().filter(|c| c.quem == Quem::Propria) {
+        let texto = sid_do_caminho(&usuario_txt, &c.caminho);
+        proprias.push((c.caminho.clone(), Sid::de_texto(&texto)?, texto));
+    }
     let administrativos = sistema::grupos_administrativos(&token0)?;
 
     // As pastas que a IA usa e não consegue criar, e as permissões. Quem sobe
@@ -247,15 +253,41 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
         let mut marcas = std::fs::read_to_string(&arquivo).map(|t| marcas_de(&t)).unwrap_or_default();
         for c in &plano.concessoes {
             // A negação vai ao SID dela, que todo token preso leva (`sid_nega`).
-            let (sid, sid_txt) = match c.quem {
+            let propria = proprias.iter().find(|(caminho, _, _)| *caminho == c.caminho);
+            let (sid, sid_txt) = match (c.quem, propria) {
                 _ if c.acesso.nega() => (&sid_negacao, &nega_txt),
-                Quem::Pasta => (&sid_pasta, &pasta_txt),
-                Quem::Base => (&sid_basico, &base_txt),
+                (Quem::Propria, Some((_, sid, texto))) => (sid, texto),
+                (Quem::Pasta, _) => (&sid_pasta, &pasta_txt),
+                (Quem::Base | Quem::Propria, _) => (&sid_basico, &base_txt),
             };
             match garante(c, sid, sid_txt, &mut marcas, &arquivo) {
                 Ok(()) => {}
                 Err(e) if c.obrigatoria => return Err(e),
                 Err(e) => rastro(|| format!("permissão dispensada em {}: {e}", c.caminho)),
+            }
+        }
+        // O que uma versão antiga deu ao SID base nas pastas de uma aba só (os armazéns das abas e das contas fixas,
+        // os `CODEX_HOME` das contas extras, as pastas desta subida): toda IA presa o alcançaria, de qualquer aba.
+        // A negação de `contas` não vence uma permissão explícita.
+        let mut de_uma_aba: Vec<String> = proprias.iter().map(|(caminho, _, _)| caminho.clone()).collect();
+        for pai in [junta(&casa, r".claude\contas\abas"), junta(&casa, r".claude\contas\fixas"), junta(&casa, ".codex-contas")] {
+            for d in std::fs::read_dir(&pai).into_iter().flatten().flatten() {
+                if d.file_type().is_ok_and(|t| t.is_dir()) {
+                    de_uma_aba.push(sem_prefixo(&d.path().to_string_lossy()));
+                }
+            }
+        }
+        // Menos o que este plano mesmo dá ao base (uma variável que aponta para `.claude` ou `.codex`): tirar seria
+        // dar de novo, percorrendo a pasta, a cada subida.
+        de_uma_aba.retain(|d| {
+            !plano.concessoes.iter().any(|c| c.quem == Quem::Base && !c.acesso.nega() && super::partes(&c.caminho) == super::partes(d))
+        });
+        for d in &de_uma_aba {
+            if sistema::concedido(d, &sid_basico, super::Acesso::Atributos, false).unwrap_or(false) {
+                match sistema::revogar(d, &sid_basico) {
+                    Ok(()) => rastro(|| format!("revogada a permissão antiga do SID base em {d}")),
+                    Err(e) => rastro(|| format!("a permissão antiga do SID base em {d} ficou: {e}")),
+                }
             }
         }
     }
@@ -300,7 +332,8 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
     let admins: Vec<&Sid> = administrativos.iter().collect();
     let mut tentativas: Vec<String> = Vec::new();
     for nivel in NIVEIS {
-        let ids = sids_de_restricao(nivel, &pasta_txt, &base_txt, &nega_txt, &logon_txt);
+        let mut ids = sids_de_restricao(nivel, &pasta_txt, &base_txt, &nega_txt, &logon_txt);
+        ids.extend(proprias.iter().map(|(_, _, texto)| texto.clone()));
         let quais = format!("{nivel:?} [{}]", ids.join(" "));
         // Cada passo que falha põe o porquê na lista e passa ao nível seguinte:
         // a mensagem de quando nenhum serve diz o que cada um encontrou.
@@ -716,6 +749,42 @@ pub fn autoteste() -> i32 {
             Err(e) => confere("cria dentro da pasta que só não se apaga", false, &e),
         }
     }
+
+    // A pasta de uma variável (o armazém da aba, o Codex extra) vai ao SID do próprio caminho (`Quem::Propria`), que só
+    // a subida que a usa leva; a permissão que uma versão antiga deu ao SID base nela é revogada. A pasta de prova fica
+    // fora da permitida e começa com a permissão antiga.
+    let da_aba = junta(&raiz, "armazem-da-aba");
+    let guardado = junta(&da_aba, "guardado.txt");
+    let legado = (|| -> Result<Sid, String> {
+        std::fs::create_dir_all(&da_aba).map_err(|e| format!("{da_aba}: {e}"))?;
+        std::fs::write(&guardado, "da aba").map_err(|e| format!("{guardado}: {e}"))?;
+        let token = sistema::token_do_processo()?;
+        let base = Sid::de_texto(&sid_base(&sistema::sid_do_usuario(&token)?.texto()?))?;
+        sistema::conceder(&da_aba, &base, super::Acesso::Gravacao, true)?;
+        Ok(base)
+    })();
+    confere("a permissão antiga do SID base se dá", legado.is_ok(), legado.as_ref().err().map(String::as_str).unwrap_or(""));
+    if let Ok(base) = &legado {
+        // SAFETY: nenhum outro fio corre aqui (as provas do token já acabaram), e a variável sai logo depois.
+        unsafe { std::env::set_var("CODEX_HOME", &da_aba) };
+        let com_ela = roda_linha(&format!("type \"{guardado}\""), false);
+        unsafe { std::env::remove_var("CODEX_HOME") };
+        match com_ela {
+            Ok((0, t)) => confere("lê a pasta da própria variável", t.trim() == "da aba", &t),
+            Ok((n, t)) => confere("lê a pasta da própria variável", false, &format!("saiu com {n}: {t}")),
+            Err(e) => confere("lê a pasta da própria variável", false, &e),
+        }
+        let ficou = sistema::concedido(&da_aba, base, super::Acesso::Atributos, false);
+        confere("revoga a permissão antiga do SID base", matches!(ficou, Ok(false)), &format!("{ficou:?}"));
+        match roda_linha(&format!("type \"{guardado}\""), false) {
+            Ok((n, t)) => confere(
+                "outra subida não alcança a pasta da variável",
+                n != 0 && !t.contains("da aba"),
+                &format!("saiu com {n}: {t}"),
+            ),
+            Err(e) => confere("outra subida não alcança a pasta da variável", false, &e),
+        }
+    }
     if sistema::tem_console() {
         match roda_linha("echo Keep: o console da aba chegou ao programa preso> CONOUT$", true) {
             Ok((n, _)) => confere("o console da aba passa ao programa preso", n == 0, &format!("saiu com {n}")),
@@ -729,7 +798,7 @@ pub fn autoteste() -> i32 {
     if falhas > 0 {
         // Antes de apagar a pasta de prova: quem pode o quê nela é o que explica a falha.
         println!();
-        for caminho in [&casa, &raiz, &permitida, &fora, &b, &falsa, &so_ler, &pasta_so_ler, &cofre, &liberada, &recriada] {
+        for caminho in [&casa, &raiz, &permitida, &fora, &b, &falsa, &so_ler, &pasta_so_ler, &cofre, &liberada, &recriada, &da_aba] {
             mostra_acl(caminho);
         }
         println!();
