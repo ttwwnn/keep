@@ -270,6 +270,8 @@ pub fn roda(p: &Pedido, padrao: &Padrao) -> Result<i32, String> {
         // os `CODEX_HOME` das contas extras, as pastas desta subida): toda IA presa o alcançaria, de qualquer aba.
         // A negação de `contas` não vence uma permissão explícita.
         let mut de_uma_aba: Vec<String> = proprias.iter().map(|(caminho, _, _)| caminho.clone()).collect();
+        // E o `CLAUDE_CONFIG_DIR` da pessoa, que uma versão antiga concedia sem as negações de `.claude`.
+        de_uma_aba.extend(de_env("CLAUDE_CONFIG_DIR").filter(|d| Path::new(d).is_dir()));
         for pai in [junta(&casa, r".claude\contas\abas"), junta(&casa, r".claude\contas\fixas"), junta(&casa, ".codex-contas")] {
             for d in std::fs::read_dir(&pai).into_iter().flatten().flatten() {
                 if d.file_type().is_ok_and(|t| t.is_dir()) {

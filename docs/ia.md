@@ -308,8 +308,8 @@ A permissão fica gravada no caminho depois que a IA sai, então nunca vai a um 
 caminho é de uma pasta só ou de uma aba só: as pastas dos transcritos do projeto vão ao SID da pasta presa, e as
 pastas das variáveis (o armazém da aba, o `CODEX_HOME` de uma conta extra) a um SID do próprio caminho
 (`sid_do_caminho`), que só o token da subida que as usa leva. A permissão que uma versão antiga
-deu ao SID base nessas pastas (os armazéns das abas e das contas fixas, os `CODEX_HOME` de `~\.codex-contas`) é
-revogada na subida seguinte.
+deu ao SID base nessas pastas (os armazéns das abas e das contas fixas, os `CODEX_HOME` de `~\.codex-contas`, e o
+`CLAUDE_CONFIG_DIR` da pessoa, que ela concedia) é revogada na subida seguinte.
 
 - só para ler: os dez itens do macOS (as pastas, com o que nascer nelas); o que o `CLAUDE.md` importa; e o que a
   configuração cita e cai numa área que a IA grava (`.claude`, `.codex`, `.local\state`, `.cache`, a área privada
