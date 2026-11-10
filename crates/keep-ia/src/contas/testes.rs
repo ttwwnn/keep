@@ -296,6 +296,56 @@ fn global_recusado_manda_para_a_fixa_da_mesma_conta() {
 }
 
 #[test]
+fn global_morto_sem_dono_nao_toma_a_chave_da_conta_viva() {
+    // 10/11: o global morreu (o servidor não diz de quem é um token morto), o
+    // `.ativa` que o kit deixou dizia "principal", e a conta morta passou na
+    // frente da viva com a mesma chave: a aba presa a ela ficou sem acesso.
+    let c = casa("global-morto");
+    perfis(&[("F", "u-1", "ana@x.com")]);
+    c.slot("principal", "u-1", "ana@x.com", "S1");
+    std::fs::write(c.raiz.join(".claude/contas/.ativa"), "principal\n").unwrap();
+    c.global("MORTO", "");
+    let fixa = c.fixa("k-1", Some(("F", "r")), Some(("principal", "ana@x.com", "u-1")));
+    c.ordem(&["# fila", "claude:principal"]);
+
+    let contas = listar(true);
+    let principais: Vec<&Conta> = contas.iter().filter(|c| c.e("claude:principal")).collect();
+    assert_eq!(principais.len(), 1, "uma chave, uma conta: {:?}", chaves(&contas));
+    let achada = achar(&contas, "claude:principal").expect("a conta da chave");
+    assert_eq!(achada.key, "u-1");
+    assert!(achada.roda);
+    assert_eq!(
+        ambiente(achada),
+        Ok(vec![("CLAUDE_SECURESTORAGE_CONFIG_DIR".into(), fixa.to_string_lossy().into_owned())])
+    );
+    assert_eq!(contas[0].key, "u-1", "a conta viva fica em primeiro, como na ordem");
+}
+
+#[test]
+fn achar_prefere_a_conta_que_roda_entre_duas_com_a_mesma_chave() {
+    let base = |key: &str, roda: bool| Conta {
+        engine: Motor::Claude,
+        key: key.into(),
+        alias: "principal".into(),
+        aliases: vec!["principal".into()],
+        email: None,
+        plan: None,
+        is_active: false,
+        is_preferred: false,
+        warning: None,
+        order_key: "claude:principal".into(),
+        has_token: true,
+        armazens: vec![],
+        token: None,
+        roda,
+    };
+    let lista = [base("morta", false), base("viva", true)];
+    assert_eq!(achar(&lista, "claude:principal").map(|c| c.key.as_str()), Some("viva"));
+    let so_morta = [base("morta", false)];
+    assert_eq!(achar(&so_morta, "claude:principal").map(|c| c.key.as_str()), Some("morta"), "sem outra, a que há");
+}
+
+#[test]
 fn login_recusado_em_todo_lugar_vira_aviso() {
     let c = casa("aviso");
     perfis(&[("G", "u-1", "ana@x.com")]);
