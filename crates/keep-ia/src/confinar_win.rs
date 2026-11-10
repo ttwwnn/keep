@@ -544,8 +544,10 @@ pub fn plano(amb: &dyn Ambiente, e: &Entrada) -> Plano {
         poe(grava(cache, Quem::Base, true, false, false));
     }
     // Quem muda a casa da IA por variável (a conta da aba, o Codex extra): no SID do próprio caminho, que só esta
-    // subida leva. O armazém de outra aba, que outra subida concedeu, fica fora do alcance desta.
-    for var in ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "CLAUDE_SECURESTORAGE_CONFIG_DIR"] {
+    // subida leva. O armazém de outra aba, que outra subida concedeu, fica fora do alcance desta. O `CLAUDE_CONFIG_DIR`
+    // da pessoa não entra, como no macOS: é onde o Claude lê a configuração, os ganchos e as skills de toda sessão, e
+    // as negações de `.claude` não valeriam nele.
+    for var in ["CODEX_HOME", "CLAUDE_SECURESTORAGE_CONFIG_DIR"] {
         if let Some(p) = amb.var(var).filter(|v| !v.trim().is_empty()) {
             let p = sem_prefixo(&p);
             if amb.existe(&p) && !do_sistema(&p) && !dentro_de(&e.pasta, &p) {
@@ -1369,15 +1371,24 @@ mod testes {
 
     #[test]
     fn o_plano_nao_mexe_em_pasta_do_sistema_e_segue_as_variaveis_da_ia() {
-        let mut amb = Falso::novo(&[r"C:\Windows\System32", r"E:\contas\codex2", r"C:\Program Files\nodejs", r"C:\Users\ana\fnm\node"]);
+        let mut amb = Falso::novo(&[
+            r"C:\Windows\System32",
+            r"E:\contas\codex2",
+            r"C:\Program Files\nodejs",
+            r"C:\Users\ana\fnm\node",
+            r"D:\config-do-claude",
+        ]);
         amb.vars.insert("CODEX_HOME".into(), r"E:\contas\codex2".into());
-        amb.vars.insert("CLAUDE_CONFIG_DIR".into(), r"C:\Windows\System32".into());
+        amb.vars.insert("CLAUDE_SECURESTORAGE_CONFIG_DIR".into(), r"C:\Windows\System32".into());
+        // O `CLAUDE_CONFIG_DIR` da pessoa nunca: as negações de `.claude` não valeriam nele.
+        amb.vars.insert("CLAUDE_CONFIG_DIR".into(), r"D:\config-do-claude".into());
         let mut e = entrada(r"C:\Windows\System32\cmd.exe");
         e.node = Some(r"C:\Users\ana\fnm\node\node.exe".into());
         let p = plano(&amb, &e);
         // O Codex extra entra; a variável que aponta para o sistema, não.
         assert_eq!(de(&p, r"E:\contas\codex2").len(), 1);
         assert!(de(&p, r"C:\Windows\System32").is_empty());
+        assert!(de(&p, r"D:\config-do-claude").is_empty());
         // O node de um usuário só ganha leitura; o programa em System32, não.
         assert_eq!(de(&p, r"C:\Users\ana\fnm\node")[0].acesso, Acesso::Leitura);
     }

@@ -639,10 +639,12 @@ pub fn conceder_so_aqui(caminho: &str, sid: &Sid, acesso: Acesso) -> Result<(), 
 }
 
 /// Se o SID já tem, em `caminho`, ao menos `acesso` (e, numa pasta, para o
-/// que vier a nascer nela): então não há o que percorrer de novo. A permissão
-/// só vale explícita: a herdada vem depois da negação herdada de uma pasta de
-/// cima (a dos transcritos, a das contas), e uma pasta recriada no lugar de
-/// uma que a tinha só traz a herdada. A negação vale herdada também.
+/// que vier a nascer nela): então não há o que percorrer de novo. Só vale a
+/// ACE explícita: entre as herdadas, a da pasta mais perto vem primeiro, e a
+/// permissão herdada de uma pasta liberada (o armazém da aba, os transcritos
+/// do projeto) passaria por cima da negação herdada de `contas` ou de
+/// `projects`, como a negação herdada passaria por cima da permissão; e uma
+/// pasta recriada no lugar de uma que a tinha só traz a herdada.
 pub fn concedido(caminho: &str, sid: &Sid, acesso: Acesso, heranca: bool) -> Result<bool, String> {
     let (dacl, _sd, _guarda) = dacl_de(caminho)?;
     // Sem DACL o objeto é de todos.
@@ -674,7 +676,7 @@ pub fn concedido(caminho: &str, sid: &Sid, acesso: Acesso, heranca: bool) -> Res
         if cabeca.AceType != tipo || u32::from(cabeca.AceFlags) & INHERIT_ONLY_ACE != 0 {
             continue;
         }
-        if !acesso.nega() && u32::from(cabeca.AceFlags) & INHERITED_ACE != 0 {
+        if u32::from(cabeca.AceFlags) & INHERITED_ACE != 0 {
             continue;
         }
         if heranca && u32::from(cabeca.AceFlags) & SUB_CONTAINERS_AND_OBJECTS_INHERIT != SUB_CONTAINERS_AND_OBJECTS_INHERIT

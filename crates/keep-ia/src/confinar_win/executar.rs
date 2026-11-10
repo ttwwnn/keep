@@ -649,8 +649,8 @@ pub fn autoteste() -> i32 {
     // As negações de `.claude` (o plano), numa cópia dentro da pasta de prova: a de verdade não se arrisca. A cópia
     // tem o que a de verdade tem: a gravação do SID base herdando, e as negações no SID delas, que todo token preso
     // leva. Provam que a negação vence a permissão herdada, que a permissão explícita (o armazém da aba, os
-    // transcritos do projeto) vence a negação herdada, e que a herdada sozinha, numa pasta recriada, não conta como
-    // dada (`sistema::concedido`).
+    // transcritos do projeto) vence a negação herdada, e que a herdada sozinha (numa pasta recriada, num arquivo da
+    // pasta só para ler) não conta como dada (`sistema::concedido`).
     let falsa = junta(&permitida, "claude-de-prova");
     let so_ler = junta(&falsa, "settings.json");
     let pasta_so_ler = junta(&falsa, "skills");
@@ -679,7 +679,7 @@ pub fn autoteste() -> i32 {
         let lidas = [
             sistema::concedido(&so_ler, &nega, super::Acesso::NegaEscrita, false)?,
             sistema::concedido(&pasta_so_ler, &nega, super::Acesso::NegaEscrita, true)?,
-            sistema::concedido(&antigo, &nega, super::Acesso::NegaEscrita, false)?,
+            !sistema::concedido(&antigo, &nega, super::Acesso::NegaEscrita, false)?,
             sistema::concedido(&falsa, &nega, super::Acesso::NegaApagar, false)?,
             sistema::concedido(&falsa, &base, super::Acesso::Gravacao, true)?,
             sistema::concedido(&liberada, &base, super::Acesso::Gravacao, true)?,

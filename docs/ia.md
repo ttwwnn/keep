@@ -300,13 +300,14 @@ O plano do token restrito (`confinar_win::plano`) tira de `.claude` o mesmo que 
 DACL de cada item, num SID só delas (`sid_nega`) que todo token preso leva: o `SetEntriesInAcl` funde a permissão e
 a negação de um mesmo SID, e a permissão de `.claude` voltaria a ser dada, percorrendo a pasta, a cada subida. A
 negação explícita vence a permissão herdada de `.claude`, e a permissão explícita (o armazém da aba, a pasta dos
-transcritos do projeto preso) vence a negação herdada de `contas\` e de `projects\`; por isso uma permissão só
-conta como dada se for explícita (`sistema::concedido`). Toda negação é obrigatória: sem ela, a IA não sobe.
+transcritos do projeto preso) vence a negação herdada de `contas\` e de `projects\`; por isso uma permissão ou
+uma negação só conta como dada se for explícita (`sistema::concedido`). Toda negação é obrigatória: sem ela, a IA
+não sobe. O `CLAUDE_CONFIG_DIR` da pessoa não é concedido, como no macOS: as negações de `.claude` não valeriam nele.
 
 A permissão fica gravada no caminho depois que a IA sai, então nunca vai a um SID que toda IA presa leva quando o
 caminho é de uma pasta só ou de uma aba só: as pastas dos transcritos do projeto vão ao SID da pasta presa, e as
-pastas das variáveis (o armazém da aba, o `CODEX_HOME` de uma conta extra, o `CLAUDE_CONFIG_DIR`) a um SID do
-próprio caminho (`sid_do_caminho`), que só o token da subida que as usa leva. A permissão que uma versão antiga
+pastas das variáveis (o armazém da aba, o `CODEX_HOME` de uma conta extra) a um SID do próprio caminho
+(`sid_do_caminho`), que só o token da subida que as usa leva. A permissão que uma versão antiga
 deu ao SID base nessas pastas (os armazéns das abas e das contas fixas, os `CODEX_HOME` de `~\.codex-contas`) é
 revogada na subida seguinte.
 
