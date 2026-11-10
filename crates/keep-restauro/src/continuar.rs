@@ -499,13 +499,23 @@ pub struct Conversa {
     pub rotulo: String,
 }
 
+/// As sessões do Claude gravadas em `~/.claude/sessions` e nas configurações das IAs presas, estas só com o `cwd`
+/// dentro da pasta presa (`keep_ia::caminhos::pastas_de_sessoes`). A de `~/.claude` vem primeiro e vence.
 fn sessoes_brutas() -> HashMap<u32, Value> {
-    let pasta = keep_ia::caminhos::claude().join("sessions");
     let mut saida = HashMap::new();
-    for e in std::fs::read_dir(&pasta).into_iter().flatten().flatten() {
-        let Ok(v) = serde_json::from_slice::<Value>(&std::fs::read(e.path()).unwrap_or_default()) else { continue };
-        if let Some(pid) = v.get("pid").and_then(Value::as_u64) {
-            saida.insert(pid as u32, v);
+    for (pasta, presa) in keep_ia::caminhos::pastas_de_sessoes() {
+        for e in std::fs::read_dir(&pasta).into_iter().flatten().flatten() {
+            let Some(texto) = keep_ia::caminhos::le_sessao(&e.path()) else { continue };
+            let Ok(v) = serde_json::from_str::<Value>(&texto) else { continue };
+            let cwd = v.get("cwd").and_then(Value::as_str).unwrap_or_default();
+            let Some(pid) = v.get("pid").and_then(Value::as_u64).and_then(|p| u32::try_from(p).ok()) else { continue };
+            // Só a sessão do processo que a gravou: um arquivo velho de um Claude que caiu, com o pid reaproveitado,
+            // não encobre a sessão de quem roda agora. E a IA presa grava na pasta de sessões dela o que quiser: dali,
+            // só a de um processo que sobe com essa configuração própria (`caminhos::sessao_da_presa`).
+            if !keep_ia::sessoes::mesmo_processo(&v, pid) || !keep_ia::caminhos::sessao_da_presa(pid, cwd, presa.as_ref()) {
+                continue;
+            }
+            saida.entry(pid).or_insert(v);
         }
     }
     saida

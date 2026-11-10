@@ -473,15 +473,18 @@ pub(crate) const CLAUDE_ESTADO: [&str; 22] = [
 /// transcritos, só os do projeto preso. Fora da casa, os programas instalados
 /// (`/Applications`, `/Library`, `/opt`, `/usr/local`) ficam só para ler.
 ///
+/// Com a configuração própria do Claude preso (`presa`, o `CLAUDE_CONFIG_DIR` dele: `config_da_presa`), o estado do
+/// CLI na `~/.claude` de verdade, que ele não usa mais, e o `~/.claude.json` ficam fechados.
+///
 /// As permissões usam as MESMAS operações da negação e vêm depois dela: uma
 /// permissão de `file-read*` não vence uma negação de `file-read-data`, que
 /// é mais específica, e a última regra que casa é a que vale.
-pub fn perfil(pasta: &Path) -> String {
+pub fn perfil(pasta: &Path, presa: Option<&Path>) -> String {
     let armazem = std::env::var_os("CLAUDE_SECURESTORAGE_CONFIG_DIR").filter(|v| !v.is_empty()).map(PathBuf::from);
-    perfil_com(pasta, &keep_proto::socket_path(), &caminhos::casa(), armazem.as_deref())
+    perfil_com(pasta, &keep_proto::socket_path(), &caminhos::casa(), armazem.as_deref(), presa)
 }
 
-fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Path>) -> String {
+fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Path>, presa: Option<&Path>) -> String {
     let casa = casa_dir.to_string_lossy().into_owned();
     let mut rw = vec![pasta.to_string_lossy().into_owned()];
     rw.extend(pastas_do_git(pasta));
@@ -506,6 +509,13 @@ fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Pat
     // O sandbox casa o caminho canônico (`/private/var/...`, não `/var/...`), então as duas formas entram.
     for socket in socket_do_daemon(socket) {
         linhas.push(format!("(deny network-outbound (remote unix-socket (path-literal {})))", literal(&socket)));
+    }
+    // O canal de mensagens entre as sessões do Claude Code (`/tmp/cc-socks/<pid>.sock`, anotado na sessão de cada uma em
+    // `~/.claude/sessions`): por ele a IA presa mandaria pedidos a uma sessão sem sandbox.
+    for raiz in ["/private/tmp/cc-socks/", "/tmp/cc-socks/"] {
+        if let Some(re) = literal_regex(&format!("^{}", escapa_regex(raiz))) {
+            linhas.push(format!("(deny network-outbound (remote unix-socket (path-regex {re})))"));
+        }
     }
     for p in &rw {
         linhas.push(format!("(allow file-read-data file-write* (subpath {}))", literal(p)));
@@ -552,6 +562,12 @@ fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Pat
     for p in em_claude("contas") {
         linhas.push(format!("(deny file-read-data file-write* (subpath {}))", literal(&p)));
     }
+    // As configurações próprias das IAs presas (`config_da_presa`), em qualquer modo: o Keep as monta de fora do
+    // sandbox e lê as sessões delas, e uma IA presa que plantasse ali um link (para a própria `~/.claude`) ou uma
+    // `.pasta` faria a montagem apagar o que é da pessoa ou forjaria sessões. A de quem sobe com ela volta abaixo.
+    for p in em_claude("presas") {
+        linhas.push(format!("(deny file-read-data file-write* (subpath {}))", literal(&p)));
+    }
     for p in armazem.map(|a| armazem_da_aba(&claude.join("contas"), a)).unwrap_or_default() {
         linhas.push(format!("(allow file-read-data file-write* (subpath {}))", literal(&p)));
     }
@@ -567,6 +583,33 @@ fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Pat
             if let Some(re) = literal_regex(&regra_do_projeto(p, &nome)) {
                 linhas.push(format!("(allow file-read-data file-write* (regex {re}))"));
             }
+        }
+    }
+    // Com a configuração própria do Claude preso (`CLAUDE_CONFIG_DIR`): o estado do CLI na `~/.claude` de verdade, que
+    // ele não usa mais, fica fechado, para ler e para gravar — o retrato do shell e o ambiente que cada sessão relê, as
+    // sessões (com o canal de mensagens e a chave de cada uma), o histórico e os anexos de todas as conversas, as outras
+    // configurações próprias — e o `~/.claude.json` também, onde um servidor MCP gravado subiria em toda sessão. Os
+    // transcritos do projeto e o armazém da aba ficam como acima; as pastas das ferramentas da pessoa em `~/.claude`
+    // (as que os ganchos dela usam), também. Da configuração própria, tudo, menos trocar a pasta e a `.pasta` que o Keep
+    // lê para saber a que pasta ela está presa (`caminhos::pastas_de_sessoes`).
+    if let Some(presa) = presa {
+        for nome in CLAUDE_ESTADO.iter().copied().filter(|n| !matches!(*n, "projects" | "contas")) {
+            for p in em_claude(nome) {
+                linhas.push(format!("(deny file-read-data file-write* (subpath {}))", literal(&p)));
+            }
+        }
+        for p in em_claude("history.jsonl") {
+            linhas.push(format!("(deny file-read-data file-write* (literal {}))", literal(&p)));
+        }
+        linhas.push(format!("(deny file-read-data file-write* (literal {}))", literal(&format!("{casa}/.claude.json"))));
+        if let Some(re) = literal_regex(&format!("^{}.*", escapa_regex(&format!("{casa}/.claude.json.")))) {
+            linhas.push(format!("(deny file-read-data file-write* (regex {re}))"));
+        }
+        for p in formas(presa) {
+            linhas.push(format!("(allow file-read-data file-write* (subpath {}))", literal(&p)));
+        }
+        for p in formas(presa).into_iter().chain(formas(&presa.join(".pasta"))) {
+            linhas.push(format!("(deny file-write* (literal {}))", literal(&p)));
         }
     }
     // O que a configuração da pessoa manda executar e cai onde a IA presa grava (um `~/.claude/statusline-command.sh`):
@@ -610,6 +653,257 @@ fn perfil_com(pasta: &Path, socket: &Path, casa_dir: &Path, armazem: Option<&Pat
         }
     }
     linhas.join("\n") + "\n"
+}
+
+/// A configuração própria do Claude preso a `pasta` (o `CLAUDE_CONFIG_DIR` dele): `~/.claude/presas/<nome>`, uma por
+/// pasta presa, com o nome que o Claude Code dá aos transcritos dela (até 80 caracteres) e um hash do caminho, que
+/// separa duas pastas de nome igual (`/a/b-c` e `/a/b/c`).
+#[cfg(unix)]
+pub(crate) fn config_da_presa(pasta: &Path) -> PathBuf {
+    use sha2::{Digest, Sha256};
+    let nome: String = projeto_do_claude(pasta).into_iter().next().unwrap_or_default().chars().take(80).collect();
+    let hash = Sha256::digest(pasta.to_string_lossy().as_bytes());
+    let hex: String = hash.iter().take(4).map(|b| format!("{b:02x}")).collect();
+    caminhos::presas().join(format!("{nome}-{hex}"))
+}
+
+/// A configuração própria para o Claude preso a `pasta` (`config_da_presa`), quando ele sobe no armazém de login da
+/// aba (`CLAUDE_SECURESTORAGE_CONFIG_DIR`, uma pasta de `contas/abas` ou `contas/fixas`). Sem o armazém, o Claude usa o
+/// login global, que mora no item do Chaveiro da pasta de configuração (`contas::credencial`): noutra pasta, ele
+/// pediria outro login. Com um `CLAUDE_CONFIG_DIR` da pessoa (ou herdado de um Claude preso de fora), fica o que veio.
+#[cfg(unix)]
+fn presa_para(programa: &str, pasta: &Path) -> Option<PathBuf> {
+    if nome(programa) != "claude" || std::env::var_os("CLAUDE_CONFIG_DIR").is_some_and(|v| !v.is_empty()) {
+        return None;
+    }
+    let armazem = std::env::var_os("CLAUDE_SECURESTORAGE_CONFIG_DIR").filter(|v| !v.is_empty()).map(PathBuf::from)?;
+    if armazem_da_aba(&caminhos::contas(), &armazem).is_empty() {
+        return None;
+    }
+    Some(config_da_presa(pasta))
+}
+
+/// Monta a configuração própria (`presa`) antes de subir, de fora do sandbox: a `.pasta`, com a pasta presa; um link
+/// para cada item que toda sessão do Claude lê ao abrir (`CLAUDE_SO_LEITURA`: a configuração, o `CLAUDE.md`, as skills,
+/// os plugins, os ganchos…), que o perfil deixa só para ler; um link para a pasta dos transcritos do projeto (e da
+/// subpasta em que o programa começa), que fica onde o Keep e o Claude sem sandbox a acham (a retomada, a lista das
+/// conversas); e o `.claude.json`, refeito do da pessoa (`semeia_claude_json`).
+#[cfg(unix)]
+fn prepara_config_da_presa(presa: &Path, pasta: &Path, onde: &Path, casa: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    let claude = casa.join(".claude");
+    // `presas/` e a configuração própria, pastas de verdade: um link ali (de antes desta negação, ou de quem mais
+    // grave na casa) levaria a montagem, que apaga e liga, para dentro da `~/.claude` da pessoa.
+    let presas = presa.parent().unwrap_or(presa);
+    for d in [presas, presa] {
+        match std::fs::symlink_metadata(d) {
+            Ok(m) if m.is_dir() => {}
+            Ok(_) => {
+                std::fs::remove_file(d)?;
+                std::fs::DirBuilder::new().mode(0o700).create(d)?;
+            }
+            Err(_) => std::fs::DirBuilder::new().recursive(true).mode(0o700).create(d)?,
+        }
+    }
+    // Uma montagem por vez nesta configuração: a restauração sobe juntas as abas presas à mesma pasta. A trava fica em
+    // `presas/`, que nenhuma IA presa alcança (ali ela a prenderia para sempre); solta quando o arquivo fecha.
+    let _trava = trava_da_montagem(&presas.join(format!(
+        "{}.trava",
+        presa.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+    )))?;
+    // Daqui em diante grava-se, de fora do sandbox, onde a IA presa grava o que quiser: um link (ou um arquivo) que
+    // ela tenha posto no lugar de `projects/` sai antes, ou as ligações de baixo iriam por ele até onde ela escolheu.
+    let projetos = presa.join("projects");
+    match std::fs::symlink_metadata(&projetos) {
+        Ok(m) if m.is_dir() => {}
+        Ok(_) => {
+            std::fs::remove_file(&projetos)?;
+            std::fs::DirBuilder::new().mode(0o700).create(&projetos)?;
+        }
+        Err(_) => std::fs::DirBuilder::new().mode(0o700).create(&projetos)?,
+    }
+    let marca = format!("{}\n", pasta.to_string_lossy());
+    let lida = Some(presa.join(".pasta"))
+        .filter(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.is_file()))
+        .and_then(|p| caminhos::ler_texto_ate(&p, 4096).ok());
+    if lida.as_deref() != Some(marca.as_str()) {
+        grava_sem_seguir(&presa.join(".pasta"), marca.as_bytes())?;
+    }
+    for nome in CLAUDE_SO_LEITURA {
+        liga(&claude.join(nome), &presa.join(nome))?;
+    }
+    let mut nomes = pastas_exatas_do_claude(pasta);
+    if onde.starts_with(pasta) {
+        for nome in pastas_exatas_do_claude(onde) {
+            if !nomes.contains(&nome) {
+                nomes.push(nome);
+            }
+        }
+    }
+    // Passando de 200, o CLI acrescenta um hash ao nome, e a pasta nasce na configuração própria.
+    let mut ligacoes = Vec::new();
+    for nome in &nomes {
+        let real = claude.join("projects").join(nome);
+        std::fs::create_dir_all(&real)?;
+        ligacoes.push((nome.clone(), real));
+    }
+    liga_os_projetos(&projetos, &ligacoes)?;
+    semeia_claude_json(&casa.join(".claude.json"), &presa.join(".claude.json"), pasta)
+}
+
+/// Os links dos transcritos dentro de `projetos`, por um descritor da pasta aberto sem seguir link: outra aba presa à
+/// mesma pasta, rodando, que troque `projects/` por um link no meio da montagem não a leva para outro lugar. Uma
+/// pasta de verdade ali (de quando o nome não tinha como ser ligado) fica, com o que tem; o resto dá lugar ao link.
+#[cfg(unix)]
+fn liga_os_projetos(projetos: &Path, ligacoes: &[(String, PathBuf)]) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    struct Descritor(libc::c_int);
+    impl Drop for Descritor {
+        fn drop(&mut self) {
+            unsafe { libc::close(self.0) };
+        }
+    }
+    let texto = |b: &[u8]| CString::new(b).map_err(std::io::Error::other);
+    let falhou = |r: libc::c_int| if r == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) };
+    let pasta = texto(projetos.as_os_str().as_bytes())?;
+    // SAFETY: caminho terminado em zero; o descritor fecha no `Drop`.
+    let fd = unsafe { libc::open(pasta.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let fd = Descritor(fd);
+    for (nome, alvo) in ligacoes {
+        let (n, a) = (texto(nome.as_bytes())?, texto(alvo.as_os_str().as_bytes())?);
+        // SAFETY: `stat` é só dados; os caminhos terminam em zero e são relativos ao descritor aberto acima.
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::fstatat(fd.0, n.as_ptr(), &mut st, libc::AT_SYMLINK_NOFOLLOW) } == 0 {
+            match st.st_mode & libc::S_IFMT {
+                libc::S_IFDIR => continue,
+                libc::S_IFLNK => {
+                    let mut lido = vec![0u8; 4096];
+                    let n_lido = unsafe { libc::readlinkat(fd.0, n.as_ptr(), lido.as_mut_ptr().cast(), lido.len()) };
+                    if usize::try_from(n_lido).is_ok_and(|t| &lido[..t] == alvo.as_os_str().as_bytes()) {
+                        continue;
+                    }
+                    falhou(unsafe { libc::unlinkat(fd.0, n.as_ptr(), 0) })?;
+                }
+                _ => falhou(unsafe { libc::unlinkat(fd.0, n.as_ptr(), 0) })?,
+            }
+        }
+        falhou(unsafe { libc::symlinkat(a.as_ptr(), fd.0, n.as_ptr()) })?;
+    }
+    Ok(())
+}
+
+/// `link` passa a apontar para `alvo`, que existe; sem `alvo`, um link que estava ali sai, e o que a IA presa criou no
+/// lugar (um `settings.json` de quem não tem um) fica. Com `alvo`, o que a IA presa pôs no lugar do link sai.
+#[cfg(unix)]
+fn liga(alvo: &Path, link: &Path) -> std::io::Result<()> {
+    let tem_alvo = alvo.exists();
+    match std::fs::symlink_metadata(link) {
+        Ok(m) if m.file_type().is_symlink() => {
+            if tem_alvo && std::fs::read_link(link)?.as_path() == alvo {
+                return Ok(());
+            }
+            std::fs::remove_file(link)?;
+        }
+        Ok(m) if tem_alvo => {
+            if m.is_dir() {
+                std::fs::remove_dir_all(link)?;
+            } else {
+                std::fs::remove_file(link)?;
+            }
+        }
+        Ok(_) => return Ok(()),
+        Err(_) => {}
+    }
+    if tem_alvo {
+        std::os::unix::fs::symlink(alvo, link)?;
+    }
+    Ok(())
+}
+
+/// O `.claude.json` da configuração própria, refeito a cada subida do `~/.claude.json` da pessoa: as preferências, a
+/// conta e os servidores MCP dela, e dos projetos só os da pasta presa (os de dentro dela e, dos de cima, a raiz do
+/// repositório, pela qual o Claude acha o projeto), com o que o Claude preso gravou nos dele por cima. Uma pasta de
+/// cima que não é repositório (a casa) fica de fora: é o que a pessoa fez noutro lugar. Sem o da pessoa (ou
+/// ilegível), fica o que está.
+#[cfg(unix)]
+fn semeia_claude_json(real: &Path, destino: &Path, pasta: &Path) -> std::io::Result<()> {
+    use serde_json::Value;
+    let Ok(texto) = caminhos::ler_texto_ate(real, 64 << 20) else { return Ok(()) };
+    let Ok(Value::Object(mut novo)) = serde_json::from_str::<Value>(&texto) else { return Ok(()) };
+    // O da IA presa, só um arquivo comum dela: não um link para um arquivo da pessoa, nem uma FIFO.
+    let do_preso = Some(destino)
+        .filter(|d| std::fs::symlink_metadata(d).is_ok_and(|m| m.is_file()))
+        .and_then(|d| caminhos::ler_texto_ate(d, 64 << 20).ok())
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| v.get("projects").and_then(Value::as_object).cloned())
+        .unwrap_or_default();
+    let da_pasta = |chave: &str| {
+        let p = Path::new(chave);
+        p.is_absolute() && (p.starts_with(pasta) || (pasta.starts_with(p) && p.join(".git").exists()))
+    };
+    let mut projetos = serde_json::Map::new();
+    if let Some(Value::Object(todos)) = novo.get("projects") {
+        for (chave, v) in todos.iter().filter(|(chave, _)| da_pasta(chave)) {
+            projetos.insert(chave.clone(), v.clone());
+        }
+    }
+    for (chave, v) in do_preso.into_iter().filter(|(chave, _)| da_pasta(chave)) {
+        match (projetos.get_mut(&chave), v) {
+            (Some(Value::Object(base)), Value::Object(dele)) => base.extend(dele),
+            (_, v) => {
+                projetos.insert(chave, v);
+            }
+        }
+    }
+    novo.insert("projects".into(), Value::Object(projetos));
+    let dados = serde_json::to_vec_pretty(&Value::Object(novo)).map_err(std::io::Error::other)?;
+    grava_sem_seguir(destino, &dados)
+}
+
+/// A trava da montagem de uma configuração própria (`flock`, exclusiva): espera a outra subida acabar de montar.
+#[cfg(unix)]
+fn trava_da_montagem(caminho: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(caminho)?;
+    // SAFETY: o descritor é do `File`, que vive enquanto a trava vale.
+    if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(f)
+}
+
+/// Grava `destino` na configuração própria, onde a IA presa grava o que quiser, até um link para um arquivo da pessoa
+/// (`~/.zshrc`) no lugar do temporário ou do próprio destino: o que estiver no lugar do temporário sai, ele nasce
+/// novo, sem seguir link (`create_new`), e o `rename` troca o destino, link ou não, sem segui-lo. O temporário leva o
+/// pid: duas subidas não disputam o mesmo.
+#[cfg(unix)]
+fn grava_sem_seguir(destino: &Path, dados: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let nome = destino.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let tmp = destino.with_file_name(format!("{nome}.keep-{}", std::process::id()));
+    match std::fs::symlink_metadata(&tmp) {
+        Ok(m) if m.is_dir() => std::fs::remove_dir_all(&tmp)?,
+        Ok(_) => std::fs::remove_file(&tmp)?,
+        Err(_) => {}
+    }
+    {
+        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
+        f.write_all(dados)?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp, destino)
 }
 
 /// A pasta de transcritos `<projetos>/<nome>` e as das subpastas (`<nome>-<sub>`), com o que houver dentro.
@@ -726,19 +1020,35 @@ pub fn cli(args: &[String]) -> i32 {
     // criar a dele. Uma casa nova ainda não a tem; ela nasce aqui, de fora do sandbox.
     let _ = std::fs::create_dir_all(caminhos::claude().join("projects"));
     let aqui = std::env::current_dir().ok().and_then(|p| p.canonicalize().ok());
-    if aqui.as_ref().is_none_or(|a| !a.starts_with(&pasta_real)) {
-        let _ = std::env::set_current_dir(&pasta_real);
-        eprintln!("Keep: a IA deste workspace só acessa {}; subindo nela.", pasta_real.display());
-    } else {
-        eprintln!("Keep: a IA deste workspace só acessa {}.", pasta_real.display());
+    let onde = match aqui {
+        Some(a) if a.starts_with(&pasta_real) => {
+            eprintln!("Keep: a IA deste workspace só acessa {}.", pasta_real.display());
+            a
+        }
+        _ => {
+            let _ = std::env::set_current_dir(&pasta_real);
+            eprintln!("Keep: a IA deste workspace só acessa {}; subindo nela.", pasta_real.display());
+            pasta_real.clone()
+        }
+    };
+    // A configuração própria do Claude preso: sem ela, o que ele grava na `~/.claude` de verdade (o retrato do shell,
+    // as sessões, o `~/.claude.json`) seria lido e rodado pelas sessões sem sandbox.
+    let presa = presa_para(programa, &pasta_real);
+    if let Some(p) = &presa {
+        if let Err(e) = prepara_config_da_presa(p, &pasta_real, &onde, &caminhos::casa()) {
+            eprintln!(
+                "Keep: não deu para montar a configuração própria da IA presa em {} ({e}); a IA não sobe sem ela.",
+                p.display()
+            );
+            return 1;
+        }
     }
-    let erro = std::process::Command::new(sandbox)
-        .arg("-p")
-        .arg(perfil(&pasta_real))
-        .arg(programa)
-        .args(&linha)
-        .env("KEEP_CONFINED_TO", &pasta_real)
-        .exec();
+    let mut comando = std::process::Command::new(sandbox);
+    comando.arg("-p").arg(perfil(&pasta_real, presa.as_deref())).arg(programa).args(&linha).env("KEEP_CONFINED_TO", &pasta_real);
+    if let Some(p) = &presa {
+        comando.env("CLAUDE_CONFIG_DIR", p);
+    }
+    let erro = comando.exec();
     eprintln!("Keep: não foi possível prender {programa}: {erro}");
     1
 }
@@ -868,7 +1178,7 @@ mod testes {
         let d = tempfile::tempdir().unwrap();
         let socket = d.path().join("k.sock");
         let _escuta = std::os::unix::net::UnixListener::bind(&socket).unwrap();
-        let perfil = perfil_com(Path::new("/tmp/proj"), &socket, &caminhos::casa(), None);
+        let perfil = perfil_com(Path::new("/tmp/proj"), &socket, &caminhos::casa(), None, None);
         assert!(perfil.contains("(deny network-outbound (remote unix-socket (path-literal"), "{perfil}");
         // O perl do sistema conecta e sai com 0 se o socket atendeu (o `nc -U` ficaria esperando o outro lado).
         let conecta = ["-MIO::Socket::UNIX", "-e", "exit(IO::Socket::UNIX->new(Peer => $ARGV[0]) ? 0 : 1)"];
@@ -886,7 +1196,7 @@ mod testes {
 
     #[test]
     fn o_perfil_nega_a_casa_e_libera_a_pasta_depois() {
-        let p = perfil(Path::new("/Users/x/projeto"));
+        let p = perfil(Path::new("/Users/x/projeto"), None);
         let nega = p.find("(deny file-read-data file-write* (subpath \"/Users\"))").unwrap();
         let libera = p.find("(allow file-read-data file-write* (subpath \"/Users/x/projeto\"))").unwrap();
         assert!(libera > nega, "a permissão precisa vir depois da negação");
@@ -933,7 +1243,12 @@ mod testes {
     impl Casa {
         /// O perfil da casa de mentira, que não fica em /Users: a negação de /Users vale também para a pasta dela.
         fn perfil(&self, armazem: Option<&Path>) -> String {
-            let p = perfil_com(&self.pasta, Path::new("/tmp/nenhum.sock"), &self.casa, armazem);
+            self.perfil_com_presa(armazem, None)
+        }
+
+        /// O mesmo, com a configuração própria do Claude preso.
+        fn perfil_com_presa(&self, armazem: Option<&Path>, presa: Option<&Path>) -> String {
+            let p = perfil_com(&self.pasta, Path::new("/tmp/nenhum.sock"), &self.casa, armazem, presa);
             let volumes = "(deny file-read-data file-write* (subpath \"/Volumes\"))";
             let raiz = literal(&self.raiz.to_string_lossy());
             assert!(p.contains(volumes));
@@ -1046,6 +1361,192 @@ mod testes {
             return None;
         }
         Some(roda(perfil, comando))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_configuracao_propria_tem_o_nome_do_projeto_e_separa_as_pastas_de_nome_igual() {
+        let a = config_da_presa(Path::new("/a/b-c"));
+        assert_ne!(a, config_da_presa(Path::new("/a/b/c")));
+        assert_eq!(a, config_da_presa(Path::new("/a/b-c")));
+        assert!(a.file_name().unwrap().to_string_lossy().starts_with("-a-b-c-"), "{}", a.display());
+        assert_eq!(a.parent().unwrap(), caminhos::presas());
+        let longa = config_da_presa(&Path::new("/x").join("y".repeat(300)));
+        assert_eq!(longa.file_name().unwrap().len(), 80 + 1 + 8);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_configuracao_propria_liga_o_que_toda_sessao_le_e_refaz_o_claude_json() {
+        use serde_json::{Map, Value, json};
+        let c = casa_de_mentira();
+        let presa = c.claude.join("presas/app-1");
+        let pasta = c.pasta.to_string_lossy().into_owned();
+        let raiz_do_repo = c.raiz.join("projetos").to_string_lossy().into_owned();
+        std::fs::create_dir_all(c.raiz.join("projetos/.git")).unwrap();
+        let mut projetos = Map::new();
+        projetos.insert(pasta.clone(), json!({"hasTrustDialogAccepted": true, "allowedTools": []}));
+        projetos.insert(format!("{pasta}/sub"), json!({"x": 1}));
+        projetos.insert(raiz_do_repo.clone(), json!({"raiz": true}));
+        projetos.insert("/outro/projeto".into(), json!({"segredo": true}));
+        projetos.insert(c.raiz.to_string_lossy().into_owned(), json!({"de-cima-sem-repositorio": true}));
+        let real = json!({"hasCompletedOnboarding": true, "mcpServers": {"m": {"command": "x"}}, "projects": projetos});
+        std::fs::write(c.casa.join(".claude.json"), real.to_string()).unwrap();
+        prepara_config_da_presa(&presa, &c.pasta, &c.pasta.join("sub"), &c.casa).unwrap();
+
+        // A pasta presa, para o Keep saber de quem são as sessões gravadas ali.
+        assert_eq!(std::fs::read_to_string(presa.join(".pasta")).unwrap(), format!("{pasta}\n"));
+        // Um link para cada item que toda sessão lê, e para os transcritos do projeto e da subpasta em que começa.
+        for nome in CLAUDE_SO_LEITURA {
+            assert_eq!(std::fs::read_link(presa.join(nome)).unwrap(), c.claude.join(nome), "{nome}");
+        }
+        for nome in [projeto_do_claude(&c.pasta).remove(0), projeto_do_claude(&c.pasta.join("sub")).remove(0)] {
+            let real = c.claude.join("projects").join(&nome);
+            assert_eq!(std::fs::read_link(presa.join("projects").join(&nome)).unwrap(), real, "{nome}");
+            assert!(real.is_dir(), "{nome}");
+        }
+        // Do `.claude.json` da pessoa: tudo, menos os projetos de outras pastas.
+        let lido = |p: &Path| serde_json::from_str::<Value>(&std::fs::read_to_string(p).unwrap()).unwrap();
+        let semeado = lido(&presa.join(".claude.json"));
+        assert_eq!(semeado["hasCompletedOnboarding"], true);
+        assert_eq!(semeado["mcpServers"]["m"]["command"], "x");
+        let deles = semeado["projects"].as_object().unwrap();
+        assert!(deles.contains_key(&pasta) && deles.contains_key(&format!("{pasta}/sub")), "{deles:?}");
+        assert!(deles.contains_key(&raiz_do_repo), "a de cima, como a raiz do repositório: {deles:?}");
+        assert!(!deles.contains_key("/outro/projeto"), "{deles:?}");
+        assert!(!deles.contains_key(&*c.raiz.to_string_lossy()), "a de cima que não é repositório: {deles:?}");
+
+        // O Claude preso grava no projeto dele; a IA presa troca um link por um arquivo dela e cria um item que a
+        // pessoa não tem; a pessoa apaga um item. Na subida seguinte:
+        let mut dele = semeado.clone();
+        dele["projects"][&pasta]["allowedTools"] = json!(["Bash(ls)"]);
+        dele["projects"][&pasta]["lastSessionId"] = json!("s-1");
+        std::fs::write(presa.join(".claude.json"), dele.to_string()).unwrap();
+        std::fs::remove_file(presa.join("settings.json")).unwrap();
+        std::fs::write(presa.join("settings.json"), "{\"hooks\":{}}").unwrap();
+        std::fs::remove_file(c.claude.join("settings.local.json")).unwrap();
+        std::fs::remove_dir_all(c.claude.join("output-styles")).unwrap();
+        std::fs::remove_file(presa.join("output-styles")).unwrap();
+        std::fs::create_dir_all(presa.join("output-styles")).unwrap();
+        prepara_config_da_presa(&presa, &c.pasta, &c.pasta, &c.casa).unwrap();
+        let de_novo = lido(&presa.join(".claude.json"));
+        // o que o Claude preso gravou no projeto dele fica por cima do da pessoa;
+        assert_eq!(de_novo["projects"][&pasta]["allowedTools"], json!(["Bash(ls)"]));
+        assert_eq!(de_novo["projects"][&pasta]["lastSessionId"], "s-1");
+        assert_eq!(de_novo["projects"][&pasta]["hasTrustDialogAccepted"], true);
+        // o link volta por cima do que a IA presa pôs no lugar; o que só ela tem fica; o link sem alvo sai.
+        assert_eq!(std::fs::read_link(presa.join("settings.json")).unwrap(), c.claude.join("settings.json"));
+        assert!(presa.join("output-styles").is_dir() && std::fs::read_link(presa.join("output-styles")).is_err());
+        assert!(std::fs::symlink_metadata(presa.join("settings.local.json")).is_err(), "o link sem alvo sai");
+        // A IA presa pôs links no lugar do temporário e de `projects/`, para um arquivo e uma pasta da pessoa: a
+        // montagem, de fora do sandbox, não grava neles.
+        let da_pessoa = c.casa.join("arquivo-da-pessoa");
+        let pasta_da_pessoa = c.casa.join("pasta-da-pessoa");
+        std::fs::write(&da_pessoa, "intocado\n").unwrap();
+        std::fs::create_dir_all(&pasta_da_pessoa).unwrap();
+        let pid = std::process::id();
+        std::os::unix::fs::symlink(&da_pessoa, presa.join(format!(".claude.json.keep-{pid}"))).unwrap();
+        // (e uma `.pasta` que é link para o mesmo arquivo, e o temporário dela)
+        std::fs::remove_file(presa.join(".pasta")).unwrap();
+        std::os::unix::fs::symlink(&da_pessoa, presa.join(".pasta")).unwrap();
+        std::os::unix::fs::symlink(&da_pessoa, presa.join(format!(".pasta.keep-{pid}"))).unwrap();
+        std::fs::remove_dir_all(presa.join("projects")).unwrap();
+        std::os::unix::fs::symlink(&pasta_da_pessoa, presa.join("projects")).unwrap();
+        prepara_config_da_presa(&presa, &c.pasta, &c.pasta, &c.casa).unwrap();
+        assert_eq!(std::fs::read_to_string(&da_pessoa).unwrap(), "intocado\n");
+        assert_eq!(std::fs::read_dir(&pasta_da_pessoa).unwrap().count(), 0, "nada nasce na pasta da pessoa");
+        assert!(std::fs::symlink_metadata(presa.join("projects")).unwrap().is_dir());
+        assert!(std::fs::symlink_metadata(presa.join(".claude.json")).unwrap().is_file());
+        assert!(std::fs::symlink_metadata(presa.join(".pasta")).unwrap().is_file());
+        assert_eq!(std::fs::read_to_string(presa.join(".pasta")).unwrap(), format!("{pasta}\n"));
+        // Uma pasta de transcritos de verdade na configuração própria (de um nome que não tinha como ser ligado) fica
+        // com o que tem; um arquivo no lugar de um link dá lugar a ele.
+        let nome = projeto_do_claude(&c.pasta).remove(0);
+        std::fs::remove_file(presa.join("projects").join(&nome)).unwrap();
+        std::fs::create_dir_all(presa.join("projects").join(&nome)).unwrap();
+        std::fs::write(presa.join("projects").join(&nome).join("t.jsonl"), "{}\n").unwrap();
+        let sub = projeto_do_claude(&c.pasta.join("sub")).remove(0);
+        std::fs::write(presa.join("projects").join(&sub), "lixo").unwrap();
+        prepara_config_da_presa(&presa, &c.pasta, &c.pasta.join("sub"), &c.casa).unwrap();
+        assert!(presa.join("projects").join(&nome).join("t.jsonl").is_file());
+        assert_eq!(std::fs::read_link(presa.join("projects").join(&sub)).unwrap(), c.claude.join("projects").join(&sub));
+        // Uma configuração própria que é link (para a própria `~/.claude`) não leva a montagem até lá: sai, e a pasta
+        // nasce de verdade; o que é da pessoa fica.
+        let plantada = c.claude.join("presas/plantada");
+        std::os::unix::fs::symlink(&c.claude, &plantada).unwrap();
+        prepara_config_da_presa(&plantada, &c.pasta, &c.pasta, &c.casa).unwrap();
+        assert!(std::fs::symlink_metadata(&plantada).unwrap().is_dir());
+        assert_eq!(std::fs::read_to_string(c.claude.join("settings.json")).unwrap(), "{}\n");
+        assert!(c.claude.join("skills/x").is_file());
+        // Duas subidas juntas (a restauração sobe as abas presas à mesma pasta ao mesmo tempo): as duas montam.
+        let juntas: Vec<_> = (0..4)
+            .map(|_| {
+                let (presa, pasta, casa) = (presa.clone(), c.pasta.clone(), c.casa.clone());
+                std::thread::spawn(move || prepara_config_da_presa(&presa, &pasta, &pasta, &casa))
+            })
+            .collect();
+        for j in juntas {
+            j.join().unwrap().unwrap();
+        }
+        // Sem o `.claude.json` da pessoa, o dela fica.
+        std::fs::remove_file(c.casa.join(".claude.json")).unwrap();
+        prepara_config_da_presa(&presa, &c.pasta, &c.pasta, &c.casa).unwrap();
+        assert_eq!(lido(&presa.join(".claude.json"))["projects"][&pasta]["lastSessionId"], "s-1");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn com_a_configuracao_propria_o_estado_do_cli_na_casa_fica_fechado() {
+        let c = casa_de_mentira();
+        let armazem = c.claude.join("contas/abas/aba");
+        let presa = c.claude.join("presas/app-1");
+        for d in ["sessions", "shell-snapshots", "session-env", "file-history", "jev", "presas/outra"] {
+            std::fs::create_dir_all(c.claude.join(d)).unwrap();
+            std::fs::write(c.claude.join(d).join("x"), "dentro\n").unwrap();
+        }
+        std::fs::write(c.casa.join(".claude.json"), "{}\n").unwrap();
+        prepara_config_da_presa(&presa, &c.pasta, &c.pasta, &c.casa).unwrap();
+        let p = c.perfil_com_presa(Some(&armazem), Some(&presa));
+        let (cl, pr, ca) = (c.claude.display().to_string(), presa.display().to_string(), c.casa.display().to_string());
+        let tem = |cmd: &str| preso(&p, cmd);
+        if tem("true").is_none() {
+            return;
+        }
+        // O estado do CLI na `~/.claude` de verdade, que o Claude preso não usa mais: nem ler, nem gravar.
+        for d in ["sessions", "shell-snapshots", "session-env", "file-history", "presas/outra"] {
+            assert_eq!(tem(&format!("cat '{cl}/{d}/x'")), Some(false), "ler {d}");
+            assert_eq!(tem(&format!("echo y > '{cl}/{d}/novo'")), Some(false), "gravar {d}");
+        }
+        assert_eq!(tem(&format!("cat '{cl}/history.jsonl'")), Some(false), "o histórico");
+        assert_eq!(tem(&format!("cat '{ca}/.claude.json'")), Some(false), "ler o ~/.claude.json");
+        let troca = format!("echo '{{}}' > '{ca}/.claude.json.tmp.1' && mv '{ca}/.claude.json.tmp.1' '{ca}/.claude.json'");
+        assert_eq!(tem(&troca), Some(false), "gravar o ~/.claude.json");
+        // A configuração própria: grava o que quiser, menos a `.pasta` e a própria pasta.
+        let dela = format!("mkdir -p '{pr}/todos' && echo y > '{pr}/todos/x' && cat '{pr}/.claude.json' >/dev/null");
+        assert_eq!(tem(&dela), Some(true), "a configuração própria");
+        assert_eq!(tem(&format!("echo /outra > '{pr}/.pasta'")), Some(false), "a .pasta");
+        assert_eq!(tem(&format!("mv '{pr}' '{}/levada'", c.pasta.display())), Some(false), "levar a configuração própria");
+        // Os links: a configuração da pessoa se lê e não se grava; os transcritos do projeto se gravam onde o Keep os
+        // acha; um link plantado para outro projeto não leva até ele.
+        assert_eq!(tem(&format!("cat '{pr}/settings.json' '{pr}/skills/x' '{pr}/CLAUDE.md'")), Some(true), "ler pelos links");
+        assert_eq!(tem(&format!("echo y >> '{pr}/settings.json'")), Some(false), "gravar a configuração da pessoa");
+        let nome = projeto_do_claude(&c.pasta).remove(0);
+        assert_eq!(tem(&format!("echo '{{}}' > '{pr}/projects/{nome}/novo.jsonl'")), Some(true), "o transcrito do projeto");
+        assert!(c.projeto.join("novo.jsonl").is_file(), "o transcrito cai na pasta de verdade");
+        let plantado = format!("ln -s '{cl}/projects/-outro' '{pr}/projects/-outro' && cat '{pr}/projects/-outro/t.jsonl'");
+        assert_eq!(tem(&plantado), Some(false), "outro projeto por um link plantado");
+        // O armazém da aba e a pasta de uma ferramenta da pessoa ficam como estavam.
+        assert_eq!(tem(&format!("echo y > '{}/trava'", armazem.display())), Some(true), "o armazém da aba");
+        assert_eq!(tem(&format!("echo y >> '{cl}/jev/x'")), Some(true), "a pasta de uma ferramenta da pessoa");
+        // O canal de mensagens entre as sessões, nos dois modos.
+        let canal = "(deny network-outbound (remote unix-socket (path-regex #\"^/private/tmp/cc-socks/\")))";
+        assert!(p.contains(canal) && c.perfil(Some(&armazem)).contains(canal));
+        // Sem a configuração própria, as delas ficam fechadas também: nem ler, nem plantar um link ou uma `.pasta`.
+        let sem = c.perfil(Some(&armazem));
+        assert_eq!(preso(&sem, &format!("cat '{pr}/.pasta'")), Some(false), "ler uma configuração própria");
+        let planta = format!("ln -s '{cl}' '{cl}/presas/plantada'");
+        assert_eq!(preso(&sem, &planta), Some(false), "plantar um link em presas/");
+        assert_eq!(preso(&sem, &format!("echo / > '{cl}/presas/outra/.pasta'")), Some(false), "forjar uma .pasta");
     }
 
     #[cfg(target_os = "macos")]

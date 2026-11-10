@@ -4,7 +4,10 @@
 //! Uma sessão viva é um `~/.claude/sessions/<pid>.json` cujo processo é o
 //! que o gravou: o Claude Code escreve ali quando o processo nasceu
 //! (`procStart`, o `ps -o lstart` em UTC; no Windows, `procStartFt`, o
-//! FILETIME), e um pid reaproveitado nasceu em outra hora.
+//! FILETIME), e um pid reaproveitado nasceu em outra hora. A IA presa grava
+//! a dela na configuração própria (`~/.claude/presas/<nome>/sessions`), e
+//! essa só vale com o `cwd` dentro da pasta a que ela está presa
+//! (`caminhos::pastas_de_sessoes_em`).
 
 use std::collections::BTreeSet;
 use std::io::{Read, Seek, SeekFrom};
@@ -51,45 +54,46 @@ fn pid_de(v: &Value) -> Option<u32> {
 
 /// Toda sessão do Claude viva, de qualquer tipo.
 pub fn vivas_em(pasta: &Path) -> Vec<SessaoViva> {
-    let Ok(dir) = std::fs::read_dir(pasta) else { return Vec::new() };
-    let mut nomes: Vec<PathBuf> = dir
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x == "json"))
-        .collect();
-    nomes.sort();
-    nomes
-        .into_iter()
-        .filter_map(|p| {
-            let v: Value = serde_json::from_slice(&std::fs::read(&p).ok()?).ok()?;
-            let pid = pid_de(&v)?;
-            let id = texto_de(&v, "sessionId")?;
-            confere(pid, &v).then(|| SessaoViva {
-                pid,
-                id,
-                kind: texto_de(&v, "kind"),
-                cwd: texto_de(&v, "cwd").unwrap_or_default(),
-                job: texto_de(&v, "jobId"),
-                parked: texto_de(&v, "parkedJobId"),
-            })
-        })
-        .collect()
+    let mut vivas: Vec<SessaoViva> = Vec::new();
+    for (pasta, presa) in crate::caminhos::pastas_de_sessoes_em(pasta) {
+        let Ok(dir) = std::fs::read_dir(&pasta) else { continue };
+        let mut nomes: Vec<PathBuf> = dir
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "json"))
+            .collect();
+        nomes.sort();
+        for p in nomes {
+            let Some(viva) = le_viva(&p, presa.as_ref()) else { continue };
+            if !vivas.iter().any(|v| v.pid == viva.pid) {
+                vivas.push(viva);
+            }
+        }
+    }
+    vivas
+}
+
+/// A sessão gravada em `arquivo`, se o processo dela é mesmo quem a gravou e, numa pasta de sessões de IA presa,
+/// se ele sobe com essa configuração própria, com o `cwd` dentro da pasta presa (`caminhos::sessao_da_presa`).
+fn le_viva(arquivo: &Path, presa: Option<&crate::caminhos::Presa>) -> Option<SessaoViva> {
+    let v: Value = serde_json::from_str(&crate::caminhos::le_sessao(arquivo)?).ok()?;
+    let pid = pid_de(&v)?;
+    let id = texto_de(&v, "sessionId")?;
+    let cwd = texto_de(&v, "cwd").unwrap_or_default();
+    (confere(pid, &v) && crate::caminhos::sessao_da_presa(pid, &cwd, presa)).then(|| SessaoViva {
+        pid,
+        id,
+        kind: texto_de(&v, "kind"),
+        cwd,
+        job: texto_de(&v, "jobId"),
+        parked: texto_de(&v, "parkedJobId"),
+    })
 }
 
 /// A sessão gravada para o processo `pid`, se ele é mesmo quem a gravou.
 pub fn do_pid_em(pasta: &Path, pid: u32) -> Option<SessaoViva> {
-    let v: Value = serde_json::from_slice(&std::fs::read(pasta.join(format!("{pid}.json"))).ok()?).ok()?;
-    if pid_de(&v)? != pid {
-        return None;
-    }
-    let id = texto_de(&v, "sessionId")?;
-    confere(pid, &v).then(|| SessaoViva {
-        pid,
-        id,
-        kind: texto_de(&v, "kind"),
-        cwd: texto_de(&v, "cwd").unwrap_or_default(),
-        job: texto_de(&v, "jobId"),
-        parked: texto_de(&v, "parkedJobId"),
-    })
+    crate::caminhos::pastas_de_sessoes_em(pasta)
+        .into_iter()
+        .find_map(|(pasta, presa)| le_viva(&pasta.join(format!("{pid}.json")), presa.as_ref()).filter(|v| v.pid == pid))
 }
 
 /// `Sat Oct  3 20:55:10 2026` (UTC) em segundos unix.

@@ -37,14 +37,11 @@ impl SessaoClaude {
     }
 }
 
-fn pasta_sessoes() -> PathBuf {
-    caminhos::claude().join("sessions")
-}
 
 /// O `procStart` que o Claude grava ("Sat Oct  3 22:57:57 2026", em UTC) é
 /// o do processo dono do pid agora? Um pid reaproveitado deixa o arquivo
 /// velho apontando para outro processo.
-fn mesmo_processo(d: &Value, pid: u32) -> bool {
+pub fn mesmo_processo(d: &Value, pid: u32) -> bool {
     let Some(p) = processos::um(pid) else { return false };
     if let Some(texto) = d.get("procStart").and_then(Value::as_str) {
         let normal = texto.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -80,25 +77,35 @@ fn de_json(d: &Value, pid: u32) -> Option<SessaoClaude> {
     })
 }
 
-/// A sessão do processo `pid`, se ele é um Claude vivo com sessão anotada.
+/// A sessão do processo `pid`, se ele é um Claude vivo com sessão anotada: na pasta de sessões de `~/.claude` ou na
+/// da configuração de uma IA presa (`caminhos::pastas_de_sessoes`), esta só com o `cwd` dentro da pasta dela.
 pub fn sessao_claude(pid: u32) -> Option<SessaoClaude> {
-    let texto = std::fs::read_to_string(pasta_sessoes().join(format!("{pid}.json"))).ok()?;
-    let d: Value = serde_json::from_str(&texto).ok()?;
-    if !mesmo_processo(&d, pid) {
-        return None;
-    }
-    de_json(&d, pid)
+    sessao_claude_em(pid, &caminhos::pastas_de_sessoes())
+}
+
+fn sessao_claude_em(pid: u32, pastas: &[(PathBuf, Option<caminhos::Presa>)]) -> Option<SessaoClaude> {
+    pastas.iter().find_map(|(pasta, presa)| {
+        let texto = caminhos::le_sessao(&pasta.join(format!("{pid}.json")))?;
+        let d: Value = serde_json::from_str(&texto).ok()?;
+        let cwd = d.get("cwd").and_then(Value::as_str).unwrap_or_default();
+        if !mesmo_processo(&d, pid) || !caminhos::sessao_da_presa(pid, cwd, presa.as_ref()) {
+            return None;
+        }
+        de_json(&d, pid)
+    })
 }
 
 /// Toda sessão do Claude viva, interativa ou em segundo plano.
 pub fn sessoes_vivas() -> Vec<SessaoClaude> {
-    let Ok(dir) = std::fs::read_dir(pasta_sessoes()) else { return Vec::new() };
-    dir.filter_map(|e| {
-        let nome = e.ok()?.file_name().into_string().ok()?;
-        let pid: u32 = nome.strip_suffix(".json")?.parse().ok()?;
-        sessao_claude(pid)
-    })
-    .collect()
+    let pastas = caminhos::pastas_de_sessoes();
+    let mut pids: Vec<u32> = pastas
+        .iter()
+        .flat_map(|(pasta, _)| std::fs::read_dir(pasta).into_iter().flatten().flatten())
+        .filter_map(|e| e.file_name().into_string().ok()?.strip_suffix(".json")?.parse().ok())
+        .collect();
+    pids.sort_unstable();
+    pids.dedup();
+    pids.into_iter().filter_map(|pid| sessao_claude_em(pid, &pastas)).collect()
 }
 
 /// A sessão viva que roda a conversa `id`, de qualquer processo.

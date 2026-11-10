@@ -42,6 +42,76 @@ pub fn ordem() -> PathBuf {
     contas().join(".ordem")
 }
 
+/// `~/.claude/presas`: a pasta de configuração do Claude de cada pasta presa
+/// (`CLAUDE_CONFIG_DIR`, `confinar::config_da_presa`).
+pub fn presas() -> PathBuf {
+    claude().join("presas")
+}
+
+/// A configuração própria de uma IA presa, de onde vem uma pasta de sessões:
+/// a pasta dela (o `CLAUDE_CONFIG_DIR` do Claude preso) e a pasta a que ela
+/// está presa.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Presa {
+    pub raiz: PathBuf,
+    pub pasta: PathBuf,
+}
+
+/// As pastas `sessions` do Claude Code: a de `~/.claude` e a da configuração
+/// de cada IA presa (`presas/<nome>/sessions`), esta com a pasta a que a IA
+/// está presa (`presas/<nome>/.pasta`, que o Keep grava e a IA presa não
+/// troca). Uma configuração sem `.pasta` fica de fora.
+pub fn pastas_de_sessoes() -> Vec<(PathBuf, Option<Presa>)> {
+    pastas_de_sessoes_em(&claude().join("sessions"))
+}
+
+/// O mesmo, a partir de uma pasta `sessions`: as das IAs presas ficam ao lado
+/// dela, em `presas/`.
+pub fn pastas_de_sessoes_em(sessoes: &std::path::Path) -> Vec<(PathBuf, Option<Presa>)> {
+    let mut pastas = vec![(sessoes.to_path_buf(), None)];
+    let Some(claude) = sessoes.parent() else { return pastas };
+    let mut presas: Vec<PathBuf> =
+        std::fs::read_dir(claude.join("presas")).into_iter().flatten().flatten().map(|e| e.path()).collect();
+    presas.sort();
+    for raiz in presas {
+        // Uma configuração própria de verdade (não um link), e uma pasta presa que não seja a raiz.
+        if !std::fs::symlink_metadata(&raiz).is_ok_and(|m| m.is_dir()) {
+            continue;
+        }
+        let Ok(texto) = ler_texto_ate(&raiz.join(".pasta"), 4096) else { continue };
+        let pasta = PathBuf::from(texto.trim_end_matches(['\n', '\r']));
+        let sessoes = raiz.join("sessions");
+        if pasta.is_absolute() && pasta.parent().is_some() && std::fs::symlink_metadata(&sessoes).is_ok_and(|m| m.is_dir()) {
+            pastas.push((sessoes, Some(Presa { raiz, pasta })));
+        }
+    }
+    pastas
+}
+
+/// Se a sessão do processo `pid`, com este `cwd`, pode vir da pasta de
+/// sessões da configuração própria `presa`. A IA presa grava ali o que
+/// quiser, até a sessão de outro processo (o `procStart` de qualquer um ela lê
+/// com `ps`): só vale a de um processo que sobe com essa configuração (o
+/// `CLAUDE_CONFIG_DIR` do ambiente dele, que o Keep põe e nenhuma IA presa
+/// troca no de outro), num `cwd` absoluto, sem `..` (que `starts_with` não
+/// resolve: `/app/../outro` começa por `/app`), dentro da pasta presa.
+pub fn sessao_da_presa(pid: u32, cwd: &str, presa: Option<&Presa>) -> bool {
+    use std::path::Component;
+    let Some(p) = presa else { return true };
+    let c = std::path::Path::new(cwd);
+    c.is_absolute()
+        && c.components().all(|x| matches!(x, Component::RootDir | Component::Prefix(_) | Component::Normal(_)))
+        && c.starts_with(&p.pasta)
+        && crate::processos::variavel(pid, "CLAUDE_CONFIG_DIR").is_some_and(|v| std::path::Path::new(&v) == p.raiz)
+}
+
+/// Uma sessão gravada em `arquivo`, só se for um arquivo comum e pequeno: a IA
+/// presa pode pôr na pasta de sessões dela uma FIFO, que travaria quem a
+/// lesse, ou um link para `/dev/zero`.
+pub fn le_sessao(arquivo: &std::path::Path) -> Option<String> {
+    ler_texto_ate(arquivo, LEITURA_MAXIMA).ok()
+}
+
 /// `~/.codex`: o login principal do GPT.
 pub fn codex() -> PathBuf {
     casa().join(".codex")
@@ -119,6 +189,63 @@ pub fn grava_privado(caminho: &std::path::Path, dados: &[u8]) -> std::io::Result
 mod testes_privado {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn as_sessoes_das_ias_presas_so_valem_dentro_da_pasta_delas() {
+        let d = tempfile::tempdir().unwrap();
+        let claude = d.path().join(".claude");
+        let presa = claude.join("presas/app-1");
+        std::fs::create_dir_all(presa.join("sessions")).unwrap();
+        std::fs::create_dir_all(claude.join("presas/sem-pasta/sessions")).unwrap();
+        std::fs::write(presa.join(".pasta"), "/projetos/app\n").unwrap();
+        let dela = Presa { raiz: presa.clone(), pasta: PathBuf::from("/projetos/app") };
+        assert_eq!(
+            pastas_de_sessoes_em(&claude.join("sessions")),
+            vec![(claude.join("sessions"), None), (presa.join("sessions"), Some(dela.clone()))]
+        );
+        // A sessão de um processo que sobe com a configuração própria, dentro da pasta presa.
+        // O próprio binário de teste (o macOS não entrega o ambiente de um programa do sistema, como o `/bin/sleep`).
+        let mut filho = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "processos::testes::dorminhoco", "--ignored", "--test-threads=1", "-q"])
+            .env("CLAUDE_CONFIG_DIR", &presa)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid = filho.id();
+        // Até o filho trocar de programa, o ambiente que se lê dele é o deste processo.
+        let ate = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while crate::processos::variavel(pid, "CLAUDE_CONFIG_DIR").is_none() && std::time::Instant::now() < ate {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(sessao_da_presa(pid, "/qualquer", None));
+        assert!(sessao_da_presa(pid, "/projetos/app/sub", Some(&dela)));
+        assert!(!sessao_da_presa(pid, "/projetos/app-velho", Some(&dela)));
+        assert!(!sessao_da_presa(pid, "", Some(&dela)));
+        assert!(!sessao_da_presa(pid, "/projetos/app/../outro", Some(&dela)));
+        assert!(!sessao_da_presa(pid, "projetos/app/x", Some(&dela)));
+        // A de outro processo, que não sobe com ela (este, sem a variável), não vale, mesmo dentro da pasta.
+        assert!(!sessao_da_presa(std::process::id(), "/projetos/app/sub", Some(&dela)));
+        let _ = filho.kill();
+        let _ = filho.wait();
+        // Uma pasta de sessões que é link (para a de outra IA, para a de verdade) fica de fora.
+        let outra = claude.join("presas/outra");
+        std::fs::create_dir_all(&outra).unwrap();
+        std::fs::write(outra.join(".pasta"), "/projetos/outra\n").unwrap();
+        std::os::unix::fs::symlink(claude.join("sessions"), outra.join("sessions")).unwrap();
+        assert_eq!(pastas_de_sessoes_em(&claude.join("sessions")).len(), 2);
+        // Nem uma configuração própria que é link, nem uma presa à raiz.
+        std::os::unix::fs::symlink(&presa, claude.join("presas/link")).unwrap();
+        let raiz = claude.join("presas/raiz");
+        std::fs::create_dir_all(raiz.join("sessions")).unwrap();
+        std::fs::write(raiz.join(".pasta"), "/\n").unwrap();
+        assert_eq!(pastas_de_sessoes_em(&claude.join("sessions")).len(), 2);
+        // Uma FIFO na pasta de sessões não trava quem lê.
+        let fifo = presa.join("sessions/1.json");
+        let c = std::ffi::CString::new(fifo.to_string_lossy().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        assert_eq!(le_sessao(&fifo), None);
+    }
 
     #[test]
     fn grava_privado_cria_a_arvore_0700_e_o_arquivo_0600() {
