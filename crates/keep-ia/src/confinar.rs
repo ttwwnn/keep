@@ -694,7 +694,8 @@ fn prepara_config_da_presa(presa: &Path, pasta: &Path, onde: &Path, casa: &Path)
     let claude = casa.join(".claude");
     // `presas/` e a configuração própria, pastas de verdade: um link ali (de antes desta negação, ou de quem mais
     // grave na casa) levaria a montagem, que apaga e liga, para dentro da `~/.claude` da pessoa.
-    for d in [presa.parent().unwrap_or(presa), presa] {
+    let presas = presa.parent().unwrap_or(presa);
+    for d in [presas, presa] {
         match std::fs::symlink_metadata(d) {
             Ok(m) if m.is_dir() => {}
             Ok(_) => {
@@ -704,6 +705,12 @@ fn prepara_config_da_presa(presa: &Path, pasta: &Path, onde: &Path, casa: &Path)
             Err(_) => std::fs::DirBuilder::new().recursive(true).mode(0o700).create(d)?,
         }
     }
+    // Uma montagem por vez nesta configuração: a restauração sobe juntas as abas presas à mesma pasta. A trava fica em
+    // `presas/`, que nenhuma IA presa alcança (ali ela a prenderia para sempre); solta quando o arquivo fecha.
+    let _trava = trava_da_montagem(&presas.join(format!(
+        "{}.trava",
+        presa.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+    )))?;
     // Daqui em diante grava-se, de fora do sandbox, onde a IA presa grava o que quiser: um link (ou um arquivo) que
     // ela tenha posto no lugar de `projects/` sai antes, ou as ligações de baixo iriam por ele até onde ela escolheu.
     let projetos = presa.join("projects");
@@ -857,15 +864,35 @@ fn semeia_claude_json(real: &Path, destino: &Path, pasta: &Path) -> std::io::Res
     grava_sem_seguir(destino, &dados)
 }
 
+/// A trava da montagem de uma configuração própria (`flock`, exclusiva): espera a outra subida acabar de montar.
+#[cfg(unix)]
+fn trava_da_montagem(caminho: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(caminho)?;
+    // SAFETY: o descritor é do `File`, que vive enquanto a trava vale.
+    if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(f)
+}
+
 /// Grava `destino` na configuração própria, onde a IA presa grava o que quiser, até um link para um arquivo da pessoa
 /// (`~/.zshrc`) no lugar do temporário ou do próprio destino: o que estiver no lugar do temporário sai, ele nasce
-/// novo, sem seguir link (`create_new`), e o `rename` troca o destino, link ou não, sem segui-lo.
+/// novo, sem seguir link (`create_new`), e o `rename` troca o destino, link ou não, sem segui-lo. O temporário leva o
+/// pid: duas subidas não disputam o mesmo.
 #[cfg(unix)]
 fn grava_sem_seguir(destino: &Path, dados: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
     let nome = destino.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let tmp = destino.with_file_name(format!("{nome}.keep"));
+    let tmp = destino.with_file_name(format!("{nome}.keep-{}", std::process::id()));
     match std::fs::symlink_metadata(&tmp) {
         Ok(m) if m.is_dir() => std::fs::remove_dir_all(&tmp)?,
         Ok(_) => std::fs::remove_file(&tmp)?,
@@ -1417,11 +1444,12 @@ mod testes {
         let pasta_da_pessoa = c.casa.join("pasta-da-pessoa");
         std::fs::write(&da_pessoa, "intocado\n").unwrap();
         std::fs::create_dir_all(&pasta_da_pessoa).unwrap();
-        std::os::unix::fs::symlink(&da_pessoa, presa.join(".claude.json.keep")).unwrap();
+        let pid = std::process::id();
+        std::os::unix::fs::symlink(&da_pessoa, presa.join(format!(".claude.json.keep-{pid}"))).unwrap();
         // (e uma `.pasta` que é link para o mesmo arquivo, e o temporário dela)
         std::fs::remove_file(presa.join(".pasta")).unwrap();
         std::os::unix::fs::symlink(&da_pessoa, presa.join(".pasta")).unwrap();
-        std::os::unix::fs::symlink(&da_pessoa, presa.join(".pasta.keep")).unwrap();
+        std::os::unix::fs::symlink(&da_pessoa, presa.join(format!(".pasta.keep-{pid}"))).unwrap();
         std::fs::remove_dir_all(presa.join("projects")).unwrap();
         std::os::unix::fs::symlink(&pasta_da_pessoa, presa.join("projects")).unwrap();
         prepara_config_da_presa(&presa, &c.pasta, &c.pasta, &c.casa).unwrap();
@@ -1450,6 +1478,16 @@ mod testes {
         assert!(std::fs::symlink_metadata(&plantada).unwrap().is_dir());
         assert_eq!(std::fs::read_to_string(c.claude.join("settings.json")).unwrap(), "{}\n");
         assert!(c.claude.join("skills/x").is_file());
+        // Duas subidas juntas (a restauração sobe as abas presas à mesma pasta ao mesmo tempo): as duas montam.
+        let juntas: Vec<_> = (0..4)
+            .map(|_| {
+                let (presa, pasta, casa) = (presa.clone(), c.pasta.clone(), c.casa.clone());
+                std::thread::spawn(move || prepara_config_da_presa(&presa, &pasta, &pasta, &casa))
+            })
+            .collect();
+        for j in juntas {
+            j.join().unwrap().unwrap();
+        }
         // Sem o `.claude.json` da pessoa, o dela fica.
         std::fs::remove_file(c.casa.join(".claude.json")).unwrap();
         prepara_config_da_presa(&presa, &c.pasta, &c.pasta, &c.casa).unwrap();
