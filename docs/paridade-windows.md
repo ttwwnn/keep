@@ -376,6 +376,16 @@ formato do Mac) e quem prende é o `keep ia confinar -- <programa>`.
   leem, listam e gravam o que a pasta permite. `keep ia confinar --diagnostico`
   mostra o que o Windows aceita do token. `CONFINEMENT_ENFORCED`
   (confinement.ts) tira o botão e os itens do menu.
+- [x] As negações de `.claude` do macOS: só para ler o que toda sessão do Claude
+  executa ou toma como instrução (a configuração, `CLAUDE.md`, skills, plugins,
+  agentes, comandos, ganchos, regras, estilos, o que a configuração cita e o que
+  o `CLAUDE.md` importa), `contas\` e os transcritos de outro projeto fechados, e
+  `.claude` sem renomear, numa ACE que nega, no SID das negações que todo token
+  preso leva (`sid_nega`). O que falta nasce antes, para levar a negação.
+  Conferido no CI: o autoteste, numa `.claude` de prova, e o roteiro, na
+  `.claude` do executor com o Claude Code preso. Os limites (a negação é do
+  objeto: um arquivo trocado por renomeação a perde até a subida seguinte) estão
+  em docs/ia.md.
 - [x] O Claude preso sem o Git Bash, que não roda preso: o runtime do MSYS2 cria
   um canal de sinais com nome e uma DACL só do usuário e do sistema, e o token
   restrito não leva nenhum dos dois (`couldn't create signal pipe`, erro 5),

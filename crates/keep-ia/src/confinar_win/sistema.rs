@@ -18,14 +18,14 @@ use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 use windows_sys::Win32::Security::Authorization::{
-    ConvertSidToStringSidW, ConvertStringSidToSidW, EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW,
+    ConvertSidToStringSidW, ConvertStringSidToSidW, DENY_ACCESS, EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW, REVOKE_ACCESS,
     GetSecurityInfo, NO_MULTIPLE_TRUSTEE, SE_FILE_OBJECT, SE_KERNEL_OBJECT, SetEntriesInAclW, SetNamedSecurityInfoW,
     SetSecurityInfo, TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
 };
 use windows_sys::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_REVISION, ACL_SIZE_INFORMATION, AclSizeInformation, AddAccessAllowedAce,
     CreateRestrictedToken, DACL_SECURITY_INFORMATION, DISABLE_MAX_PRIVILEGE, DuplicateTokenEx, EqualSid, GetAce,
-    GetAclInformation, GetLengthSid, GetSecurityDescriptorControl, GetTokenInformation, INHERIT_ONLY_ACE,
+    GetAclInformation, GetLengthSid, GetSecurityDescriptorControl, GetTokenInformation, INHERIT_ONLY_ACE, INHERITED_ACE,
     InitializeAcl, IsTokenRestricted, LUA_TOKEN, LUID_AND_ATTRIBUTES, LookupPrivilegeNameW, LookupPrivilegeValueW,
     NO_INHERITANCE, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, RevertToSelf, SE_DACL_PROTECTED,
     SID_AND_ATTRIBUTES, SUB_CONTAINERS_AND_OBJECTS_INHERIT, SecurityImpersonation,
@@ -492,10 +492,10 @@ fn dacl_de(caminho: &str) -> Result<(*mut ACL, PSECURITY_DESCRIPTOR, Local), Str
     Ok((dacl, sd, Local(sd)))
 }
 
-/// Dá `acesso` ao SID em `caminho`. Numa pasta com `heranca`, vale para o que
-/// já está nela (o Windows percorre a árvore: a primeira vez numa pasta
-/// grande demora) e para o que nascer. A DACL do caminho segue protegida ou
-/// herdando, como estava.
+/// Dá `acesso` ao SID em `caminho` (ou, numa negação, o nega). Numa pasta com
+/// `heranca`, vale para o que já está nela (o Windows percorre a árvore: a
+/// primeira vez numa pasta grande demora) e para o que nascer. A DACL do
+/// caminho segue protegida ou herdando, como estava.
 pub fn conceder(caminho: &str, sid: &Sid, acesso: Acesso, heranca: bool) -> Result<(), String> {
     let (dacl, sd, _guarda) = dacl_de(caminho)?;
     // Sem DACL o objeto é de todos; pôr uma DACL só com este SID o tiraria de
@@ -506,7 +506,7 @@ pub fn conceder(caminho: &str, sid: &Sid, acesso: Acesso, heranca: bool) -> Resu
     let protegida = !nao_protegida(sd);
     let ea = EXPLICIT_ACCESS_W {
         grfAccessPermissions: acesso.mascara(),
-        grfAccessMode: GRANT_ACCESS,
+        grfAccessMode: modo(acesso),
         grfInheritance: if heranca { SUB_CONTAINERS_AND_OBJECTS_INHERIT } else { NO_INHERITANCE },
         Trustee: TRUSTEE_W {
             pMultipleTrustee: null_mut(),
@@ -533,8 +533,52 @@ pub fn conceder(caminho: &str, sid: &Sid, acesso: Acesso, heranca: bool) -> Resu
     Ok(())
 }
 
-/// Dá `acesso` ao SID só em `caminho`, sem herança e sem percorrer o que há
-/// dentro dele. `conceder` troca a DACL pelo nome, e o Windows então refaz a
+/// Tira de `caminho` o que o SID tem permitido nele (as ACEs que negam
+/// ficam), refazendo a herança do que está dentro: o Windows percorre a pasta.
+/// Para a permissão que uma versão antiga deu a um SID que toda IA presa leva.
+pub fn revogar(caminho: &str, sid: &Sid) -> Result<(), String> {
+    let (dacl, sd, _guarda) = dacl_de(caminho)?;
+    if dacl.is_null() {
+        return Ok(());
+    }
+    let protegida = !nao_protegida(sd);
+    let ea = EXPLICIT_ACCESS_W {
+        grfAccessPermissions: 0,
+        grfAccessMode: REVOKE_ACCESS,
+        grfInheritance: NO_INHERITANCE,
+        Trustee: TRUSTEE_W {
+            pMultipleTrustee: null_mut(),
+            MultipleTrusteeOperation: NO_MULTIPLE_TRUSTEE,
+            TrusteeForm: TRUSTEE_IS_SID,
+            TrusteeType: TRUSTEE_IS_UNKNOWN,
+            ptstrName: sid.ptr() as PWSTR,
+        },
+    };
+    let mut nova: *mut ACL = null_mut();
+    let r = unsafe { SetEntriesInAclW(1, &ea, dacl, &mut nova) };
+    if r != 0 {
+        return Err(falha("SetEntriesInAcl", r));
+    }
+    let _nova = Local(nova as *mut c_void);
+    let w = larga(caminho);
+    let estado = if protegida { PROTECTED_DACL_SECURITY_INFORMATION } else { UNPROTECTED_DACL_SECURITY_INFORMATION };
+    let r = unsafe {
+        SetNamedSecurityInfoW(w.as_ptr(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | estado, null_mut(), null_mut(), nova, null())
+    };
+    if r != 0 {
+        return Err(falha(&format!("não foi possível tirar a permissão de {caminho}"), r));
+    }
+    Ok(())
+}
+
+/// Como o `SetEntriesInAcl` põe `acesso`: permitindo ou negando. A negação
+/// entra antes das permissões, e uma explícita vence a herdada.
+fn modo(acesso: Acesso) -> i32 {
+    if acesso.nega() { DENY_ACCESS } else { GRANT_ACCESS }
+}
+
+/// Dá `acesso` ao SID só em `caminho` (ou o nega), sem herança e sem percorrer
+/// o que há dentro dele. `conceder` troca a DACL pelo nome, e o Windows então refaz a
 /// herança de tudo o que está embaixo: numa pasta de passagem, como a casa do
 /// usuário, seria percorrer o perfil inteiro por uma permissão que não é
 /// herdada. Pela alça, o sistema troca só a DACL deste objeto.
@@ -570,7 +614,7 @@ pub fn conceder_so_aqui(caminho: &str, sid: &Sid, acesso: Acesso) -> Result<(), 
     }
     let ea = EXPLICIT_ACCESS_W {
         grfAccessPermissions: acesso.mascara(),
-        grfAccessMode: GRANT_ACCESS,
+        grfAccessMode: modo(acesso),
         grfInheritance: NO_INHERITANCE,
         Trustee: TRUSTEE_W {
             pMultipleTrustee: null_mut(),
@@ -595,7 +639,12 @@ pub fn conceder_so_aqui(caminho: &str, sid: &Sid, acesso: Acesso) -> Result<(), 
 }
 
 /// Se o SID já tem, em `caminho`, ao menos `acesso` (e, numa pasta, para o
-/// que vier a nascer nela): então não há o que percorrer de novo.
+/// que vier a nascer nela): então não há o que percorrer de novo. Só vale a
+/// ACE explícita: entre as herdadas, a da pasta mais perto vem primeiro, e a
+/// permissão herdada de uma pasta liberada (o armazém da aba, os transcritos
+/// do projeto) passaria por cima da negação herdada de `contas` ou de
+/// `projects`, como a negação herdada passaria por cima da permissão; e uma
+/// pasta recriada no lugar de uma que a tinha só traz a herdada.
 pub fn concedido(caminho: &str, sid: &Sid, acesso: Acesso, heranca: bool) -> Result<bool, String> {
     let (dacl, _sd, _guarda) = dacl_de(caminho)?;
     // Sem DACL o objeto é de todos.
@@ -615,14 +664,19 @@ pub fn concedido(caminho: &str, sid: &Sid, acesso: Acesso, heranca: bool) -> Res
         return Err(falha_ultimo("GetAclInformation"));
     }
     let mascara = acesso.mascara();
+    // ACCESS_ALLOWED_ACE_TYPE e ACCESS_DENIED_ACE_TYPE, que têm a mesma forma.
+    let tipo: u8 = if acesso.nega() { 1 } else { 0 };
     for i in 0..info.AceCount {
         let mut ace: *mut c_void = null_mut();
         if unsafe { GetAce(dacl, i, &mut ace) } == 0 {
             return Err(falha_ultimo("GetAce"));
         }
         let cabeca = unsafe { &*(ace as *const ACE_HEADER) };
-        // Só as que permitem (tipo 0), e que valem para o próprio objeto.
-        if cabeca.AceType != 0 || u32::from(cabeca.AceFlags) & INHERIT_ONLY_ACE != 0 {
+        // Só as do tipo pedido, e que valem para o próprio objeto.
+        if cabeca.AceType != tipo || u32::from(cabeca.AceFlags) & INHERIT_ONLY_ACE != 0 {
+            continue;
+        }
+        if u32::from(cabeca.AceFlags) & INHERITED_ACE != 0 {
             continue;
         }
         if heranca && u32::from(cabeca.AceFlags) & SUB_CONTAINERS_AND_OBJECTS_INHERIT != SUB_CONTAINERS_AND_OBJECTS_INHERIT
