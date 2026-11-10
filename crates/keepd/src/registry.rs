@@ -219,7 +219,8 @@ impl Registry {
             Ok(g) => g.values().cloned().collect(),
             Err(_) => return,
         };
-        let young: Vec<String> = workspaces.iter().flat_map(|w| w.reap()).collect();
+        let until = std::time::Instant::now() + crate::workspace::SHELL_EXIT_GRACE;
+        let young: Vec<String> = workspaces.iter().flat_map(|w| w.reap(until)).collect();
         if let (Some(log), false) = (&self.log, young.is_empty()) {
             note(log, &young);
         }

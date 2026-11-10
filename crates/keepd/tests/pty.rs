@@ -374,7 +374,7 @@ fn a_group_finishing_together_stays_one_tab() {
         wait_for(Duration::from_secs(5), || root_tab.is_finished() && middle_tab.is_finished()),
         "the shells never exited"
     );
-    workspace.reap();
+    workspace.reap(std::time::Instant::now());
 
     let tabs = workspace.tabs();
     assert_eq!(tabs.len(), 2, "reaping took a running pane with it");

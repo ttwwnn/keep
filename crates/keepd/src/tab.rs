@@ -720,10 +720,9 @@ impl Tab {
         self.child.lock().ok()?.try_wait().ok().flatten()
     }
 
-    /// How the shell ended, given up to `within` to be done: the terminal can
+    /// How the shell ended, given until `until` to be done: the terminal can
     /// reach its end a moment before the shell has finished exiting.
-    pub fn exit_status_after_end(&self, within: Duration) -> Option<ExitStatus> {
-        let until = std::time::Instant::now() + within;
+    pub fn exit_status_by(&self, until: std::time::Instant) -> Option<ExitStatus> {
         loop {
             if let Some(status) = self.exit_status() {
                 return Some(status);

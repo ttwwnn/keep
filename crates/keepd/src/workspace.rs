@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 use portable_pty::{CommandBuilder, ExitStatus};
@@ -139,9 +139,10 @@ fn rehome(tabs: &mut [Entry], departed: &HashMap<u32, (u32, u8)>) {
 /// (`Workspace::reap`).
 const YOUNG: Duration = Duration::from_secs(10);
 
-/// How long a finished tab's shell is given to be done, for the log to say how
-/// it ended rather than that it still runs.
-const SHELL_EXIT_GRACE: Duration = Duration::from_millis(500);
+/// How long the shells of the tabs a reap finds finished are given, together,
+/// to be done, for the log to say how each ended rather than that it still
+/// runs. One wait for the whole reap: a list asks for one, and it waits on it.
+pub(crate) const SHELL_EXIT_GRACE: Duration = Duration::from_millis(500);
 
 /// How a shell ended, for the log: its code — in hex too, the way Windows'
 /// own codes read (0xC0000142) — the signal, or that it still runs, when the
@@ -665,8 +666,9 @@ impl Workspace {
     /// A finished tab someone is still attached to stays: they may not have
     /// read the last of its output yet. One that ended within seconds of
     /// opening goes before anyone saw why, so how it ended comes back, a line
-    /// each, for the daemon's log (`Registry::reap`).
-    pub fn reap(&self) -> Vec<String> {
+    /// each, for the daemon's log (`Registry::reap`): its shell is given until
+    /// `until` to be done.
+    pub fn reap(&self, until: Instant) -> Vec<String> {
         let mut young = Vec::new();
         if let Ok(mut guard) = self.tabs.lock() {
             let departed: HashMap<u32, (u32, u8)> = guard
@@ -696,7 +698,7 @@ impl Workspace {
                     self.name,
                     id,
                     age.as_secs_f32(),
-                    ended(tab.exit_status_after_end(SHELL_EXIT_GRACE), tab.shell_pid()),
+                    ended(tab.exit_status_by(until), tab.shell_pid()),
                 )
             })
             .collect()
