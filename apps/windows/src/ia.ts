@@ -544,11 +544,9 @@ export interface JevLine {
 /** Where the OpenRouter account buys credit. */
 export const OPENROUTER_CREDITS_URL = "https://openrouter.ai/settings/credits";
 
-/** A spend per day: cents and below keep four places, the Jev's being fractions of a cent. */
-export function perDay(value: number): string {
-  const v = Math.max(0, value);
-  if (v > 0 && v < 0.00005) return "< US$ 0,0001/dia";
-  return `US$ ${v.toFixed(v > 0 && v < 0.01 ? 4 : 2).replace(".", ",")}/dia`;
+/** A spend per month: the 30-day average per day, times 30 (pedido de 12/11/2026: "Gasto médio: US$ xx,xx/mês"). */
+export function perMonth(dailyAverage: number): string {
+  return `${dollars(dailyAverage * 30)}/mês`;
 }
 
 export const accountLeft = (c: JevCredit) => Math.max(0, c.total - c.used);
@@ -641,7 +639,7 @@ export function jevHelp(line: JevLine, nowMs: number): string {
     if (c.usedToday !== null) lines.push(`Gasto hoje: ${dollars(c.usedToday)}`);
     if (c.usedThisMonth !== null) lines.push(`Gasto no mês: ${dollars(c.usedThisMonth)}`);
   }
-  if (line.dailyAverage30d !== null) lines.push(`Média dos últimos 30 dias: ${perDay(line.dailyAverage30d)}`);
+  if (line.dailyAverage30d !== null) lines.push(`Gasto médio: ${perMonth(line.dailyAverage30d)} (últimos 30 dias)`);
   if (line.pending !== null && line.pending > 0) {
     lines.push(`Inclui ${dollars(line.pending)} de decisões desta máquina que o OpenRouter ainda não contou`);
   }

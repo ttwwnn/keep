@@ -76,10 +76,13 @@ function around(terminal: ITheme & { background: string; foreground: string }): 
   };
 }
 
-/** Keep Escuro: #242626, and Ghostty's letter and palette. */
+/**
+ * Keep Escuro: #242626 and the letter #fafafa (the picture of 12/11/2026); with Claude Code's dark-ansi theme, its
+ * secondary text (white) is #fafafa too, and the background of the person's messages (brightBlack) the ground's own.
+ */
 const KEEP_ESCURO: Palette = around({
   background: "#242626",
-  foreground: "#ffffff",
+  foreground: "#fafafa",
   cursor: "#ffffff",
   cursorAccent: "#242626",
   selectionBackground: "rgba(255, 255, 255, 0.26)",
@@ -90,15 +93,15 @@ const KEEP_ESCURO: Palette = around({
   blue: "#81a2be",
   magenta: "#b294bb",
   cyan: "#8abeb7",
-  white: "#c5c8c6",
-  brightBlack: "#666666",
+  white: "#fafafa",
+  brightBlack: "#242626",
   brightRed: "#d54e53",
   brightGreen: "#b9ca4a",
   brightYellow: "#e7c547",
   brightBlue: "#7aa6da",
   brightMagenta: "#c397d8",
   brightCyan: "#70c0b1",
-  brightWhite: "#eaeaea",
+  brightWhite: "#fafafa",
 });
 
 /**

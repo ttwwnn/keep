@@ -411,12 +411,9 @@ enum UsageText {
         return "US$ " + String(format: "%.2f", value).replacingOccurrences(of: ".", with: ",")
     }
 
-    /// A spend per day: cents and below keep four places, the Jev's being fractions of a cent.
-    static func perDay(_ value: Double) -> String {
-        let value = max(0, value)
-        if value > 0, value < 0.00005 { return "< US$ 0,0001/dia" }
-        let places = value > 0 && value < 0.01 ? 4 : 2
-        return "US$ " + String(format: "%.\(places)f", value).replacingOccurrences(of: ".", with: ",") + "/dia"
+    /// A spend per month: the 30-day average per day, times 30 (pedido de 12/11/2026: "Gasto médio: US$ xx,xx/mês").
+    static func perMonth(dailyAverage: Double) -> String {
+        dollars(dailyAverage * 30) + "/mês"
     }
 
     /// How long until a window starts over, in the fewest characters that

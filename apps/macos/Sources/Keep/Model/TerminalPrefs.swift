@@ -227,11 +227,16 @@ enum KeepThemes {
 
     static let files: [(name: String, text: String)] = [
         ("Keep Escuro", """
-            # Keep Escuro — fundo #242626 e a letra e a paleta do Ghostty; a barra lateral
-            # fica em #131313 com a janela em uso e #2d2d2d fora dela, como a do Finder.
+            # Keep Escuro — fundo #242626 e letra #fafafa, como a imagem de 12/11/2026; a barra
+            # lateral fica em #131313 com a janela em uso e #2d2d2d fora dela, como a do Finder.
+            # Com o tema dark-ansi do Claude Code: o texto secundário (palette 7) também #fafafa
+            # e o fundo das mensagens da pessoa (palette 8) no tom do fundo, sem faixa.
             # Metade escura do tema do Keep (terminal.json).
             background = #242626
-            foreground = #ffffff
+            foreground = #fafafa
+            palette = 7=#fafafa
+            palette = 8=#242626
+            palette = 15=#fafafa
 
             """),
         ("Keep Claro", """
@@ -281,6 +286,14 @@ enum KeepThemes {
             # Keep Escuro — fundo #1d2025 (o tom que a barra lateral tinha; ela agora é
             # preta) e a letra e a paleta do Ghostty. Metade escura do tema do Keep (terminal.json).
             background = #1d2025
+            foreground = #ffffff
+
+            """,
+            """
+            # Keep Escuro — fundo #242626 e a letra e a paleta do Ghostty; a barra lateral
+            # fica em #131313 com a janela em uso e #2d2d2d fora dela, como a do Finder.
+            # Metade escura do tema do Keep (terminal.json).
+            background = #242626
             foreground = #ffffff
 
             """,
