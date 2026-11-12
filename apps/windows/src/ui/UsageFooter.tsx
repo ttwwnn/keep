@@ -26,7 +26,7 @@ import {
   numberedName,
   orderKeyOf,
   percentText,
-  perDay,
+  perMonth,
   untilText,
   type AutomationSwitch,
   type CreditRow,
@@ -246,8 +246,8 @@ function JevBlock(props: { line: JevLine; nowMs: number }) {
       )}
       <div class="usage-jev-extra">
         {line.dailyAverage30d !== null && (
-          <span class="usage-note" title="Gasto médio por dia do Jev nos últimos 30 dias, pelas decisões desta máquina">
-            média 30 dias: {perDay(line.dailyAverage30d)}
+          <span class="usage-note" title="Gasto médio do Jev por mês, pelos últimos 30 dias de decisões desta máquina">
+            Gasto médio: {perMonth(line.dailyAverage30d)}
           </span>
         )}
         <button class="usage-jev-credit" title="Abre a página de créditos do OpenRouter" onClick={() => void openUrl(OPENROUTER_CREDITS_URL)}>

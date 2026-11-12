@@ -35,7 +35,7 @@ check("the default line", KeepThemes.defaultLine(in: themes) ?? "nil", "theme = 
 
 print("what the two say: Ghostty's dark, and a white ground with GitHub Light's palette")
 let darkText = read(dark)
-check("dark ground and ink", darkText.contains("\nbackground = #242626\nforeground = #ffffff\n") ? "yes" : darkText, "yes")
+check("dark ground and ink", darkText.contains("\nbackground = #242626\nforeground = #fafafa\n") ? "yes" : darkText, "yes")
 let lightText = read(light)
 check("light ground and ink", lightText.contains("\nbackground = #ffffff\nforeground = #1f2328\n") ? "yes" : lightText, "yes")
 check("light palette slots", String(lightText.components(separatedBy: "\npalette = ").count - 1), "16")

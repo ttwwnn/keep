@@ -29,7 +29,7 @@ import {
   provenKey,
   tabAccountLabel,
   readAutomation,
-  perDay,
+  perMonth,
   readJev,
   readStoredLines,
   readSwitch,
@@ -437,11 +437,11 @@ describe("the Jev's credit", () => {
     expect(readJev({ credit: credit(), measuredAt: 1, problem: null, pending: 0.0002 })?.pending).toBe(0.0002);
     expect(readJev({ credit: credit(), measuredAt: 1, problem: null, dailyAverage30d: 0.0049 })?.dailyAverage30d).toBe(0.0049);
   });
-  it("says a spend per day with the places it needs", () => {
-    expect(perDay(0.0049)).toBe("US$ 0,0049/dia");
-    expect(perDay(0.25)).toBe("US$ 0,25/dia");
-    expect(perDay(0)).toBe("US$ 0,00/dia");
-    expect(perDay(0.000001)).toBe("< US$ 0,0001/dia");
+  it("says the 30-day average as a spend per month", () => {
+    expect(perMonth(0.012)).toBe("US$ 0,36/mês");
+    expect(perMonth(0.25)).toBe("US$ 7,50/mês");
+    expect(perMonth(0)).toBe("US$ 0,00/mês");
+    expect(perMonth(0.0001)).toBe("< US$ 0,01/mês");
   });
   it("the note and the tooltip say it as the macOS footer does", () => {
     const now = Date.UTC(2026, 9, 5, 12);
