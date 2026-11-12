@@ -296,6 +296,10 @@ a conversa volta quando a aba é mostrada.
   parâmetros, a conta, a pasta presa). Não volta se a conversa já roda em
   outro lugar ou se a aba roda outra coisa: a pessoa tomou a aba. Uma aba
   posta na tela durante a rodada é acordada no fim dela.
+  Uma aba presa a uma conta do Claude que está no limite pela última medição
+  volta seguindo a ordem, na primeira conta livre da fila, quando há outra
+  livre (pedido de 12/11/2026); vale também para a restauração depois de um
+  reinício.
 - **Reinício**: o retrato leva a aba adormecida com a conversa (`adormecida`)
   e a restauração a recria adormecida, sem subir a conversa; ela acorda do
   mesmo jeito. A varredura de worktrees não a toma por órfã (o shell da aba

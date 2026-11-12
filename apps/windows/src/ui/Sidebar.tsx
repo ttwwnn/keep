@@ -10,7 +10,7 @@ import { SPLIT_DOWN, SPLIT_RIGHT } from "../api";
 import { endedADrag } from "../drag";
 import type { RootTab } from "../layout";
 import { mayArmRename, slowRename } from "../naming";
-import { SIDEBAR_MAX, SIDEBAR_MIN, tabKey } from "../state";
+import { SIDEBAR_MIN, sidebarMax, tabKey } from "../state";
 import {
   activeTab,
   activeWorkspace,
@@ -411,7 +411,7 @@ function Resizer() {
       onPointerMove={(e) => {
         if (!start.current) return;
         const width = start.current.width + e.clientX - start.current.x;
-        setSidebarWidth(Math.round(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, width))));
+        setSidebarWidth(Math.round(Math.min(sidebarMax(), Math.max(SIDEBAR_MIN, width))));
       }}
       onPointerUp={() => (start.current = null)}
       onDblClick={() => setSidebarWidth(250)}

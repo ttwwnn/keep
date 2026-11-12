@@ -311,7 +311,12 @@ struct JevLine: Equatable, Codable {
     var measuredAt: Date?
     var problem: String?
     var pending: Double?
+    /// Spent per day over the last 30 days, by this Mac's decisions.
+    var dailyAverage30d: Double?
 }
+
+/// Where the OpenRouter account buys credit.
+let openRouterCreditsURL = URL(string: "https://openrouter.ai/settings/credits")!
 
 /// What `keep ia jev` answers. `jev` is null when this Mac has no key of the
 /// Jev's: there is then nothing to show.
@@ -404,6 +409,14 @@ enum UsageText {
         let value = max(0, value)
         if value > 0, value < 0.01 { return "< US$ 0,01" }
         return "US$ " + String(format: "%.2f", value).replacingOccurrences(of: ".", with: ",")
+    }
+
+    /// A spend per day: cents and below keep four places, the Jev's being fractions of a cent.
+    static func perDay(_ value: Double) -> String {
+        let value = max(0, value)
+        if value > 0, value < 0.00005 { return "< US$ 0,0001/dia" }
+        let places = value > 0 && value < 0.01 ? 4 : 2
+        return "US$ " + String(format: "%.\(places)f", value).replacingOccurrences(of: ".", with: ",") + "/dia"
     }
 
     /// How long until a window starts over, in the fewest characters that

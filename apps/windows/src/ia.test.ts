@@ -29,6 +29,7 @@ import {
   provenKey,
   tabAccountLabel,
   readAutomation,
+  perDay,
   readJev,
   readStoredLines,
   readSwitch,
@@ -430,15 +431,23 @@ describe("the Jev's credit", () => {
       measuredAt: null,
       problem: "sem rede",
       pending: null,
+      dailyAverage30d: null,
     });
     expect(line?.pending).toBeNull();
     expect(readJev({ credit: credit(), measuredAt: 1, problem: null, pending: 0.0002 })?.pending).toBe(0.0002);
+    expect(readJev({ credit: credit(), measuredAt: 1, problem: null, dailyAverage30d: 0.0049 })?.dailyAverage30d).toBe(0.0049);
+  });
+  it("says a spend per day with the places it needs", () => {
+    expect(perDay(0.0049)).toBe("US$ 0,0049/dia");
+    expect(perDay(0.25)).toBe("US$ 0,25/dia");
+    expect(perDay(0)).toBe("US$ 0,00/dia");
+    expect(perDay(0.000001)).toBe("< US$ 0,0001/dia");
   });
   it("the note and the tooltip say it as the macOS footer does", () => {
     const now = Date.UTC(2026, 9, 5, 12);
-    const line = { credit: credit({ keyLimit: null }), measuredAt: now / 1000 - 3600, problem: null, pending: null };
+    const line = { credit: credit({ keyLimit: null }), measuredAt: now / 1000 - 3600, problem: null, pending: null, dailyAverage30d: null };
     expect(jevNote(line, now)).toBe("medido há 1h");
-    expect(jevNote({ credit: null, measuredAt: null, problem: null, pending: null }, now)).toBe("medindo…");
+    expect(jevNote({ credit: null, measuredAt: null, problem: null, pending: null, dailyAverage30d: null }, now)).toBe("medindo…");
     expect(jevHelp(line, now)).toContain("Chave: sem teto, gastou < US$ 0,01");
     expect(jevHelp(line, now)).not.toContain("ainda não contou");
     expect(jevHelp({ ...line, pending: 0.0002 }, now)).toContain(

@@ -466,6 +466,10 @@ perguntas de decisão, no Claude Code e no Codex) gasta crédito do OpenRouter a
   arredondamento; a sobra que não cobre uma chamada inteira fica para a leitura seguinte). Chamada não
   contada em 10 min sai da soma; chave nova começa o livro do zero. Os dois apps vigiam o livro no
   olhar de 2 s e pedem `--cache`: uma decisão aparece no rodapé em uns 2 s, sem ir à rede.
+- Média de 30 dias (`dailyAverage30d`): o gasto do livro inteiro (todas as chaves desta máquina) nos
+  últimos 30 dias, dividido por 30, ou pelos dias que o livro tem quando ele tem menos (ao menos um). O
+  rodapé mostra "média 30 dias: US$ x/dia" (quatro casas abaixo de um centavo) e um botão "Pôr crédito",
+  que abre `https://openrouter.ai/settings/credits` (pedido de 12/11/2026).
 - Os valores do Jev têm duas casas decimais: o número na tela muda quando o gasto acumulado das decisões
   completa um centavo (uma decisão custa de US$ 0,00002 a US$ 0,0002).
 - Resposta: `{"jev": {"credit": {"total", "used", "keyLimit", "keyUsed", "usedToday", "usedThisMonth"},

@@ -909,6 +909,22 @@ struct UsageFooter: View {
                 }
                 .opacity(stale ? 0.55 : 1)
             }
+            HStack(spacing: 6) {
+                if let average = jev.dailyAverage30d {
+                    Text("média 30 dias: \(UsageText.perDay(average))")
+                        .font(numbers)
+                        .monospacedDigit()
+                        .foregroundStyle(UsageInk.inkFaint)
+                        .lineLimit(1)
+                        .help("Gasto médio por dia do Jev nos últimos 30 dias, pelas decisões desta máquina")
+                }
+                Spacer(minLength: 4)
+                Link("Pôr crédito", destination: openRouterCreditsURL)
+                    .font(numbers)
+                    .lineLimit(1)
+                    .help("Abre a página de créditos do OpenRouter")
+            }
+            .frame(height: 16 * scale)
             if let note = jevNote(jev, now: now) {
                 Text(note)
                     .font(numbers)
@@ -1003,6 +1019,7 @@ struct UsageFooter: View {
             if let today = credit.usedToday { lines.append("Gasto hoje: \(UsageText.dollars(today))") }
             if let month = credit.usedThisMonth { lines.append("Gasto no mês: \(UsageText.dollars(month))") }
         }
+        if let average = jev.dailyAverage30d { lines.append("Média dos últimos 30 dias: \(UsageText.perDay(average))") }
         if let pending = jev.pending, pending > 0 {
             lines.append("Inclui \(UsageText.dollars(pending)) de decisões desta máquina que o OpenRouter ainda não contou")
         }

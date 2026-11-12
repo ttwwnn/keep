@@ -304,6 +304,11 @@ pub fn subida(ws: &str, ia: &Ia, programa: String, conversa: &str, contas: &[kee
 }
 
 pub(crate) fn retoma(ws: &str, tab: u32, ia: &Ia, contas: &[keep_ia::contas::Conta]) -> Result<(), String> {
+    let mut ia = ia.clone();
+    if ia.agente != "codex" {
+        ia.conta = escolha_ao_subir(&ia.conta, contas, &keep_ia::uso::disponiveis_de(contas));
+    }
+    let ia = &ia;
     let (programa, conversa) = if ia.agente == "codex" {
         let p = keep_ia::programas::codex().ok_or("o Codex não está instalado")?;
         (p, ia.conversa.clone())
@@ -334,6 +339,21 @@ pub(crate) fn retoma(ws: &str, tab: u32, ia: &Ia, contas: &[keep_ia::contas::Con
     }
     espera_subir(ws, tab, &ia.agente);
     Ok(())
+}
+
+/// A escolha com que o Claude volta: a conta presa da aba, salvo quando ela está no limite pela última medição e
+/// outra do Claude pode trabalhar; aí a aba volta seguindo a ordem, na primeira livre da fila (pedido de
+/// 12/11/2026: a aba acordada numa conta com o limite estourado já abre na próxima da lista).
+fn escolha_ao_subir(escolha: &str, contas: &[keep_ia::contas::Conta], livres: &[String]) -> String {
+    use keep_ia::contas::Motor;
+    let Some(c) = (escolha != keep_ia::abas::SEGUIR_ORDEM && escolha.starts_with("claude:"))
+        .then(|| keep_ia::contas::achar(contas, escolha))
+        .flatten()
+    else {
+        return escolha.to_string();
+    };
+    let outra_livre = contas.iter().any(|o| o.engine == Motor::Claude && o.roda && o.key != c.key && livres.contains(&o.key));
+    if !livres.contains(&c.key) && outra_livre { keep_ia::abas::SEGUIR_ORDEM.to_string() } else { escolha.to_string() }
 }
 
 /// O armazém de login da aba `ws`#`tab` para o Claude que volta nela, com a
@@ -379,6 +399,42 @@ fn espera_subir(ws: &str, tab: u32, agente: &str) {
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    fn conta(engine: keep_ia::contas::Motor, ap: &str, key: &str) -> keep_ia::contas::Conta {
+        keep_ia::contas::Conta {
+            engine,
+            key: key.into(),
+            alias: ap.into(),
+            aliases: vec![ap.into()],
+            email: None,
+            plan: None,
+            is_active: false,
+            is_preferred: false,
+            warning: None,
+            order_key: engine.chave(ap),
+            has_token: true,
+            armazens: vec![],
+            token: None,
+            roda: true,
+        }
+    }
+
+    #[test]
+    fn a_conta_presa_no_limite_volta_seguindo_a_ordem() {
+        use keep_ia::contas::Motor::{Claude, Codex};
+        let contas = [conta(Claude, "ana", "u-1"), conta(Claude, "bia", "u-2"), conta(Codex, "principal", "g-1")];
+        let livres = |k: &[&str]| k.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // A Ana no limite, a Bia livre: volta pela ordem, que a leva à Bia.
+        assert_eq!(escolha_ao_subir("claude:ana", &contas, &livres(&["u-2"])), "claude:ordem");
+        // A Ana livre: fica na Ana.
+        assert_eq!(escolha_ao_subir("claude:ana", &contas, &livres(&["u-1", "u-2"])), "claude:ana");
+        // Nenhuma outra do Claude livre (o GPT não conta): fica onde a pessoa a pôs.
+        assert_eq!(escolha_ao_subir("claude:ana", &contas, &livres(&["g-1"])), "claude:ana");
+        // Quem segue a ordem, o GPT e uma conta que o Keep não tem: como estão.
+        assert_eq!(escolha_ao_subir("claude:ordem", &contas, &livres(&[])), "claude:ordem");
+        assert_eq!(escolha_ao_subir("gpt:principal", &contas, &livres(&["u-2"])), "gpt:principal");
+        assert_eq!(escolha_ao_subir("claude:ninguem", &contas, &livres(&["u-2"])), "claude:ninguem");
+    }
 
     fn aba(ws: &str, n: u32, mae: u32) -> AbaGuardada {
         AbaGuardada {

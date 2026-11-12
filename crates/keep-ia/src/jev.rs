@@ -401,9 +401,9 @@ struct Chamada {
     custo: f64,
 }
 
-/// As chamadas da chave `id` depois de `desde`, da mais antiga à mais nova.
+/// As chamadas da chave `id` (de qualquer chave, sem `id`) depois de `desde`, da mais antiga à mais nova.
 /// Linha que não se lê, de outra chave ou sem custo fica de fora.
-fn chamadas(id: &str, desde: f64) -> Vec<Chamada> {
+fn chamadas(id: Option<&str>, desde: f64) -> Vec<Chamada> {
     use std::io::{Read, Seek, SeekFrom};
     // Só um arquivo comum: um link para `/dev/zero` ou uma FIFO no lugar do livro prenderia o `keep ia jev` do app.
     if !std::fs::metadata(livro()).is_ok_and(|m| m.is_file()) {
@@ -424,7 +424,7 @@ fn chamadas(id: &str, desde: f64) -> Vec<Chamada> {
     let linhas = texto.lines().skip(usize::from(pulo > 0));
     let mut lista: Vec<Chamada> = linhas
         .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-        .filter(|v| v.get("chave").and_then(Value::as_str) == Some(id))
+        .filter(|v| id.is_none() || v.get("chave").and_then(Value::as_str) == id)
         .filter_map(|v| {
             let quando = numero(v.get("quando"))?;
             let custo = numero(v.get("custo_usd"))?;
@@ -446,7 +446,7 @@ fn concilia(r: &mut Registro, gasto: f64, agora_s: f64) {
     let mut ate = r.livro_ate.unwrap_or(agora_s);
     let mut resta = gasto.max(0.0) + r.livro_sobra;
     let mut esperando = false;
-    for c in chamadas(&id, ate) {
+    for c in chamadas(Some(&id), ate) {
         if c.quando < agora_s - ESPERA_DO_OPENROUTER {
             ate = c.quando;
         } else if resta + 1e-12 >= c.custo * 0.99 {
@@ -465,7 +465,7 @@ fn concilia(r: &mut Registro, gasto: f64, agora_s: f64) {
 /// O que as chamadas desta máquina gastaram e o OpenRouter ainda não contou.
 fn pendente(r: &Registro, agora_s: f64) -> f64 {
     let (Some(id), Some(desde)) = (r.chave_id.as_deref(), r.livro_ate) else { return 0.0 };
-    let soma: f64 = chamadas(id, desde)
+    let soma: f64 = chamadas(Some(id), desde)
         .iter()
         .filter(|c| c.quando >= agora_s - ESPERA_DO_OPENROUTER)
         .map(|c| c.custo)
@@ -484,6 +484,21 @@ pub struct Saldo {
     pub problem: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending: Option<f64>,
+    /// O gasto médio por dia nos últimos 30 dias, pelas decisões desta máquina (o livro, de todas as chaves dela).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub daily_average_30d: Option<f64>,
+}
+
+const TRINTA_DIAS: f64 = 30.0 * 86_400.0;
+
+/// A média por dia dos últimos 30 dias, pelo livro; nada sem decisão nenhuma no livro.
+fn media_30_dias(agora_s: f64) -> Option<f64> {
+    let todas = chamadas(None, 0.0);
+    let primeira = todas.first()?.quando;
+    let soma: f64 = todas.iter().filter(|c| c.quando >= agora_s - TRINTA_DIAS).map(|c| c.custo).sum();
+    // Com menos de 30 dias de livro, a média é dos dias que ele tem (ao menos um).
+    let dias = ((agora_s - primeira) / 86_400.0).clamp(1.0, 30.0);
+    Some(soma / dias)
 }
 
 fn saldo(r: Registro) -> Saldo {
@@ -493,6 +508,7 @@ fn saldo(r: Registro) -> Saldo {
         measured_at: r.measured_at,
         problem: r.problem,
         pending: (p > 0.0).then_some(p),
+        daily_average_30d: media_30_dias(agora()),
     }
 }
 
@@ -1055,6 +1071,26 @@ mod testes {
         let s = mede_de_novo();
         assert!(s.pending.is_none(), "{:?}", s.pending);
         assert!(le_cache().livro_ate.unwrap() > agora() - 60.0);
+    }
+
+    #[test]
+    fn a_media_de_30_dias_soma_o_livro_de_todas_as_chaves() {
+        let _c = casa("jev-media");
+        assert_eq!(media_30_dias(agora()), None, "sem livro, sem média");
+        let hoje = agora();
+        // Livro de 40 dias: o que passou de 30 dias fica de fora; as duas chaves entram.
+        anota("sk-or-v1-velha", hoje - 40.0 * 86_400.0, 9.0);
+        anota("sk-or-v1-velha", hoje - 10.0 * 86_400.0, 0.12);
+        anota("sk-or-v1-nova", hoje - 60.0, 0.18);
+        assert!(perto(media_30_dias(hoje).unwrap(), 0.01), "{:?}", media_30_dias(hoje));
+    }
+
+    #[test]
+    fn com_menos_de_30_dias_de_livro_a_media_e_dos_dias_que_ele_tem() {
+        let _c = casa("jev-media-curta");
+        let hoje = agora();
+        anota("sk-or-v1-nova", hoje - 2.0 * 86_400.0, 0.04);
+        assert!(perto(media_30_dias(hoje).unwrap(), 0.02), "{:?}", media_30_dias(hoje));
     }
 
     #[test]

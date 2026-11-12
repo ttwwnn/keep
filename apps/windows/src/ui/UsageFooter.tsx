@@ -9,6 +9,7 @@
 
 import {
   AUTOMATION_TITLES,
+  OPENROUTER_CREDITS_URL,
   STALE_AFTER_S,
   accountHelp,
   available,
@@ -25,6 +26,7 @@ import {
   numberedName,
   orderKeyOf,
   percentText,
+  perDay,
   untilText,
   type AutomationSwitch,
   type CreditRow,
@@ -47,6 +49,7 @@ import {
   usageLines,
   usageNotice,
 } from "../iaStore";
+import { openUrl } from "../api";
 import { openSignInMenu } from "./AccountMenu";
 import * as icon from "./icons";
 
@@ -241,6 +244,16 @@ function JevBlock(props: { line: JevLine; nowMs: number }) {
           ))}
         </div>
       )}
+      <div class="usage-jev-extra">
+        {line.dailyAverage30d !== null && (
+          <span class="usage-note" title="Gasto médio por dia do Jev nos últimos 30 dias, pelas decisões desta máquina">
+            média 30 dias: {perDay(line.dailyAverage30d)}
+          </span>
+        )}
+        <button class="usage-jev-credit" title="Abre a página de créditos do OpenRouter" onClick={() => void openUrl(OPENROUTER_CREDITS_URL)}>
+          Pôr crédito
+        </button>
+      </div>
       {note && <div class="usage-note">{note}</div>}
     </div>
   );
