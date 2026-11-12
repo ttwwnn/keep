@@ -160,12 +160,13 @@ describe("the palette of a theme", () => {
     await loadThemes();
   });
 
-  it("keeps Keep's own: the dark ground in the sidebar's old tone, the sidebar black", () => {
+  it("keeps Keep's own: the dark ground #242626, the sidebar in the Finder's two tones", () => {
     const escuro = resolvePalette("dark");
     expect(escuro.dark).toBe(true);
-    expect(escuro.ground).toBe("#1d2025");
-    expect(escuro.recessed).toBe("#000000");
-    expect(escuro.overlay).toBe("rgba(23, 25, 29, 0.86)");
+    expect(escuro.ground).toBe("#242626");
+    expect(escuro.recessed).toBe("#131313");
+    expect(escuro.recessedIdle).toBe("#2d2d2d");
+    expect(escuro.overlay).toBe("rgba(28, 30, 30, 0.86)");
     const claro = resolvePalette("light");
     expect(claro.dark).toBe(false);
     expect(claro.ground).toBe("#ffffff");
@@ -177,7 +178,7 @@ describe("the palette of a theme", () => {
     expect(mocha.dark).toBe(true);
     expect(mocha.ground).toBe("#1e1e2e");
     expect(mocha.terminal.background).toBe("#1e1e2e");
-    expect(mocha.recessed).toBe("#000000");
+    expect(mocha.recessed).toBe("#131313");
     expect(mocha.overlay).toBe("rgba(23, 23, 36, 0.86)");
     const latte = resolvePalette("dark", "Catppuccin Latte");
     expect(latte.dark).toBe(false);
@@ -219,7 +220,7 @@ describe("the palette of a theme", () => {
     expect(resolvePalette("light", "dark:Catppuccin Mocha,light:Catppuccin Latte").ground).toBe("#eff1f5");
     expect(resolvePalette("dark", "Dracula").ground).toBe("#282a36");
     expect(resolvePalette("light", "Dracula").ground).toBe("#282a36");
-    expect(resolvePalette("dark", "No such theme").ground).toBe("#1d2025");
+    expect(resolvePalette("dark", "No such theme").ground).toBe("#242626");
     expect(resolvePalette("light", "No such theme").ground).toBe("#ffffff");
   });
   it("is the same object for the same theme, so nothing is redone for nothing", () => {
@@ -234,9 +235,13 @@ describe("the palette of a theme", () => {
       expect(palette.ground, name).toBe(themeColors(name)!.background);
     }
   });
-  it("puts the sidebar a step behind the ground, in every theme", () => {
+  it("puts the sidebar a step behind the ground in every light theme, and in the Finder's tones in a dark one", () => {
     for (const name of listThemes()) {
       const palette = paletteOf(themeColors(name)!);
+      if (palette.dark) {
+        expect([palette.recessed, palette.recessedIdle], name).toEqual(["#131313", "#2d2d2d"]);
+        continue;
+      }
       const ground = parseHex(palette.ground)!;
       const recessed = parseHex(palette.recessed)!;
       for (let channel = 0; channel < 3; channel++) expect(recessed[channel], name).toBeLessThanOrEqual(ground[channel]);

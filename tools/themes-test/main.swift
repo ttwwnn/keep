@@ -35,7 +35,7 @@ check("the default line", KeepThemes.defaultLine(in: themes) ?? "nil", "theme = 
 
 print("what the two say: Ghostty's dark, and a white ground with GitHub Light's palette")
 let darkText = read(dark)
-check("dark ground and ink", darkText.contains("\nbackground = #1d2025\nforeground = #ffffff\n") ? "yes" : darkText, "yes")
+check("dark ground and ink", darkText.contains("\nbackground = #242626\nforeground = #ffffff\n") ? "yes" : darkText, "yes")
 let lightText = read(light)
 check("light ground and ink", lightText.contains("\nbackground = #ffffff\nforeground = #1f2328\n") ? "yes" : lightText, "yes")
 check("light palette slots", String(lightText.components(separatedBy: "\npalette = ").count - 1), "16")
@@ -49,10 +49,12 @@ check("theirs stays", read(light), "background = #123456\n")
 check("the missing one comes back", read(dark) == darkText ? "yes" : "no", "yes")
 
 print("the dark half as Keep wrote it before: it takes the new ground; edited, it stays")
-try? KeepThemes.previous["Keep Escuro"]!.write(toFile: dark, atomically: true, encoding: .utf8)
-KeepThemes.install(into: themes)
-check("the old file is rewritten", read(dark) == darkText ? "yes" : read(dark), "yes")
-let edited = KeepThemes.previous["Keep Escuro"]! + "cursor-color = #ff0000\n"
+for (n, old) in KeepThemes.previous["Keep Escuro"]!.enumerated() {
+    try? old.write(toFile: dark, atomically: true, encoding: .utf8)
+    KeepThemes.install(into: themes)
+    check("old file \(n + 1) is rewritten", read(dark) == darkText ? "yes" : read(dark), "yes")
+}
+let edited = KeepThemes.previous["Keep Escuro"]![0] + "cursor-color = #ff0000\n"
 try? edited.write(toFile: dark, atomically: true, encoding: .utf8)
 KeepThemes.install(into: themes)
 check("an edited one is left alone", read(dark) == edited ? "yes" : "no", "yes")

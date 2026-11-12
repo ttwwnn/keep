@@ -227,9 +227,10 @@ enum KeepThemes {
 
     static let files: [(name: String, text: String)] = [
         ("Keep Escuro", """
-            # Keep Escuro — fundo #1d2025 (o tom que a barra lateral tinha; ela agora é
-            # preta) e a letra e a paleta do Ghostty. Metade escura do tema do Keep (terminal.json).
-            background = #1d2025
+            # Keep Escuro — fundo #242626 e a letra e a paleta do Ghostty; a barra lateral
+            # fica em #131313 com a janela em uso e #2d2d2d fora dela, como a do Finder.
+            # Metade escura do tema do Keep (terminal.json).
+            background = #242626
             foreground = #ffffff
 
             """),
@@ -267,14 +268,23 @@ enum KeepThemes {
 
     /// What Keep wrote before, word for word: a file still holding it is Keep's and takes the new text; one the person
     /// edited is theirs and is left alone.
-    static let previous: [String: String] = [
-        "Keep Escuro": """
+    static let previous: [String: [String]] = [
+        "Keep Escuro": [
+            """
             # Keep Escuro — o escuro de sempre: o fundo e a letra padrão do Ghostty,
             # com a paleta dele. Metade escura do tema do Keep (terminal.json).
             background = #282c34
             foreground = #ffffff
 
             """,
+            """
+            # Keep Escuro — fundo #1d2025 (o tom que a barra lateral tinha; ela agora é
+            # preta) e a letra e a paleta do Ghostty. Metade escura do tema do Keep (terminal.json).
+            background = #1d2025
+            foreground = #ffffff
+
+            """,
+        ],
     ]
 
     /// The two files, written where missing, or where they still hold what Keep wrote before.
@@ -283,7 +293,7 @@ enum KeepThemes {
         for (name, text) in files {
             let path = (directory as NSString).appendingPathComponent(name)
             let old = try? String(contentsOfFile: path, encoding: .utf8)
-            guard !fm.fileExists(atPath: path) || (old != nil && old != text && old == previous[name]) else { continue }
+            guard !fm.fileExists(atPath: path) || (old != nil && old != text && (previous[name] ?? []).contains(old!)) else { continue }
             try? fm.createDirectory(atPath: directory, withIntermediateDirectories: true)
             try? text.write(toFile: path, atomically: true, encoding: .utf8)
         }

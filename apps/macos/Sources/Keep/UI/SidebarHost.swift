@@ -125,23 +125,22 @@ final class SidebarHost: NSViewController {
         return screen.visibleFrame.maxY >= screen.frame.maxY - 1
     }
 
-    /// Where the battery goes: between the traffic lights and the zoom, where
-    /// the zoom stands when the titlebar row is shown (see `CenteringHost`:
-    /// it rides the sidebar's edge, a divider's gap and the toggle away, then
-    /// a gap more), centred on a row `rowHeight` tall at the top. Nil where
-    /// there is no battery, or no room between the two.
+    /// Where the battery goes: between the zoom, right after the traffic lights
+    /// (see `CenteringHost.zoomPlace`), and the sidebar toggle, centred on a row
+    /// `rowHeight` tall at the top. Nil where there is no battery, or no room
+    /// between the two.
     private func batteryFrame(rowHeight: CGFloat) -> NSRect? {
         guard battery.isPresent else { return nil }
         let toggle = max(4, view.bounds.width - 12 - 26)
-        let zoomEnd = toggle - 6
-        let zoomLeft = [false, true]
-            .map { zoomEnd - ZoomControl.width(compact: $0) }
-            .first { $0 >= 4 }
+        // The zoom right after the traffic lights (CenteringHost.zoomPlace, the same rule), the battery after it.
+        let zoomStart = Self.trafficLightsEnd
+        let zoomRight = [false, true]
+            .map { zoomStart + ZoomControl.width(compact: $0) }
+            .first { $0 <= toggle - 6 }
         let width = battery.fittingWidth
         let height = battery.fittingHeight
-        let end = (zoomLeft ?? zoomEnd) - 10
-        var left = end - width
-        if left < Self.trafficLightsEnd {
+        var left = (zoomRight ?? zoomStart) + 10
+        if left + width > toggle - 10 {
             // No room between the two. In full screen the traffic lights are
             // away, and the battery takes the row's own corner instead.
             guard view.window?.styleMask.contains(.fullScreen) == true else { return nil }

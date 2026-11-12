@@ -51,7 +51,7 @@ import { arrangeTabs, heirsOf, insertBefore, memberIds, pruneOrders, substitute 
 import { TerminalManager, viewKey, type TermView } from "./terminals";
 import { TrustWatch, type TrustPane } from "./trust";
 import { effectiveAlpha, glassTheme, holdsOpaque } from "./glass";
-import { DEFAULT_FONT_SIZE, applyPalette, onSystemAppearanceChange, resolvePalette } from "./theme";
+import { DEFAULT_FONT_SIZE, applyPalette, onSystemAppearanceChange, resolvePalette, watchWindowFocus } from "./theme";
 import { loadThemes, themePreview } from "./themes";
 import {
   listingPids,
@@ -1632,6 +1632,7 @@ export async function start(options: StartOptions): Promise<api.WindowBoot> {
   // symbols font the terminals fall back to for icons.
   await Promise.all([gui.value.theme ? loadThemes().catch(() => {}) : undefined, loadSymbolsFont()]);
   applyPalette(palette.value);
+  watchWindowFocus();
   onSystemAppearanceChange(() => (systemTheme.value += 1));
 
   terminals = new TerminalManager(

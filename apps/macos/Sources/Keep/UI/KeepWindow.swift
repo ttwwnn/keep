@@ -70,12 +70,17 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
 
     override func becomeKey() {
         super.becomeKey()
+        // The sidebar darkens while the window is in use, as the Finder's does.
+        appliedAppearance = nil
+        applyTerminalAppearance()
         Trace.log("focus", "becomeKey responder=\(Trace.describe(firstResponder))")
         (firstResponder as? TerminalSurfaceView)?.noteFocus()
     }
 
     override func resignKey() {
         super.resignKey()
+        appliedAppearance = nil
+        applyTerminalAppearance()
         Trace.log("focus", "resignKey")
         // The responder does not change when a window stops being key, so
         // nothing else would tell the terminal it no longer has the keyboard.
@@ -180,7 +185,7 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
                 // level with it. The chrome row above the content keeps the
                 // content's own colour, because it is the content's row.
                 sidebarBackdropView?.layer?.backgroundColor = Self
-                    .recessed(terminalBackground)
+                    .recessed(terminalBackground, inUse: isKeyWindow)
                     .withAlphaComponent(CGFloat(next.opacity))
                     .cgColor
                 chromeBackdropView?.isHidden = false
@@ -208,7 +213,7 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
                 // own colour paints the content, and the sidebar paints over
                 // it with the recessed one.
                 sidebarBackdropView?.layer?.backgroundColor = Self
-                    .recessed(terminalBackground).cgColor
+                    .recessed(terminalBackground, inUse: isKeyWindow).cgColor
                 sidebarBackdropView?.isHidden = false
             } else {
                 sidebarBackdropView?.isHidden = true
@@ -232,10 +237,15 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
     /// off white is a mid-grey slab beside a white terminal; a shade under
     /// it is what a sidebar looks like on a light Mac.
     ///
-    /// On a dark ground, absolute black (pedido de 12/11/2026), the terminal wearing the tone the sidebar had.
-    private static func recessed(_ color: NSColor) -> NSColor {
+    /// On a dark ground, the Finder's two tones (pedido de 12/11/2026, measured on its sidebar): #131313 while the
+    /// window is in use, #2d2d2d while it is not.
+    private static func recessed(_ color: NSColor, inUse: Bool) -> NSColor {
         guard let rgb = color.usingColorSpace(.sRGB) else { return color }
-        let factor: CGFloat = GhosttyApp.isDark(color) ? 0 : 0.955
+        if GhosttyApp.isDark(color) {
+            let v: CGFloat = (inUse ? 0x13 : 0x2d) / 255
+            return NSColor(srgbRed: v, green: v, blue: v, alpha: rgb.alphaComponent)
+        }
+        let factor: CGFloat = 0.955
         return NSColor(
             srgbRed: rgb.redComponent * factor,
             green: rgb.greenComponent * factor,
@@ -384,6 +394,8 @@ private final class CenteringHost: NSView {
     /// is passed straight through to the row underneath, which is the only
     /// reason a strip of titlebar this wide can belong to a control this small.
     /// Asked again when the screens change (`screensChanged`): a wider monitor plugged in later widens it too.
+    /// Where the traffic lights end, in the window: the zoom starts here.
+    static let trafficLightsEnd: CGFloat = 84
     private static var reach: CGFloat {
         NSScreen.screens.map { MainWindowController.sidebarMaximum(on: $0) }.max().map { $0 + 60 } ?? 380
     }
@@ -470,14 +482,18 @@ private final class CenteringHost: NSView {
     /// those, and none of it while the sidebar is shut — it is the sidebar's,
     /// and a shut sidebar leaves this row to the tabs. Never nearer the
     /// traffic lights than the toggle's own home.
+    ///
+    /// Right after the traffic lights (pedido de 12/11/2026), the battery and the time after it
+    /// (`SidebarHost.batteryFrame`); the same rule there picks the same width.
     private var zoomPlace: (frame: NSRect, compact: Bool)? {
         guard window != nil, sidebarEdge > 0 else { return nil }
         let end = childX - Self.zoomGap
+        let start = max(leading, Self.trafficLightsEnd - convert(NSPoint.zero, to: nil).x)
         for compact in [false, true] {
             let width = ZoomControl.width(compact: compact)
-            guard end - width >= leading else { continue }
+            guard start + width <= end else { continue }
             let frame = NSRect(
-                x: end - width,
+                x: start,
                 y: ((bounds.height - ZoomControl.height) / 2).rounded(),
                 width: width,
                 height: ZoomControl.height)
