@@ -32,7 +32,7 @@ body,
 }
 
 body {
-  background: var(--ground, #282c34);
+  background: var(--ground, #1d2025);
   color: var(--ink);
   font: 13px/1.35 var(--ui-font);
   -webkit-font-smoothing: antialiased;

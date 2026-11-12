@@ -65,19 +65,19 @@ function around(terminal: ITheme & { background: string; foreground: string }): 
   return {
     dark,
     ground: terminal.background,
-    recessed: toHex(scale(ground, dark ? 0.72 : 0.955)),
+    recessed: toHex(scale(ground, dark ? 0 : 0.955)),
     overlay: rgba(scale(ground, deep), dark ? 0.86 : 0.9),
     terminal,
     search: searchOn(ground, parseHex(terminal.foreground) ?? [255, 255, 255]),
   };
 }
 
-/** Keep Escuro: Ghostty's own background, letter and palette. */
+/** Keep Escuro: #1d2025 (the tone the sidebar had; it is black now), and Ghostty's letter and palette. */
 const KEEP_ESCURO: Palette = around({
-  background: "#282c34",
+  background: "#1d2025",
   foreground: "#ffffff",
   cursor: "#ffffff",
-  cursorAccent: "#282c34",
+  cursorAccent: "#1d2025",
   selectionBackground: "rgba(255, 255, 255, 0.26)",
   black: "#1d1f21",
   red: "#cc6666",

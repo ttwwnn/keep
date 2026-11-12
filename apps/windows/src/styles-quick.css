@@ -7,7 +7,7 @@
 html.quick,
 html.quick body,
 html.quick #app {
-  background: var(--ground, #282c34);
+  background: var(--ground, #1d2025);
 }
 
 .quick-shell {
