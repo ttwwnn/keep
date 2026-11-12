@@ -246,7 +246,7 @@ function JevBlock(props: { line: JevLine; nowMs: number }) {
       )}
       <div class="usage-jev-extra">
         {line.dailyAverage30d !== null && (
-          <span class="usage-note" title="Gasto médio do Jev por mês, pelos últimos 30 dias de decisões desta máquina">
+          <span class="usage-note" title="Gasto médio por mês da conta do OpenRouter (todas as chaves), pelos últimos 30 dias">
             Gasto médio: {perMonth(line.dailyAverage30d)}
           </span>
         )}

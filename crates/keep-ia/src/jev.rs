@@ -122,6 +122,9 @@ struct Registro {
     /// inteira do livro: parte da próxima.
     #[serde(default)]
     livro_sobra: f64,
+    /// O gasto da conta (`used`, todas as chaves) medido no tempo: um ponto por hora, 31 dias. Dá o gasto médio.
+    #[serde(default)]
+    historico: Vec<[f64; 2]>,
 }
 
 fn agora() -> f64 {
@@ -484,31 +487,43 @@ pub struct Saldo {
     pub problem: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending: Option<f64>,
-    /// O gasto médio por dia nos últimos 30 dias, pelas decisões desta máquina (o livro, de todas as chaves dela).
+    /// O gasto médio por dia da conta do OpenRouter (todas as chaves), nos últimos 30 dias (`media_da_conta`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub daily_average_30d: Option<f64>,
 }
 
 const TRINTA_DIAS: f64 = 30.0 * 86_400.0;
 
-/// A média por dia dos últimos 30 dias, pelo livro; nada sem decisão nenhuma no livro.
-fn media_30_dias(agora_s: f64) -> Option<f64> {
-    let todas = chamadas(None, 0.0);
-    let primeira = todas.first()?.quando;
-    let soma: f64 = todas.iter().filter(|c| c.quando >= agora_s - TRINTA_DIAS).map(|c| c.custo).sum();
-    // Com menos de 30 dias de livro, a média é dos dias que ele tem (ao menos um).
-    let dias = ((agora_s - primeira) / 86_400.0).clamp(1.0, 30.0);
-    Some(soma / dias)
+/// O gasto médio por dia da CONTA do OpenRouter (todas as chaves: a do Jev desta máquina, a da clínica, as de
+/// outras máquinas). O livro sozinho só via as decisões desta máquina (12/11/2026: US$ 0,36/mês no rodapé, com a
+/// conta gastando uns US$ 15/mês). Com um dia ou mais de histórico, a diferença do `used` entre o ponto mais velho
+/// (até 31 dias) e agora; no primeiro dia, o `used` inteiro dividido pelos dias desde a primeira decisão do livro, só
+/// com o livro de 7 dias ou mais (uma conta mais velha que o Jev, de livro recente, daria uma média inflada); senão,
+/// nada.
+fn media_da_conta(historico: &[[f64; 2]], usado: f64, inicio: Option<f64>, agora_s: f64) -> Option<f64> {
+    if let Some(p) = historico.iter().find(|p| agora_s - p[0] <= TRINTA_DIAS + 86_400.0) {
+        let dias = (agora_s - p[0]) / 86_400.0;
+        if dias >= 1.0 {
+            return Some((usado - p[1]).max(0.0) / dias);
+        }
+    }
+    let dias = (agora_s - inicio?) / 86_400.0;
+    (dias >= 7.0).then(|| usado.max(0.0) / dias)
+}
+
+fn media_30_dias(r: &Registro, usado: f64, agora_s: f64) -> Option<f64> {
+    media_da_conta(&r.historico, usado, chamadas(None, 0.0).first().map(|c| c.quando), agora_s)
 }
 
 fn saldo(r: Registro) -> Saldo {
     let p = pendente(&r, agora());
+    let media = r.credit.as_ref().and_then(|c| media_30_dias(&r, c.used + p, agora()));
     Saldo {
         credit: r.credit.map(|c| c.com_pendente(p)),
         measured_at: r.measured_at,
         problem: r.problem,
         pending: (p > 0.0).then_some(p),
-        daily_average_30d: media_30_dias(agora()),
+        daily_average_30d: media,
     }
 }
 
@@ -567,9 +582,18 @@ pub fn medir(forcar: bool) -> Option<Saldo> {
                     concilia(&mut r, gasto, agora_s);
                 }
             }
+            let usado = c.used;
             r.credit = Some(c);
             r.measured_at = Some(agora());
             r.problem = None;
+            // Outra chave (talvez outra conta) ou o gasto que desceu: os pontos de antes não são desta conta.
+            if outra_chave || r.historico.last().is_some_and(|p| usado + 1e-9 < p[1]) {
+                r.historico.clear();
+            }
+            if r.historico.last().is_none_or(|p| agora_s - p[0] >= 3600.0) {
+                r.historico.push([agora_s, usado]);
+            }
+            r.historico.retain(|p| agora_s - p[0] <= 31.0 * 86_400.0);
         }
         Resultado::Falha(problema, pausa) => {
             r.problem = Some(problema);
@@ -998,6 +1022,16 @@ mod testes {
         let s = medir(false).unwrap();
         assert!(s.pending.is_none());
         assert!(perto(s.credit.unwrap().key_used.unwrap(), 0.01));
+        assert_eq!(le_cache().historico.len(), 1, "a leitura entra no histórico do gasto da conta");
+        assert!(perto(le_cache().historico[0][1], 0.03));
+        // O gasto que desce (outra conta) zera o histórico: só o ponto novo fica.
+        let mut r = le_cache();
+        r.historico = vec![[agora() - 7200.0, 5.0]];
+        r.measured_at = Some(agora() - 120.0);
+        grava_cache(&r);
+        medir(false).unwrap();
+        assert_eq!(le_cache().historico.len(), 1, "{:?}", le_cache().historico);
+        assert!(perto(le_cache().historico[0][1], 0.03));
 
         // Duas decisões desta máquina; uma de outra chave, uma de antes da
         // leitura e uma linha que não se lê ficam de fora.
@@ -1074,23 +1108,20 @@ mod testes {
     }
 
     #[test]
-    fn a_media_de_30_dias_soma_o_livro_de_todas_as_chaves() {
-        let _c = casa("jev-media");
-        assert_eq!(media_30_dias(agora()), None, "sem livro, sem média");
-        let hoje = agora();
-        // Livro de 40 dias: o que passou de 30 dias fica de fora; as duas chaves entram.
-        anota("sk-or-v1-velha", hoje - 40.0 * 86_400.0, 9.0);
-        anota("sk-or-v1-velha", hoje - 10.0 * 86_400.0, 0.12);
-        anota("sk-or-v1-nova", hoje - 60.0, 0.18);
-        assert!(perto(media_30_dias(hoje).unwrap(), 0.01), "{:?}", media_30_dias(hoje));
-    }
-
-    #[test]
-    fn com_menos_de_30_dias_de_livro_a_media_e_dos_dias_que_ele_tem() {
-        let _c = casa("jev-media-curta");
-        let hoje = agora();
-        anota("sk-or-v1-nova", hoje - 2.0 * 86_400.0, 0.04);
-        assert!(perto(media_30_dias(hoje).unwrap(), 0.02), "{:?}", media_30_dias(hoje));
+    fn a_media_e_da_conta_toda_pelo_historico_de_30_dias() {
+        let dia = 86_400.0;
+        let hoje = 100.0 * dia;
+        // Sem um dia de histórico: o gasto inteiro da conta desde a primeira decisão do Jev, com livro de 7 dias.
+        assert!(perto(media_da_conta(&[], 19.9, Some(hoje - 39.8 * dia), hoje).unwrap(), 0.5), "começo");
+        assert_eq!(media_da_conta(&[], 19.9, None, hoje), None, "sem livro nem histórico, sem média");
+        assert_eq!(media_da_conta(&[], 15.0, Some(hoje - 2.0 * dia), hoje), None, "livro recente: nada, não inflado");
+        assert_eq!(media_da_conta(&[[hoje - 0.5 * dia, 1.0]], 15.0, Some(hoje - 2.0 * dia), hoje), None);
+        // Histórico de 30 dias: a diferença entre o ponto mais velho e agora; o de 40 dias fica de fora.
+        let historico = [[hoje - 40.0 * dia, 1.0], [hoje - 30.0 * dia, 10.0], [hoje - 5.0 * dia, 20.0]];
+        assert!(perto(media_da_conta(&historico, 25.0, Some(hoje - 60.0 * dia), hoje).unwrap(), 0.5));
+        // Histórico curto (2 dias): a diferença nele, não o gasto da vida da conta.
+        let curto = [[hoje - 2.0 * dia, 24.0]];
+        assert!(perto(media_da_conta(&curto, 25.0, Some(hoje - 2.0 * dia), hoje).unwrap(), 0.5));
     }
 
     #[test]
