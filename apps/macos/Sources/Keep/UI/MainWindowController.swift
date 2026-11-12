@@ -135,7 +135,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         split.splitView.isVertical = true
         let sidebarSplitItem = NSSplitViewItem(viewController: sidebarHost)
         sidebarSplitItem.minimumThickness = 200
-        sidebarSplitItem.maximumThickness = 320
+        sidebarSplitItem.maximumThickness = Self.sidebarMaximum(on: NSScreen.main)
         sidebarSplitItem.canCollapse = true
         sidebarSplitItem.canCollapseFromWindowResize = false
         sidebarSplitItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
@@ -167,6 +167,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.isRestorable = false
         window.setFrame(NSRect(x: 0, y: 0, width: 1040, height: 660), display: false)
         window.center()
+        // The screen the window is on now, not whichever had focus when the item was made.
+        sidebarSplitItem.maximumThickness = Self.sidebarMaximum(on: window.screen)
 
         window.installUnifiedToolbar(
             chromeBackdrop: chromeBackdrop,
@@ -277,6 +279,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             self?.send(.setPickerQuery(query))
         }
 
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.screensChanged() }
+        }
         // Divider drags become model facts, debounced; model-driven geometry
         // is guarded out so it cannot echo back as intent.
         NotificationCenter.default.addObserver(
@@ -290,6 +297,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not supported") }
+
+    /// The sidebar widens to a third of the screen it is on (pedido de 12/11/2026), and never less than the 320 it
+    /// always had.
+    static func sidebarMaximum(on screen: NSScreen?) -> CGFloat {
+        max(320, ((screen ?? NSScreen.main)?.visibleFrame.width ?? 0) / 3)
+    }
+
+    func windowDidChangeScreen(_ notification: Notification) {
+        screensChanged()
+    }
+
+    /// A monitor plugged in, taken out or rearranged, or the window on another one.
+    private func screensChanged() {
+        sidebarItem?.maximumThickness = Self.sidebarMaximum(on: window?.screen)
+        (window as? KeepWindow)?.screensChanged()
+    }
 
     deinit {
         if let sizeObserver { NotificationCenter.default.removeObserver(sizeObserver) }

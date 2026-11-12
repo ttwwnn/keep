@@ -115,6 +115,11 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
         }
     }
 
+    /// The screens changed: the toggle's reach follows the widest sidebar now possible.
+    func screensChanged() {
+        sidebarToggleHost?.invalidateIntrinsicContentSize()
+    }
+
     /// The sidebar's trailing edge moved; the toggle rides it.
     func trackSidebarEdge(_ edge: CGFloat) {
         sidebarToggleHost?.followSidebar(to: edge)
@@ -370,12 +375,16 @@ private final class CenteringHost: NSView {
 
     /// How far the button can be asked to travel.
     ///
-    /// The sidebar stops widening at 320, and the button rides its edge, so
-    /// the host has to be at least that long to carry it there. Being longer
-    /// costs nothing: everything but the button itself is passed straight
-    /// through to the row underneath, which is the only reason a strip of
-    /// titlebar this wide can belong to a control this small.
-    private static let reach: CGFloat = 380
+    /// The sidebar stops widening at a third of its screen
+    /// (`MainWindowController.sidebarMaximum`), and the button rides its edge,
+    /// so the host has to be at least that long, on the widest screen, to carry
+    /// it there. Being longer costs nothing: everything but the button itself
+    /// is passed straight through to the row underneath, which is the only
+    /// reason a strip of titlebar this wide can belong to a control this small.
+    /// Asked again when the screens change (`screensChanged`): a wider monitor plugged in later widens it too.
+    private static var reach: CGFloat {
+        NSScreen.screens.map { MainWindowController.sidebarMaximum(on: $0) }.max().map { $0 + 60 } ?? 380
+    }
     /// Between the button and the divider it sits against — the same twelve
     /// points a tab's capsule keeps from the buttons at the far end.
     private static let dividerGap: CGFloat = 12

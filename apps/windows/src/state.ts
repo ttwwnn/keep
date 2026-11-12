@@ -59,7 +59,10 @@ export interface GuiState {
 }
 
 export const SIDEBAR_MIN = 200;
-export const SIDEBAR_MAX = 320;
+/** The sidebar widens to a third of the screen (pedido de 12/11/2026), and never less than the 320 it always had. */
+export function sidebarMax(): number {
+  return Math.max(320, Math.round((globalThis.screen?.availWidth ?? 0) / 3));
+}
 
 /** Lines of history a terminal keeps unless told otherwise. */
 export const DEFAULT_SCROLLBACK = 10000;
@@ -152,7 +155,7 @@ export function normalizeState(raw: unknown): GuiState {
     appearance,
     sidebar: {
       visible: typeof sidebar.visible === "boolean" ? sidebar.visible : true,
-      width: Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, width)),
+      width: Math.min(sidebarMax(), Math.max(SIDEBAR_MIN, width)),
     },
     font: {
       family: typeof font.family === "string" ? font.family : "",
