@@ -160,24 +160,24 @@ describe("the palette of a theme", () => {
     await loadThemes();
   });
 
-  it("keeps Keep's own as they were drawn before the sidebar was derived", () => {
+  it("keeps Keep's own: the dark ground in the sidebar's old tone, the sidebar black", () => {
     const escuro = resolvePalette("dark");
     expect(escuro.dark).toBe(true);
-    expect(escuro.ground).toBe("#282c34");
-    expect(escuro.recessed).toBe("#1d2025");
-    expect(escuro.overlay).toBe("rgba(31, 34, 41, 0.86)");
+    expect(escuro.ground).toBe("#1d2025");
+    expect(escuro.recessed).toBe("#000000");
+    expect(escuro.overlay).toBe("rgba(23, 25, 29, 0.86)");
     const claro = resolvePalette("light");
     expect(claro.dark).toBe(false);
     expect(claro.ground).toBe("#ffffff");
     expect(claro.recessed).toBe("#f4f4f4");
     expect(claro.overlay).toBe("rgba(240, 240, 240, 0.9)");
   });
-  it("makes the ground the theme's background, a step further back for the sidebar", () => {
+  it("makes the ground the theme's background, and a dark one's sidebar black", () => {
     const mocha = resolvePalette("light", "Catppuccin Mocha");
     expect(mocha.dark).toBe(true);
     expect(mocha.ground).toBe("#1e1e2e");
     expect(mocha.terminal.background).toBe("#1e1e2e");
-    expect(mocha.recessed).toBe("#161621");
+    expect(mocha.recessed).toBe("#000000");
     expect(mocha.overlay).toBe("rgba(23, 23, 36, 0.86)");
     const latte = resolvePalette("dark", "Catppuccin Latte");
     expect(latte.dark).toBe(false);
@@ -219,7 +219,7 @@ describe("the palette of a theme", () => {
     expect(resolvePalette("light", "dark:Catppuccin Mocha,light:Catppuccin Latte").ground).toBe("#eff1f5");
     expect(resolvePalette("dark", "Dracula").ground).toBe("#282a36");
     expect(resolvePalette("light", "Dracula").ground).toBe("#282a36");
-    expect(resolvePalette("dark", "No such theme").ground).toBe("#282c34");
+    expect(resolvePalette("dark", "No such theme").ground).toBe("#1d2025");
     expect(resolvePalette("light", "No such theme").ground).toBe("#ffffff");
   });
   it("is the same object for the same theme, so nothing is redone for nothing", () => {

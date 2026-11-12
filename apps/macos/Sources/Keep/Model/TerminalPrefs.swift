@@ -227,9 +227,9 @@ enum KeepThemes {
 
     static let files: [(name: String, text: String)] = [
         ("Keep Escuro", """
-            # Keep Escuro — o escuro de sempre: o fundo e a letra padrão do Ghostty,
-            # com a paleta dele. Metade escura do tema do Keep (terminal.json).
-            background = #282c34
+            # Keep Escuro — fundo #1d2025 (o tom que a barra lateral tinha; ela agora é
+            # preta) e a letra e a paleta do Ghostty. Metade escura do tema do Keep (terminal.json).
+            background = #1d2025
             foreground = #ffffff
 
             """),
@@ -265,12 +265,25 @@ enum KeepThemes {
     /// which libghostty also reads.
     static var directory: String { ThemeCatalog.directories[0] }
 
-    /// The two files, written where missing.
+    /// What Keep wrote before, word for word: a file still holding it is Keep's and takes the new text; one the person
+    /// edited is theirs and is left alone.
+    static let previous: [String: String] = [
+        "Keep Escuro": """
+            # Keep Escuro — o escuro de sempre: o fundo e a letra padrão do Ghostty,
+            # com a paleta dele. Metade escura do tema do Keep (terminal.json).
+            background = #282c34
+            foreground = #ffffff
+
+            """,
+    ]
+
+    /// The two files, written where missing, or where they still hold what Keep wrote before.
     static func install(into directory: String = KeepThemes.directory) {
         let fm = FileManager.default
         for (name, text) in files {
             let path = (directory as NSString).appendingPathComponent(name)
-            guard !fm.fileExists(atPath: path) else { continue }
+            let old = try? String(contentsOfFile: path, encoding: .utf8)
+            guard !fm.fileExists(atPath: path) || (old != nil && old != text && old == previous[name]) else { continue }
             try? fm.createDirectory(atPath: directory, withIntermediateDirectories: true)
             try? text.write(toFile: path, atomically: true, encoding: .utf8)
         }

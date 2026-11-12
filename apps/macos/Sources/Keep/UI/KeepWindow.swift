@@ -231,9 +231,11 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
     /// A smaller step on a light ground. The same quarter of the light taken
     /// off white is a mid-grey slab beside a white terminal; a shade under
     /// it is what a sidebar looks like on a light Mac.
+    ///
+    /// On a dark ground, absolute black (pedido de 12/11/2026), the terminal wearing the tone the sidebar had.
     private static func recessed(_ color: NSColor) -> NSColor {
         guard let rgb = color.usingColorSpace(.sRGB) else { return color }
-        let factor: CGFloat = GhosttyApp.isDark(color) ? 0.72 : 0.955
+        let factor: CGFloat = GhosttyApp.isDark(color) ? 0 : 0.955
         return NSColor(
             srgbRed: rgb.redComponent * factor,
             green: rgb.greenComponent * factor,
