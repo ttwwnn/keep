@@ -916,7 +916,7 @@ struct UsageFooter: View {
                         .monospacedDigit()
                         .foregroundStyle(UsageInk.inkFaint)
                         .lineLimit(1)
-                        .help("Gasto médio do Jev por mês, pelos últimos 30 dias de decisões desta máquina")
+                        .help("Gasto médio por mês da conta do OpenRouter (todas as chaves), pelos últimos 30 dias")
                 }
                 Spacer(minLength: 4)
                 Link("Pôr crédito", destination: openRouterCreditsURL)
