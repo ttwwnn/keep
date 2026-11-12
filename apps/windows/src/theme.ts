@@ -15,8 +15,10 @@ export interface Palette {
   dark: boolean;
   /** The terminal's background, and the strip's. */
   ground: string;
-  /** The sidebar: a step further back. */
+  /** The sidebar while the window is in use: a step further back. */
   recessed: string;
+  /** The sidebar while the window is not in use (dark: the Finder's lighter tone). */
+  recessedIdle: string;
   /** The cards': the ground a step further back still, a little translucent over the blur. */
   overlay: string;
   terminal: ITheme;
@@ -65,19 +67,21 @@ function around(terminal: ITheme & { background: string; foreground: string }): 
   return {
     dark,
     ground: terminal.background,
-    recessed: toHex(scale(ground, dark ? 0 : 0.955)),
+    // Dark: the Finder's sidebar, measured (pedido de 12/11/2026): #131313 in use, #2d2d2d not.
+    recessed: dark ? "#131313" : toHex(scale(ground, 0.955)),
+    recessedIdle: dark ? "#2d2d2d" : toHex(scale(ground, 0.955)),
     overlay: rgba(scale(ground, deep), dark ? 0.86 : 0.9),
     terminal,
     search: searchOn(ground, parseHex(terminal.foreground) ?? [255, 255, 255]),
   };
 }
 
-/** Keep Escuro: #1d2025 (the tone the sidebar had; it is black now), and Ghostty's letter and palette. */
+/** Keep Escuro: #242626, and Ghostty's letter and palette. */
 const KEEP_ESCURO: Palette = around({
-  background: "#1d2025",
+  background: "#242626",
   foreground: "#ffffff",
   cursor: "#ffffff",
-  cursorAccent: "#1d2025",
+  cursorAccent: "#242626",
   selectionBackground: "rgba(255, 255, 255, 0.26)",
   black: "#1d1f21",
   red: "#cc6666",
@@ -188,7 +192,8 @@ export function applyPalette(palette: Palette): void {
   root.style.colorScheme = palette.dark ? "dark" : "light";
   const vars: Record<string, string> = {
     "--ground": palette.ground,
-    "--recessed": palette.recessed,
+    "--recessed-key": palette.recessed,
+    "--recessed-idle": palette.recessedIdle,
     // The sidebar's inks, as the macOS app draws them (Palette in
     // WorkspaceSidebar.swift), which the footers and the menus share.
     "--ink": `rgba(${ink}, ${palette.dark ? 0.96 : 0.92})`,
@@ -248,3 +253,11 @@ export function defaultFontFamily(platform: string): string {
  * up — what the macOS app calls 100% (GhosttyApp.textBoost).
  */
 export const DEFAULT_FONT_SIZE = 16.25;
+
+/** The sidebar in the Finder's two tones: the darker while the window is in use, the lighter while it is not. */
+export function watchWindowFocus(): void {
+  const set = () => document.documentElement.classList.toggle("window-idle", !document.hasFocus());
+  window.addEventListener("focus", set);
+  window.addEventListener("blur", set);
+  set();
+}
