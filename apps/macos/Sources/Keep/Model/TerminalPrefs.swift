@@ -230,12 +230,12 @@ enum KeepThemes {
             # Keep Escuro — fundo #242626 e letra #fafafa, como a imagem de 12/11/2026; a barra
             # lateral fica em #131313 com a janela em uso e #2d2d2d fora dela, como a do Finder.
             # Com o tema dark-ansi do Claude Code: o texto secundário (palette 7) também #fafafa
-            # e o fundo das mensagens da pessoa (palette 8) no tom do fundo, sem faixa.
+            # e o fundo das mensagens da pessoa (palette 8) em #3b4141, uma cor à parte do fundo.
             # Metade escura do tema do Keep (terminal.json).
             background = #242626
             foreground = #fafafa
             palette = 7=#fafafa
-            palette = 8=#242626
+            palette = 8=#3b4141
             palette = 15=#fafafa
 
             """),
@@ -295,6 +295,19 @@ enum KeepThemes {
             # Metade escura do tema do Keep (terminal.json).
             background = #242626
             foreground = #ffffff
+
+            """,
+            """
+            # Keep Escuro — fundo #242626 e letra #fafafa, como a imagem de 12/11/2026; a barra
+            # lateral fica em #131313 com a janela em uso e #2d2d2d fora dela, como a do Finder.
+            # Com o tema dark-ansi do Claude Code: o texto secundário (palette 7) também #fafafa
+            # e o fundo das mensagens da pessoa (palette 8) no tom do fundo, sem faixa.
+            # Metade escura do tema do Keep (terminal.json).
+            background = #242626
+            foreground = #fafafa
+            palette = 7=#fafafa
+            palette = 8=#242626
+            palette = 15=#fafafa
 
             """,
         ],
