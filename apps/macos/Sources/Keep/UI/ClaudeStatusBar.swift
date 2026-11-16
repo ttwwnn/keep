@@ -384,12 +384,18 @@ enum ClaudeSessionName {
     /// `KEEP_CLAUDE_SETTINGS` points the test somewhere else.
     static func namedByHook(settings: URL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["KEEP_CLAUDE_SETTINGS"]
                                                 ?? NSHomeDirectory() + "/.claude/settings.json")) -> Bool {
-        (try? String(contentsOf: settings, encoding: .utf8))?.contains("jev/ganchos.py modelo") ?? false
+        guard let data = try? Data(contentsOf: settings),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let groups = (root["hooks"] as? [String: Any])?["UserPromptSubmit"] as? [[String: Any]] else { return false }
+        return groups.contains { group in
+            (group["hooks"] as? [[String: Any]] ?? []).contains { ($0["command"] as? String)?.contains("jev/ganchos.py modelo") == true }
+        }
     }
 
     static func apply(_ name: String, to id: TabID) {
-        guard let command = command(for: name), !namedByHook() else { return }
+        guard let command = command(for: name) else { return }
         DispatchQueue.global(qos: .utility).async {
+            guard !namedByHook() else { return }
             func type(_ text: String) { try? Daemon.sendInput(Array(text.utf8), workspace: id.workspace, tab: id.root) }
             if ClaudePickerDriver.hasDraft(workspace: id.workspace, tab: id.root) {
                 type("\u{13}")
