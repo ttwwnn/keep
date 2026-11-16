@@ -388,7 +388,7 @@ enum ClaudeSessionName {
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let groups = (root["hooks"] as? [String: Any])?["UserPromptSubmit"] as? [[String: Any]] else { return false }
         return groups.contains { group in
-            (group["hooks"] as? [[String: Any]] ?? []).contains { ($0["command"] as? String)?.contains("jev/ganchos.py modelo") == true }
+            (group["hooks"] as? [[String: Any]] ?? []).contains { ($0["command"] as? String).map { $0.contains("jev/ganchos.py") && $0.contains("modelo") } == true }
         }
     }
 
