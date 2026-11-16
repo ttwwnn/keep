@@ -1731,6 +1731,13 @@ final class Session {
         }
     }
 
+    /// The folders the Claude Code in a tab works in, for a relative file name it printed (`LinkOpener`). Empty
+    /// for a pane that is not the tab's first, or where no status line file has been left.
+    func claudeWorkingDirectories(workspace: String, tab: UInt32) -> [String] {
+        let shell = workspaces.first { $0.name == workspace }?.tabs.first { $0.id.root == tab }?.shellPid ?? 0
+        return ClaudeStatusReader.workingDirectories(shellPid: shell)
+    }
+
     /// The shell process of each AI tab, which names the file Claude Code's
     /// status line leaves for it. Absent where the daemon cannot say.
     func aiShellPids() -> [TabID: UInt32] {

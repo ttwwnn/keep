@@ -23,6 +23,12 @@ check("no effort", plain?.effort, nil)
 check("not a status", ClaudeStatusReader.parse(Data("{}".utf8)) == nil, true)
 check("not json", ClaudeStatusReader.parse(Data("x".utf8)) == nil, true)
 
+// Where Claude Code works: where it is now first, then where it started and the folders added; a relative name or a
+// repeat is dropped.
+let dirs = #"{"cwd":"/a/b","workspace":{"current_dir":"/a/b","project_dir":"/c","added_dirs":["/d","rel","/c"]}}"#
+check("working directories", ClaudeStatusReader.workingDirectories(parse: Data(dirs.utf8)), ["/a/b", "/c", "/d"])
+check("none in a status without them", ClaudeStatusReader.workingDirectories(parse: Data("{}".utf8)), [])
+
 check("no agents", ClaudeStatusReader.agents(onScreen: screen()), 0)
 check("agents listed", ClaudeStatusReader.agents(onScreen: screen(footer: [
     "", "  ⏺ main", "  ◯ general-purpose  Reading", "  ◯ Explore  Scanning"])), 2)
