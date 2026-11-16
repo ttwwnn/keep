@@ -164,7 +164,7 @@ describe("the palette of a theme", () => {
     const escuro = resolvePalette("dark");
     expect(escuro.dark).toBe(true);
     expect(escuro.ground).toBe("#242626");
-    expect(escuro.terminal.brightBlack).toBe("#3b4141");
+    expect(escuro.terminal.brightBlack).toBe("#6b7d00");
     expect(escuro.recessed).toBe("#131313");
     expect(escuro.recessedIdle).toBe("#2d2d2d");
     expect(escuro.overlay).toBe("rgba(28, 30, 30, 0.86)");
