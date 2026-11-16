@@ -1523,7 +1523,8 @@ final class TerminalSurfaceView: NSView {
             let screen = self.visibleText()
             Trace.log("link", "no link under the click; the word: \(word)")
             if !LinkOpener.openRecovered(
-                word, from: self.currentDirectory, screen: screen.lines, near: screen.pointerRow)
+                word, from: self.currentDirectory, others: self.claudeDirectories, screen: screen.lines,
+                near: screen.pointerRow)
             {
                 LinkOpener.openRecoveredAddress(
                     word, screen: screen.lines, near: screen.pointerRow, columns: self.columns)
@@ -1601,6 +1602,7 @@ final class TerminalSurfaceView: NSView {
         }
         let row = cell?.row ?? screen.pointerRow
         let directory = currentDirectory
+        let others = claudeDirectories
         let columns = self.columns
         let programHasMouse = surface.map { ghostty_surface_mouse_captured($0) } ?? false
         let at = pressed.time
@@ -1609,7 +1611,7 @@ final class TerminalSurfaceView: NSView {
             if let link, LinkOpener.plainClickMayOpen(link, programHasMouse: programHasMouse) {
                 Trace.log("link", "plain click on the link: \(link)")
                 if LinkOpener.open(
-                    link, from: directory, screen: screen.lines, near: row, columns: columns,
+                    link, from: directory, others: others, screen: screen.lines, near: row, columns: columns,
                     whole: !screen.lines.contains { $0.contains(link) })
                 {
                     return
@@ -1617,7 +1619,7 @@ final class TerminalSurfaceView: NSView {
             }
             guard let word else { return }
             Trace.log("link", "plain click on: \(word)")
-            if !LinkOpener.openRecovered(word, from: directory, screen: screen.lines, near: row),
+            if !LinkOpener.openRecovered(word, from: directory, others: others, screen: screen.lines, near: row),
                 !programHasMouse
             {
                 LinkOpener.openRecoveredAddress(word, screen: screen.lines, near: row, columns: columns)
@@ -1726,7 +1728,7 @@ final class TerminalSurfaceView: NSView {
             return nil
         }
         Trace.log("link", "right-click on: \(word), row \(cell.row)")
-        guard let url = LinkOpener.file(for: word, from: currentDirectory, screen: screen, near: cell.row)
+        guard let url = LinkOpener.file(for: word, from: currentDirectory, others: claudeDirectories, screen: screen, near: cell.row)
         else { return nil }
         return menu([
             ("Abrir", #selector(openFileFromMenu(_:))),
@@ -1964,6 +1966,10 @@ final class TerminalSurfaceView: NSView {
     /// on. Nil until the first prompt, and stale by exactly as long as a
     /// program that changes directory without printing a prompt runs.
     private(set) var currentDirectory: String?
+
+    /// Where the app says the Claude Code in a pane works (set by the window; see `Session.claudeWorkingDirectories`).
+    static var claudeDirectories: (String, UInt32) -> [String] = { _, _ in [] }
+    var claudeDirectories: [String] { Self.claudeDirectories(workspace, tab) }
 
     func noteTitle(_ title: String) {
         guard title != lastTitle else { return }

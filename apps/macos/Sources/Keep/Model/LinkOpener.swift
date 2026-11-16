@@ -11,7 +11,11 @@ enum LinkOpener {
     /// The file or folder a printed path stands for, or nil when nothing
     /// there exists. The path is tried whole first (a file may really be
     /// called `a:1`), then without a trailing `:line[:col]`.
-    static func resolve(_ text: String, from directory: String?) -> URL? {
+    ///
+    /// A relative path is tried against the `others` (where Claude Code works) and then `directory` (the shell's):
+    /// Claude changes folder inside its own Bash tool without the shell ever printing a prompt, and names files
+    /// from where it is, so a name both folders have is the one in its folder.
+    static func resolve(_ text: String, from directory: String?, others: [String] = []) -> URL? {
         var candidates = [text]
         var trimmed = text
         for _ in 0..<2 {
@@ -23,14 +27,14 @@ enum LinkOpener {
             candidates.append(trimmed)
         }
         for candidate in candidates {
-            var path = (candidate as NSString).expandingTildeInPath
-            if !path.hasPrefix("/") {
-                guard let directory else { continue }
-                path = (directory as NSString).appendingPathComponent(path)
-            }
-            path = (path as NSString).standardizingPath
-            if FileManager.default.fileExists(atPath: path) {
-                return URL(fileURLWithPath: path)
+            let expanded = (candidate as NSString).expandingTildeInPath
+            let bases = expanded.hasPrefix("/") ? [""] : (others + [directory].compactMap { $0 })
+            for base in bases {
+                let path = ((base.isEmpty ? expanded : (base as NSString).appendingPathComponent(expanded)) as NSString)
+                    .standardizingPath
+                if FileManager.default.fileExists(atPath: path) {
+                    return URL(fileURLWithPath: path)
+                }
             }
         }
         return candidates.lazy.compactMap { scratchFile(named: $0) }.first
@@ -83,11 +87,11 @@ enum LinkOpener {
     /// below when it ends it, and the longest piece that names a file wins.
     /// `lines` is the screen, `row` roughly where the pointer was on it.
     static func recover(
-        _ text: String, in lines: [String], near row: Int?, from directory: String?
+        _ text: String, in lines: [String], near row: Int?, from directory: String?, others: [String] = []
     ) -> URL? {
         for hit in hits(of: text, in: lines, near: row) {
             for candidate in candidates(lines, hit.line, hit.start, hit.end) {
-                if let url = resolve(candidate, from: directory) { return url }
+                if let url = resolve(candidate, from: directory, others: others) { return url }
             }
         }
         return nil
@@ -237,10 +241,10 @@ enum LinkOpener {
     /// The file or folder the word under the pointer stands for, pieced back
     /// together from the screen as for a click, or nil when it names nothing.
     static func file(
-        for word: String, from directory: String?, screen: [String], near row: Int?
+        for word: String, from directory: String?, others: [String] = [], screen: [String], near row: Int?
     ) -> URL? {
-        recover(word, in: screen, near: row, from: directory)
-            ?? resolve(word, from: directory)
+        recover(word, in: screen, near: row, from: directory, others: others)
+            ?? resolve(word, from: directory, others: others)
     }
 
     /// The word at a cell of the screen, as a shell would read it (blanks
@@ -352,9 +356,9 @@ enum LinkOpener {
     /// the screen around it names a file, and silently left alone otherwise.
     @discardableResult
     static func openRecovered(
-        _ word: String, from directory: String?, screen: [String], near row: Int?
+        _ word: String, from directory: String?, others: [String] = [], screen: [String], near row: Int?
     ) -> Bool {
-        guard let file = recover(word, in: screen, near: row, from: directory) else { return false }
+        guard let file = recover(word, in: screen, near: row, from: directory, others: others) else { return false }
         return hand(file)
     }
 
@@ -368,7 +372,7 @@ enum LinkOpener {
     /// (OSC 8) arrives `whole` and is opened as it is.
     @discardableResult
     static func open(
-        _ text: String, from directory: String?, screen: [String] = [], near row: Int? = nil,
+        _ text: String, from directory: String?, others: [String] = [], screen: [String] = [], near row: Int? = nil,
         columns: Int = 0, whole: Bool = false
     ) -> Bool {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -376,7 +380,7 @@ enum LinkOpener {
         // A scheme of more than one letter is an address; `C:\` is not.
         if let url = URL(string: text), let scheme = url.scheme, scheme.count > 1 {
             if url.isFileURL {
-                return open(url.path, from: directory)
+                return open(url.path, from: directory, others: others)
             }
             // Only the schemes a person means by a link in a terminal: any other (smb://, vnc://, ssh://, an app's own)
             // would be handed to whatever app is registered for it, with an address the program chose and a text it
@@ -391,8 +395,8 @@ enum LinkOpener {
             }
             return hand(url)
         }
-        guard let file = recover(text, in: screen, near: row, from: directory)
-            ?? resolve(text, from: directory)
+        guard let file = recover(text, in: screen, near: row, from: directory, others: others)
+            ?? resolve(text, from: directory, others: others)
         else {
             Trace.log("link", "no such file: \(text)")
             return false

@@ -708,7 +708,7 @@ final class GhosttyApp {
                     view?.linkHandedAt = CACurrentMediaTime()
                     let screen = view?.visibleText() ?? (lines: [], pointerRow: nil)
                     LinkOpener.open(
-                        text, from: view?.currentDirectory,
+                        text, from: view?.currentDirectory, others: view?.claudeDirectories ?? [],
                         screen: screen.lines, near: screen.pointerRow,
                         columns: view?.columns ?? 0, whole: whole)
                 }

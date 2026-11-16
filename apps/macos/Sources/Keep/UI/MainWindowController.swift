@@ -80,6 +80,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         self.session = session
         self.windowID = id
         container.windowID = id
+        TerminalSurfaceView.claudeDirectories = { [weak session] workspace, tab in
+            session?.claudeWorkingDirectories(workspace: workspace, tab: tab) ?? []
+        }
         sidebarHost = SidebarHost(dispatch: { [weak session] in session?.dispatch($0, from: id) })
 
         // The window's content extends under the titlebar (fullSizeContentView,

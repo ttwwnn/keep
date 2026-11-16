@@ -47,6 +47,25 @@ enum ClaudeStatusReader {
         return parse(data)
     }
 
+    /// The folders Claude Code says it works in (its status line input: where it is now, where it was started,
+    /// the ones added), for the tab whose shell is `shellPid`: a relative file name it printed is from one of them,
+    /// not from where the shell last printed a prompt.
+    static func workingDirectories(shellPid: UInt32) -> [String] {
+        guard shellPid > 0,
+            let data = FileManager.default.contents(atPath: (directory as NSString).appendingPathComponent("\(shellPid).json"))
+        else { return [] }
+        return workingDirectories(parse: data)
+    }
+
+    static func workingDirectories(parse data: Data) -> [String] {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
+        let workspace = json["workspace"] as? [String: Any]
+        let all = [workspace?["current_dir"], json["cwd"], workspace?["project_dir"]].compactMap { $0 as? String }
+            + ((workspace?["added_dirs"] as? [String]) ?? [])
+        var seen = Set<String>()
+        return all.filter { $0.hasPrefix("/") && seen.insert($0).inserted }
+    }
+
     static func parse(_ data: Data) -> (modelID: String, modelName: String, effort: String?)? {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let model = json["model"] as? [String: Any]

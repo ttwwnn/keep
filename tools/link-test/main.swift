@@ -163,6 +163,16 @@ check("a name nobody made", LinkOpener.resolve("outra.mp3", from: root)?.path, n
 check("a word with no extension", LinkOpener.resolve("nova", from: root)?.path, nil)
 check("the tab's own folder wins", LinkOpener.resolve("a.txt", from: root)?.path, root + "/a.txt")
 
+// Claude Code changes folder inside its own Bash tool: a relative name it printed is from where it works, not from
+// where the shell last printed a prompt.
+check("a name from the folder Claude works in", LinkOpener.resolve("a.txt", from: "/nowhere", others: ["/also/nowhere", root])?.path, root + "/a.txt")
+let other = root + "/sub dir"
+FileManager.default.createFile(atPath: other + "/a.txt", contents: Data())
+check("Claude's folder is tried before the shell's", LinkOpener.resolve("a.txt", from: root, others: [other])?.path, other + "/a.txt")
+check("the shell's folder when Claude's has no such name", LinkOpener.resolve("a.txt", from: root, others: ["/nowhere"])?.path, root + "/a.txt")
+check("a name in none of them", LinkOpener.resolve("zz.txt", from: root, others: ["/nowhere"])?.path, nil)
+check("the same through the screen", LinkOpener.recover("a.txt", in: ["a.txt"], near: 0, from: "/nowhere", others: [root])?.path, root + "/a.txt")
+
 // Audio goes to QuickTime Player when the Mac would send it to Music; other files are left alone.
 check("a text has no special player", LinkOpener.audioPlayer(for: URL(fileURLWithPath: root + "/a.txt"))?.path, nil)
 FileManager.default.createFile(atPath: root + "/a.mp3", contents: Data())
