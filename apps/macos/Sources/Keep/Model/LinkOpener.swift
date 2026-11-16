@@ -12,8 +12,9 @@ enum LinkOpener {
     /// there exists. The path is tried whole first (a file may really be
     /// called `a:1`), then without a trailing `:line[:col]`.
     ///
-    /// A relative path is tried against `directory` (the shell's) and then the `others`: Claude Code changes
-    /// folder inside its own Bash tool without the shell ever printing a prompt, and names files from where it is.
+    /// A relative path is tried against the `others` (where Claude Code works) and then `directory` (the shell's):
+    /// Claude changes folder inside its own Bash tool without the shell ever printing a prompt, and names files
+    /// from where it is, so a name both folders have is the one in its folder.
     static func resolve(_ text: String, from directory: String?, others: [String] = []) -> URL? {
         var candidates = [text]
         var trimmed = text
@@ -27,7 +28,7 @@ enum LinkOpener {
         }
         for candidate in candidates {
             let expanded = (candidate as NSString).expandingTildeInPath
-            let bases = expanded.hasPrefix("/") ? [""] : ([directory].compactMap { $0 } + others)
+            let bases = expanded.hasPrefix("/") ? [""] : (others + [directory].compactMap { $0 })
             for base in bases {
                 let path = ((base.isEmpty ? expanded : (base as NSString).appendingPathComponent(expanded)) as NSString)
                     .standardizingPath
