@@ -60,6 +60,7 @@ swiftc -O tools/sendkey.swift -o "$SENDKEY" 2>/dev/null || { say "could not buil
 export KEEP_SOCKET=$SOCKET
 export KEEP_STATE_DIR=$WORK/state
 export KEEP_STATUS_DIR=$WORK/status
+export KEEP_CLAUDE_SETTINGS=$WORK/no-settings.json   # the Jev hook of this machine would name the tab instead
 mkdir -p "$KEEP_STATUS_DIR"
 mkdir -p "$KEEP_STATE_DIR"
 require_scratch_socket
