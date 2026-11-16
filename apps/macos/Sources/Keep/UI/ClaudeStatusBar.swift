@@ -379,9 +379,23 @@ enum ClaudeSessionName {
         return line.isEmpty ? nil : "/rename " + line
     }
 
+    /// The Jev hook (UserPromptSubmit) already gives the conversation the tab's name as its `sessionTitle`, on the
+    /// next message and in conversations already open: nothing to type, and no `/rename` line on the screen.
+    /// `KEEP_CLAUDE_SETTINGS` points the test somewhere else.
+    static func namedByHook(settings: URL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["KEEP_CLAUDE_SETTINGS"]
+                                                ?? NSHomeDirectory() + "/.claude/settings.json")) -> Bool {
+        guard let data = try? Data(contentsOf: settings),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let groups = (root["hooks"] as? [String: Any])?["UserPromptSubmit"] as? [[String: Any]] else { return false }
+        return groups.contains { group in
+            (group["hooks"] as? [[String: Any]] ?? []).contains { ($0["command"] as? String).map { $0.contains("jev/ganchos.py") && $0.contains("modelo") } == true }
+        }
+    }
+
     static func apply(_ name: String, to id: TabID) {
         guard let command = command(for: name) else { return }
         DispatchQueue.global(qos: .utility).async {
+            guard !namedByHook() else { return }
             func type(_ text: String) { try? Daemon.sendInput(Array(text.utf8), workspace: id.workspace, tab: id.root) }
             if ClaudePickerDriver.hasDraft(workspace: id.workspace, tab: id.root) {
                 type("\u{13}")
