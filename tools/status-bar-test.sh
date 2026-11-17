@@ -95,7 +95,8 @@ def status():
     pids.add(int(subprocess.check_output(["ps", "-o", "ppid=", "-p", str(os.getppid())]).split()[0]))
     for pid in pids:
         with open(os.path.join(os.environ["KEEP_STATUS_DIR"], "%d.json" % pid), "w") as f:
-            json.dump({"model": {"id": model[0], "display_name": model[1]}, "effort": {"level": effort}}, f)
+            json.dump({"model": {"id": model[0], "display_name": model[1]}, "effort": {"level": effort},
+                       "transcript_path": os.environ["KEEP_BAR_TRANSCRIPT"], "session_id": "teste-da-barra"}, f)
 def draw():
     # As wide as the terminal, as Claude Code draws it: a fixed width wraps
     # in a narrower pane, and the box is not found.
@@ -182,6 +183,23 @@ while True:
 PY
 chmod +x "$WORK/printer"
 export KEEP_BAR_WORK=$WORK
+
+# The conversation's transcript, for the files panel: the person sent a file,
+# the conversation wrote another.
+SENT=$WORK/enviado-pela-pessoa.pdf
+MADE=$WORK/gerado-pela-conversa.html
+: >"$SENT"
+: >"$MADE"
+export KEEP_BAR_TRANSCRIPT=$WORK/transcript.jsonl
+python3 - "$SENT" "$MADE" >"$KEEP_BAR_TRANSCRIPT" <<'PY'
+import json, sys
+# Compact, as Claude Code writes it.
+dumps = lambda d: json.dumps(d, separators=(",", ":"))
+print(dumps({"type": "user", "timestamp": "2026-01-01T00:00:00.000Z", "origin": {"kind": "human"},
+                  "message": {"role": "user", "content": "veja " + sys.argv[1]}}))
+print(dumps({"type": "assistant", "timestamp": "2026-01-01T00:00:01.000Z", "message": {"role": "assistant",
+                  "content": [{"type": "tool_use", "name": "Write", "input": {"file_path": sys.argv[2], "content": ""}}]}}))
+PY
 
 # Claude Code's process is called after its version, which is how Keep knows
 # what runs in the tab: a program of that name holds the terminal and runs the
@@ -288,6 +306,23 @@ for _ in $(seq 20); do [ "$(bar claude-effort title)" = "esforço high ▾" ] &&
 check "the draft is set aside (Ctrl+S) before the picker" "<C-S>/effort<CR>" "$(sed 's/\x13/<C-S>/' "$WORK/bytes" 2>/dev/null | cut -c1-16)"
 check "the effort changed" "esforço high ▾" "$(bar claude-effort title)"
 check "the draft is back" "rascunho" "$(cat "$WORK/box" 2>/dev/null)"
+
+say ""
+say "the files of the conversation"
+check "the button at the bar's end" "Arquivos" "$(bar claude-files title)"
+"$AXPRESS" "$APP_NAME" press claude-files >/dev/null 2>&1
+found() {  # found <label> -> yes when the panel shows it
+    for _ in $(seq 10); do
+        "$AXPRESS" "$APP_NAME" frame "$1" >/dev/null 2>&1 && { echo yes; return; }
+        sleep 1
+    done
+    echo no
+}
+check "the panel lists the file sent" "yes" "$(found enviado-pela-pessoa.pdf)"
+check "and the one the conversation made" "yes" "$(found gerado-pela-conversa.html)"
+"$AXPRESS" "$APP_NAME" press claude-files >/dev/null 2>&1
+sleep 1
+check "pressed again, the panel goes" "no" "$("$AXPRESS" "$APP_NAME" frame gerado-pela-conversa.html >/dev/null 2>&1 && echo yes || echo no)"
 
 stop_app
 say ""

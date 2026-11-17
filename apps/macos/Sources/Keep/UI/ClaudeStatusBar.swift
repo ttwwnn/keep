@@ -20,6 +20,8 @@ final class ClaudeStatusBar: NSView {
     var onEffort: ((String) -> Void)?
     /// A model was picked from the model menu (its id).
     var onModel: ((String) -> Void)?
+    /// The files button was pressed: the panel beside the conversation opens or closes.
+    var onFiles: (() -> Void)?
 
     private(set) var status: ClaudeStatus?
     private let modelButton = ClaudeStatusBar.chip(id: "claude-model")
@@ -28,6 +30,8 @@ final class ClaudeStatusBar: NSView {
     private let effortDot = ClaudeStatusBar.dot()
     private let agentsDot = ClaudeStatusBar.dot()
     private let rule = NSBox()
+    /// At the bar's right end, under the side the panel opens on.
+    private let filesButton = NSButton(title: "Arquivos", target: nil, action: nil)
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -42,6 +46,16 @@ final class ClaudeStatusBar: NSView {
         modelButton.action = #selector(showModels(_:))
         effortButton.target = self
         effortButton.action = #selector(showEfforts(_:))
+        filesButton.isBordered = false
+        filesButton.setButtonType(.pushOnPushOff)
+        filesButton.image = NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: nil)
+        filesButton.imagePosition = .imageLeading
+        filesButton.target = self
+        filesButton.action = #selector(pressedFiles)
+        filesButton.toolTip = "Arquivos enviados e gerados nesta conversa"
+        filesButton.setAccessibilityIdentifier("claude-files")
+        filesButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(filesButton)
         let stack = NSStackView(views: [modelButton, effortDot, effortButton, agentsDot, agentsLabel])
         stack.orientation = .horizontal
         stack.spacing = 6
@@ -55,6 +69,8 @@ final class ClaudeStatusBar: NSView {
             rule.heightAnchor.constraint(equalToConstant: 1),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             stack.centerYAnchor.constraint(equalTo: centerYAnchor, constant: 0.5),
+            filesButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            filesButton.centerYAnchor.constraint(equalTo: centerYAnchor, constant: 0.5),
         ])
         setAccessibilityIdentifier("claude-status-bar")
     }
@@ -99,10 +115,21 @@ final class ClaudeStatusBar: NSView {
         effortButton.toolTip = "Esforço de raciocínio. Clique para trocar."
         agentsLabel.isHidden = status.agents == nil
         agentsDot.isHidden = status.agents == nil
+        // Read from Claude Code's transcript: Codex has none it names.
+        filesButton.isHidden = status.program != "claude"
+        filesButton.font = Self.font
         if let agents = status.agents {
             agentsLabel.stringValue = agents == 1 ? "1 agente" : "\(agents) agentes"
         }
     }
+
+    /// Drawn pressed while the panel is open.
+    func showFiles(open: Bool) {
+        filesButton.state = open ? .on : .off
+        filesButton.contentTintColor = open ? .controlAccentColor : .labelColor
+    }
+
+    @objc private func pressedFiles() { onFiles?() }
 
     @objc private func showEfforts(_ sender: NSButton) {
         guard let status else { return }

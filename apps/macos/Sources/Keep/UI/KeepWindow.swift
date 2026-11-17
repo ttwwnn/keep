@@ -26,6 +26,8 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
     private weak var sidebarToggleHost: CenteringHost?
     private var sidebarToggleZoomObserver: NSObjectProtocol?
     private weak var sidebarBackdropView: NSView?
+    /// The files panel at the right, a step behind the terminal as the sidebar is: painted as it is.
+    weak var filesBackdropView: NSView?
     private var terminalBackgroundObserver: NSObjectProtocol?
 
     // The last appearance actually applied, so becomeMain and repeated
@@ -219,6 +221,9 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
                 sidebarBackdropView?.isHidden = true
             }
         }
+
+        filesBackdropView?.layer?.backgroundColor = sidebarBackdropView?.layer?.backgroundColor
+        filesBackdropView?.isHidden = sidebarBackdropView?.isHidden ?? true
 
         Trace.log(
             "chrome",
