@@ -100,6 +100,8 @@ final class TabStripView: NSView {
     private let chromeIsGlass = Glass.isAvailable
     private var backgroundObserver: NSObjectProtocol?
     private var sizeObserver: NSObjectProtocol?
+    /// Whether the menu bar is out of sight changes with full screen, the screen, the space and the system's setting.
+    private var menuBarObservers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -145,6 +147,17 @@ final class TabStripView: NSView {
                 self?.needsLayout = true
             }
         }
+        let again: (Notification) -> Void = { [weak self] _ in
+            MainActor.assumeIsolated { self?.needsLayout = true }
+        }
+        for name in [NSApplication.didChangeScreenParametersNotification, NSWindow.didChangeScreenNotification,
+                     NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
+            let center = NotificationCenter.default
+            menuBarObservers.append((center, center.addObserver(forName: name, object: nil, queue: .main, using: again)))
+        }
+        let workspace = NSWorkspace.shared.notificationCenter
+        menuBarObservers.append((workspace, workspace.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main, using: again)))
     }
 
     @available(*, unavailable)
@@ -155,6 +168,7 @@ final class TabStripView: NSView {
             NotificationCenter.default.removeObserver(backgroundObserver)
         }
         if let sizeObserver { NotificationCenter.default.removeObserver(sizeObserver) }
+        for (center, token) in menuBarObservers { center.removeObserver(token) }
         if let renameWatch { NSEvent.removeMonitor(renameWatch) }
         if let fieldWatch { NSEvent.removeMonitor(fieldWatch) }
     }
