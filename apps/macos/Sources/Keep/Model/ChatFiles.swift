@@ -2,11 +2,34 @@ import Foundation
 
 /// The files of a Claude Code conversation, for the panel beside it: the ones
 /// the person sent (a picture pasted, a file dropped or named in a message, an
-/// upload) and the ones the conversation made (written, handed over with
-/// SendUserFile, or named by it and created since it began). Newest first.
+/// upload) and the ones the conversation made for them: handed over with
+/// SendUserFile, or named in an answer (by path or by name) and written or
+/// created since it began. What it made only on the way (the HTML a PDF was
+/// printed from, a script, a scratch file) and never showed is left out. Newest first.
 struct ChatFiles: Equatable {
-    var sent: [URL] = []
-    var made: [URL] = []
+    var sent: [ChatFileItem] = []
+    var made: [ChatFileItem] = []
+}
+
+/// A file as its row shows it: the name without its extension, the extension as its type, when it last
+/// changed, how big it is.
+struct ChatFileItem: Identifiable, Equatable {
+    let url: URL
+    var id: URL { url }
+    let name: String
+    let type: String
+    let modified: Date
+    let size: Int64
+
+    /// Reads the disk: built off the main thread, with the lists.
+    init(_ url: URL) {
+        self.url = url
+        let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        name = (url.lastPathComponent as NSString).deletingPathExtension
+        type = url.pathExtension.lowercased()
+        modified = values?.contentModificationDate ?? .distantPast
+        size = Int64(values?.fileSize ?? 0)
+    }
 }
 
 /// Reads one conversation's transcript as it grows: each read takes only the
@@ -21,9 +44,12 @@ final class ChatFilesReader: @unchecked Sendable {
     private var offset: UInt64 = 0
     private var start: Date?
     private var sent: [String] = []
-    /// In the order the conversation came to them. Written or handed over (`own`): its files, whatever their
-    /// date. Named in a command or an answer: its only if created after it began.
-    private var made: [(path: String, own: Bool)] = []
+    /// In the order the conversation came to them. `own`: written by it, whatever the file's date (otherwise
+    /// only if created after it began). `handed`: given to the person with SendUserFile.
+    private var made: [(path: String, own: Bool, handed: Bool)] = []
+    /// What its answers name, by path and by bare name: a file it made and named there is a result, not a step.
+    private var answered = Set<String>()
+    private var answeredNames = Set<String>()
     /// Each path once, so a read checks the disk once per file however often it was named.
     private var madeIndex: [String: Int] = [:]
     private var sentSeen = Set<String>()
@@ -62,18 +88,26 @@ final class ChatFilesReader: @unchecked Sendable {
         let sentNow = unique(sent + uploaded).filter(isFile)
         let sentSet = Set(sentNow)
         let begun = start ?? .distantPast
-        // Created since it began: a file it only changed (a config, a test) is not one it made.
+        // A bare name in an answer stands for a file only when one file it made goes by that name:
+        // `index.html` named once does not bring in every other index.html on the way.
+        var sameName: [String: Int] = [:]
+        for entry in made { sameName[(entry.path as NSString).lastPathComponent, default: 0] += 1 }
         let madeNow = made.filter { entry in
             guard isFile(entry.path) else { return false }
+            if entry.handed { return true }
+            let name = (entry.path as NSString).lastPathComponent
+            guard answered.contains(entry.path) || (answeredNames.contains(name) && sameName[name] == 1)
+            else { return false }
             if entry.own { return true }
+            // Created since it began: a file it only changed (a config, a test) is not one it made.
             guard !Self.ignored(entry.path),
                 let date = (try? fm.attributesOfItem(atPath: entry.path))?[.creationDate] as? Date
             else { return false }
             return date >= begun
         }.map(\.path).filter { !sentSet.contains($0) && $0 != transcript }
         return ChatFiles(
-            sent: sentNow.reversed().map { URL(fileURLWithPath: $0) },
-            made: madeNow.reversed().map { URL(fileURLWithPath: $0) })
+            sent: sentNow.reversed().map { ChatFileItem(URL(fileURLWithPath: $0)) },
+            made: madeNow.reversed().map { ChatFileItem(URL(fileURLWithPath: $0)) })
     }
 
     // MARK: - the transcript
@@ -90,6 +124,8 @@ final class ChatFilesReader: @unchecked Sendable {
             made = []
             madeIndex = [:]
             sentSeen = []
+            answered = []
+            answeredNames = []
         }
         guard size > offset else { return }
         try? handle.seek(toOffset: offset)
@@ -155,14 +191,19 @@ final class ChatFilesReader: @unchecked Sendable {
         guard let blocks = message["content"] as? [[String: Any]] else { return }
         for block in blocks {
             switch block["type"] as? String {
-            case "text": Self.paths(in: block["text"] as? String ?? "").forEach { addMade($0, own: false) }
+            case "text":
+                let text = block["text"] as? String ?? ""
+                let paths = Self.paths(in: text)
+                paths.forEach { addMade($0) }
+                answered.formUnion(paths)
+                answeredNames.formUnion(Self.fileNames(in: text))
             case "tool_use":
                 let input = block["input"] as? [String: Any] ?? [:]
                 switch block["name"] as? String {
                 case "Write": if let path = input["file_path"] as? String { addMade(path, own: true) }
                 case "NotebookEdit": if let path = input["notebook_path"] as? String { addMade(path, own: true) }
-                case "SendUserFile": ((input["files"] as? [String]) ?? []).forEach { addMade($0, own: true) }
-                case "Bash": Self.paths(in: input["command"] as? String ?? "").forEach { addMade($0, own: false) }
+                case "SendUserFile": ((input["files"] as? [String]) ?? []).forEach { addMade($0, own: true, handed: true) }
+                case "Bash": Self.paths(in: input["command"] as? String ?? "").forEach { addMade($0) }
                 default: break
                 }
             default: break
@@ -170,13 +211,14 @@ final class ChatFilesReader: @unchecked Sendable {
         }
     }
 
-    private func addMade(_ path: String, own: Bool) {
+    private func addMade(_ path: String, own: Bool = false, handed: Bool = false) {
         if let index = madeIndex[path] {
-            if own { made[index].own = true }
+            made[index].own = made[index].own || own
+            made[index].handed = made[index].handed || handed
             return
         }
         madeIndex[path] = made.count
-        made.append((path, own))
+        made.append((path, own, handed))
     }
 
     private func addSent(_ path: String) {
@@ -241,6 +283,17 @@ final class ChatFilesReader: @unchecked Sendable {
             if !found.contains(full) { found.append(full) }
         }
         return found
+    }
+
+    /// The bare file names a text holds (`Resumo-2026.pdf`, `**grafico.png**`): words with an extension and no slash.
+    static func fileNames(in text: String) -> [String] {
+        text.split(whereSeparator: \.isWhitespace).compactMap { word in
+            let name = String(word).trimmingCharacters(in: wrapping)
+            guard !name.contains("/"), !(name as NSString).pathExtension.isEmpty,
+                (name as NSString).pathExtension.allSatisfy({ $0.isLetter || $0.isNumber })
+            else { return nil }
+            return name
+        }
     }
 
     private static let wrapping = CharacterSet(charactersIn: "`'\"()<>[]{}.,;:!?*")

@@ -185,7 +185,7 @@ chmod +x "$WORK/printer"
 export KEEP_BAR_WORK=$WORK
 
 # The conversation's transcript, for the files panel: the person sent a file,
-# the conversation wrote another.
+# the conversation wrote another and named it in its answer (a step it never showed is left out).
 SENT=$WORK/enviado-pela-pessoa.pdf
 MADE=$WORK/gerado-pela-conversa.html
 : >"$SENT"
@@ -198,7 +198,8 @@ dumps = lambda d: json.dumps(d, separators=(",", ":"))
 print(dumps({"type": "user", "timestamp": "2026-01-01T00:00:00.000Z", "origin": {"kind": "human"},
                   "message": {"role": "user", "content": "veja " + sys.argv[1]}}))
 print(dumps({"type": "assistant", "timestamp": "2026-01-01T00:00:01.000Z", "message": {"role": "assistant",
-                  "content": [{"type": "tool_use", "name": "Write", "input": {"file_path": sys.argv[2], "content": ""}}]}}))
+                  "content": [{"type": "tool_use", "name": "Write", "input": {"file_path": sys.argv[2], "content": ""}},
+                              {"type": "text", "text": "Pronto: " + sys.argv[2]}]}}))
 PY
 
 # Claude Code's process is called after its version, which is how Keep knows
@@ -318,11 +319,11 @@ found() {  # found <label> -> yes when the panel shows it
     done
     echo no
 }
-check "the panel lists the file sent" "yes" "$(found enviado-pela-pessoa.pdf)"
-check "and the one the conversation made" "yes" "$(found gerado-pela-conversa.html)"
+check "the panel lists the file sent" "yes" "$(found chat-file-enviado-pela-pessoa.pdf)"
+check "and the one the conversation made" "yes" "$(found chat-file-gerado-pela-conversa.html)"
 "$AXPRESS" "$APP_NAME" press claude-files >/dev/null 2>&1
 sleep 1
-check "pressed again, the panel goes" "no" "$("$AXPRESS" "$APP_NAME" frame gerado-pela-conversa.html >/dev/null 2>&1 && echo yes || echo no)"
+check "pressed again, the panel goes" "no" "$("$AXPRESS" "$APP_NAME" frame chat-file-gerado-pela-conversa.html >/dev/null 2>&1 && echo yes || echo no)"
 
 stop_app
 say ""

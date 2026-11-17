@@ -8,7 +8,8 @@
 #
 #   tools/chat-files-test.sh             the check
 #   tools/chat-files-test.sh --sabotage  and then a file only read counted as made,
-#                                        and the summary's files counted as sent
+#                                        the summary's files counted as sent, and a
+#                                        step on the way counted as made
 set -uo pipefail
 cd "$(dirname "$0")/.."
 WORK=$(mktemp -d /tmp/keep-chat-files-XXXXXX)
@@ -35,6 +36,12 @@ if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; 
 
 echo "sabotage: the summary of a compaction is taken as the person's"
 sed 's/guard json\["isCompactSummary"\] as? Bool != true,/guard true,/' "$SOURCE" > "$WORK/Sabotaged.swift"
+cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage did not apply"; exit 1; }
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
+echo "sabotage: a file it wrote counts though no answer shows it"
+sed 's/guard answered.contains(entry.path) || /guard true || /' "$SOURCE" > "$WORK/Sabotaged.swift"
 cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage did not apply"; exit 1; }
 build "$WORK/Sabotaged.swift" || exit 1
 if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
