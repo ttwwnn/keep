@@ -13,7 +13,7 @@ final class ChatFilesModel: ObservableObject {
 
 /// The panel at the right of a Claude Code conversation, on the sidebar's ground
 /// and in its inks: the files the conversation made above, the ones the person
-/// sent below, each a list of name, type, modified and size, sorted by a click
+/// sent below them, then the Mac's Downloads folder, each a list of name, type, modified and size, sorted by a click
 /// on a column's title (its arrow turns with a second click). A double click
 /// opens a file as a click on its name in the terminal does; it can be dragged out.
 struct ChatFilesPanel: View {
@@ -36,6 +36,7 @@ struct ChatFilesPanel: View {
                 VStack(alignment: .leading, spacing: 0) {
                     section("Gerados", model.files.made, empty: "Nada gerado ainda")
                     section("Enviados", model.files.sent, empty: "Nada enviado nesta conversa")
+                    section("Downloads", model.files.downloads, empty: "A pasta Downloads está vazia")
                 }
                 .padding(.top, 10)
             }

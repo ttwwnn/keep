@@ -9,6 +9,8 @@ import Foundation
 struct ChatFiles: Equatable {
     var sent: [ChatFileItem] = []
     var made: [ChatFileItem] = []
+    /// The Mac's Downloads folder, beside the conversation's own: to drag a file from it into the prompt.
+    var downloads: [ChatFileItem] = []
 }
 
 /// A file as its row shows it: the name without its extension, the extension as its type, when it last
@@ -54,10 +56,41 @@ final class ChatFilesReader: @unchecked Sendable {
     private var madeIndex: [String: Int] = [:]
     private var sentSeen = Set<String>()
 
-    init(transcript: String, session: String, imageFolder: String) {
+    /// Read with the lists; a test points it elsewhere.
+    let downloadsFolder: URL?
+
+    init(transcript: String, session: String, imageFolder: String,
+         downloadsFolder: URL? = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first) {
         self.transcript = transcript
         self.session = session
         self.imageFolder = imageFolder
+        self.downloadsFolder = downloadsFolder
+        Self.pruneOnce(imageFolder)
+    }
+
+    /// Pictures a conversation pasted are not kept for good: a conversation's folder untouched for 30 days
+    /// goes, once a launch. One still read gets its pictures written again from the transcript.
+    /// What a folder holds that one would drag: its files and folders, hidden ones and packages' insides left out.
+    static func downloads(in folder: URL?) -> [ChatFileItem] {
+        guard let folder else { return [] }
+        let urls = (try? FileManager.default.contentsOfDirectory(
+            at: folder, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
+            options: [.skipsHiddenFiles])) ?? []
+        return urls.map(ChatFileItem.init)
+    }
+
+    static let keptFor: TimeInterval = 30 * 86_400
+    nonisolated(unsafe) private static var pruned = Set<String>()
+    static func pruneOnce(_ folder: String, now: Date = Date()) {
+        guard pruned.insert(folder).inserted else { return }
+        let fm = FileManager.default
+        for name in (try? fm.contentsOfDirectory(atPath: folder)) ?? [] {
+            let path = (folder as NSString).appendingPathComponent(name)
+            guard let date = (try? fm.attributesOfItem(atPath: path))?[.modificationDate] as? Date,
+                now.timeIntervalSince(date) > keptFor
+            else { continue }
+            try? fm.removeItem(atPath: path)
+        }
     }
 
     /// The transcript and the conversation a Claude Code status line file
@@ -88,26 +121,28 @@ final class ChatFilesReader: @unchecked Sendable {
         let sentNow = unique(sent + uploaded).filter(isFile)
         let sentSet = Set(sentNow)
         let begun = start ?? .distantPast
-        // A bare name in an answer stands for a file only when one file it made goes by that name:
-        // `index.html` named once does not bring in every other index.html on the way.
-        var sameName: [String: Int] = [:]
-        for entry in made { sameName[(entry.path as NSString).lastPathComponent, default: 0] += 1 }
-        let madeNow = made.filter { entry in
+        // Its own: handed over, written by it, or created since it began (a file it only changed, a config,
+        // a test, is not one it made).
+        let candidates = made.filter { entry in
             guard isFile(entry.path) else { return false }
-            if entry.handed { return true }
-            let name = (entry.path as NSString).lastPathComponent
-            guard answered.contains(entry.path) || (answeredNames.contains(name) && sameName[name] == 1)
-            else { return false }
-            if entry.own { return true }
-            // Created since it began: a file it only changed (a config, a test) is not one it made.
+            if entry.handed || entry.own { return true }
             guard !Self.ignored(entry.path),
                 let date = (try? fm.attributesOfItem(atPath: entry.path))?[.creationDate] as? Date
             else { return false }
             return date >= begun
+        }
+        // A bare name in an answer stands for a file only when one of its own goes by that name:
+        // `index.html` named once does not bring in every other index.html it made on the way.
+        var sameName: [String: Int] = [:]
+        for entry in candidates { sameName[(entry.path as NSString).lastPathComponent, default: 0] += 1 }
+        let madeNow = candidates.filter { entry in
+            let name = (entry.path as NSString).lastPathComponent
+            return entry.handed || answered.contains(entry.path) || (answeredNames.contains(name) && sameName[name] == 1)
         }.map(\.path).filter { !sentSet.contains($0) && $0 != transcript }
         return ChatFiles(
             sent: sentNow.reversed().map { ChatFileItem(URL(fileURLWithPath: $0)) },
-            made: madeNow.reversed().map { ChatFileItem(URL(fileURLWithPath: $0)) })
+            made: madeNow.reversed().map { ChatFileItem(URL(fileURLWithPath: $0)) },
+            downloads: Self.downloads(in: downloadsFolder))
     }
 
     // MARK: - the transcript

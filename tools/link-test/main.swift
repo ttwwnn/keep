@@ -224,5 +224,7 @@ check(
     recovered("Contrato-2026-11-17.pdf", [listed[0]] + Array(repeating: "", count: 25) + [listed[1]], 26, "/nowhere"), nil)
 check("the nearest folder first", LinkOpener.foldersNamed(in: ["em /a", "x", "em ~/b e /a"], near: 1).joined(separator: ","), "/a," + NSHomeDirectory() + "/b")
 check("the tab's folder still wins", recovered("a.txt", ["em " + root + "/baixados", "a.txt"], 1, root), root + "/a.txt")
+check("an empty screen names no folder", LinkOpener.foldersNamed(in: [], near: 0).joined(), "")
+check("a row off the screen names none", LinkOpener.foldersNamed(in: ["em /a"], near: 5).joined(), "")
 _ = real
 exit(failures == 0 ? 0 : 1)

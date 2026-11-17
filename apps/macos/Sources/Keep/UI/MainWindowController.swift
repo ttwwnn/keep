@@ -52,6 +52,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// Reads off the main thread, one read at a time, the reader kept between reads.
     private let filesQueue = DispatchQueue(label: "keep.chat-files")
     private var filesReader: ChatFilesReader?
+    /// Every conversation's reader this window has read, so going back to a tab reads only what it gained.
+    private var filesReaders: [String: ChatFilesReader] = [:]
     private let sidebarHost: SidebarHost
     private let picker = PickerView()
     private weak var sidebarItem: NSSplitViewItem?
@@ -503,14 +505,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             return
         }
         let reader: ChatFilesReader
-        if let current = filesReader, current.transcript == source.transcript {
-            reader = current
+        if let kept = filesReaders[source.transcript] {
+            reader = kept
         } else {
             reader = ChatFilesReader(
                 transcript: source.transcript, session: source.session, imageFolder: ChatFilesReader.cacheFolder)
-            filesReader = reader
+            filesReaders[source.transcript] = reader
             filesModel.note = "Lendo a conversa…"
         }
+        filesReader = reader
         filesQueue.async {
             let files = reader.read()
             DispatchQueue.main.async { [weak self] in

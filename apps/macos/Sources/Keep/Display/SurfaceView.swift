@@ -2142,7 +2142,11 @@ final class TerminalSurfaceView: NSView {
     private func markByArrow(left: Bool) -> Bool {
         guard surface != nil, let cursor = cursorCell(),
             let (box, first) = CutSelection.promptBoxRows(visibleText().lines, cursorRow: cursor.row)
-        else { return false }
+        else {
+            // Out of the box: the mark it had is gone with it, and the next one starts from the cursor.
+            arrowMark = nil
+            return false
+        }
         let lengths = box.map(\.count)
         let row = cursor.row - first
         let here = (row: row, column: min(max(cursor.column - 2, 0), lengths[row]))
@@ -2184,6 +2188,8 @@ final class TerminalSurfaceView: NSView {
                 return
             }
             let last = high.1 > 0 ? (high.0, high.1 - 1) : (high.0 - 1, max(0, lengths[high.0 - 1] - 1))
+            // Only the step from a row's end to the next row's start: no character is marked.
+            guard last >= low else { return }
             let start = (row: first + low.0, column: low.1 + 2, edge: 0.25)
             let end = (row: first + last.0, column: last.1 + 2, edge: 0.75)
             // Pressed where the mark moves, so arrows in a row never press twice at one spot.
