@@ -15,6 +15,7 @@ import {
 } from "../claude";
 import { isDormant } from "../iaChores";
 import type { RootTab } from "../layout";
+import { RESTING, windowIdle } from "../theme";
 import { now, palette, tabActivity, tabBusy, tabLabel, tabMode, tabWaitingSince } from "../store";
 
 export interface TabLook {
@@ -33,8 +34,13 @@ export interface TabLook {
   fill: string;
 }
 
-export function tabLook(workspace: string, tab: RootTab, index: number, selected: boolean): TabLook {
+// The sidebar's resting hue for each mode, the macOS app's mapping: its teal is green, its violet blue.
+const RESTING_MODE = { plan: RESTING.green, acceptEdits: RESTING.blue, bypass: RESTING.red, auto: RESTING.yellow };
+
+/** `resting`: the sidebar's rows, which wear the five resting hues while the window is out of use. */
+export function tabLook(workspace: string, tab: RootTab, index: number, selected: boolean, resting = false): TabLook {
   const dark = palette.value.dark;
+  const idle = resting && dark && windowIdle.value;
   const activity = tabActivity(workspace, tab);
   const mode = tabMode(workspace, tab);
   const wantsYou = activity === "waitingForYou";
@@ -43,12 +49,13 @@ export function tabLook(workspace: string, tab: RootTab, index: number, selected
   const mark = !wantsYou && atWork ? busyMark(programOf(tab.root.command, tab.root.title)) : undefined;
   let color: string | undefined;
   if (wantsYou) color = css(attentionTitleInk(selected));
+  else if (idle && activity === "waitingForWorkflow") color = RESTING.blue;
   else if (activity && activity !== "working") color = css(activityColor(activity, dark)!);
-  else if (mode) color = css(modeColor(mode, dark));
+  else if (mode) color = idle ? RESTING_MODE[mode] : css(modeColor(mode, dark));
   const since = tabWaitingSince(workspace, tab);
   const until = lastBreath(since);
-  const breathing = wantsYou && !selected && until !== undefined && now.value / 1000 < until;
-  return { label, color, wantsYou, atWork, mark, breathing, asleep: isDormant(workspace, tab), fill: css(attentionFill(dark)) };
+  const breathing = wantsYou && !selected && !idle && until !== undefined && now.value / 1000 < until;
+  return { label, color, wantsYou, atWork, mark, breathing, asleep: isDormant(workspace, tab), fill: idle ? RESTING.orange : css(attentionFill(dark)) };
 }
 
 /**
