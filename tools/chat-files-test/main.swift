@@ -22,6 +22,8 @@ func file(_ name: String, created: Date? = nil) -> String {
 let dropped = file("dir com espaço/contrato.pdf", created: old)
 let typedPath = file("notas.md", created: old)
 let written = file("relatorio.html", created: old)
+let step = file("rascunho.html")
+let scratch = file("extrai.sh")
 let handed = file("resumo.pdf")
 let madeByBash = file("grafico.png")
 let onlyRead = file("entrada.csv", created: old)
@@ -47,9 +49,11 @@ var lines = [
           "message": ["role": "user", "content": "<task-notification>\(fromOtherTab)</task-notification>"]]),
     line(["type": "assistant", "timestamp": start, "message": ["role": "assistant", "content": [
         ["type": "tool_use", "name": "Write", "input": ["file_path": written, "content": "x"]],
-        ["type": "tool_use", "name": "Bash", "input": ["command": "plot \(onlyRead) > \(madeByBash) && cat /etc/hosts"]],
+        ["type": "tool_use", "name": "Write", "input": ["file_path": step, "content": "x"]],
+        ["type": "tool_use", "name": "Write", "input": ["file_path": scratch, "content": "x"]],
+        ["type": "tool_use", "name": "Bash", "input": ["command": "sh \(scratch); print \(step) > \(handed); plot \(onlyRead) > \(madeByBash) && cat /etc/hosts"]],
         ["type": "tool_use", "name": "SendUserFile", "input": ["files": [handed]]],
-        ["type": "text", "text": "Gravei **\(madeByBash)**: pronto."],
+        ["type": "text", "text": "Gravei **\(madeByBash)** e o relatorio.html, a partir de entrada.csv: pronto."],
     ]]]),
 ]
 let transcript = root + "/t.jsonl"
@@ -60,27 +64,29 @@ let reader = ChatFilesReader(transcript: transcript, session: "sessao", imageFol
 var files = reader.read()
 let image = images + "/sessao/Imagem 3.png"
 check("sent: the picture, then what was typed and dropped, newest first", files.sent.map(\.path), [image, typedPath, dropped])
-check("made: written, handed over, and created by a command, newest first", files.made.map(\.path), [handed, madeByBash, written])
+check("made: handed over, and what an answer names, newest first; not the steps on the way",
+      files.made.map(\.path), [madeByBash, handed, written])
 check("the picture is written out, for its owner alone",
       [String(format: "%o", (try? fm.attributesOfItem(atPath: image))?[.posixPermissions] as? Int ?? 0)], ["600"])
 
 // The transcript grows: only the new line is read, and it counts.
 let later = file("depois.txt")
 let more = line(["type": "assistant", "timestamp": start, "message": ["role": "assistant", "content": [
-    ["type": "tool_use", "name": "Write", "input": ["file_path": later, "content": "x"]]]]])
+    ["type": "tool_use", "name": "Write", "input": ["file_path": later, "content": "x"]],
+    ["type": "text", "text": "Também gravei depois.txt."]]]])
 let handle = FileHandle(forWritingAtPath: transcript)!
 handle.seekToEndOfFile()
 handle.write(Data(more.utf8))  // no newline yet: still being written
 files = reader.read()
-check("a line still being written waits", files.made.map(\.path), [handed, madeByBash, written])
+check("a line still being written waits", files.made.map(\.path), [madeByBash, handed, written])
 handle.write(Data("\n".utf8))
 try! handle.close()
 files = reader.read()
-check("and is read once whole", files.made.map(\.path), [later, handed, madeByBash, written])
+check("and is read once whole", files.made.map(\.path), [later, madeByBash, handed, written])
 
 // A file gone from disk leaves the list.
 try! fm.removeItem(atPath: written)
-check("a file deleted is no longer listed", reader.read().made.map(\.path), [later, handed, madeByBash])
+check("a file deleted is no longer listed", reader.read().made.map(\.path), [later, madeByBash, handed])
 
 // Two pictures in one message, without paste ids: two files, not one twice.
 let two = root + "/dois.jsonl"

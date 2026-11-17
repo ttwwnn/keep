@@ -40,6 +40,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private let filesPanel: NSHostingView<ChatFilesPanel>
     private var filesWidth: NSLayoutConstraint!
     private let filesBackdrop = TerminalTintBackdropView()
+    private let filesEdge = PanelEdge()
+    /// The width the person left the panel at, kept across launches as the sidebar's is.
+    private static let filesWidthKey = "keep.filesPanelWidth"
+    private var filesChosenWidth: CGFloat = {
+        let kept = UserDefaults.standard.double(forKey: MainWindowController.filesWidthKey)
+        return kept > 0 ? kept : 260
+    }()
     private var filesOpen = false
     private var filesTimer: Timer?
     /// Reads off the main thread, one read at a time, the reader kept between reads.
@@ -115,11 +122,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         content.addSubview(statusBar)
         statusBarHeight = statusBar.heightAnchor.constraint(equalToConstant: 0)
         filesPanel.translatesAutoresizingMaskIntoConstraints = false
+        // Sized by the window alone: a table's own minimum size pushed the terminal down to one row.
+        filesPanel.sizingOptions = []
         filesPanel.isHidden = true
         filesBackdrop.wantsLayer = true
         filesBackdrop.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(filesBackdrop)
         content.addSubview(filesPanel)
+        filesEdge.translatesAutoresizingMaskIntoConstraints = false
+        filesEdge.isHidden = true
+        content.addSubview(filesEdge)
         filesWidth = filesPanel.widthAnchor.constraint(equalToConstant: 0)
         // The strip lives in the chrome row — the same region the backdrop
         // tints, above the terminal, beside the sidebar. Plain content: no
@@ -150,6 +162,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             filesPanel.topAnchor.constraint(equalTo: container.topAnchor),
             filesPanel.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
             filesWidth,
+            filesEdge.centerXAnchor.constraint(equalTo: filesPanel.leadingAnchor),
+            filesEdge.widthAnchor.constraint(equalToConstant: 8),
+            filesEdge.topAnchor.constraint(equalTo: filesPanel.topAnchor),
+            filesEdge.bottomAnchor.constraint(equalTo: filesPanel.bottomAnchor),
             filesBackdrop.leadingAnchor.constraint(equalTo: filesPanel.leadingAnchor),
             filesBackdrop.trailingAnchor.constraint(equalTo: filesPanel.trailingAnchor),
             filesBackdrop.topAnchor.constraint(equalTo: filesPanel.topAnchor),
@@ -215,6 +231,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         statusBar.onEffort = { [weak self] level in self?.changeEffort(to: level) }
         statusBar.onModel = { [weak self] id in self?.changeModel(to: id) }
         statusBar.onFiles = { [weak self] in self?.toggleFiles() }
+        filesEdge.onDrag = { [weak self] delta in self?.dragFilesEdge(by: delta) }
+        filesEdge.onEnd = { [weak self] in self?.endFilesDrag() }
         window.delegate = self
         // The row is as tall as the titles in it need: see `updateZoomHeight`.
         updateZoomHeight()
@@ -437,10 +455,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private func layOutFiles() {
         let shown = filesOpen && statusBar.status?.program == "claude"
         statusBar.showFiles(open: filesOpen)
-        // The sidebar's width at its narrowest: generated above, sent below, one column.
-        let width: CGFloat = shown ? 260 : 0
+        let width: CGFloat = shown ? min(filesChosenWidth, filesMaximum) : 0
         if filesWidth.constant != width { filesWidth.constant = width }
         filesPanel.isHidden = !shown
+        filesEdge.isHidden = !shown
         if shown, filesTimer == nil {
             filesModel.note = "Lendo a conversa…"
             refreshFiles()
@@ -453,6 +471,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             filesTimer?.invalidate()
             filesTimer = nil
         }
+    }
+
+    /// At most a third of the screen the window is on.
+    private var filesMaximum: CGFloat { ((window?.screen ?? NSScreen.main)?.visibleFrame.width ?? 1200) / 3 }
+
+    private func dragFilesEdge(by delta: CGFloat) {
+        filesWidth.constant = max(0, min(filesMaximum, filesWidth.constant + delta))
+    }
+
+    /// Let go narrower than a row can be read in, the panel shuts, keeping the width it had; otherwise that width stays.
+    private func endFilesDrag() {
+        if filesWidth.constant < 120 {
+            filesOpen = false
+            layOutFiles()
+            return
+        }
+        filesChosenWidth = filesWidth.constant
+        UserDefaults.standard.set(Double(filesChosenWidth), forKey: Self.filesWidthKey)
     }
 
     /// The tab on view's files, read again: only what its transcript gained since the last read.
