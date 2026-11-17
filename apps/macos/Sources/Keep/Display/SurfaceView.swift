@@ -963,6 +963,13 @@ final class TerminalSurfaceView: NSView {
     /// as alt-b.
     override func keyDown(with event: NSEvent) {
         guard surface != nil else { return }
+        let shiftSideArrow = [123, 124].contains(event.keyCode)
+            && event.modifierFlags.intersection([.shift, .control, .option, .command]) == .shift
+        // Any other key lets the mark go: typed over, deleted, or an arrow without Shift, as in a text box.
+        if !shiftSideArrow, arrowMarking {
+            arrowMarking = false
+            if (123...126).contains(event.keyCode) { _ = perform("clear_selection") }
+        }
         if Self.isZoomChord(event) {
             Trace.log("key", "zoom chord kept from the terminal")
             return
@@ -1050,14 +1057,7 @@ final class TerminalSurfaceView: NSView {
         }
         if Self.isComposingControl(event.characters, composing: composing) { return }
         // Shift with a side arrow marks text in Claude Code's prompt box, as in any text box.
-        if [123, 124].contains(event.keyCode),
-           event.modifierFlags.intersection([.shift, .control, .option, .command]) == .shift,
-           markByArrow(left: event.keyCode == 123) { return }
-        if arrowMarking {
-            arrowMarking = false
-            // An arrow without Shift lets the mark go, as in a text box.
-            if (123...126).contains(event.keyCode) { perform("clear_selection") }
-        }
+        if shiftSideArrow, markByArrow(left: event.keyCode == 123) { return }
         // Backspace or forward delete over a selection in the prompt deletes it.
         if [51, 117].contains(event.keyCode), event.modifierFlags.isDisjoint(with: [.shift, .control, .option, .command]),
            eraseSelectionBeforeTyping() { return }
@@ -2143,9 +2143,13 @@ final class TerminalSurfaceView: NSView {
         guard surface != nil, let cursor = cursorCell(),
             let (box, first) = CutSelection.promptBoxRows(visibleText().lines, cursorRow: cursor.row)
         else { return false }
-        let here = (row: cursor.row - first, column: cursor.column - 2)
+        let lengths = box.map(\.count)
+        let row = cursor.row - first
+        let here = (row: row, column: min(max(cursor.column - 2, 0), lengths[row]))
         var mark = arrowMark ?? (here, here)
-        let next = CutSelection.step(from: mark.focus, left: left, rowLengths: box.map(\.count))
+        // The box was drawn again with fewer rows than the mark spans: start over from the cursor.
+        if !lengths.indices.contains(mark.anchor.row) || !lengths.indices.contains(mark.focus.row) { mark = (here, here) }
+        let next = CutSelection.step(from: mark.focus, left: left, rowLengths: lengths)
         // At the box's first or last character there is nowhere to go.
         guard next != mark.focus else { return true }
         mark.focus = next
@@ -2175,6 +2179,10 @@ final class TerminalSurfaceView: NSView {
             let (low, high) = anchor < focus ? (anchor, focus) : (focus, anchor)
             // `high` is where the mark stops, not a character in it: the last one is just before.
             let lengths = box.map(\.count)
+            guard lengths.indices.contains(low.0), lengths.indices.contains(high.0), high.1 > 0 || high.0 > 0 else {
+                self.arrowMark = nil
+                return
+            }
             let last = high.1 > 0 ? (high.0, high.1 - 1) : (high.0 - 1, max(0, lengths[high.0 - 1] - 1))
             let start = (row: first + low.0, column: low.1 + 2, edge: 0.25)
             let end = (row: first + last.0, column: last.1 + 2, edge: 0.75)
@@ -2183,8 +2191,8 @@ final class TerminalSurfaceView: NSView {
         }
     }
 
-    /// A press at one cell and a drag to another with Shift held: the
-    /// terminal's own selection, which never reaches the program. `edge` is
+    /// A press at one cell and a drag to another: the terminal's own
+    /// selection, which never reaches the program. `edge` is
     /// how far across the cell (a quarter in takes the cell from its start,
     /// three quarters to its end). The pointer is then told where it really is.
     /// Where the cells are is read off the cursor's own cell.
@@ -2203,7 +2211,9 @@ final class TerminalSurfaceView: NSView {
             (x - cellWidth / 2 - Double(cursor.column - c.column) * cellWidth + c.edge * cellWidth,
              y - Double(cursor.row + 1 - c.row) * cellHeight + cellHeight / 2)
         }
-        let shift = ghostty_input_mods_e(GHOSTTY_MODS_SHIFT.rawValue)
+        // Shift only where the program has the mouse (it keeps the press from reaching it): with Shift
+        // the terminal stretches the last selection from where it began instead of starting one here.
+        let shift = ghostty_input_mods_e(ghostty_surface_mouse_captured(surface) ? GHOSTTY_MODS_SHIFT.rawValue : 0)
         let p = point(a), q = point(b)
         // A click in the corner first: the terminal takes presses within a cell's width of the last one
         // for a double or triple click (word, then line), and each arrow presses one cell over.
