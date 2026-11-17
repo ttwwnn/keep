@@ -66,6 +66,13 @@ cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage did not apply";
 build "$WORK/Sabotaged.swift" || exit 1
 if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
 
+echo "sabotage: a bare name is never looked for in the folder the screen names"
+sed 's/if let url = fileInFolderNamed(candidate, in: lines, near: hit.line) { return url }/_ = candidate/' \
+    "$SOURCE" > "$WORK/Sabotaged.swift"
+cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage did not apply"; exit 1; }
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
 echo "sabotage: an address opened by a plain click though the program has the mouse"
 sed 's/return !programHasMouse \&\& \[/return [/' "$SOURCE" > "$WORK/Sabotaged.swift"
 cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage did not apply"; exit 1; }

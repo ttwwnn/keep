@@ -94,6 +94,35 @@ enum LinkOpener {
                 if let url = resolve(candidate, from: directory, others: others) { return url }
             }
         }
+        for hit in hits(of: text, in: lines, near: row) {
+            for candidate in candidates(lines, hit.line, hit.start, hit.end) {
+                if let url = fileInFolderNamed(candidate, in: lines, near: hit.line) { return url }
+            }
+        }
+        return nil
+    }
+
+    /// A bare file name in a list under a heading that says where the files
+    /// are ("PDFs (em ~/Downloads)" and then the names alone): the file in a
+    /// folder the screen names, the nearest mention first. Nil for anything
+    /// with a slash or without an extension, as for a scratchpad name.
+    static func fileInFolderNamed(_ name: String, in lines: [String], near row: Int) -> URL? {
+        guard !name.isEmpty, !name.contains("/"), !name.hasPrefix("~"),
+            !(name as NSString).pathExtension.isEmpty
+        else { return nil }
+        let order = lines.indices.sorted { abs($0 - row) != abs($1 - row) ? abs($0 - row) < abs($1 - row) : $0 < $1 }
+        var tried = Set<String>()
+        for index in order {
+            for word in lines[index].split(whereSeparator: \.isWhitespace) {
+                let folder = String(word).trimmingCharacters(in: wrapping)
+                guard folder.hasPrefix("/") || folder.hasPrefix("~/"), tried.insert(folder).inserted else { continue }
+                let path = ((folder as NSString).expandingTildeInPath as NSString).appendingPathComponent(name)
+                var isDirectory: ObjCBool = false
+                if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), !isDirectory.boolValue {
+                    return URL(fileURLWithPath: (path as NSString).standardizingPath)
+                }
+            }
+        }
         return nil
     }
 
