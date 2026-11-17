@@ -1741,6 +1741,15 @@ final class Session {
         return ClaudeStatusReader.workingDirectories(shellPid: entity.shellPid)
     }
 
+    /// What Claude Code's status line last said for a tab (its transcript, its folders…), while it runs there.
+    func claudeStatusFile(workspace: String, tab: UInt32) -> Data? {
+        guard let entity = workspaces.first(where: { $0.name == workspace })?.tabs.first(where: { $0.id.root == tab }),
+            claudeTabs().contains(entity.id), entity.shellPid > 0
+        else { return nil }
+        return FileManager.default.contents(
+            atPath: (ClaudeStatusReader.directory as NSString).appendingPathComponent("\(entity.shellPid).json"))
+    }
+
     /// The shell process of each AI tab, which names the file Claude Code's
     /// status line leaves for it. Absent where the daemon cannot say.
     func aiShellPids() -> [TabID: UInt32] {

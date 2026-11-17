@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 /// THE window, alive for the app's lifetime.
 ///
@@ -34,6 +35,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// Model, effort and agents of the Claude Code conversation shown.
     private let statusBar = ClaudeStatusBar()
     private var statusBarHeight: NSLayoutConstraint!
+    /// The files the conversation shown was sent and made, at its right; open or shut for the whole window.
+    private let filesModel: ChatFilesModel
+    private let filesPanel: NSHostingView<ChatFilesPanel>
+    private var filesWidth: NSLayoutConstraint!
+    private let filesBackdrop = TerminalTintBackdropView()
+    private var filesOpen = false
+    private var filesTimer: Timer?
+    /// Reads off the main thread, one read at a time, the reader kept between reads.
+    private let filesQueue = DispatchQueue(label: "keep.chat-files")
+    private var filesReader: ChatFilesReader?
     private let sidebarHost: SidebarHost
     private let picker = PickerView()
     private weak var sidebarItem: NSSplitViewItem?
@@ -80,6 +91,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         self.session = session
         self.windowID = id
         container.windowID = id
+        let filesModel = ChatFilesModel()
+        self.filesModel = filesModel
+        filesPanel = NSHostingView(rootView: ChatFilesPanel(model: filesModel))
         TerminalSurfaceView.claudeDirectories = { [weak session] workspace, tab in
             session?.claudeWorkingDirectories(workspace: workspace, tab: tab) ?? []
         }
@@ -100,6 +114,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         statusBar.isHidden = true
         content.addSubview(statusBar)
         statusBarHeight = statusBar.heightAnchor.constraint(equalToConstant: 0)
+        filesPanel.translatesAutoresizingMaskIntoConstraints = false
+        filesPanel.isHidden = true
+        filesBackdrop.wantsLayer = true
+        filesBackdrop.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(filesBackdrop)
+        content.addSubview(filesPanel)
+        filesWidth = filesPanel.widthAnchor.constraint(equalToConstant: 0)
         // The strip lives in the chrome row — the same region the backdrop
         // tints, above the terminal, beside the sidebar. Plain content: no
         // toolbar sizing, no private views, and empty regions still drag the
@@ -123,8 +144,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             tabStrip.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             tabStrip.topAnchor.constraint(equalTo: content.topAnchor),
             container.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            container.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            container.trailingAnchor.constraint(equalTo: filesPanel.leadingAnchor),
             container.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
+            filesPanel.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            filesPanel.topAnchor.constraint(equalTo: container.topAnchor),
+            filesPanel.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
+            filesWidth,
+            filesBackdrop.leadingAnchor.constraint(equalTo: filesPanel.leadingAnchor),
+            filesBackdrop.trailingAnchor.constraint(equalTo: filesPanel.trailingAnchor),
+            filesBackdrop.topAnchor.constraint(equalTo: filesPanel.topAnchor),
+            filesBackdrop.bottomAnchor.constraint(equalTo: filesPanel.bottomAnchor),
             statusBar.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             statusBar.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             statusBar.bottomAnchor.constraint(equalTo: content.bottomAnchor),
@@ -173,6 +202,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // The screen the window is on now, not whichever had focus when the item was made.
         sidebarSplitItem.maximumThickness = Self.sidebarMaximum(on: window.screen)
 
+        window.filesBackdropView = filesBackdrop
         window.installUnifiedToolbar(
             chromeBackdrop: chromeBackdrop,
             sidebarBackdrop: sidebarHost.backdropView
@@ -184,6 +214,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
         statusBar.onEffort = { [weak self] level in self?.changeEffort(to: level) }
         statusBar.onModel = { [weak self] id in self?.changeModel(to: id) }
+        statusBar.onFiles = { [weak self] in self?.toggleFiles() }
         window.delegate = self
         // The row is as tall as the titles in it need: see `updateZoomHeight`.
         updateZoomHeight()
@@ -307,6 +338,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         max(320, ((screen ?? NSScreen.main)?.visibleFrame.width ?? 0) / 3)
     }
 
+    func windowDidBecomeKey(_ notification: Notification) { filesModel.inUse = true }
+    func windowDidResignKey(_ notification: Notification) { filesModel.inUse = false }
+
     func windowDidChangeScreen(_ notification: Notification) {
         screensChanged()
     }
@@ -361,6 +395,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
         if active.id != container.visibleTab {
             switchVisible(to: active)
+            // The panel follows the tab now, not at its next tick.
+            if !filesPanel.isHidden { refreshFiles() }
         } else {
             // Same tab: apply what changed around it.
             let host = container.host(for: active)
@@ -387,6 +423,68 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         statusBar.apply(status)
         let height = status == nil ? 0 : ClaudeStatusBar.height
         if statusBarHeight.constant != height { statusBarHeight.constant = height }
+        layOutFiles()
+    }
+
+    // MARK: - the files panel
+
+    private func toggleFiles() {
+        filesOpen.toggle()
+        layOutFiles()
+    }
+
+    /// Open beside a Claude Code conversation, and only there: a tab without one keeps the terminal whole.
+    private func layOutFiles() {
+        let shown = filesOpen && statusBar.status?.program == "claude"
+        statusBar.showFiles(open: filesOpen)
+        // The sidebar's width at its narrowest: generated above, sent below, one column.
+        let width: CGFloat = shown ? 260 : 0
+        if filesWidth.constant != width { filesWidth.constant = width }
+        filesPanel.isHidden = !shown
+        if shown, filesTimer == nil {
+            filesModel.note = "Lendo a conversa…"
+            refreshFiles()
+            let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshFiles() }
+            }
+            RunLoop.current.add(timer, forMode: .common)
+            filesTimer = timer
+        } else if !shown {
+            filesTimer?.invalidate()
+            filesTimer = nil
+        }
+    }
+
+    /// The tab on view's files, read again: only what its transcript gained since the last read.
+    private func refreshFiles() {
+        guard let id = container.visibleTab,
+            let data = session.claudeStatusFile(workspace: id.workspace, tab: id.root),
+            let source = ChatFilesReader.source(statusFile: data)
+        else {
+            // A read of the tab before, still under way, is not to land here.
+            filesReader = nil
+            filesModel.note = "Esta aba não tem conversa do Claude Code"
+            return
+        }
+        let reader: ChatFilesReader
+        if let current = filesReader, current.transcript == source.transcript {
+            reader = current
+        } else {
+            reader = ChatFilesReader(
+                transcript: source.transcript, session: source.session, imageFolder: ChatFilesReader.cacheFolder)
+            filesReader = reader
+            filesModel.note = "Lendo a conversa…"
+        }
+        filesQueue.async {
+            let files = reader.read()
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.filesReader === reader else { return }
+                    self.filesModel.note = nil
+                    if self.filesModel.files != files { self.filesModel.files = files }
+                }
+            }
+        }
     }
 
     /// The effort picked in the bar: `/effort` in Claude Code, Codex's
