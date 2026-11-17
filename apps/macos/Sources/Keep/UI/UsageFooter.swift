@@ -1092,6 +1092,9 @@ private struct BlueSwitch: ToggleStyle {
         }
         .contentShape(Rectangle())
         .onTapGesture { configuration.isOn.toggle() }
+        // Tab and Space, as AppKit's switch had (with keyboard navigation on).
+        .focusable(interactions: .activate)
+        .onKeyPress(.space) { configuration.isOn.toggle(); return .handled }
     }
 }
 
