@@ -24,9 +24,24 @@ import SwiftUI
 /// titled in the colour Claude Code prints that mode in, and a tab where it
 /// waits on you wears a badge in its orange. Nothing else in here is
 /// coloured.
+/// Whether the window this sidebar is in is the one in use (the key window).
+/// Carried down as an environment value because the colours of the states
+/// read it from rows far below the root.
+private struct SidebarInUseKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    fileprivate var sidebarInUse: Bool {
+        get { self[SidebarInUseKey.self] }
+        set { self[SidebarInUseKey.self] = newValue }
+    }
+}
+
 struct WorkspaceSidebar: View {
     @ObservedObject var model: SidebarRows
     let dispatch: (Intent) -> Void
+    @Environment(\.colorScheme) private var scheme
     @State private var newName = ""
     @State private var hovered: String?
     /// The zoom's share, which the names here are written at (see
@@ -169,6 +184,7 @@ struct WorkspaceSidebar: View {
         .onReceive(NotificationCenter.default.publisher(for: GhosttyApp.textSizeDidChange)) { _ in
             titleZoom = GhosttyApp.shared.zoomLevel
         }
+        .environment(\.sidebarInUse, model.inUse)
     }
 
     private var list: some View {
@@ -852,6 +868,11 @@ struct WorkspaceSidebar: View {
     private func titleInk(for tab: SessionSnapshot.SidebarTab, chosen: Bool, hovered: Bool)
         -> Color
     {
+        if !model.inUse && scheme == .dark {
+            if let tone = tab.claudeActivity.flatMap { Palette.Resting.tone(of: $0) } { return tone }
+            if tab.claudeActivity == nil || tab.claudeActivity == .working,
+               let mode = tab.claudeMode { return Palette.Resting.tone(of: mode) }
+        }
         if let activity = tab.claudeActivity?.dynamicColor { return Color(nsColor: activity) }
         if let mode = tab.claudeMode { return Color(nsColor: mode.dynamicColor) }
         // A turn running in the manual mode, which has no colour: at least
@@ -1361,28 +1382,35 @@ private struct CleanupDropDelegate: DropDelegate {
 private struct BusyMark: View {
     let program: String
     let font: Font
+    @Environment(\.sidebarInUse) private var inUse
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
+        let resting = !inUse && scheme == .dark
         Text(program == "codex" ? "◆" : "✳")
             .font(font)
             .foregroundStyle(
-                program == "codex" ? Palette.codexMark
-                    : program == "claude" ? Palette.claudeMark : Palette.busy)
+                program == "codex" ? (resting ? Palette.Resting.blue : Palette.codexMark)
+                    : program == "claude" ? (resting ? Palette.Resting.orange : Palette.claudeMark)
+                    : (resting ? Palette.Resting.yellow : Palette.busy))
     }
 }
 
 private struct StateDot: View {
     let state: SessionSnapshot.SidebarRow.Dot
+    @Environment(\.sidebarInUse) private var inUse
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
+        let resting = !inUse && scheme == .dark
         Group {
             switch state {
             case .attached:
-                Circle().fill(Palette.attached)
+                Circle().fill(resting ? Palette.Resting.green : Palette.attached)
             case .busy:
-                Circle().fill(Palette.busy)
+                Circle().fill(resting ? Palette.Resting.yellow : Palette.busy)
             case .idle:
-                Circle().strokeBorder(Palette.idle, lineWidth: 1.5)
+                Circle().strokeBorder(resting ? Palette.Resting.blue : Palette.idle, lineWidth: 1.5)
             case .empty:
                 Circle().strokeBorder(Palette.inkFaint, lineWidth: 1.5)
             }
@@ -1461,6 +1489,39 @@ private enum Palette {
     /// What is printed on the badge of a tab waiting on you.
     static let attentionInk = Color(nsColor: Attention.ink)
 
+    /// The five hues the sidebar wears while its window is not the one in use
+    /// (pedido de 17/11/2026, measured on the Finder's sidebar over #2d2d2d):
+    /// the same muted tones whatever the state, so the list rests with the
+    /// ground instead of shouting from it. Only on a dark ground; a light one
+    /// keeps its own.
+    enum Resting {
+        static let red = rgb(0xa1, 0x49, 0x44)
+        static let orange = rgb(0xa1, 0x76, 0x2c)
+        static let yellow = rgb(0xa1, 0x92, 0x2c)
+        static let green = rgb(0x40, 0x92, 0x4c)
+        static let blue = rgb(0x2c, 0x69, 0xa1)
+
+        private static func rgb(_ r: Double, _ g: Double, _ b: Double) -> Color {
+            Color(.sRGB, red: r / 255, green: g / 255, blue: b / 255, opacity: 1)
+        }
+
+        /// Claude Code's mode, in the nearest of the five: the footer's teal
+        /// is green here, its violet blue, its red and its yellow themselves.
+        static func tone(of mode: ClaudeMode) -> Color {
+            switch mode {
+            case .plan: return green
+            case .acceptEdits: return blue
+            case .bypass: return red
+            case .auto: return yellow
+            }
+        }
+
+        /// The turn's, where it has a hue: waiting on a workflow is the blue.
+        static func tone(of activity: ClaudeActivity) -> Color? {
+            activity == .waitingForWorkflow ? blue : nil
+        }
+    }
+
     /// The wash behind the current workspace, in a hue that is that
     /// workspace's own.
     ///
@@ -1506,10 +1567,14 @@ private enum Palette {
 private struct AttentionCapsule: View {
     let until: Date?
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.sidebarInUse) private var inUse
 
     var body: some View {
         let dark = scheme == .dark
-        if let until, until > Date() {
+        if dark && !inUse {
+            // At rest the badge keeps still, in the list's own orange.
+            Capsule(style: .continuous).fill(Palette.Resting.orange)
+        } else if let until, until > Date() {
             TimelineView(Breaths(until: until)) { context in
                 Capsule(style: .continuous).fill(Color(nsColor: Attention.colour(
                     dark: dark,

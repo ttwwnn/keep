@@ -30,6 +30,9 @@ final class SidebarRows: ObservableObject {
     /// Moves when the footer's account list does: the tabs' "(IA·n)" is read
     /// from it, so the list is drawn again.
     @Published var accountListRevision = 0
+    /// Whether the window is the one in use (key). Out of use, the states are
+    /// drawn in the resting tones (see `Palette.Resting`).
+    @Published var inUse = true
 }
 
 /// The flat, full-height sidebar host.
@@ -107,6 +110,21 @@ final class SidebarHost: NSViewController {
         }
         observers.append(NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main, using: again))
+        let keyChanged: (Notification) -> Void = { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, let window = self.view.window,
+                      (note.object as? NSWindow) === window else { return }
+                self.syncInUse()
+            }
+        }
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+            observers.append(center.addObserver(forName: name, object: nil, queue: .main, using: keyChanged))
+        }
+    }
+
+    private func syncInUse() {
+        let now = view.window?.isKeyWindow ?? true
+        if model.inUse != now { model.inUse = now }
     }
 
     /// The row the battery stands in, in full screen: the tab row's height.
@@ -145,6 +163,7 @@ final class SidebarHost: NSViewController {
     override func viewDidLayout() {
         super.viewDidLayout()
         guard let window = view.window else { return }
+        syncInUse()
         // The titlebar's height, asked of the window: its frame less the part
         // it says is content. Plus a little, so the first row is under the
         // traffic lights rather than against them.
