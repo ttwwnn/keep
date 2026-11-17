@@ -92,7 +92,8 @@ final class ChatFilesReader: @unchecked Sendable {
         }
         if let changed, let cached = downloadsCache, cached.changed == changed { return cached.items }
         let items = Self.downloads(in: downloadsFolder)
-        if let changed { downloadsCache = (changed, items) }
+        // A refusal is not kept: access given in System Settings does not move the folder's date.
+        if let changed, items != nil { downloadsCache = (changed, items) }
         return items
     }
 
