@@ -141,6 +141,8 @@ export class TermView {
       allowTransparency: look.translucent === true,
       scrollback: look.scrollback,
       allowProposedApi: true,
+      // The letter #fafafa does not read on the person's messages (lime green): xterm darkens it there.
+      minimumContrastRatio: 4.5,
       cursorBlink: look.blink,
       cursorStyle: look.cursor,
       // Hollow while the terminal does not have the keyboard, as Ghostty draws it.

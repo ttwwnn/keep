@@ -1042,12 +1042,16 @@ final class TerminalSurfaceView: NSView {
             return
         }
         if !committed.isEmpty {
+            _ = eraseSelectionBeforeTyping()
             for text in committed {
                 send(event, action: GHOSTTY_ACTION_PRESS, text: text)
             }
             return
         }
         if Self.isComposingControl(event.characters, composing: composing) { return }
+        // Backspace or forward delete over a selection in the prompt deletes it.
+        if [51, 117].contains(event.keyCode), event.modifierFlags.isDisjoint(with: [.shift, .control, .option, .command]),
+           eraseSelectionBeforeTyping() { return }
         // Nothing committed: an ordinary key (return, the arrows, backspace),
         // or the dead key itself, which libghostty is told is composing so
         // that it encodes nothing for it.
@@ -2046,7 +2050,19 @@ final class TerminalSurfaceView: NSView {
         } else {
             return
         }
-        guard let (row, column) = cursorCell() else { return }
+        guard let keys = keysDeleting(selected: selected) else {
+            Trace.log("cut", "copied only: \(selected.count) chars")
+            return
+        }
+        Trace.log("cut", "cut \(selected.count) chars")
+        perform(CutSelection.action(for: keys))
+        perform("clear_selection")
+    }
+
+    /// The keys that take `selected` out of the line or prompt box the cursor
+    /// is in, or nil where that cannot be told (see `CutSelection`).
+    private func keysDeleting(selected: String) -> String? {
+        guard let (row, column) = cursorCell() else { return nil }
         let lines = visibleText().lines
         let keys: String?
         if let (box, first) = CutSelection.promptBoxRows(lines, cursorRow: row) {
@@ -2064,13 +2080,33 @@ final class TerminalSurfaceView: NSView {
         } else {
             keys = nil
         }
-        guard let keys else {
-            Trace.log("cut", "copied only: \(selected.count) chars, cursor row \(row)")
-            return
+        return keys
+    }
+
+    /// Typing or deleting over a selection in the prompt replaces it, as in any
+    /// text box: the selected text is taken out first, with keys. True when it
+    /// was (a delete key then has nothing left to do). A selection that is not
+    /// in the prompt is left alone.
+    private func eraseSelectionBeforeTyping() -> Bool {
+        guard let surface else { return false }
+        let selected: String
+        if ghostty_surface_has_selection(surface) {
+            var text = ghostty_text_s()
+            guard ghostty_surface_read_selection(surface, &text), let raw = text.text else { return false }
+            selected = String(cString: raw)
+            ghostty_surface_free_text(surface, &text)
+        } else if let copied = selectionTheProgramCopied() {
+            // Claude Code's own mouse selection (full screen); spent below, so the next key does not erase it again.
+            selected = copied
+        } else {
+            return false
         }
-        Trace.log("cut", "cut \(selected.count) chars, cursor row \(row) column \(column)")
+        guard let keys = keysDeleting(selected: selected) else { return false }
+        pasteboardAtPress = nil
+        Trace.log("type-over", "erased \(selected.count) chars before typing")
         perform(CutSelection.action(for: keys))
         perform("clear_selection")
+        return true
     }
 
     /// The clipboard's count, and when, as the pointer last went down here.

@@ -6,7 +6,8 @@ import IOKit.ps
 /// from 20% down, red from 10%.
 ///
 /// It stands in the sidebar's top row whenever the menu bar, which carries
-/// the system's own, is out of sight (`SidebarHost`). A Mac without a battery
+/// the system's own, is out of sight (`SidebarHost`), and in the tab row while
+/// the sidebar is shut (`TabStripView`). A Mac without a battery
 /// has nothing to show, and `isPresent` says so.
 @MainActor
 final class BatteryIndicator: NSView {
@@ -98,6 +99,16 @@ final class BatteryIndicator: NSView {
         timer?.invalidate()
         if let groundObserver { NotificationCenter.default.removeObserver(groundObserver) }
         if let zoomObserver { NotificationCenter.default.removeObserver(zoomObserver) }
+    }
+
+    /// Whether the bar at the top of the screen, which carries the system's
+    /// battery, is out of sight: full screen hides it, and so does the
+    /// system's own setting to hide it (the screen then has no strip the
+    /// windows must leave free).
+    static func menuBarHidden(for window: NSWindow) -> Bool {
+        if window.styleMask.contains(.fullScreen) || !NSMenu.menuBarVisible() { return true }
+        guard let screen = window.screen ?? NSScreen.main else { return false }
+        return screen.visibleFrame.maxY >= screen.frame.maxY - 1
     }
 
     /// nil on a Mac with no battery.
