@@ -7,8 +7,29 @@ import Foundation
 /// created since it began. What it made only on the way (the HTML a PDF was
 /// printed from, a script, a scratch file) and never showed is left out. Newest first.
 struct ChatFiles: Equatable {
-    var sent: [URL] = []
-    var made: [URL] = []
+    var sent: [ChatFileItem] = []
+    var made: [ChatFileItem] = []
+}
+
+/// A file as its row shows it: the name without its extension, the extension as its type, when it last
+/// changed, how big it is.
+struct ChatFileItem: Identifiable, Equatable {
+    let url: URL
+    var id: URL { url }
+    let name: String
+    let type: String
+    let modified: Date
+    let size: Int64
+
+    /// Reads the disk: built off the main thread, with the lists.
+    init(_ url: URL) {
+        self.url = url
+        let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        name = (url.lastPathComponent as NSString).deletingPathExtension
+        type = url.pathExtension.lowercased()
+        modified = values?.contentModificationDate ?? .distantPast
+        size = Int64(values?.fileSize ?? 0)
+    }
 }
 
 /// Reads one conversation's transcript as it grows: each read takes only the
@@ -67,10 +88,15 @@ final class ChatFilesReader: @unchecked Sendable {
         let sentNow = unique(sent + uploaded).filter(isFile)
         let sentSet = Set(sentNow)
         let begun = start ?? .distantPast
+        // A bare name in an answer stands for a file only when one file it made goes by that name:
+        // `index.html` named once does not bring in every other index.html on the way.
+        var sameName: [String: Int] = [:]
+        for entry in made { sameName[(entry.path as NSString).lastPathComponent, default: 0] += 1 }
         let madeNow = made.filter { entry in
             guard isFile(entry.path) else { return false }
             if entry.handed { return true }
-            guard answered.contains(entry.path) || answeredNames.contains((entry.path as NSString).lastPathComponent)
+            let name = (entry.path as NSString).lastPathComponent
+            guard answered.contains(entry.path) || (answeredNames.contains(name) && sameName[name] == 1)
             else { return false }
             if entry.own { return true }
             // Created since it began: a file it only changed (a config, a test) is not one it made.
@@ -80,8 +106,8 @@ final class ChatFilesReader: @unchecked Sendable {
             return date >= begun
         }.map(\.path).filter { !sentSet.contains($0) && $0 != transcript }
         return ChatFiles(
-            sent: sentNow.reversed().map { URL(fileURLWithPath: $0) },
-            made: madeNow.reversed().map { URL(fileURLWithPath: $0) })
+            sent: sentNow.reversed().map { ChatFileItem(URL(fileURLWithPath: $0)) },
+            made: madeNow.reversed().map { ChatFileItem(URL(fileURLWithPath: $0)) })
     }
 
     // MARK: - the transcript

@@ -11,26 +11,6 @@ final class ChatFilesModel: ObservableObject {
     @Published var inUse = true
 }
 
-/// A file as its row shows it: the name without its extension, the extension as its type, when it last
-/// changed, how big it is.
-struct ChatFileItem: Identifiable {
-    let url: URL
-    var id: URL { url }
-    let name: String
-    let type: String
-    let modified: Date
-    let size: Int64
-
-    init(_ url: URL) {
-        self.url = url
-        let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
-        name = (url.lastPathComponent as NSString).deletingPathExtension
-        type = url.pathExtension.lowercased()
-        modified = values?.contentModificationDate ?? .distantPast
-        size = Int64(values?.fileSize ?? 0)
-    }
-}
-
 /// The panel at the right of a Claude Code conversation, on the sidebar's ground
 /// and in its inks: the files the conversation made above, the ones the person
 /// sent below, each a list of name, type, modified and size, sorted by a click
@@ -64,8 +44,8 @@ struct ChatFilesPanel: View {
         .accessibilityIdentifier("chat-files-panel")
     }
 
-    private func section(_ title: String, _ files: [URL], empty: String) -> some View {
-        let items = files.map(ChatFileItem.init).sorted(using: order)
+    private func section(_ title: String, _ files: [ChatFileItem], empty: String) -> some View {
+        let items = files.sorted(using: order)
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text(title).font(.system(size: 12 * textZoom, weight: .semibold)).foregroundStyle(UsageInk.ink)

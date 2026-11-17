@@ -63,9 +63,9 @@ let images = root + "/imagens"
 let reader = ChatFilesReader(transcript: transcript, session: "sessao", imageFolder: images)
 var files = reader.read()
 let image = images + "/sessao/Imagem 3.png"
-check("sent: the picture, then what was typed and dropped, newest first", files.sent.map(\.path), [image, typedPath, dropped])
+check("sent: the picture, then what was typed and dropped, newest first", files.sent.map(\.url.path), [image, typedPath, dropped])
 check("made: handed over, and what an answer names, newest first; not the steps on the way",
-      files.made.map(\.path), [madeByBash, handed, written])
+      files.made.map(\.url.path), [madeByBash, handed, written])
 check("the picture is written out, for its owner alone",
       [String(format: "%o", (try? fm.attributesOfItem(atPath: image))?[.posixPermissions] as? Int ?? 0)], ["600"])
 
@@ -78,15 +78,15 @@ let handle = FileHandle(forWritingAtPath: transcript)!
 handle.seekToEndOfFile()
 handle.write(Data(more.utf8))  // no newline yet: still being written
 files = reader.read()
-check("a line still being written waits", files.made.map(\.path), [madeByBash, handed, written])
+check("a line still being written waits", files.made.map(\.url.path), [madeByBash, handed, written])
 handle.write(Data("\n".utf8))
 try! handle.close()
 files = reader.read()
-check("and is read once whole", files.made.map(\.path), [later, madeByBash, handed, written])
+check("and is read once whole", files.made.map(\.url.path), [later, madeByBash, handed, written])
 
 // A file gone from disk leaves the list.
 try! fm.removeItem(atPath: written)
-check("a file deleted is no longer listed", reader.read().made.map(\.path), [later, madeByBash, handed])
+check("a file deleted is no longer listed", reader.read().made.map(\.url.path), [later, madeByBash, handed])
 
 // Two pictures in one message, without paste ids: two files, not one twice.
 let two = root + "/dois.jsonl"
@@ -96,8 +96,19 @@ try! (line(["type": "user", "timestamp": start, "uuid": "abcdef0123",
                 ["type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": png]]]]]) + "\n")
     .write(toFile: two, atomically: true, encoding: .utf8)
 check("two pictures without ids, each its own file",
-      ChatFilesReader(transcript: two, session: "dois", imageFolder: images).read().sent.map(\.lastPathComponent),
+      ChatFilesReader(transcript: two, session: "dois", imageFolder: images).read().sent.map(\.url.lastPathComponent),
       ["Imagem abcdef01-1.jpg", "Imagem abcdef01-0.jpg"])
+
+// A bare name in an answer, two files by that name: neither is taken on the name alone.
+try! fm.createDirectory(atPath: root + "/a", withIntermediateDirectories: true)
+try! fm.createDirectory(atPath: root + "/b", withIntermediateDirectories: true)
+let twins = [file("a/index.html"), file("b/index.html")]
+let twinsLog = root + "/twins.jsonl"
+try! (line(["type": "assistant", "timestamp": start, "message": ["role": "assistant", "content":
+    twins.map { ["type": "tool_use", "name": "Write", "input": ["file_path": $0, "content": "x"]] }
+        + [["type": "text", "text": "Veja o index.html."]]]]) + "\n").write(toFile: twinsLog, atomically: true, encoding: .utf8)
+check("a bare name two files share names neither",
+      ChatFilesReader(transcript: twinsLog, session: "gemeos", imageFolder: images).read().made.map(\.url.path), [])
 
 check("paths in text", ChatFilesReader.paths(in: "veja file:///tmp/a.txt, ~/b.md:12 e \"/x/c d.pdf\"."),
       ["/tmp/a.txt", NSHomeDirectory() + "/b.md", "/x/c d.pdf"])
