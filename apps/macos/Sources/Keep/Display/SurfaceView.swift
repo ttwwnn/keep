@@ -963,6 +963,13 @@ final class TerminalSurfaceView: NSView {
     /// as alt-b.
     override func keyDown(with event: NSEvent) {
         guard surface != nil else { return }
+        let shiftSideArrow = [123, 124].contains(event.keyCode)
+            && event.modifierFlags.intersection([.shift, .control, .option, .command]) == .shift
+        // Any other key lets the mark go: typed over, deleted, or an arrow without Shift, as in a text box.
+        if !shiftSideArrow, arrowMarking {
+            arrowMarking = false
+            if (123...126).contains(event.keyCode) { _ = perform("clear_selection") }
+        }
         if Self.isZoomChord(event) {
             Trace.log("key", "zoom chord kept from the terminal")
             return
@@ -1049,6 +1056,8 @@ final class TerminalSurfaceView: NSView {
             return
         }
         if Self.isComposingControl(event.characters, composing: composing) { return }
+        // Shift with a side arrow marks text in Claude Code's prompt box, as in any text box.
+        if shiftSideArrow, markByArrow(left: event.keyCode == 123) { return }
         // Backspace or forward delete over a selection in the prompt deletes it.
         if [51, 117].contains(event.keyCode), event.modifierFlags.isDisjoint(with: [.shift, .control, .option, .command]),
            eraseSelectionBeforeTyping() { return }
@@ -1429,6 +1438,7 @@ final class TerminalSurfaceView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        arrowMarking = false
         noteActivity()
         let now = CACurrentMediaTime()
         pressed = (
@@ -2108,6 +2118,117 @@ final class TerminalSurfaceView: NSView {
         perform(CutSelection.action(for: keys))
         perform("clear_selection")
         return true
+    }
+
+    /// The mark Shift and the side arrows are making in Claude Code's prompt
+    /// box: where it began and where the cursor is, as rows and columns of the
+    /// box's text. Nil once another key or a click lets it go.
+    private var arrowMark: (anchor: (row: Int, column: Int), focus: (row: Int, column: Int))?
+    private var arrowMarking: Bool {
+        get { arrowMark != nil }
+        set { if !newValue { arrowMark = nil } }
+    }
+    /// Only the latest arrow's drawing runs: two presses at one spot would be a double click.
+    private var arrowMarkDrawing = 0
+
+    /// Shift with a side arrow in Claude Code's prompt box marks text from the
+    /// cursor, as in any text box. Claude Code only moves its cursor for it, so
+    /// the arrow goes to it plain, and once its cursor has moved the terminal's
+    /// selection is drawn from where the mark began to there. Drawn whole each
+    /// time: the program writes its line again at every arrow, and the
+    /// terminal lets a selection go when the text under it is written over.
+    /// Typing, deleting, ⌘C and ⌘X act on it as on a selection made with the
+    /// mouse. False outside the box: the key goes to the program as it is.
+    private func markByArrow(left: Bool) -> Bool {
+        guard surface != nil, let cursor = cursorCell(),
+            let (box, first) = CutSelection.promptBoxRows(visibleText().lines, cursorRow: cursor.row)
+        else { return false }
+        let lengths = box.map(\.count)
+        let row = cursor.row - first
+        let here = (row: row, column: min(max(cursor.column - 2, 0), lengths[row]))
+        var mark = arrowMark ?? (here, here)
+        // The box was drawn again with fewer rows than the mark spans: start over from the cursor.
+        if !lengths.indices.contains(mark.anchor.row) || !lengths.indices.contains(mark.focus.row) { mark = (here, here) }
+        let next = CutSelection.step(from: mark.focus, left: left, rowLengths: lengths)
+        // At the box's first or last character there is nowhere to go.
+        guard next != mark.focus else { return true }
+        mark.focus = next
+        arrowMark = mark
+        perform(CutSelection.action(for: left ? CutSelection.left : CutSelection.right))
+        arrowMarkDrawing += 1
+        drawArrowMark(turn: arrowMarkDrawing, tries: 30)
+        return true
+    }
+
+    /// The mark drawn once the program's cursor is where the mark ends (or
+    /// after a third of a second, at a soft wrap where the two may differ).
+    private func drawArrowMark(turn: Int, tries: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { [weak self] in
+            guard let self, turn == self.arrowMarkDrawing, let mark = self.arrowMark,
+                let cursor = self.cursorCell(),
+                let (box, first) = CutSelection.promptBoxRows(self.visibleText().lines, cursorRow: cursor.row)
+            else { return }
+            let at = (row: cursor.row - first, column: cursor.column - 2)
+            if at != mark.focus, tries > 0 {
+                self.drawArrowMark(turn: turn, tries: tries - 1)
+                return
+            }
+            self.perform("clear_selection")
+            let anchor = (mark.anchor.row, mark.anchor.column), focus = (mark.focus.row, mark.focus.column)
+            guard anchor != focus else { return }
+            let (low, high) = anchor < focus ? (anchor, focus) : (focus, anchor)
+            // `high` is where the mark stops, not a character in it: the last one is just before.
+            let lengths = box.map(\.count)
+            guard lengths.indices.contains(low.0), lengths.indices.contains(high.0), high.1 > 0 || high.0 > 0 else {
+                self.arrowMark = nil
+                return
+            }
+            let last = high.1 > 0 ? (high.0, high.1 - 1) : (high.0 - 1, max(0, lengths[high.0 - 1] - 1))
+            let start = (row: first + low.0, column: low.1 + 2, edge: 0.25)
+            let end = (row: first + last.0, column: last.1 + 2, edge: 0.75)
+            // Pressed where the mark moves, so arrows in a row never press twice at one spot.
+            if focus == high { self.drag(from: end, to: start) } else { self.drag(from: start, to: end) }
+        }
+    }
+
+    /// A press at one cell and a drag to another: the terminal's own
+    /// selection, which never reaches the program. `edge` is
+    /// how far across the cell (a quarter in takes the cell from its start,
+    /// three quarters to its end). The pointer is then told where it really is.
+    /// Where the cells are is read off the cursor's own cell.
+    private func drag(
+        from a: (row: Int, column: Int, edge: Double), to b: (row: Int, column: Int, edge: Double)
+    ) {
+        guard let surface, let cursor = cursorCell() else { return }
+        var x = 0.0, y = 0.0, width = 0.0, height = 0.0
+        ghostty_surface_ime_point(surface, &x, &y, &width, &height)
+        let size = ghostty_surface_size(surface)
+        let scale = Double(window?.backingScaleFactor ?? 2.0)
+        let cellWidth = Double(size.cell_width_px) / scale
+        let cellHeight = Double(size.cell_height_px) / scale
+        func point(_ c: (row: Int, column: Int, edge: Double)) -> (x: Double, y: Double) {
+            // The runtime's point is the middle of the cursor's cell, along the bottom of it.
+            (x - cellWidth / 2 - Double(cursor.column - c.column) * cellWidth + c.edge * cellWidth,
+             y - Double(cursor.row + 1 - c.row) * cellHeight + cellHeight / 2)
+        }
+        // Shift only where the program has the mouse (it keeps the press from reaching it): with Shift
+        // the terminal stretches the last selection from where it began instead of starting one here.
+        let shift = ghostty_input_mods_e(ghostty_surface_mouse_captured(surface) ? GHOSTTY_MODS_SHIFT.rawValue : 0)
+        let p = point(a), q = point(b)
+        // A click in the corner first: the terminal takes presses within a cell's width of the last one
+        // for a double or triple click (word, then line), and each arrow presses one cell over.
+        ghostty_surface_mouse_pos(surface, 1, 1, shift)
+        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, shift)
+        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, shift)
+        // A press with Shift stretches a selection already there: the corner's goes first.
+        _ = perform("clear_selection")
+        ghostty_surface_mouse_pos(surface, p.x, p.y, shift)
+        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, shift)
+        ghostty_surface_mouse_pos(surface, q.x, q.y, shift)
+        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, shift)
+        let pointer = convert(window?.mouseLocationOutsideOfEventStream ?? .zero, from: nil)
+        ghostty_surface_mouse_pos(surface, pointer.x, bounds.height - pointer.y, mouseMods(from: NSEvent.modifierFlags))
+        Trace.log("mark", "arrow mark \(a.row):\(a.column) → \(b.row):\(b.column)")
     }
 
     /// The clipboard's count, and when, as the pointer last went down here.

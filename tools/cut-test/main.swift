@@ -72,4 +72,15 @@ check("the real cases were read", String(tried), "8")
 let twice = ["─────────────────────", "❯\u{a0}alfa beta alfa beta", "─────────────────────"]
 check("words found twice in the box: not cut", CutSelection.keysAcrossRows(
     selected: "alfa", box: CutSelection.promptBox(twice, cursorRow: 1) ?? [], width: 17, cursorRow: 0, cursorColumn: 20), nil)
+// Shift with an arrow: where the cursor goes, one character at a time.
+func stepped(_ row: Int, _ column: Int, left: Bool) -> String {
+    let next = CutSelection.step(from: (row, column), left: left, rowLengths: [5, 3])
+    return "\(next.row),\(next.column)"
+}
+check("left, inside a row", stepped(0, 3, left: true), "0,2")
+check("right, inside a row", stepped(0, 3, left: false), "0,4")
+check("left from a row's start: the end of the row above", stepped(1, 0, left: true), "0,5")
+check("right from a row's end: the start of the row below", stepped(0, 5, left: false), "1,0")
+check("left at the box's first character stays", stepped(0, 0, left: true), "0,0")
+check("right at the box's last character stays", stepped(1, 3, left: false), "1,3")
 exit(failures == 0 ? 0 : 1)
