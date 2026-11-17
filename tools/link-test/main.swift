@@ -219,6 +219,10 @@ check("a bare name in the folder the heading names", recovered("Contrato-2026-11
 check("opened by a click", opened { LinkOpener.open("Contrato-2026-11-17.pdf", from: "/nowhere", screen: listed, near: 1) }, real + "/baixados/Contrato-2026-11-17.pdf")
 check("a name not in that folder", recovered("Outro-2026-11-17.pdf", listed, 2, "/nowhere"), nil)
 check("a bare name with no folder on the screen", recovered("Contrato-2026-11-17.pdf", Array(listed.dropFirst()), 0, "/nowhere"), nil)
+check(
+    "a folder named far from the click does not count",
+    recovered("Contrato-2026-11-17.pdf", [listed[0]] + Array(repeating: "", count: 25) + [listed[1]], 26, "/nowhere"), nil)
+check("the nearest folder first", LinkOpener.foldersNamed(in: ["em /a", "x", "em ~/b e /a"], near: 1).joined(separator: ","), "/a," + NSHomeDirectory() + "/b")
 check("the tab's folder still wins", recovered("a.txt", ["em " + root + "/baixados", "a.txt"], 1, root), root + "/a.txt")
 _ = real
 exit(failures == 0 ? 0 : 1)
