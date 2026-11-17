@@ -82,6 +82,17 @@ check("and is read once whole", files.made.map(\.path), [later, handed, madeByBa
 try! fm.removeItem(atPath: written)
 check("a file deleted is no longer listed", reader.read().made.map(\.path), [later, handed, madeByBash])
 
+// Two pictures in one message, without paste ids: two files, not one twice.
+let two = root + "/dois.jsonl"
+try! (line(["type": "user", "timestamp": start, "uuid": "abcdef0123",
+            "message": ["role": "user", "content": [
+                ["type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": png]],
+                ["type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": png]]]]]) + "\n")
+    .write(toFile: two, atomically: true, encoding: .utf8)
+check("two pictures without ids, each its own file",
+      ChatFilesReader(transcript: two, session: "dois", imageFolder: images).read().sent.map(\.lastPathComponent),
+      ["Imagem abcdef01-1.jpg", "Imagem abcdef01-0.jpg"])
+
 check("paths in text", ChatFilesReader.paths(in: "veja file:///tmp/a.txt, ~/b.md:12 e \"/x/c d.pdf\"."),
       ["/tmp/a.txt", NSHomeDirectory() + "/b.md", "/x/c d.pdf"])
 exit(failures == 0 ? 0 : 1)

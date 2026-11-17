@@ -24,6 +24,9 @@ final class ChatFilesReader: @unchecked Sendable {
     /// In the order the conversation came to them. Written or handed over (`own`): its files, whatever their
     /// date. Named in a command or an answer: its only if created after it began.
     private var made: [(path: String, own: Bool)] = []
+    /// Each path once, so a read checks the disk once per file however often it was named.
+    private var madeIndex: [String: Int] = [:]
+    private var sentSeen = Set<String>()
 
     init(transcript: String, session: String, imageFolder: String) {
         self.transcript = transcript
@@ -57,16 +60,17 @@ final class ChatFilesReader: @unchecked Sendable {
         let uploads = (NSHomeDirectory() as NSString).appendingPathComponent(".claude/uploads/\(session)")
         let uploaded = ((try? fm.contentsOfDirectory(atPath: uploads)) ?? []).map { (uploads as NSString).appendingPathComponent($0) }
         let sentNow = unique(sent + uploaded).filter(isFile)
+        let sentSet = Set(sentNow)
         let begun = start ?? .distantPast
         // Created since it began: a file it only changed (a config, a test) is not one it made.
-        let madeNow = unique(made.filter { entry in
+        let madeNow = made.filter { entry in
             guard isFile(entry.path) else { return false }
             if entry.own { return true }
             guard !Self.ignored(entry.path),
                 let date = (try? fm.attributesOfItem(atPath: entry.path))?[.creationDate] as? Date
             else { return false }
             return date >= begun
-        }.map(\.path)).filter { !sentNow.contains($0) && $0 != transcript }
+        }.map(\.path).filter { !sentSet.contains($0) && $0 != transcript }
         return ChatFiles(
             sent: sentNow.reversed().map { URL(fileURLWithPath: $0) },
             made: madeNow.reversed().map { URL(fileURLWithPath: $0) })
@@ -84,6 +88,8 @@ final class ChatFilesReader: @unchecked Sendable {
             start = nil
             sent = []
             made = []
+            madeIndex = [:]
+            sentSeen = []
         }
         guard size > offset else { return }
         try? handle.seek(toOffset: offset)
@@ -126,14 +132,13 @@ final class ChatFilesReader: @unchecked Sendable {
         }
         guard let blocks = message["content"] as? [[String: Any]] else { return }
         var ids = (json["imagePasteIds"] as? [Int]) ?? []
-        for block in blocks {
+        for (index, block) in blocks.enumerated() {
             switch block["type"] as? String {
             case "text": takeTyped(block["text"] as? String ?? "")
             case "image":
                 let id = ids.isEmpty ? nil : ids.removeFirst()
-                if let path = writeImage(block, id: id, uuid: json["uuid"] as? String ?? UUID().uuidString) {
-                    sent.append(path)
-                }
+                let uuid = json["uuid"] as? String ?? UUID().uuidString
+                if let path = writeImage(block, id: id, fallback: "\(uuid.prefix(8))-\(index)") { addSent(path) }
             default: break
             }
         }
@@ -143,21 +148,21 @@ final class ChatFilesReader: @unchecked Sendable {
     /// notice, a command's output: those open with a tag).
     private func takeTyped(_ text: String) {
         guard !text.trimmingCharacters(in: .whitespaces).hasPrefix("<") else { return }
-        sent += Self.paths(in: text)
+        Self.paths(in: text).forEach(addSent)
     }
 
     private func takeAssistant(_ message: [String: Any]) {
         guard let blocks = message["content"] as? [[String: Any]] else { return }
         for block in blocks {
             switch block["type"] as? String {
-            case "text": made += Self.paths(in: block["text"] as? String ?? "").map { ($0, false) }
+            case "text": Self.paths(in: block["text"] as? String ?? "").forEach { addMade($0, own: false) }
             case "tool_use":
                 let input = block["input"] as? [String: Any] ?? [:]
                 switch block["name"] as? String {
-                case "Write": if let path = input["file_path"] as? String { made.append((path, true)) }
-                case "NotebookEdit": if let path = input["notebook_path"] as? String { made.append((path, true)) }
-                case "SendUserFile": made += ((input["files"] as? [String]) ?? []).map { ($0, true) }
-                case "Bash": made += Self.paths(in: input["command"] as? String ?? "").map { ($0, false) }
+                case "Write": if let path = input["file_path"] as? String { addMade(path, own: true) }
+                case "NotebookEdit": if let path = input["notebook_path"] as? String { addMade(path, own: true) }
+                case "SendUserFile": ((input["files"] as? [String]) ?? []).forEach { addMade($0, own: true) }
+                case "Bash": Self.paths(in: input["command"] as? String ?? "").forEach { addMade($0, own: false) }
                 default: break
                 }
             default: break
@@ -165,13 +170,28 @@ final class ChatFilesReader: @unchecked Sendable {
         }
     }
 
-    private func writeImage(_ block: [String: Any], id: Int?, uuid: String) -> String? {
+    private func addMade(_ path: String, own: Bool) {
+        if let index = madeIndex[path] {
+            if own { made[index].own = true }
+            return
+        }
+        madeIndex[path] = made.count
+        made.append((path, own))
+    }
+
+    private func addSent(_ path: String) {
+        if sentSeen.insert(path).inserted { sent.append(path) }
+    }
+
+    private func writeImage(_ block: [String: Any], id: Int?, fallback: String) -> String? {
         guard let source = block["source"] as? [String: Any], source["type"] as? String == "base64",
             let base64 = source["data"] as? String
         else { return nil }
-        let ext = (source["media_type"] as? String)?.split(separator: "/").last.map(String.init) ?? "png"
+        let type = (source["media_type"] as? String)?.split(separator: "/").last.map(String.init) ?? "png"
+        let ext = type == "jpeg" ? "jpg" : type
         let folder = (imageFolder as NSString).appendingPathComponent(session)
-        let name = id.map { "Imagem \($0).\(ext == "jpeg" ? "jpg" : ext)" } ?? "Imagem \(uuid.prefix(8)).\(ext)"
+        // Each picture its own name: a message without paste ids may hold several.
+        let name = "Imagem \(id.map(String.init) ?? fallback).\(ext)"
         let path = (folder as NSString).appendingPathComponent(name)
         if FileManager.default.fileExists(atPath: path) { return path }
         guard let data = Data(base64Encoded: base64) else { return nil }

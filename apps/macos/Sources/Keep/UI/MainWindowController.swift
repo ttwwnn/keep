@@ -461,6 +461,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             let data = session.claudeStatusFile(workspace: id.workspace, tab: id.root),
             let source = ChatFilesReader.source(statusFile: data)
         else {
+            // A read of the tab before, still under way, is not to land here.
+            filesReader = nil
             filesModel.note = "Esta aba não tem conversa do Claude Code"
             return
         }
