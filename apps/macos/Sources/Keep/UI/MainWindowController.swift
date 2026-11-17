@@ -52,8 +52,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// Reads off the main thread, one read at a time, the reader kept between reads.
     private let filesQueue = DispatchQueue(label: "keep.chat-files")
     private var filesReader: ChatFilesReader?
-    /// Every conversation's reader this window has read, so going back to a tab reads only what it gained.
+    /// The readers of the last conversations this window showed, so going back to a tab reads only what it
+    /// gained. Eight at most, the oldest let go: each holds what its conversation named.
     private var filesReaders: [String: ChatFilesReader] = [:]
+    private var filesReadersOrder: [String] = []
     private let sidebarHost: SidebarHost
     private let picker = PickerView()
     private weak var sidebarItem: NSSplitViewItem?
@@ -512,6 +514,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 transcript: source.transcript, session: source.session, imageFolder: ChatFilesReader.cacheFolder)
             filesReaders[source.transcript] = reader
         }
+        filesReadersOrder.removeAll { $0 == source.transcript }
+        filesReadersOrder.append(source.transcript)
+        while filesReadersOrder.count > 8 { filesReaders[filesReadersOrder.removeFirst()] = nil }
         // Another conversation's lists are not shown while this one's are read: a double click would open its file.
         if filesReader !== reader { filesModel.note = "Lendo a conversa…" }
         filesReader = reader

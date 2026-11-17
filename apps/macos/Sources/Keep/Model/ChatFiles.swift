@@ -67,11 +67,11 @@ final class ChatFilesReader: @unchecked Sendable {
         self.session = session
         self.imageFolder = imageFolder
         self.downloadsFolder = downloadsFolder
-        Self.pruneOnce(imageFolder)
     }
 
     /// Pictures a conversation pasted are not kept for good: a conversation's folder untouched for 30 days
-    /// goes, once a launch. One still read gets its pictures written again from the transcript.
+    /// goes, once a launch. One still read gets its pictures written again from the transcript. Reads run on
+    /// one serial queue, so `pruned` is touched by one thread at a time.
     /// What a folder holds that one would drag: its files and folders, hidden ones and packages' insides left out.
     /// Nil when the folder cannot be read.
     static func downloads(in folder: URL?) -> [ChatFileItem]? {
@@ -127,6 +127,8 @@ final class ChatFilesReader: @unchecked Sendable {
     }
 
     func read() -> ChatFiles {
+        // Here and not at init: a read runs off the main thread, and a big cache takes a while to go through.
+        Self.pruneOnce(imageFolder)
         readNewLines()
         let fm = FileManager.default
         func isFile(_ path: String) -> Bool {
