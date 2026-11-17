@@ -101,14 +101,18 @@ final class ChatFilesReader: @unchecked Sendable {
     nonisolated(unsafe) private static var pruned = Set<String>()
     private static let prunedLock = NSLock()
     static func pruneOnce(_ folder: String, now: Date = Date()) {
-        guard prunedLock.withLock({ pruned.insert(folder).inserted }) else { return }
-        let fm = FileManager.default
-        for name in (try? fm.contentsOfDirectory(atPath: folder)) ?? [] {
-            let path = (folder as NSString).appendingPathComponent(name)
-            guard let date = (try? fm.attributesOfItem(atPath: path))?[.modificationDate] as? Date,
-                now.timeIntervalSince(date) > keptFor
-            else { continue }
-            try? fm.removeItem(atPath: path)
+        // Held through the whole sweep: a window that comes in meanwhile waits, and does not read pictures
+        // the sweep is about to take away.
+        prunedLock.withLock {
+            guard pruned.insert(folder).inserted else { return }
+            let fm = FileManager.default
+            for name in (try? fm.contentsOfDirectory(atPath: folder)) ?? [] {
+                let path = (folder as NSString).appendingPathComponent(name)
+                guard let date = (try? fm.attributesOfItem(atPath: path))?[.modificationDate] as? Date,
+                    now.timeIntervalSince(date) > keptFor
+                else { continue }
+                try? fm.removeItem(atPath: path)
+            }
         }
     }
 
@@ -165,7 +169,9 @@ final class ChatFilesReader: @unchecked Sendable {
             sent: sentNow.reversed().map { ChatFileItem(URL(fileURLWithPath: $0)) },
             made: madeNow.reversed().map { ChatFileItem(URL(fileURLWithPath: $0)) },
             downloads: downloads ?? [],
-            downloadsDenied: downloadsFolder != nil && downloads == nil)
+            // Refused, not missing: a folder that is not there is only empty.
+            downloadsDenied: downloads == nil
+                && downloadsFolder.map { FileManager.default.fileExists(atPath: $0.path) } == true)
     }
 
     // MARK: - the transcript
