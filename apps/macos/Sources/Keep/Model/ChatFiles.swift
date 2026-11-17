@@ -69,9 +69,6 @@ final class ChatFilesReader: @unchecked Sendable {
         self.downloadsFolder = downloadsFolder
     }
 
-    /// Pictures a conversation pasted are not kept for good: a conversation's folder untouched for 30 days
-    /// goes, once a launch. One still read gets its pictures written again from the transcript. Reads run on
-    /// one serial queue, so `pruned` is touched by one thread at a time.
     /// What a folder holds that one would drag: its files and folders, hidden ones and packages' insides left out.
     /// Nil when the folder cannot be read.
     static func downloads(in folder: URL?) -> [ChatFileItem]? {
@@ -97,10 +94,14 @@ final class ChatFilesReader: @unchecked Sendable {
         return items
     }
 
+    /// Pictures a conversation pasted are not kept for good: a conversation's folder untouched for 30 days
+    /// goes, once a launch. One still read gets its pictures written again from the transcript. Each window
+    /// reads on a queue of its own, so the folders already gone through are kept under a lock.
     static let keptFor: TimeInterval = 30 * 86_400
     nonisolated(unsafe) private static var pruned = Set<String>()
+    private static let prunedLock = NSLock()
     static func pruneOnce(_ folder: String, now: Date = Date()) {
-        guard pruned.insert(folder).inserted else { return }
+        guard prunedLock.withLock({ pruned.insert(folder).inserted }) else { return }
         let fm = FileManager.default
         for name in (try? fm.contentsOfDirectory(atPath: folder)) ?? [] {
             let path = (folder as NSString).appendingPathComponent(name)
