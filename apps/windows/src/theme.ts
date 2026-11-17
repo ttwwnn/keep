@@ -78,8 +78,11 @@ function around(terminal: ITheme & { background: string; foreground: string }): 
 
 /**
  * Keep Escuro: #242626 and the letter #fafafa (the picture of 12/11/2026); with Claude Code's dark-ansi theme, its
- * secondary text (white) is #fafafa too, and the background of the person's messages (brightBlack) is #6b7d00, a colour of its own.
+ * secondary text (white) is #fafafa too, and the background of the person's messages (brightBlack) is #a3e635 (lime green; the letter on it turns dark through `minimumContrastRatio`, terminals.ts).
  */
+/** The person's messages in Keep Escuro (Claude Code's dark-ansi brightBlack). */
+export const LIME_GREEN = "#a3e635";
+
 const KEEP_ESCURO: Palette = around({
   background: "#242626",
   foreground: "#fafafa",
@@ -94,7 +97,7 @@ const KEEP_ESCURO: Palette = around({
   magenta: "#b294bb",
   cyan: "#8abeb7",
   white: "#fafafa",
-  brightBlack: "#6b7d00",
+  brightBlack: LIME_GREEN,
   brightRed: "#d54e53",
   brightGreen: "#b9ca4a",
   brightYellow: "#e7c547",

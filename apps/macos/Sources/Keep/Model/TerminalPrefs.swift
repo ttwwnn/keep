@@ -230,12 +230,14 @@ enum KeepThemes {
             # Keep Escuro — fundo #242626 e letra #fafafa, como a imagem de 12/11/2026; a barra
             # lateral fica em #131313 com a janela em uso e #2d2d2d fora dela, como a do Finder.
             # Com o tema dark-ansi do Claude Code: o texto secundário (palette 7) também #fafafa
-            # e o fundo das mensagens da pessoa (palette 8) em #6b7d00 (amarelo limão escuro: o texto #fafafa segue legível).
+            # e o fundo das mensagens da pessoa (palette 8) em #a3e635 (verde limão); o minimum-contrast
+            # troca a letra para preto onde a #fafafa não se lê sobre ele (17/11/2026).
             # Metade escura do tema do Keep (terminal.json).
             background = #242626
             foreground = #fafafa
+            minimum-contrast = 2
             palette = 7=#fafafa
-            palette = 8=#6b7d00
+            palette = 8=#a3e635
             palette = 15=#fafafa
 
             """),
@@ -275,6 +277,19 @@ enum KeepThemes {
     /// edited is theirs and is left alone.
     static let previous: [String: [String]] = [
         "Keep Escuro": [
+            """
+            # Keep Escuro — fundo #242626 e letra #fafafa, como a imagem de 12/11/2026; a barra
+            # lateral fica em #131313 com a janela em uso e #2d2d2d fora dela, como a do Finder.
+            # Com o tema dark-ansi do Claude Code: o texto secundário (palette 7) também #fafafa
+            # e o fundo das mensagens da pessoa (palette 8) em #6b7d00 (amarelo limão escuro: o texto #fafafa segue legível).
+            # Metade escura do tema do Keep (terminal.json).
+            background = #242626
+            foreground = #fafafa
+            palette = 7=#fafafa
+            palette = 8=#6b7d00
+            palette = 15=#fafafa
+
+            """,
             """
             # Keep Escuro — o escuro de sempre: o fundo e a letra padrão do Ghostty,
             # com a paleta dele. Metade escura do tema do Keep (terminal.json).

@@ -67,7 +67,18 @@ final class TabStripView: NSView {
     /// because the chrome is not going anywhere and this row is.
     private var leadingClearance: CGFloat {
         guard window != nil else { return 0 }
-        return max(0, Self.chromeWidth - convert(NSPoint.zero, to: nil).x)
+        let room = batteryShown ? battery.fittingWidth + Self.batteryGap : 0
+        return max(0, Self.chromeWidth + room - convert(NSPoint.zero, to: nil).x)
+    }
+
+    /// The battery and the time, kept in view whenever the menu bar is out of
+    /// sight: here while the sidebar is shut (this row then starts under the
+    /// traffic lights), in the sidebar's own top row otherwise (`SidebarHost`).
+    private let battery = BatteryIndicator()
+    private static let batteryGap: CGFloat = 10
+    private var batteryShown: Bool {
+        guard let window, battery.isPresent else { return false }
+        return convert(NSPoint.zero, to: nil).x < Self.chromeWidth && BatteryIndicator.menuBarHidden(for: window)
     }
 
     private var items: [SessionSnapshot.StripItem] = []
@@ -89,10 +100,14 @@ final class TabStripView: NSView {
     private let chromeIsGlass = Glass.isAvailable
     private var backgroundObserver: NSObjectProtocol?
     private var sizeObserver: NSObjectProtocol?
+    /// Whether the menu bar is out of sight changes with full screen, the screen, the space and the system's setting.
+    private var menuBarObservers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
+        battery.isHidden = true
+        addSubview(battery)
 
         let specs: [(symbol: String, label: String, tip: String, action: Selector)] = [
             ("magnifyingglass", "Go To", "Go To… (⌘P)", #selector(goToPressed)),
@@ -132,6 +147,17 @@ final class TabStripView: NSView {
                 self?.needsLayout = true
             }
         }
+        let again: (Notification) -> Void = { [weak self] _ in
+            MainActor.assumeIsolated { self?.needsLayout = true }
+        }
+        for name in [NSApplication.didChangeScreenParametersNotification, NSWindow.didChangeScreenNotification,
+                     NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
+            let center = NotificationCenter.default
+            menuBarObservers.append((center, center.addObserver(forName: name, object: nil, queue: .main, using: again)))
+        }
+        let workspace = NSWorkspace.shared.notificationCenter
+        menuBarObservers.append((workspace, workspace.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main, using: again)))
     }
 
     @available(*, unavailable)
@@ -142,6 +168,7 @@ final class TabStripView: NSView {
             NotificationCenter.default.removeObserver(backgroundObserver)
         }
         if let sizeObserver { NotificationCenter.default.removeObserver(sizeObserver) }
+        for (center, token) in menuBarObservers { center.removeObserver(token) }
         if let renameWatch { NSEvent.removeMonitor(renameWatch) }
         if let fieldWatch { NSEvent.removeMonitor(fieldWatch) }
     }
@@ -295,6 +322,14 @@ final class TabStripView: NSView {
     override func layout() {
         super.layout()
         let height = bounds.height
+        let batteryShown = batteryShown
+        if battery.isHidden == batteryShown { battery.isHidden = !batteryShown }
+        if batteryShown {
+            battery.frame = NSRect(
+                x: Self.chromeWidth - convert(NSPoint.zero, to: nil).x + 2,
+                y: ((height - battery.fittingHeight) / 2).rounded(),
+                width: battery.fittingWidth, height: battery.fittingHeight)
+        }
         // A circle with a symbol in it, not a bare glyph: it reads as a
         // control, which is what it is. The same across as a tab's capsule is
         // tall, and as the sidebar toggle.

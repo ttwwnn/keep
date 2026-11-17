@@ -115,16 +115,6 @@ final class SidebarHost: NSViewController {
     /// reaches the top.
     private static let trafficLightsEnd: CGFloat = 84
 
-    /// Whether the bar at the top of the screen, which carries the system's
-    /// battery, is out of sight: full screen hides it, and so does the
-    /// system's own setting to hide it (the screen then has no strip the
-    /// windows must leave free).
-    private func menuBarHidden(for window: NSWindow) -> Bool {
-        if window.styleMask.contains(.fullScreen) || !NSMenu.menuBarVisible() { return true }
-        guard let screen = window.screen ?? NSScreen.main else { return false }
-        return screen.visibleFrame.maxY >= screen.frame.maxY - 1
-    }
-
     /// Where the battery goes: between the zoom, right after the traffic lights
     /// (see `CenteringHost.zoomPlace`), and the sidebar toggle, centred on a row
     /// `rowHeight` tall at the top. Nil where there is no battery, or no room
@@ -166,7 +156,7 @@ final class SidebarHost: NSViewController {
         let bar = titlebar > 1 ? titlebar : 52
         // In a window the titlebar's own row holds it; in full screen it gets
         // a row of its own, as tall as the tab row beside it.
-        let batteryFrame = menuBarHidden(for: window)
+        let batteryFrame = BatteryIndicator.menuBarHidden(for: window)
             ? self.batteryFrame(rowHeight: fullScreen ? Self.batteryRow : bar) : nil
         if battery.isHidden != (batteryFrame == nil) { battery.isHidden = batteryFrame == nil }
         if let batteryFrame, battery.frame != batteryFrame { battery.frame = batteryFrame }

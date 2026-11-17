@@ -20,6 +20,7 @@ import { installLinks, type LinkEnv, type Links } from "./links";
 import { installOsc52 } from "./osc52";
 import { isSafePaste, pasteQuestion, preparePaste, type Question } from "./paste";
 import { SchemeReporter } from "./schemeReport";
+import { LIME_GREEN } from "./theme";
 import { serializeBuffer } from "./serialize";
 import type { CursorShape } from "./state";
 import { viewerSize } from "./windowModel";
@@ -73,6 +74,9 @@ const BADGE_MS = 900;
 
 /** What a repaint is written after: home and clear, as the terminal client does. */
 const CLEAR_FOR_REPAINT = "\x1b[H\x1b[2J";
+
+/** The letter #fafafa does not read on the person's messages (lime green in Keep Escuro): xterm darkens it there, and only there. */
+const contrastFor = (theme: ITheme | undefined): number => (theme?.brightBlack === LIME_GREEN ? 4.5 : 1);
 
 export class TermView {
   key: string;
@@ -141,6 +145,7 @@ export class TermView {
       allowTransparency: look.translucent === true,
       scrollback: look.scrollback,
       allowProposedApi: true,
+      minimumContrastRatio: contrastFor(look.theme),
       cursorBlink: look.blink,
       cursorStyle: look.cursor,
       // Hollow while the terminal does not have the keyboard, as Ghostty draws it.
@@ -423,6 +428,7 @@ export class TermView {
     const translucent = look.translucent === true;
     if (options.allowTransparency !== translucent) options.allowTransparency = translucent;
     options.theme = look.theme;
+    options.minimumContrastRatio = contrastFor(look.theme);
     if (options.cursorStyle !== look.cursor) options.cursorStyle = look.cursor;
     if (options.cursorBlink !== look.blink) options.cursorBlink = look.blink;
     if (options.scrollback !== look.scrollback) options.scrollback = look.scrollback;
