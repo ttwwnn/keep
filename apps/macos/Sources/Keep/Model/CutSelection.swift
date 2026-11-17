@@ -134,6 +134,27 @@ enum CutSelection {
         return steps + String(repeating: backspace, count: end - start)
     }
 
+    /// Where a left or right arrow takes the cursor in Claude Code's prompt
+    /// box, as a row and column of `rowLengths` (each row's text, gutter off):
+    /// one character over, onto the end of the row above or the start of the
+    /// row below at a row's edge, and nowhere past the box's first or last
+    /// character. Shift with an arrow marks from where it began to here.
+    /// shortcut: a row the box wrapped is taken to end where its text does,
+    /// so the mark can be a character off at a soft wrap; the text it cuts
+    /// is still found by its words (`keysAcrossRows`).
+    static func step(from cell: (row: Int, column: Int), left: Bool, rowLengths: [Int])
+        -> (row: Int, column: Int)
+    {
+        guard rowLengths.indices.contains(cell.row) else { return cell }
+        let column = min(max(cell.column, 0), rowLengths[cell.row])
+        if left {
+            if column > 0 { return (cell.row, column - 1) }
+            return cell.row > 0 ? (cell.row - 1, rowLengths[cell.row - 1]) : (cell.row, 0)
+        }
+        if column < rowLengths[cell.row] { return (cell.row, column + 1) }
+        return cell.row + 1 < rowLengths.count ? (cell.row + 1, 0) : (cell.row, column)
+    }
+
     static let right = "\u{1B}[C"
     static let left = "\u{1B}[D"
     static let backspace = "\u{7F}"

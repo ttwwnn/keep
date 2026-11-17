@@ -3,7 +3,8 @@
 # ⌘X on text selected in the line a program is editing cuts it: the text goes
 # to the clipboard and the program is told, with keys, to take it out. ⌘⇧V
 # sends the program ^V, which is how Claude Code is asked to read an image on
-# the clipboard.
+# the clipboard. Shift with the left arrow marks text in the prompt box, and
+# typing over the mark replaces it.
 #
 # The tab's program is a tiny line editor (it understands Right, Left and
 # Backspace and writes down what is in its line). The word is selected with a
@@ -84,8 +85,10 @@ def save(name, text):
         f.write(text)
 def draw():
     # On the row the test aims at, once it has said which (see "row" below).
+    # Between two rules, as Claude Code draws its prompt box.
     try:
-        out.write("\x1b[%d;1H" % (int(open(os.path.join(WORK, "row")).read()) + 1))
+        row = int(open(os.path.join(WORK, "row")).read()) + 1
+        out.write("\x1b[%d;1H\x1b[K%s\x1b[%d;1H\x1b[K%s\x1b[%d;1H" % (row - 1, "─" * 40, row + 1, "─" * 40, row))
     except (OSError, ValueError):
         pass
     out.write("\r\x1b[K❯ " + line + ("\x1b[%dG" % (3 + pos)) + os.environ.get("MARK",""))
@@ -117,6 +120,8 @@ while True:
             if pos > 0:
                 line = line[:pos-1] + line[pos:]; pos -= 1
             i += 1
+        elif 0x20 <= data[i] < 0x7f:
+            line = line[:pos] + chr(data[i]) + line[pos:]; pos += 1; i += 1
         else:
             i += 1
     draw()
@@ -219,6 +224,20 @@ rm -f "$WORK/bytes"
 sleep 1
 # The program keeps everything it was ever sent; the file is back only if it was sent more.
 check "the program gets ^V last" "16" "$(tail -c 2 "$WORK/bytes" 2>/dev/null)"
+
+say ""
+say "Shift with the left arrow marks text in the prompt box"
+"$SENDKEY" "$APP_PID_REAL" text "abcdef"
+sleep 1
+check "the word is typed" "abcdef" "$(cat "$WORK/line")"
+for _ in 1 2 3; do "$SENDKEY" "$APP_PID_REAL" key 123 shift; sleep 0.4; done
+sleep 0.5
+"$SENDKEY" "$APP_PID_REAL" key 8 cmd
+sleep 1
+check "⌘C copies the three letters marked" "def" "$(pbpaste)"
+"$SENDKEY" "$APP_PID_REAL" text "X"
+sleep 1.5
+check "typing over the mark replaces it" "abcX" "$(cat "$WORK/line")"
 
 printf %s "$SAVED_CLIP" | pbcopy
 stop_app
