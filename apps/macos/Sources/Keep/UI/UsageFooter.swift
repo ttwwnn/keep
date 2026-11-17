@@ -880,6 +880,8 @@ struct UsageFooter: View {
         // accent control in a window that is not key, and the switch's state
         // is what these read at a glance.
         .environment(\.controlActiveState, .key)
+        // The sidebar's blue (see `Palette.Resting`), not the system accent.
+        .tint(Color(.sRGB, red: 0x2c / 255, green: 0x69 / 255, blue: 0xa1 / 255, opacity: 1))
         .fixedSize(horizontal: cabe, vertical: true)
         .help(switchHelp(which, on: on))
         .accessibilityLabel(which.title)
