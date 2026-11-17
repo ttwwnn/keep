@@ -67,7 +67,7 @@ import { UsageFooter } from "./UsageFooter";
 
 function TabRow(props: { workspace: string; tab: RootTab; tabs: RootTab[]; index: number; selected: boolean }) {
   const { workspace, tab, tabs, index, selected } = props;
-  const look = tabLook(workspace, tab, index, selected);
+  const look = tabLook(workspace, tab, index, selected, true);
   const badge = useBreath(look.breathing);
   const renaming = editingTabOn("sidebar", workspace, tab.root.id);
   const rename = () => startRename(workspace, tab.root.id, "sidebar");

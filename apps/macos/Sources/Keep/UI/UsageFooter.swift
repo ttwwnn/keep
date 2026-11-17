@@ -876,6 +876,10 @@ struct UsageFooter: View {
         }
         .toggleStyle(.switch)
         .controlSize(.mini)
+        // Blue whether or not the window is the one in use: AppKit greys an
+        // accent control in a window that is not key, and the switch's state
+        // is what these read at a glance.
+        .environment(\.controlActiveState, .key)
         .fixedSize(horizontal: cabe, vertical: true)
         .help(switchHelp(which, on: on))
         .accessibilityLabel(which.title)

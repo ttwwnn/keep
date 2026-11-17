@@ -1,3 +1,4 @@
+import { signal } from "@preact/signals";
 // Keep's two themes, as the terminal and as the chrome around it.
 //
 // The chrome has no colours of its own (DESIGN.md): its ground is the
@@ -260,9 +261,28 @@ export function defaultFontFamily(platform: string): string {
  */
 export const DEFAULT_FONT_SIZE = 16.25;
 
+/** Whether the window is out of use: the sidebar's tone and its states' hues follow it. */
+export const windowIdle = signal(false);
+
+/**
+ * The five hues the sidebar's states wear while the window is out of use, on a
+ * dark ground (the macOS app's `Palette.Resting`; the dots and marks take
+ * them from styles.css, the titles and the badge from `tabLook`).
+ */
+export const RESTING = {
+  red: "#a14944",
+  orange: "#a1762c",
+  yellow: "#a1922c",
+  green: "#40924c",
+  blue: "#2c69a1",
+} as const;
+
 /** The sidebar in the Finder's two tones: the darker while the window is in use, the lighter while it is not. */
 export function watchWindowFocus(): void {
-  const set = () => document.documentElement.classList.toggle("window-idle", !document.hasFocus());
+  const set = () => {
+    windowIdle.value = !document.hasFocus();
+    document.documentElement.classList.toggle("window-idle", windowIdle.value);
+  };
   window.addEventListener("focus", set);
   window.addEventListener("blur", set);
   set();

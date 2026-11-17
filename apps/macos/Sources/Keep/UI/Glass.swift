@@ -299,6 +299,10 @@ enum Attention {
         dark ? srgb(255, 120, 20) : srgb(255, 106, 0)
     }
 
+    /// The badge while its window is not the one in use, on a dark ground: the
+    /// sidebar's resting orange, kept still (pedido de 17/11/2026).
+    static let resting = srgb(0xa1, 0x76, 0x2c)
+
     /// The far end of a breath: the same orange with light let into it.
     static func glow(dark: Bool) -> NSColor {
         dark ? srgb(255, 178, 112) : srgb(255, 166, 96)

@@ -158,6 +158,18 @@ final class TabStripView: NSView {
         let workspace = NSWorkspace.shared.notificationCenter
         menuBarObservers.append((workspace, workspace.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main, using: again)))
+        // The waiting badge rests in its own window's colour when the window
+        // is not the one in use: written again at each change of key.
+        let keyChanged: (Notification) -> Void = { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, (note.object as? NSWindow) === self.window else { return }
+                self.applyCells()
+            }
+        }
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+            let center = NotificationCenter.default
+            menuBarObservers.append((center, center.addObserver(forName: name, object: nil, queue: .main, using: keyChanged)))
+        }
     }
 
     @available(*, unavailable)
@@ -995,7 +1007,7 @@ final class TabCellView: NSView {
     private let selectionOutline = NSView()
     /// Until when the badge breathes, and in which colours, so that a poll
     /// which changes nothing does not start the breath over.
-    private var breathing: (until: Date?, dark: Bool)?
+    private var breathing: (until: Date?, dark: Bool, resting: Bool)?
     private let label = NSTextField(labelWithString: "")
     /// The label shows attributed text (marks, a struck title) rather than the plain title.
     private var labelIsAttributed = false
@@ -1324,17 +1336,20 @@ final class TabCellView: NSView {
         // A tab waiting on you wears the badge, and the hover's faint capsule
         // under it would only muddy the orange.
         attention.isHidden = !wantsYou
+        let resting = palette.dark && window?.isKeyWindow == false
         if wantsYou {
-            attention.layer?.backgroundColor = Attention.fill(dark: palette.dark).cgColor
+            attention.layer?.backgroundColor = (resting
+                ? Attention.resting : Attention.fill(dark: palette.dark)).cgColor
         }
         // Breathing for a while after it starts waiting, and only out of
         // sight: the tab you are in is in front of you already, and a badge
         // pulsing under the thing you are reading would be a light left
         // flashing in your face.
         let breathe = (
-            until: wantsYou && !item.isActive ? Attention.lastBreath(since: item.wantsYouSince) : nil,
-            dark: palette.dark)
-        if breathing?.until != breathe.until || breathing?.dark != breathe.dark {
+            until: wantsYou && !item.isActive && !resting ? Attention.lastBreath(since: item.wantsYouSince) : nil,
+            dark: palette.dark, resting: resting)
+        if breathing?.until != breathe.until || breathing?.dark != breathe.dark
+            || breathing?.resting != breathe.resting {
             breathing = breathe
             if let layer = attention.layer {
                 Attention.pulse(layer, dark: breathe.dark, until: breathe.until)

@@ -1979,3 +1979,12 @@ button.danger.primary {
 :root.window-idle {
   --recessed: var(--recessed-idle);
 }
+
+/* The states' hues while the window is out of use, on a dark ground: the five of the sidebar's resting tones (theme.ts, RESTING). */
+:root[data-theme="dark"].window-idle {
+  --dot-attached: #40924c;
+  --dot-busy: #a1922c;
+  --dot-idle: #2c69a1;
+  --mark-claude: #a1762c;
+  --mark-codex: #2c69a1;
+}
