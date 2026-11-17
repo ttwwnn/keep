@@ -41,7 +41,7 @@ build "$WORK/Sabotaged.swift" || exit 1
 if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
 
 echo "sabotage: a file it wrote counts though no answer shows it"
-sed 's/guard answered.contains(entry.path) || /guard true || /' "$SOURCE" > "$WORK/Sabotaged.swift"
+sed 's/return entry.handed || answered.contains/return true || answered.contains/' "$SOURCE" > "$WORK/Sabotaged.swift"
 cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage did not apply"; exit 1; }
 build "$WORK/Sabotaged.swift" || exit 1
 if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi

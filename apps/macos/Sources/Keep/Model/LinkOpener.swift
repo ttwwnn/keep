@@ -112,8 +112,9 @@ enum LinkOpener {
     /// nearest first, each once: the heading of a list of bare names says
     /// where they are ("PDFs (em ~/Downloads)").
     static func foldersNamed(in lines: [String], near row: Int) -> [String] {
+        // Checked before the range is made: an empty screen would make one that ends before it starts.
+        guard lines.indices.contains(row) else { return [] }
         let reach = max(0, row - folderReach)...min(lines.count - 1, row + folderReach)
-        guard !lines.isEmpty, reach.contains(row) else { return [] }
         var found: [String] = []
         for index in reach.sorted(by: { abs($0 - row) != abs($1 - row) ? abs($0 - row) < abs($1 - row) : $0 < $1 }) {
             for word in lines[index].split(whereSeparator: \.isWhitespace) {

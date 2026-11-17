@@ -110,6 +110,38 @@ try! (line(["type": "assistant", "timestamp": start, "message": ["role": "assist
 check("a bare name two files share names neither",
       ChatFilesReader(transcript: twinsLog, session: "gemeos", imageFolder: images).read().made.map(\.url.path), [])
 
+// A copy a command made from a file it never wrote does not count against the one it wrote.
+try! fm.createDirectory(atPath: root + "/modelo", withIntermediateDirectories: true)
+let template = file("modelo/pagina.html", created: old)
+let page = file("pagina.html")
+let copied = root + "/copiado.jsonl"
+try! (line(["type": "assistant", "timestamp": start, "message": ["role": "assistant", "content": [
+    ["type": "tool_use", "name": "Bash", "input": ["command": "cp \(template) /tmp/nada"]],
+    ["type": "tool_use", "name": "Write", "input": ["file_path": page, "content": "x"]],
+    ["type": "text", "text": "Veja a pagina.html."]]]]) + "\n").write(toFile: copied, atomically: true, encoding: .utf8)
+check("a namesake only read does not hide the one it wrote",
+      ChatFilesReader(transcript: copied, session: "copia", imageFolder: images).read().made.map(\.url.path), [page])
+
+// Pictures of a conversation untouched for 30 days go; newer ones stay.
+let cache = root + "/cache"
+for (name, age) in [("velha", 31.0), ("nova", 2.0)] {
+    try! fm.createDirectory(atPath: cache + "/" + name, withIntermediateDirectories: true)
+    try! fm.setAttributes([.modificationDate: Date().addingTimeInterval(-age * 86_400)], ofItemAtPath: cache + "/" + name)
+}
+ChatFilesReader.pruneOnce(cache)
+check("a conversation's pictures left for 30 days are gone", ((try? fm.contentsOfDirectory(atPath: cache)) ?? []).sorted(), ["nova"])
+
+// The Downloads folder: its files and folders, the hidden ones left out.
+let downloads = root + "/baixados-teste"
+try! fm.createDirectory(atPath: downloads + "/pasta", withIntermediateDirectories: true)
+fm.createFile(atPath: downloads + "/nota.pdf", contents: Data())
+fm.createFile(atPath: downloads + "/.DS_Store", contents: Data())
+check("the Downloads folder, hidden files left out",
+      (ChatFilesReader.downloads(in: URL(fileURLWithPath: downloads)) ?? []).map(\.url.lastPathComponent).sorted(), ["nota.pdf", "pasta"])
+
+check("a folder that cannot be read is not an empty one",
+      [ChatFilesReader.downloads(in: URL(fileURLWithPath: root + "/nao-existe")) == nil ? "nil" : "lista"], ["nil"])
+
 check("paths in text", ChatFilesReader.paths(in: "veja file:///tmp/a.txt, ~/b.md:12 e \"/x/c d.pdf\"."),
       ["/tmp/a.txt", NSHomeDirectory() + "/b.md", "/x/c d.pdf"])
 exit(failures == 0 ? 0 : 1)

@@ -55,6 +55,7 @@ say "building $APP_NAME, the client, the daemon and the tools (yours is left alo
 ./tools/build-dev.sh >/dev/null || { say "could not build $APP_NAME — run tools/build-dev.sh"; exit 1; }
 swiftc -O tools/axpress.swift -o "$AXPRESS" 2>/dev/null || { say "could not build axpress"; exit 1; }
 swiftc -O tools/sendkey.swift -o "$SENDKEY" 2>/dev/null || { say "could not build sendkey"; exit 1; }
+swiftc -O tools/mousedrag.swift -o "$MOUSE" 2>/dev/null || { say "could not build mousedrag"; exit 1; }
 
 export KEEP_SOCKET=$SOCKET
 export KEEP_STATE_DIR=$WORK/state
@@ -321,6 +322,14 @@ found() {  # found <label> -> yes when the panel shows it
 }
 check "the panel lists the file sent" "yes" "$(found chat-file-enviado-pela-pessoa.pdf)"
 check "and the one the conversation made" "yes" "$(found chat-file-gerado-pela-conversa.html)"
+# Dragged from the panel onto the conversation, a file arrives as a dropped one does: its path typed.
+read -r RX RY RW RH <<<"$("$AXPRESS" "$APP_NAME" frame chat-file-enviado-pela-pessoa.pdf 2>/dev/null)"
+read -r FX FY FW FH <<<"$("$MOUSE" frame)"
+: > "$WORK/bytes"
+"$MOUSE" drag "$(( ${RX%.*} + 20 ))" "$(( ${RY%.*} + ${RH%.*} / 2 ))" "$(( ${FX%.*} + ${FW%.*} / 3 ))" "$(( ${FY%.*} + ${FH%.*} / 2 ))" 30 15
+sleep 2
+check "dragged onto the conversation, its path is typed" "yes" \
+    "$(grep -q "enviado-pela-pessoa.pdf" "$WORK/bytes" 2>/dev/null && echo yes || echo no)"
 "$AXPRESS" "$APP_NAME" press claude-files >/dev/null 2>&1
 sleep 1
 check "pressed again, the panel goes" "no" "$("$AXPRESS" "$APP_NAME" frame chat-file-gerado-pela-conversa.html >/dev/null 2>&1 && echo yes || echo no)"
