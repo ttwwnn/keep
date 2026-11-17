@@ -11,6 +11,8 @@ struct ChatFiles: Equatable {
     var made: [ChatFileItem] = []
     /// The Mac's Downloads folder, beside the conversation's own: to drag a file from it into the prompt.
     var downloads: [ChatFileItem] = []
+    /// The folder could not be read (macOS asks before an app reads Downloads): not the same as empty.
+    var downloadsDenied = false
 }
 
 /// A file as its row shows it: the name without its extension, the extension as its type, when it last
@@ -71,12 +73,27 @@ final class ChatFilesReader: @unchecked Sendable {
     /// Pictures a conversation pasted are not kept for good: a conversation's folder untouched for 30 days
     /// goes, once a launch. One still read gets its pictures written again from the transcript.
     /// What a folder holds that one would drag: its files and folders, hidden ones and packages' insides left out.
-    static func downloads(in folder: URL?) -> [ChatFileItem] {
-        guard let folder else { return [] }
-        let urls = (try? FileManager.default.contentsOfDirectory(
-            at: folder, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
-            options: [.skipsHiddenFiles])) ?? []
+    /// Nil when the folder cannot be read.
+    static func downloads(in folder: URL?) -> [ChatFileItem]? {
+        guard let folder,
+            let urls = try? FileManager.default.contentsOfDirectory(
+                at: folder, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
+                options: [.skipsHiddenFiles])
+        else { return nil }
         return urls.map(ChatFileItem.init)
+    }
+
+    /// The Downloads listing, read again only when the folder's date moves (a file added, renamed or taken out).
+    /// shortcut: a file still downloading keeps the size it was listed with until something else changes the folder.
+    private var downloadsCache: (changed: Date, items: [ChatFileItem]?)?
+    private func downloadsNow() -> [ChatFileItem]? {
+        let changed = downloadsFolder.flatMap {
+            (try? FileManager.default.attributesOfItem(atPath: $0.path))?[.modificationDate] as? Date
+        }
+        if let changed, let cached = downloadsCache, cached.changed == changed { return cached.items }
+        let items = Self.downloads(in: downloadsFolder)
+        if let changed { downloadsCache = (changed, items) }
+        return items
     }
 
     static let keptFor: TimeInterval = 30 * 86_400
@@ -139,10 +156,12 @@ final class ChatFilesReader: @unchecked Sendable {
             let name = (entry.path as NSString).lastPathComponent
             return entry.handed || answered.contains(entry.path) || (answeredNames.contains(name) && sameName[name] == 1)
         }.map(\.path).filter { !sentSet.contains($0) && $0 != transcript }
+        let downloads = downloadsNow()
         return ChatFiles(
             sent: sentNow.reversed().map { ChatFileItem(URL(fileURLWithPath: $0)) },
             made: madeNow.reversed().map { ChatFileItem(URL(fileURLWithPath: $0)) },
-            downloads: Self.downloads(in: downloadsFolder))
+            downloads: downloads ?? [],
+            downloadsDenied: downloadsFolder != nil && downloads == nil)
     }
 
     // MARK: - the transcript

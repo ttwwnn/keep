@@ -36,7 +36,9 @@ struct ChatFilesPanel: View {
                 VStack(alignment: .leading, spacing: 0) {
                     section("Gerados", model.files.made, empty: "Nada gerado ainda")
                     section("Enviados", model.files.sent, empty: "Nada enviado nesta conversa")
-                    section("Downloads", model.files.downloads, empty: "A pasta Downloads está vazia")
+                    section("Downloads", model.files.downloads, empty: model.files.downloadsDenied
+                        ? "Sem acesso à pasta Downloads: libere em Ajustes do Sistema › Privacidade › Arquivos e Pastas"
+                        : "A pasta Downloads está vazia")
                 }
                 .padding(.top, 10)
             }

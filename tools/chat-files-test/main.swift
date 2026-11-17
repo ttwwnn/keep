@@ -137,7 +137,10 @@ try! fm.createDirectory(atPath: downloads + "/pasta", withIntermediateDirectorie
 fm.createFile(atPath: downloads + "/nota.pdf", contents: Data())
 fm.createFile(atPath: downloads + "/.DS_Store", contents: Data())
 check("the Downloads folder, hidden files left out",
-      ChatFilesReader.downloads(in: URL(fileURLWithPath: downloads)).map(\.url.lastPathComponent).sorted(), ["nota.pdf", "pasta"])
+      (ChatFilesReader.downloads(in: URL(fileURLWithPath: downloads)) ?? []).map(\.url.lastPathComponent).sorted(), ["nota.pdf", "pasta"])
+
+check("a folder that cannot be read is not an empty one",
+      [ChatFilesReader.downloads(in: URL(fileURLWithPath: root + "/nao-existe")) == nil ? "nil" : "lista"], ["nil"])
 
 check("paths in text", ChatFilesReader.paths(in: "veja file:///tmp/a.txt, ~/b.md:12 e \"/x/c d.pdf\"."),
       ["/tmp/a.txt", NSHomeDirectory() + "/b.md", "/x/c d.pdf"])

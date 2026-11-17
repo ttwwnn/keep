@@ -511,8 +511,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             reader = ChatFilesReader(
                 transcript: source.transcript, session: source.session, imageFolder: ChatFilesReader.cacheFolder)
             filesReaders[source.transcript] = reader
-            filesModel.note = "Lendo a conversa…"
         }
+        // Another conversation's lists are not shown while this one's are read: a double click would open its file.
+        if filesReader !== reader { filesModel.note = "Lendo a conversa…" }
         filesReader = reader
         filesQueue.async {
             let files = reader.read()
