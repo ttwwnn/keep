@@ -275,6 +275,12 @@ export const RESTING = {
   yellow: "#a1922c",
   green: "#40924c",
   blue: "#2c69a1",
+  // The Finder's sidebar at rest, over #2d2d2d (17/11/2026): an item's name, a heading or what is secondary, the
+  // selected item's pill and its name.
+  text: "#919191",
+  faint: "#6e6e6e",
+  selection: "#222222",
+  selectedText: "#195699",
 } as const;
 
 /** The sidebar in the Finder's two tones: the darker while the window is in use, the lighter while it is not. */

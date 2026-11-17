@@ -1005,8 +1005,9 @@ button {
   transition: background 0.15s ease-out;
 }
 
+/* The sidebar's blue, in use or not, as on macOS. */
 .usage-switch.on .usage-switch-track {
-  background: var(--live);
+  background: #2c69a1;
 }
 
 .usage-switch-knob {
@@ -1980,11 +1981,25 @@ button.danger.primary {
   --recessed: var(--recessed-idle);
 }
 
-/* The states' hues while the window is out of use, on a dark ground: the five of the sidebar's resting tones (theme.ts, RESTING). */
+/* The window out of use, on a dark ground: the Finder's sidebar (theme.ts, RESTING). Its two greys for the inks, and
+   the states' hues in the five resting tones. Important: applyPalette writes these on the root's own style, which
+   would win over this rule otherwise. */
 :root[data-theme="dark"].window-idle {
-  --dot-attached: #40924c;
-  --dot-busy: #a1922c;
-  --dot-idle: #2c69a1;
-  --mark-claude: #a1762c;
-  --mark-codex: #2c69a1;
+  --ink: #919191 !important;
+  --ink-resting: #919191 !important;
+  --ink-faint: #6e6e6e !important;
+  --dot-attached: #40924c !important;
+  --dot-busy: #a1922c !important;
+  --dot-idle: #2c69a1 !important;
+  --mark-claude: #a1762c !important;
+  --mark-codex: #2c69a1 !important;
+  --attention: #a1922c !important;
+  --critical: #a14944 !important;
+  --live: #40924c !important;
+}
+
+/* The selection at rest: a darker pill, no outline. */
+:root[data-theme="dark"].window-idle .tab-row.selected:not(.wants) {
+  background: #222222;
+  box-shadow: none;
 }
