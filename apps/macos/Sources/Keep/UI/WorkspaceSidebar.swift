@@ -869,7 +869,7 @@ struct WorkspaceSidebar: View {
         -> Color
     {
         if !model.inUse && scheme == .dark {
-            if let tone = tab.claudeActivity.flatMap { Palette.Resting.tone(of: $0) } { return tone }
+            if let tone = tab.claudeActivity.flatMap({ Palette.Resting.tone(of: $0) }) { return tone }
             if tab.claudeActivity == nil || tab.claudeActivity == .working,
                let mode = tab.claudeMode { return Palette.Resting.tone(of: mode) }
         }
