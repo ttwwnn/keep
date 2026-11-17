@@ -2092,9 +2092,10 @@ final class TerminalSurfaceView: NSView {
         let selected: String
         if ghostty_surface_has_selection(surface) {
             var text = ghostty_text_s()
-            guard ghostty_surface_read_selection(surface, &text), let raw = text.text else { return false }
+            guard ghostty_surface_read_selection(surface, &text) else { return false }
+            defer { ghostty_surface_free_text(surface, &text) }
+            guard let raw = text.text else { return false }
             selected = String(cString: raw)
-            ghostty_surface_free_text(surface, &text)
         } else if let copied = selectionTheProgramCopied() {
             // Claude Code's own mouse selection (full screen); spent below, so the next key does not erase it again.
             selected = copied
