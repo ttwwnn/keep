@@ -47,15 +47,20 @@ export function tabLook(workspace: string, tab: RootTab, index: number, selected
   const atWork = tabBusy(workspace, tab);
   const label = tabLabel(workspace, tab, index);
   const mark = !wantsYou && atWork ? busyMark(programOf(tab.root.command, tab.root.title)) : undefined;
+  const asleep = isDormant(workspace, tab);
   let color: string | undefined;
   if (wantsYou) color = css(attentionTitleInk(selected));
   else if (idle && activity === "waitingForWorkflow") color = RESTING.blue;
+  else if (idle && (!activity || activity === "working") && mode) color = RESTING_MODE[mode];
+  // At rest, the Finder's way: the chosen tab's name in the selection's blue, a sleeping one faint, the rest in the one
+  // grey (a finished turn's too).
+  else if (idle) color = selected ? RESTING.selectedText : asleep ? RESTING.faint : RESTING.text;
   else if (activity && activity !== "working") color = css(activityColor(activity, dark)!);
-  else if (mode) color = idle ? RESTING_MODE[mode] : css(modeColor(mode, dark));
+  else if (mode) color = css(modeColor(mode, dark));
   const since = tabWaitingSince(workspace, tab);
   const until = lastBreath(since);
   const breathing = wantsYou && !selected && !idle && until !== undefined && now.value / 1000 < until;
-  return { label, color, wantsYou, atWork, mark, breathing, asleep: isDormant(workspace, tab), fill: idle ? RESTING.orange : css(attentionFill(dark)) };
+  return { label, color, wantsYou, atWork, mark, breathing, asleep, fill: idle ? RESTING.orange : css(attentionFill(dark)) };
 }
 
 /**

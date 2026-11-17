@@ -24,6 +24,11 @@ final class BatteryIndicator: NSView {
     private var timer: Timer?
     private var groundObserver: NSObjectProtocol?
     private var zoomObserver: NSObjectProtocol?
+    private var keyObservers: [NSObjectProtocol] = []
+
+    /// Dark and not the window in use: the clock and the figure in the
+    /// sidebar's grey, the charge in its tag's tone (`RestingTone`).
+    private var resting: Bool { RestingTone.applies(to: window, dark: TabStripView.Palette.current.dark) }
 
     private static let tipWidth: CGFloat = 1.5
     /// The bolt, left of the cell while it charges, and its gap.
@@ -47,7 +52,7 @@ final class BatteryIndicator: NSView {
     private static let clockGap: CGFloat = 8
     private var clockText: NSAttributedString {
         NSAttributedString(string: Self.clock.string(from: Date()), attributes: [
-            .font: Self.font, .foregroundColor: TabStripView.Palette.current.text,
+            .font: Self.font, .foregroundColor: resting ? RestingTone.text : TabStripView.Palette.current.text,
         ])
     }
 
@@ -81,6 +86,17 @@ final class BatteryIndicator: NSView {
                 self?.superview?.needsLayout = true
             }
         }
+        // At rest and back: the window taking or giving up the keyboard.
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+            keyObservers.append(NotificationCenter.default.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] note in
+                MainActor.assumeIsolated {
+                    guard let self, (note.object as? NSWindow) === self.window else { return }
+                    self.needsDisplay = true
+                }
+            })
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.refresh()
@@ -99,6 +115,7 @@ final class BatteryIndicator: NSView {
         timer?.invalidate()
         if let groundObserver { NotificationCenter.default.removeObserver(groundObserver) }
         if let zoomObserver { NotificationCenter.default.removeObserver(zoomObserver) }
+        for observer in keyObservers { NotificationCenter.default.removeObserver(observer) }
     }
 
     /// Whether the bar at the top of the screen, which carries the system's
@@ -160,6 +177,13 @@ final class BatteryIndicator: NSView {
         if reading.charging || reading.onPower || reading.percent > 20 { return state(0.76, 0.14, 150) }
         if reading.percent > 10 { return state(0.82, 0.15, 85) }
         return state(0.70, 0.19, 27)
+    }
+
+    /// The same, at rest.
+    static func restingFill(_ reading: Reading) -> NSColor {
+        if reading.charging || reading.onPower || reading.percent > 20 { return RestingTone.green }
+        if reading.percent > 10 { return RestingTone.yellow }
+        return RestingTone.red
     }
 
     /// OKLCH to sRGB, as the sidebar's palette does it.
@@ -228,7 +252,8 @@ final class BatteryIndicator: NSView {
         let charge = NSRect(
             x: inner.minX, y: inner.minY,
             width: max(2, inner.width * CGFloat(reading.percent) / 100), height: inner.height)
-        Self.fill(reading).setFill()
+        let fill = resting ? Self.restingFill(reading) : Self.fill(reading)
+        fill.setFill()
         NSBezierPath(roundedRect: charge, xRadius: radius - 1.5, yRadius: radius - 1.5).fill()
 
         // The percentage inside the cell: dark ink over the charge, the
@@ -248,7 +273,7 @@ final class BatteryIndicator: NSView {
         NSGraphicsContext.saveGraphicsState()
         NSBezierPath(rect: NSRect(
             x: charge.maxX, y: body.minY, width: max(0, body.maxX - charge.maxX), height: body.height)).addClip()
-        figure(palette.text).draw(at: at)
+        figure(resting ? RestingTone.text : palette.text).draw(at: at)
         NSGraphicsContext.restoreGraphicsState()
 
         // A bolt beside the cell while it charges.
@@ -258,7 +283,7 @@ final class BatteryIndicator: NSView {
         {
             let tinted = NSImage(size: bolt.size, flipped: false) { rect in
                 bolt.draw(in: rect)
-                Self.fill(reading).set()
+                fill.set()
                 rect.fill(using: .sourceIn)
                 return true
             }

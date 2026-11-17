@@ -228,6 +228,34 @@ final class AdaptiveLozengeView: NSView {
     }
 }
 
+// MARK: - The window at rest
+
+/// The tones of a window that is not the one in use, on a dark ground: the
+/// Finder's sidebar over #2d2d2d, measured pixel by pixel (pedidos de
+/// 17/11/2026). Text in one grey and a fainter one, the selection a darker
+/// pill with its name in blue, and every state hue muted to its tag's tone.
+enum RestingTone {
+    static let red = srgb(0xa1, 0x49, 0x44)
+    static let orange = srgb(0xa1, 0x76, 0x2c)
+    static let yellow = srgb(0xa1, 0x92, 0x2c)
+    static let green = srgb(0x40, 0x92, 0x4c)
+    static let blue = srgb(0x2c, 0x69, 0xa1)
+    /// An item's name and icon.
+    static let text = srgb(0x91, 0x91, 0x91)
+    /// A section's heading, and what reads as secondary.
+    static let faint = srgb(0x6e, 0x6e, 0x6e)
+    /// The selected item's pill, without an outline.
+    static let selection = srgb(0x22, 0x22, 0x22)
+    /// The selected item's name.
+    static let selectedText = srgb(0x19, 0x56, 0x99)
+
+    /// Whether `window` is drawn at rest: dark, and not the window in use.
+    @MainActor
+    static func applies(to window: NSWindow?, dark: Bool) -> Bool {
+        dark && window?.isKeyWindow == false
+    }
+}
+
 // MARK: - Where Claude Code's turn stands
 
 extension ClaudeActivity {
@@ -301,7 +329,7 @@ enum Attention {
 
     /// The badge while its window is not the one in use, on a dark ground: the
     /// sidebar's resting orange, kept still (pedido de 17/11/2026).
-    static let resting = srgb(0xa1, 0x76, 0x2c)
+    static let resting = RestingTone.orange
 
     /// The far end of a breath: the same orange with light let into it.
     static func glow(dark: Bool) -> NSColor {

@@ -500,6 +500,10 @@ struct UsageFooter: View {
     /// Folded, it is one line per account. A convenience of this Mac's, so it
     /// lives in the app's defaults rather than in any window's record.
     @AppStorage("usageFooterFolded") private var folded = false
+    @Environment(\.sidebarInUse) private var inUse
+    @Environment(\.colorScheme) private var scheme
+    /// The window at rest, for the controls AppKit draws (see `RestingTone`).
+    private var resting: Bool { !inUse && scheme == .dark }
 
     var body: some View {
         if monitor.lines.isEmpty && !monitor.helperAvailable {
@@ -595,7 +599,8 @@ struct UsageFooter: View {
                     symbol: "plus", pointSize: 9, weight: .semibold,
                     label: "Entrar em outra conta", identifier: "usage-signin",
                     help: "Entrar em outra conta",
-                    resting: UsageInk.faintColor, lit: UsageInk.restingColor,
+                    resting: resting ? RestingTone.faint : UsageInk.faintColor,
+                    lit: resting ? RestingTone.text : UsageInk.restingColor,
                     menu: {
                         AccountMenu.signIn(jevConnected: monitor.jev != nil) { service in
                             dispatch(.signIn(service))
@@ -638,9 +643,9 @@ struct UsageFooter: View {
     /// there is a `keep` to keep the order: without it the footer is
     /// as it always was.
     private func heading(_ text: String, _ line: AccountUsage, at index: Int) -> Text {
-        let name = Text(text).foregroundColor(line.account.isUsed(by: usedAccount) ? UsageInk.ink : UsageInk.inkResting)
+        let name = Text(text).foregroundStyle(line.account.isUsed(by: usedAccount) ? UsageInk.ink : UsageInk.inkResting)
         guard monitor.helperAvailable else { return name }
-        return Text("\(index + 1) · ").foregroundColor(UsageInk.inkFaint) + name
+        return Text("\(index + 1) · ").foregroundStyle(UsageInk.inkFaint) + name
     }
 
     private func block(_ line: AccountUsage, at index: Int, now: Date) -> some View {
@@ -808,13 +813,13 @@ struct UsageFooter: View {
     }
 
     private func compactFigures(_ windows: [UsageWindow]) -> Text {
-        guard !windows.isEmpty else { return Text("—").foregroundColor(UsageInk.inkFaint) }
+        guard !windows.isEmpty else { return Text("—").foregroundStyle(UsageInk.inkFaint) }
         var text = Text("")
         for (index, window) in windows.enumerated() {
-            if index > 0 { text = text + Text(" · ").foregroundColor(UsageInk.inkFaint) }
+            if index > 0 { text = text + Text(" · ").foregroundStyle(UsageInk.inkFaint) }
             let level = UsageText.level(window.percent)
             text = text + Text(UsageText.percent(window.percent))
-                .foregroundColor(level == .normal ? UsageInk.inkResting : UsageInk.fill(level))
+                .foregroundStyle(level == .normal ? UsageInk.inkResting : UsageInk.fill(level))
         }
         return text
     }
@@ -874,14 +879,7 @@ struct UsageFooter: View {
                 .minimumScaleFactor(cabe ? 1 : 0.6)
                 .foregroundStyle(on ? UsageInk.inkResting : UsageInk.inkFaint)
         }
-        .toggleStyle(.switch)
-        .controlSize(.mini)
-        // Blue whether or not the window is the one in use: AppKit greys an
-        // accent control in a window that is not key, and the switch's state
-        // is what these read at a glance.
-        .environment(\.controlActiveState, .key)
-        // The sidebar's blue (see `Palette.Resting`), not the system accent.
-        .tint(Color(.sRGB, red: 0x2c / 255, green: 0x69 / 255, blue: 0xa1 / 255, opacity: 1))
+        .toggleStyle(BlueSwitch())
         .fixedSize(horizontal: cabe, vertical: true)
         .help(switchHelp(which, on: on))
         .accessibilityLabel(which.title)
@@ -1069,6 +1067,34 @@ struct UsageFooter: View {
     }
 }
 
+/// A switch drawn here, in the sidebar's blue (`RestingTone.blue`) whether
+/// or not the window is the one in use. AppKit's own greys an accent switch
+/// in a window that is not key, tint and active state notwithstanding (seen
+/// on 17/11/2026), and the state is what these are read for at a glance.
+/// The mini switch's measure, a 35 × 16 track and a 20 × 13 knob, whatever
+/// the names' size, as AppKit's kept it.
+private struct BlueSwitch: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 6) {
+            configuration.label
+            ZStack(alignment: configuration.isOn ? .trailing : .leading) {
+                Capsule(style: .continuous)
+                    .fill(configuration.isOn ? AnyShapeStyle(Color(nsColor: RestingTone.blue))
+                        : AnyShapeStyle(UsageInk.wash(0.14)))
+                Capsule(style: .continuous)
+                    .fill(Color(white: 0.9))
+                    .shadow(color: .black.opacity(0.25), radius: 0.5, y: 0.5)
+                    .frame(width: 20, height: 13)
+                    .padding(.horizontal, 1.5)
+            }
+            .frame(width: 35, height: 16)
+            .animation(.easeOut(duration: 0.15), value: configuration.isOn)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { configuration.isOn.toggle() }
+    }
+}
+
 /// The footer's inks: the sidebar's own (`Palette` in WorkspaceSidebar.swift,
 /// private to that file), and the two warning hues it lacks. Same values, so
 /// the footer's text sits with the list's.
@@ -1081,9 +1107,10 @@ enum UsageInk {
         }
     }
 
-    static let ink = Color(nsColor: inkColor(dark: 0.96, light: 0.92))
-    static let inkResting = Color(nsColor: restingColor)
-    static let inkFaint = Color(nsColor: faintColor)
+    /// At rest, the Finder's two greys (`RestingTone`), as the list's.
+    static let ink = RestingInk(Color(nsColor: inkColor(dark: 0.96, light: 0.92)), rest: RestingTone.text)
+    static let inkResting = RestingInk(Color(nsColor: restingColor), rest: RestingTone.text)
+    static let inkFaint = RestingInk(Color(nsColor: faintColor), rest: RestingTone.faint)
     /// The same two, for the controls drawn by AppKit.
     static let restingColor = inkColor(dark: 0.60, light: 0.75)
     static let faintColor = inkColor(dark: 0.38, light: 0.55)
@@ -1105,12 +1132,12 @@ enum UsageInk {
     }
 
     /// The sidebar's "attached" green: the account the tabs are on.
-    static let live = state(0.76, 0.14, 150)
+    static let live = RestingInk(state(0.76, 0.14, 150), rest: RestingTone.green)
     /// The sidebar's "busy" amber.
-    static let attention = state(0.82, 0.15, 85)
-    static let critical = state(0.70, 0.19, 27)
+    static let attention = RestingInk(state(0.82, 0.15, 85), rest: RestingTone.yellow)
+    static let critical = RestingInk(state(0.70, 0.19, 27), rest: RestingTone.red)
 
-    static func fill(_ level: UsageText.Level) -> Color {
+    static func fill(_ level: UsageText.Level) -> RestingInk {
         switch level {
         case .normal: return inkResting
         case .attention: return attention

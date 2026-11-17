@@ -32,9 +32,35 @@ private struct SidebarInUseKey: EnvironmentKey {
 }
 
 extension EnvironmentValues {
-    fileprivate var sidebarInUse: Bool {
+    var sidebarInUse: Bool {
         get { self[SidebarInUseKey.self] }
         set { self[SidebarInUseKey.self] = newValue }
+    }
+}
+
+/// An ink with a second tone for the window at rest (`RestingTone`), picked
+/// where it is drawn from the environment: a row far below the root, or the
+/// footer, takes the window's state without anyone handing it down.
+struct RestingInk: ShapeStyle {
+    let live: Color
+    let rest: Color
+
+    init(_ live: Color, rest: Color) {
+        self.live = live
+        self.rest = rest
+    }
+
+    init(_ live: Color, rest: NSColor) {
+        self.init(live, rest: Color(nsColor: rest))
+    }
+
+    /// The same colour in use and at rest.
+    init(_ color: Color) {
+        self.init(color, rest: color)
+    }
+
+    func resolve(in environment: EnvironmentValues) -> Color {
+        environment.colorScheme == .dark && !environment.sidebarInUse ? rest : live
     }
 }
 
@@ -589,7 +615,7 @@ struct WorkspaceSidebar: View {
                 if !program.isEmpty {
                     Text(program)
                         .font(.system(size: 12 * textZoom))
-                        .foregroundStyle(wantsYou ? Palette.attentionInk.opacity(0.62) : Palette.inkFaint)
+                        .foregroundStyle(wantsYou ? RestingInk(Palette.attentionInk.opacity(0.62)) : Palette.inkFaint)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                 }
@@ -604,7 +630,7 @@ struct WorkspaceSidebar: View {
                 if tab.isElsewhere {
                     Image(systemName: "macwindow.on.rectangle")
                         .font(.system(size: 9))
-                        .foregroundStyle(wantsYou ? Palette.attentionInk.opacity(0.62) : Palette.inkFaint)
+                        .foregroundStyle(wantsYou ? RestingInk(Palette.attentionInk.opacity(0.62)) : Palette.inkFaint)
                 }
                 Spacer(minLength: 0)
                 // The close button's room, kept whether or not it is showing,
@@ -787,7 +813,7 @@ struct WorkspaceSidebar: View {
                 } else {
                     Image(systemName: "zzz")
                         .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(onBadge ? Palette.attentionInk : Palette.inkResting)
+                        .foregroundStyle(onBadge ? RestingInk(Palette.attentionInk) : Palette.inkResting)
                 }
             }
             .frame(width: 16, height: 16)
@@ -814,7 +840,7 @@ struct WorkspaceSidebar: View {
         } label: {
             Image(systemName: "xmark")
                 .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(onBadge ? Palette.attentionInk : Palette.inkResting)
+                .foregroundStyle(onBadge ? RestingInk(Palette.attentionInk) : Palette.inkResting)
                 .frame(width: 16, height: 16)
                 .background(Circle().fill(Palette.wash(0.08)))
                 .contentShape(Circle())
@@ -841,8 +867,10 @@ struct WorkspaceSidebar: View {
             identifier: "sidebar-ia-\(tab.id)",
             help: "IA e conta desta aba",
             visible: visible,
-            resting: onBadge ? Attention.ink.withAlphaComponent(0.62) : Palette.faintColor,
-            lit: onBadge ? Attention.ink : Palette.restingColor,
+            resting: onBadge ? Attention.ink.withAlphaComponent(0.62)
+                : !model.inUse && scheme == .dark ? RestingTone.faint : Palette.faintColor,
+            lit: onBadge ? Attention.ink
+                : !model.inUse && scheme == .dark ? RestingTone.text : Palette.restingColor,
             menu: {
                 AccountMenu.make(
                     tab: tab.id, account: tab.account, running: tab.runningAccount, command: tab.command
@@ -866,20 +894,33 @@ struct WorkspaceSidebar: View {
     /// state gives it. Only the ink: weight and capsule still say which tab
     /// is the chosen one.
     private func titleInk(for tab: SessionSnapshot.SidebarTab, chosen: Bool, hovered: Bool)
+        -> RestingInk
+    {
+        RestingInk(liveTitleInk(for: tab, chosen: chosen, hovered: hovered),
+                   rest: restingTitleInk(for: tab, chosen: chosen))
+    }
+
+    private func liveTitleInk(for tab: SessionSnapshot.SidebarTab, chosen: Bool, hovered: Bool)
         -> Color
     {
-        if !model.inUse && scheme == .dark {
-            if let tone = tab.claudeActivity.flatMap({ Palette.Resting.tone(of: $0) }) { return tone }
-            if tab.claudeActivity == nil || tab.claudeActivity == .working,
-               let mode = tab.claudeMode { return Palette.Resting.tone(of: mode) }
-        }
         if let activity = tab.claudeActivity?.dynamicColor { return Color(nsColor: activity) }
         if let mode = tab.claudeMode { return Color(nsColor: mode.dynamicColor) }
         // A turn running in the manual mode, which has no colour: at least
         // the resting ink, and not the faint one a finished turn's grey would
         // outshine — work under way must not read as the quietest thing here.
-        if tab.claudeActivity == .working { return chosen ? Palette.ink : Palette.inkResting }
-        return chosen ? Palette.ink : hovered ? Palette.inkResting : Palette.inkFaint
+        if tab.claudeActivity == .working { return chosen ? Palette.ink.live : Palette.inkResting.live }
+        return chosen ? Palette.ink.live : hovered ? Palette.inkResting.live : Palette.inkFaint.live
+    }
+
+    /// At rest, the Finder's way: the mode's tone where the tab has one, the
+    /// chosen tab's name in the selection's blue, a sleeping one faint and
+    /// every other name in the one grey. A finished turn's grey is that grey.
+    private func restingTitleInk(for tab: SessionSnapshot.SidebarTab, chosen: Bool) -> Color {
+        if let tone = tab.claudeActivity.flatMap({ Palette.Resting.tone(of: $0) }) { return tone }
+        if tab.claudeActivity == nil || tab.claudeActivity == .working,
+           let mode = tab.claudeMode { return Palette.Resting.tone(of: mode) }
+        if chosen { return Palette.Resting.selectedText }
+        return tab.asleep ? Palette.Resting.faint : Palette.Resting.text
     }
 
     /// A click on a tab. A double-click renames it, and so does a single
@@ -1129,6 +1170,9 @@ struct WorkspaceSidebar: View {
     ) -> some View {
         if wantsYou {
             AttentionCapsule(until: chosen ? nil : Attention.lastBreath(since: since))
+        } else if chosen && !model.inUse && scheme == .dark {
+            // At rest, the Finder's selection: a darker pill, no outline.
+            Capsule(style: .continuous).fill(Palette.Resting.selection)
         } else if chosen {
             // The strip's selected tab, as it is drawn there: its glass tint
             // and the hairline around it, which is what makes it read.
@@ -1441,9 +1485,10 @@ private enum Palette {
         })
     }
 
-    static let ink = ink(dark: 0.96, light: 0.92)
-    static let inkResting = ink(dark: 0.60, light: 0.75)
-    static let inkFaint = ink(dark: 0.38, light: 0.55)
+    /// At rest, the Finder's two greys: the name and the faint (`RestingTone`).
+    static let ink = RestingInk(ink(dark: 0.96, light: 0.92), rest: RestingTone.text)
+    static let inkResting = RestingInk(ink(dark: 0.60, light: 0.75), rest: RestingTone.text)
+    static let inkFaint = RestingInk(ink(dark: 0.38, light: 0.55), rest: RestingTone.faint)
 
     /// The same two inks, for a control AppKit draws.
     static let restingColor = inkColor(dark: 0.60, light: 0.75)
@@ -1495,15 +1540,15 @@ private enum Palette {
     /// ground instead of shouting from it. Only on a dark ground; a light one
     /// keeps its own.
     enum Resting {
-        static let red = rgb(0xa1, 0x49, 0x44)
-        static let orange = rgb(0xa1, 0x76, 0x2c)
-        static let yellow = rgb(0xa1, 0x92, 0x2c)
-        static let green = rgb(0x40, 0x92, 0x4c)
-        static let blue = rgb(0x2c, 0x69, 0xa1)
-
-        private static func rgb(_ r: Double, _ g: Double, _ b: Double) -> Color {
-            Color(.sRGB, red: r / 255, green: g / 255, blue: b / 255, opacity: 1)
-        }
+        static let red = Color(nsColor: RestingTone.red)
+        static let orange = Color(nsColor: RestingTone.orange)
+        static let yellow = Color(nsColor: RestingTone.yellow)
+        static let green = Color(nsColor: RestingTone.green)
+        static let blue = Color(nsColor: RestingTone.blue)
+        static let text = Color(nsColor: RestingTone.text)
+        static let faint = Color(nsColor: RestingTone.faint)
+        static let selection = Color(nsColor: RestingTone.selection)
+        static let selectedText = Color(nsColor: RestingTone.selectedText)
 
         /// Claude Code's mode, in the nearest of the five: the footer's teal
         /// is green here, its violet blue, its red and its yellow themselves.
