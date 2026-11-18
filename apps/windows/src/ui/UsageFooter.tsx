@@ -244,36 +244,47 @@ function JevBlock(props: { line: JevLine; nowMs: number }) {
           ))}
         </div>
       )}
-      <div class="usage-jev-extra">
-        {line.dailyAverage30d !== null && (
-          <span class="usage-note" title="Gasto médio por mês da conta do OpenRouter (todas as chaves), pelos últimos 30 dias">
-            Gasto médio: {perMonth(line.dailyAverage30d)}
-          </span>
-        )}
-        <button class="usage-jev-credit" title="Abre a página de créditos do OpenRouter" onClick={() => void openUrl(OPENROUTER_CREDITS_URL)}>
-          Pôr crédito
-        </button>
-      </div>
+      <JevSpending line={line} />
       {note && <div class="usage-note">{note}</div>}
     </div>
   );
 }
 
-/** Folded: the Jev on one line, with what it can still spend. */
+/** "Gasto médio: US$ x/mês" — what the Jev's key spends a month — and the link that buys credit; open or folded. */
+function JevSpending(props: { line: JevLine }) {
+  const { line } = props;
+  return (
+    <div class="usage-jev-extra">
+      {line.dailyAverage30d !== null && (
+        <span class="usage-note" title="Gasto médio por mês do Jev (a chave dele no OpenRouter), pelos últimos 30 dias">
+          Gasto médio: {perMonth(line.dailyAverage30d)}
+        </span>
+      )}
+      <button class="usage-jev-credit" title="Abre a página de créditos do OpenRouter" onClick={() => void openUrl(OPENROUTER_CREDITS_URL)}>
+        Pôr crédito
+      </button>
+    </div>
+  );
+}
+
+/** Folded: the Jev on one line, with what it can still spend, and its spending under it. */
 function JevCompact(props: { line: JevLine; nowMs: number }) {
   const { line, nowMs } = props;
   const c = line.credit;
   const figure = c ? dollars(available(c)) : "—";
   const spent = c ? Math.max(...creditRows(c).map((r) => (r.says === "restam" ? r.spent : 0))) : 0;
   return (
-    <div class="usage-compact" data-account="jev">
-      <span class="usage-compact-name" title={jevHelp(line, nowMs)}>
-        <span class="usage-name">Jev · OpenRouter</span>
-      </span>
-      <span class="usage-compact-figures" aria-label={`Jev OpenRouter restam ${figure}`}>
-        <span class={`usage-percent-inline ${level(spent)}`}>{figure}</span>
-      </span>
-    </div>
+    <>
+      <div class="usage-compact" data-account="jev">
+        <span class="usage-compact-name" title={jevHelp(line, nowMs)}>
+          <span class="usage-name">Jev · OpenRouter</span>
+        </span>
+        <span class="usage-compact-figures" aria-label={`Jev OpenRouter restam ${figure}`}>
+          <span class={`usage-percent-inline ${level(spent)}`}>{figure}</span>
+        </span>
+      </div>
+      <JevSpending line={line} />
+    </>
   );
 }
 

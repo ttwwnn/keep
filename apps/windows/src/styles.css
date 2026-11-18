@@ -107,30 +107,56 @@ button {
 
 /* ------------------------------------------------------------ sidebar */
 
+/* The sidebar is a card, as the Finder draws its sidebar on macOS 26 (FloatingPanelBackdrop in SidebarHost.swift):
+   rounded 18px, held 8px (PANEL_INSET, state.ts) off the window's edges, a thin rim, and the window's own colour in
+   the margin around it. The margin is the card's shadow, cut where the sidebar ends, so the card is never painted
+   over the margin (the translucent ground, styles-glass.css, would show twice there). Everything in it is cut by its
+   corners. */
 .sidebar {
   position: relative;
   flex: none;
   display: flex;
   flex-direction: column;
-  background: var(--recessed);
+  padding: 8px;
+  overflow: hidden;
   min-width: 0;
 }
 
-/* The row the window's controls stand in: the zoom and the sidebar's own
-   button ride its far end, a divider's gap from the edge. */
+.sidebar-card,
+.files-card {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--panel-rim);
+  border-radius: 18px;
+  background: var(--recessed);
+  box-shadow: 0 0 0 4000px var(--ground);
+}
+
+/* The row the window's controls stand in: the zoom and the sidebar's own button ride its far end, at the height of
+   the row of tabs beside it (52px from the window's top: the card begins 9px down). */
 .sidebar-head {
-  height: var(--titlebar);
+  height: calc(var(--titlebar) - 18px);
   flex: none;
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  padding: 0 4px 0 6px;
+}
+
+.sidebar-head-items {
+  flex: none;
+  display: flex;
+  align-items: center;
   gap: 6px;
-  padding: 0 12px 0 14px;
 }
 
 /* macOS: the window's own buttons sit over the corner. */
 .sidebar-head.inset {
-  padding-left: 78px;
+  padding-left: 69px;
 }
 
 .sidebar-list {
@@ -1138,11 +1164,12 @@ button {
   color: var(--chrome-text);
 }
 
+/* Where the card ends to the eye: the margin between it and the terminal. */
 .sidebar-resizer {
   position: absolute;
   top: 0;
-  right: -3px;
-  width: 6px;
+  right: 0;
+  width: 9px;
   height: 100%;
   cursor: col-resize;
   z-index: 5;
@@ -1352,9 +1379,17 @@ button {
 
 /* ------------------------------------------------------------ terminals */
 
+/* The terminals and, at their right, the files panel of a Claude Code conversation. */
+.work {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
 .terminal-area {
   position: relative;
   flex: 1;
+  min-width: 0;
   min-height: 0;
   background: var(--ground);
   overflow: hidden;
@@ -1464,6 +1499,211 @@ button {
 .ai-agents {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* "Arquivos", at the bar's far end: lit while the panel is open. */
+.ai-files {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-resting);
+  font: inherit;
+}
+
+.ai-files:hover {
+  color: var(--ink);
+}
+
+.ai-files.on {
+  color: var(--live);
+}
+
+/* The sidebar's glyph, turned to the right, where the panel opens. */
+.ai-files svg {
+  width: 1em;
+  height: 1em;
+  transform: scaleX(-1);
+}
+
+/* ------------------------------------------------------------ the files panel */
+
+/* The panel is a card like the sidebar's (`.files-card` beside `.sidebar-card`), its left margin the edge that
+   widens or shuts it. */
+.files-panel {
+  position: relative;
+  flex: none;
+  display: flex;
+  padding: 8px;
+  overflow: hidden;
+  font: calc(12px * var(--t)) var(--ui-font);
+  color: var(--ink);
+}
+
+.files-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 9px;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.files-note {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  text-align: center;
+  color: var(--ink-faint);
+}
+
+.files-lists {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-top: 10px;
+}
+
+/* A list with rows takes what room there is, shared with the others; an empty one only its line. */
+.files-section {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.files-section.empty {
+  flex: none;
+}
+
+.files-title {
+  display: flex;
+  gap: 6px;
+  padding: 0 16px;
+}
+
+.files-title-name {
+  font-weight: 600;
+}
+
+.files-count,
+.files-empty {
+  color: var(--ink-faint);
+}
+
+.files-empty {
+  padding: 0 16px 12px;
+}
+
+.files-table {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 8px 8px;
+}
+
+.files-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+}
+
+/* Name, type, modified, size: the name takes what the other three leave. */
+.files-row {
+  display: grid;
+  grid-template-columns: minmax(50px, 1fr) minmax(28px, 40px) minmax(70px, 92px) minmax(50px, 62px);
+  align-items: center;
+  column-gap: 6px;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.files-body .files-row:hover {
+  background: var(--tab-hover);
+}
+
+.files-body .files-row.selected {
+  background: var(--card-select);
+}
+
+.files-head {
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--rule);
+  border-radius: 0;
+}
+
+.files-cell {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--ink-resting);
+}
+
+.files-body .files-name {
+  color: var(--ink);
+}
+
+.files-size {
+  text-align: right;
+}
+
+.files-head > [role="columnheader"] {
+  min-width: 0;
+}
+
+.files-head .files-cell {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--ink-faint);
+}
+
+.files-head .files-cell.sorted {
+  color: var(--ink);
+}
+
+.files-head .files-size {
+  justify-content: flex-end;
+}
+
+.files-arrow {
+  font-size: 0.7em;
+}
+
+/* A row carried to a pane: its name on the pointer. */
+.files-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 1000;
+  max-width: 260px;
+  padding: 3px 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  border-radius: 6px;
+  background: var(--overlay);
+  color: var(--ink);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  font: calc(12px * var(--t)) var(--ui-font);
+  pointer-events: none;
 }
 
 /* In a split, the panes not holding the keyboard step back a little. */
@@ -1998,8 +2238,26 @@ button.danger.primary {
   --live: #40924c !important;
 }
 
-/* The selection at rest: a darker pill, no outline. */
-:root[data-theme="dark"].window-idle .tab-row.selected:not(.wants) {
+/* On a dark ground the chosen tab and the workspace in use wear the Finder's selection, a solid #222222 with no glass
+   and no outline, in use and at rest alike (pedido de 17/11/2026; `capsule(chosen:)` and `rowBackground` in
+   WorkspaceSidebar.swift). A light ground keeps its own. */
+:root[data-theme="dark"] .tab-row.selected:not(.wants) {
   background: #222222;
   box-shadow: none;
+}
+
+/* The workspace's frame sits behind its header: the header's own room, a little more above (where its padding is) and
+   as much below the name, so the name stands in the middle of it. */
+:root[data-theme="dark"] .workspace.current > .workspace-row {
+  position: relative;
+  isolation: isolate;
+}
+
+:root[data-theme="dark"] .workspace.current > .workspace-row::before {
+  content: "";
+  position: absolute;
+  inset: 5px 5px -1px;
+  z-index: -1;
+  border-radius: 12px;
+  background: #222222;
 }

@@ -59,6 +59,20 @@ export interface GuiState {
 }
 
 export const SIDEBAR_MIN = 200;
+
+/** The margin between a side panel's card and the window's edges (the Finder's), and the card's rim. */
+export const PANEL_INSET = 8;
+const PANEL_RIM = 1;
+
+/**
+ * The narrowest the sidebar may be (pedido de 17/11/2026, `SidebarHost.holdMinimum` in the macOS app): its top row
+ * whole — `topRow`, the width of the zoom, the battery where it shows and the button that hides the sidebar, side by
+ * side — with the row's own `padding` and the card's margin and rim on both sides; never under the old minimum.
+ */
+export function sidebarFloor(topRow: number, padding: number): number {
+  return Math.max(SIDEBAR_MIN, Math.ceil(topRow + padding + 2 * (PANEL_INSET + PANEL_RIM)));
+}
+
 /** The sidebar widens to a third of the screen (pedido de 12/11/2026), and never less than the 320 it always had. */
 export function sidebarMax(): number {
   return Math.max(320, Math.round((globalThis.screen?.availWidth ?? 0) / 3));

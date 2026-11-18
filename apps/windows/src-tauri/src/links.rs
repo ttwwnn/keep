@@ -26,7 +26,7 @@ pub struct Hit {
 const ASK_FOR: Duration = Duration::from_millis(2000);
 
 /// The names Windows keeps for devices, with any extension: `NUL.txt` is the null device too.
-fn is_device_name(path: &str) -> bool {
+pub(crate) fn is_device_name(path: &str) -> bool {
     let name = path.rsplit(['\\', '/']).next().unwrap_or(path);
     let stem = name.split('.').next().unwrap_or(name).trim_end().to_ascii_uppercase();
     let numbered = |prefix: &str| {
@@ -39,7 +39,7 @@ fn is_device_name(path: &str) -> bool {
 /// whether it exists makes it connect and sign in to that server with the user's credentials (NTLM), which hands the
 /// server a hash to crack or relay — and `kind` is asked of every path-looking word under the pointer, no click needed.
 /// WSL's own shares are the machine's.
-fn is_network_path(path: &str) -> bool {
+pub(crate) fn is_network_path(path: &str) -> bool {
     let p = path.replace('/', "\\");
     let lower = p.to_ascii_lowercase();
     if !lower.starts_with("\\\\") {

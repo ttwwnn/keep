@@ -3,7 +3,22 @@
 // to the pane that stood in for it.
 import { describe, expect, it } from "vitest";
 import type { TabInfo } from "./api";
-import { arrangeTabs, heirsOf, insertBefore, memberIds, moveId, pruneOrders, substitute } from "./tabOrder";
+import { arrangeTabs, heirsOf, insertBefore, memberIds, moveId, pruneOrders, stripTabs, substitute } from "./tabOrder";
+
+describe("the row at the top", () => {
+  const tabs = ["a", "b", "c"];
+  it("with the sidebar in sight holds the tab in use alone, at its own place", () => {
+    expect(stripTabs(tabs, "b", true)).toEqual([{ tab: "b", index: 1 }]);
+    expect(stripTabs(tabs, null, true)).toEqual([]);
+  });
+  it("with the sidebar hidden holds them all", () => {
+    expect(stripTabs(tabs, "b", false)).toEqual([
+      { tab: "a", index: 0 },
+      { tab: "b", index: 1 },
+      { tab: "c", index: 2 },
+    ]);
+  });
+});
 
 const tab = (id: number, splitOf = 0): TabInfo => ({
   id,

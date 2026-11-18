@@ -41,6 +41,14 @@ export interface AiStatus {
   canType: boolean;
   /** The prompt holds text being written. Claude Code sets it aside (Ctrl+S) for the command and gives it back; Codex has no such thing. */
   hasDraft: boolean;
+  /** Claude Code's conversation, as its status line names it: what the files panel reads (chatFiles.ts). */
+  conversation?: Conversation | null;
+}
+
+/** A Claude Code conversation: its transcript (`transcript_path`) and its id (`session_id`). */
+export interface Conversation {
+  transcript: string;
+  session: string;
 }
 
 /** Said in a menu whose items are off. */
@@ -101,6 +109,7 @@ export interface ClaudeFile {
   modelId: string;
   modelName: string;
   effort: string | null;
+  conversation?: Conversation | null;
 }
 
 /** `Opus 5.5 (1M context)` as `Opus 5.5 (1M)`. */
@@ -128,7 +137,18 @@ export function parseStatusFile(text: string): ClaudeFile | null {
   const display = typeof model.display_name === "string" ? model.display_name : id;
   if (id === "" && display === "") return null;
   const level = record(root.effort)?.level;
-  return { modelId: id, modelName: shortModelName(display), effort: typeof level === "string" && level ? level : null };
+  const transcript = root.transcript_path;
+  const session = root.session_id;
+  const conversation =
+    typeof transcript === "string" && transcript !== "" && typeof session === "string" && session !== ""
+      ? { transcript, session }
+      : null;
+  return {
+    modelId: id,
+    modelName: shortModelName(display),
+    effort: typeof level === "string" && level ? level : null,
+    conversation,
+  };
 }
 
 /** The status of a Claude Code pane, or null when its status line has not said (yet). */
@@ -146,6 +166,7 @@ export function claudeStatus(
     agents: countAgents(screen),
     canType: activity === "done",
     hasDraft: activity === "done" && !claudePromptIsEmpty(screen),
+    conversation: file.conversation ?? null,
   };
 }
 
@@ -324,7 +345,9 @@ export function sameStatus(a: AiStatus | undefined, b: AiStatus | undefined): bo
     a.effort === b.effort &&
     a.agents === b.agents &&
     a.canType === b.canType &&
-    a.hasDraft === b.hasDraft
+    a.hasDraft === b.hasDraft &&
+    a.conversation?.transcript === b.conversation?.transcript &&
+    a.conversation?.session === b.conversation?.session
   );
 }
 

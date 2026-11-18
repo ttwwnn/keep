@@ -168,3 +168,56 @@ export function keysToCut(selected: string, lines: string[], cursorRow: number, 
   if (cursorRow < 0 || cursorRow >= lines.length) return undefined;
   return cutKeys(selected, lines[cursorRow], cursorColumn);
 }
+
+// ---------------------------------------------------------------- Shift and the side arrows
+
+/** A place in Claude Code's prompt box: a row of the box and a column of its text (the gutter off). */
+export interface BoxCell {
+  row: number;
+  column: number;
+}
+
+export const ARROW_LEFT = LEFT;
+export const ARROW_RIGHT = RIGHT;
+
+/**
+ * Where a left or right arrow takes the cursor in Claude Code's prompt box, given each row's length: one character
+ * over, onto the end of the row above or the start of the row below at a row's edge, and nowhere past the box's first
+ * or last character (the macOS app's `CutSelection.step`). Shift with an arrow marks from where it began to here.
+ * shortcut: a row the box wrapped is taken to end where its text does, so the mark can be a character off at a soft
+ * wrap; the text a cut takes is still found by its words (`keysAcrossRows`).
+ */
+export function arrowStep(cell: BoxCell, left: boolean, rowLengths: number[]): BoxCell {
+  if (cell.row < 0 || cell.row >= rowLengths.length) return cell;
+  const column = Math.min(Math.max(cell.column, 0), rowLengths[cell.row]);
+  if (left) {
+    if (column > 0) return { row: cell.row, column: column - 1 };
+    return cell.row > 0 ? { row: cell.row - 1, column: rowLengths[cell.row - 1] } : { row: cell.row, column: 0 };
+  }
+  if (column < rowLengths[cell.row]) return { row: cell.row, column: column + 1 };
+  return cell.row + 1 < rowLengths.length ? { row: cell.row + 1, column: 0 } : { row: cell.row, column };
+}
+
+/**
+ * The terminal's selection for a mark from `anchor` to `focus` in the box whose first row is screen row `first`: the
+ * screen cell it starts at (the gutter's two columns put back) and how many cells it runs, row after row, in a screen
+ * `cols` wide. The cell at the later end is where the mark stops, not a character in it. Undefined for an empty mark
+ * or one the box no longer holds.
+ */
+export function markSpan(
+  anchor: BoxCell,
+  focus: BoxCell,
+  rowLengths: number[],
+  first: number,
+  cols: number,
+): { row: number; column: number; length: number } | undefined {
+  const before = (a: BoxCell, b: BoxCell) => a.row < b.row || (a.row === b.row && a.column < b.column);
+  if (anchor.row === focus.row && anchor.column === focus.column) return undefined;
+  const [low, high] = before(anchor, focus) ? [anchor, focus] : [focus, anchor];
+  if (low.row < 0 || high.row >= rowLengths.length || (high.column === 0 && high.row === 0)) return undefined;
+  const last = high.column > 0 ? { row: high.row, column: high.column - 1 } : { row: high.row - 1, column: Math.max(0, rowLengths[high.row - 1] - 1) };
+  const start = { row: first + low.row, column: low.column + 2 };
+  const end = { row: first + last.row, column: last.column + 2 };
+  const length = (end.row - start.row) * cols + end.column - start.column + 1;
+  return length > 0 ? { ...start, length } : undefined;
+}

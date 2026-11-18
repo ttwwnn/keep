@@ -60,13 +60,18 @@ export function startStripDrag(event: PointerEvent, workspace: string, tabs: Roo
   let band = { top: 0, bottom: 0 };
   let ghost: Ghost | null = null;
   const start = { x: event.clientX, y: event.clientY };
+  // With the sidebar in sight the row holds the tab in use alone (tabOrder.ts `stripTabs`): it is torn out from
+  // there as from a full row, and has no place in the row to be moved to.
+  let lone = false;
   trackDrag(event, {
     start() {
       spans = spansOf([...strip.querySelectorAll(".tab")], "x");
-      if (spans.length !== tabs.length) return false;
+      lone = spans.length === 1;
+      if (!lone && spans.length !== tabs.length) return false;
       pitch = pitches(spans);
+      const own = spans[lone ? 0 : index];
       const room = strip.getBoundingClientRect();
-      limits = { min: room.left - spans[index].start, max: room.right - (spans[index].start + spans[index].size) };
+      limits = { min: room.left - own.start, max: room.right - (own.start + own.size) };
       band = { top: room.top, bottom: room.bottom };
       return true;
     },
@@ -75,12 +80,17 @@ export function startStripDrag(event: PointerEvent, workspace: string, tabs: Roo
         if (!ghost) ghost = hangGhost(tab, at);
         ghost.follow(at);
         // The gap it left is closed: the ones after it slide into its place.
-        stripMove.value = { workspace, from: index, to: index, dx: 0, slid: slides(pitch, index, pitch.length - 1), tearing: true };
+        const slid = lone ? [] : slides(pitch, index, pitch.length - 1);
+        stripMove.value = { workspace, from: index, to: index, dx: 0, slid, tearing: true };
         return;
       }
       ghost?.remove();
       ghost = null;
       const dx = Math.min(Math.max(at.x - start.x, limits.min), limits.max);
+      if (lone) {
+        stripMove.value = { workspace, from: index, to: index, dx, slid: [] };
+        return;
+      }
       // The middle of the carried tab decides the place, as the macOS row does.
       const middle = spans[index].start + spans[index].size / 2 + dx;
       const to = Math.max(0, slotAt(spans, middle));

@@ -13,8 +13,11 @@ html.glass #app {
   background: transparent !important;
 }
 
-html.glass .sidebar {
+/* The side panels' cards: the card at the alpha, the margin around it (the card's shadow, never under the card) too. */
+html.glass .sidebar-card,
+html.glass .files-card {
   background: var(--recessed-glass);
+  box-shadow: 0 0 0 4000px var(--ground-glass);
 }
 
 html.glass .titlebar,

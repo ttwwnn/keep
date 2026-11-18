@@ -4,6 +4,7 @@
 //! below is one question to the daemon or one attached tab, and the page —
 //! sidebar, tab strip, terminals — is in `../src`.
 
+mod chat_files;
 mod claude_settings;
 mod clipboard;
 mod confinement;
@@ -460,6 +461,27 @@ fn path_exists(path: String) -> bool {
     std::path::Path::new(&path).exists()
 }
 
+/// The files of the Claude Code conversation whose transcript this is, for the panel beside it, and the
+/// Downloads folder; only what the transcript gained since the last read is read (`chat_files`).
+#[tauri::command]
+async fn chat_files(
+    readers: State<'_, chat_files::Readers>,
+    transcript: String,
+    session: String,
+) -> Answer<chat_files::Files> {
+    // The page names the transcript from the status line's file; a session id names folders here.
+    if !chat_files::valid_session(&session)
+        || !transcript.to_ascii_lowercase().ends_with(".jsonl")
+        || links::is_network_path(&transcript)
+    {
+        return Err("conversa que o Keep não lê".into());
+    }
+    let reader = readers.reader(&transcript, &session);
+    tauri::async_runtime::spawn_blocking(move || reader.lock().unwrap_or_else(|e| e.into_inner()).read())
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// For each group of spellings of one path the terminal printed, the first
 /// that exists; see `links`.
 #[tauri::command]
@@ -572,6 +594,7 @@ pub fn run() {
         .manage(windows::Hub::default())
         .manage(quick::Quick::default())
         .manage(glass::Glass::default())
+        .manage(chat_files::Readers::default())
         .setup(|app| {
             windows::start(app.handle());
             quick::setup(app.handle());
@@ -646,6 +669,7 @@ pub fn run() {
             glass::restart_app,
             path_exists,
             find_paths,
+            chat_files,
             clipboard::clipboard_files,
             open_path,
             reveal_path,

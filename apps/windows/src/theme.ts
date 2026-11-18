@@ -224,6 +224,9 @@ export function applyPalette(palette: Palette): void {
     "--wash": `rgba(${ink}, ${palette.dark ? 0.09 : 0.07})`,
     "--wash-strong": `rgba(${ink}, ${palette.dark ? 0.14 : 0.11})`,
     "--rule": `rgba(${ink}, 0.08)`,
+    // The thin rim of a side panel's card (the sidebar, the files panel), as the Finder draws its sidebar on
+    // macOS 26 (FloatingPanelBackdrop in SidebarHost.swift): white 8% on a dark ground, black 7% on a light one.
+    "--panel-rim": palette.dark ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.07)",
     // The card of the picker: the terminal's ground, a step further back (x0.78
     // dark, x0.94 light), a little translucent over the blur.
     "--overlay": palette.overlay,

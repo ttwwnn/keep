@@ -44,7 +44,17 @@ describe("the status file", () => {
     const got = parseStatusFile(
       file({ id: "claude-opus-5-5[1m]", display_name: "Opus 5.5 (1M context)" }, { level: "xhigh" }),
     );
-    expect(got).toEqual({ modelId: "claude-opus-5-5[1m]", modelName: "Opus 5.5 (1M)", effort: "xhigh" });
+    expect(got).toEqual({ modelId: "claude-opus-5-5[1m]", modelName: "Opus 5.5 (1M)", effort: "xhigh", conversation: null });
+  });
+
+  it("names the conversation the files panel reads: its transcript and its id, both or neither", () => {
+    const text = (extra: object) => JSON.stringify({ model: { id: "m" }, ...extra });
+    expect(parseStatusFile(text({ session_id: "abc-1", transcript_path: "C:\\x\\abc-1.jsonl" }))?.conversation).toEqual({
+      transcript: "C:\\x\\abc-1.jsonl",
+      session: "abc-1",
+    });
+    expect(parseStatusFile(text({ session_id: "abc-1" }))?.conversation).toBeNull();
+    expect(parseStatusFile(text({ transcript_path: "C:\\x\\abc-1.jsonl", session_id: "" }))?.conversation).toBeNull();
   });
 
   it("a model without an effort setting has none", () => {
@@ -54,8 +64,8 @@ describe("the status file", () => {
   });
 
   it("the id stands in for a missing name, and the name for a missing id", () => {
-    expect(parseStatusFile(file({ id: "claude-x" }))).toEqual({ modelId: "claude-x", modelName: "claude-x", effort: null });
-    expect(parseStatusFile(file({ display_name: "X" }))).toEqual({ modelId: "", modelName: "X", effort: null });
+    expect(parseStatusFile(file({ id: "claude-x" }))).toEqual({ modelId: "claude-x", modelName: "claude-x", effort: null, conversation: null });
+    expect(parseStatusFile(file({ display_name: "X" }))).toEqual({ modelId: "", modelName: "X", effort: null, conversation: null });
   });
 
   it("says nothing for what is not a model", () => {
@@ -150,6 +160,7 @@ describe("the status of a Claude Code pane", () => {
       agents: 1,
       canType: true,
       hasDraft: false,
+      conversation: null,
     });
   });
 

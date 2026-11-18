@@ -2024,6 +2024,7 @@ name = "keep-app"
 version = "0.3.56"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "keep-proto",
  "serde",
  "serde_json",

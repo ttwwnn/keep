@@ -18,9 +18,11 @@ import {
   type AiStatus,
   type Choice,
 } from "../aiStatus";
+import { filesOpen, toggleFiles } from "../chatFiles";
 import { viewKey } from "../terminals";
 import { codexModels, focusPane, picking, runChoice } from "../store";
 import { openMenuAt, type MenuItem } from "./common";
+import * as icon from "./icons";
 
 /** Rows a menu takes, to hang it above the bar rather than over it. */
 const ROW = 28;
@@ -101,6 +103,24 @@ export function AiStatusBar(props: { workspace: string; root: number; pane: numb
             {agentsLabel(status.agents)}
           </span>
         </>
+      )}
+      {status.program === "claude" && (
+        <button
+          class={`ai-files ${filesOpen.value ? "on" : ""}`}
+          data-chip="files"
+          title="Arquivos enviados e gerados nesta conversa"
+          aria-pressed={filesOpen.value}
+          onMouseDown={keepFocus}
+          onClick={(e) => {
+            e.stopPropagation();
+            // The panel shows the conversation of the pane in front: this one.
+            focusPane(workspace, root, pane);
+            toggleFiles();
+          }}
+        >
+          <icon.Sidebar />
+          Arquivos
+        </button>
       )}
     </div>
   );

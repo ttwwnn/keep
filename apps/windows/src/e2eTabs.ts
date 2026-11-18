@@ -209,6 +209,20 @@ const idsOf = (workspace: string): number[] => (tabsByWorkspace.value.get(worksp
 /** The row above the terminal, as drawn: the tab of each, by id. */
 const stripIds = (): number[] => all<HTMLElement>(".strip .tab").map((e) => Number((e.dataset.tab ?? "").split("\u0000")[1]));
 
+/**
+ * With the sidebar in sight the row holds the tab in use alone (tabOrder.ts `stripTabs`): a step that works the
+ * other tabs of the row hides the sidebar for its length, as a person who wants them there does.
+ */
+async function withFullRow<T>(run: () => Promise<T>): Promise<T> {
+  const shown = gui.value.sidebar.visible;
+  if (shown) toggleSidebar();
+  try {
+    return await run();
+  } finally {
+    if (shown && !gui.value.sidebar.visible) toggleSidebar();
+  }
+}
+
 /** A workspace's rows in the sidebar, as drawn: the tab of each, by id. */
 const rowIds = (workspace: string): number[] =>
   all<HTMLElement>(`.sidebar .workspace[data-workspace="${CSS.escape(workspace)}"] .tab-row[data-row]`).map((e) =>
@@ -267,21 +281,25 @@ export async function tabsSteps(runStep: StepRunner, windows: boolean, home: str
     tabs = await waitFor(() => (idsOf(A).length === 3 ? idsOf(A) : null), 20000, "o workspace com três abas");
     const [a, b, c] = tabs;
     select(A, a);
-    await waitFor(() => stripIds().length === 3, 5000, "três abas na fileira");
-    const strip = all<HTMLElement>(".strip .tab");
-    const from = middle(strip[0]);
-    const to = middle(strip[2]);
-    await drag(strip[0], line(from, { x: to.x + 6, y: from.y }, 10), "fileira: a primeira aba para o fim", async () => {
-      check(document.querySelector(".strip.reordering .tab.carried"), "a aba levada não está marcada");
-      await photo("abas-arrasto", windows);
+    // With the sidebar in sight the row holds only the tab in use.
+    await waitFor(() => stripIds().join() === String(a), 5000, "só a aba em uso na fileira, com a barra lateral à vista");
+    return await withFullRow(async () => {
+      await waitFor(() => stripIds().length === 3, 5000, "três abas na fileira");
+      const strip = all<HTMLElement>(".strip .tab");
+      const from = middle(strip[0]);
+      const to = middle(strip[2]);
+      await drag(strip[0], line(from, { x: to.x + 6, y: from.y }, 10), "fileira: a primeira aba para o fim", async () => {
+        check(document.querySelector(".strip.reordering .tab.carried"), "a aba levada não está marcada");
+        await photo("abas-arrasto", windows);
+      });
+      await waitFor(() => idsOf(A).join() === [b, c, a].join(), 3000, "a nova ordem").catch(() => {
+        throw new Error(`a ordem é ${idsOf(A)}, não ${[b, c, a]}`);
+      });
+      check(stripIds().join() === [b, c, a].join(), `a fileira mostra ${stripIds()}`);
+      check(gui.value.tabOrder[A]?.join() === [b, c, a].join(), `o estado guarda ${gui.value.tabOrder[A]}`);
+      check(activeTab.value?.root.id === a, "a aba em frente mudou com o arrasto");
+      return `${[a, b, c]} → ${idsOf(A)}; com a barra lateral à vista, a fileira só com a aba em uso`;
     });
-    await waitFor(() => idsOf(A).join() === [b, c, a].join(), 3000, "a nova ordem").catch(() => {
-      throw new Error(`a ordem é ${idsOf(A)}, não ${[b, c, a]}`);
-    });
-    check(stripIds().join() === [b, c, a].join(), `a fileira mostra ${stripIds()}`);
-    check(gui.value.tabOrder[A]?.join() === [b, c, a].join(), `o estado guarda ${gui.value.tabOrder[A]}`);
-    check(activeTab.value?.root.id === a, "a aba em frente mudou com o arrasto");
-    return `${[a, b, c]} → ${idsOf(A)}`;
   });
 
   await step("abas: arrastar uma aba na barra lateral reordena, e sobre outro workspace a move com o terminal", async () => {
@@ -467,21 +485,23 @@ export async function tabsSteps(runStep: StepRunner, windows: boolean, home: str
     select(A, x);
     await split(SPLIT_RIGHT);
     await waitFor(() => tabsByWorkspace.value.get(A)?.find((t) => t.root.id === x)?.panes.length === 2, 10000, "a aba com dois painéis");
-    const grips = await waitFor(() => (all(".tab-view.shown .pane-grip").length === 2 ? all<HTMLElement>(".tab-view.shown .pane-grip") : null), 5000, "as duas alças");
-    const pane = tabsByWorkspace.value.get(A)!.find((t) => t.root.id === x)!.panes[1].id;
-    const strip = () => all<HTMLElement>(".strip .tab").find((e) => e.dataset.tab === tabKey(A, y));
-    const tab = strip();
-    check(tab, "sem a aba de destino na fileira");
-    await drag(grips[1], line(middle(grips[1]), middle(tab), 10), "painel: a alça sobre uma aba da fileira", async () => {
-      // Held over the tab for a moment, it opens.
-      await waitFor(() => activeTab.value?.root.id === y, 2000, "a aba abrir sob o painel");
-      await photo("paineis-mola", windows);
+    // The tab it goes to is not the one in use: in the row only with the sidebar hidden.
+    return await withFullRow(async () => {
+      const grips = await waitFor(() => (all(".tab-view.shown .pane-grip").length === 2 ? all<HTMLElement>(".tab-view.shown .pane-grip") : null), 5000, "as duas alças");
+      const pane = tabsByWorkspace.value.get(A)!.find((t) => t.root.id === x)!.panes[1].id;
+      const strip = () => all<HTMLElement>(".strip .tab").find((e) => e.dataset.tab === tabKey(A, y));
+      const tab = await waitFor(strip, 3000, "a aba de destino na fileira");
+      await drag(grips[1], line(middle(grips[1]), middle(tab), 10), "painel: a alça sobre uma aba da fileira", async () => {
+        // Held over the tab for a moment, it opens.
+        await waitFor(() => activeTab.value?.root.id === y, 2000, "a aba abrir sob o painel");
+        await photo("paineis-mola", windows);
+      });
+      await waitFor(() => tabsByWorkspace.value.get(A)?.find((t) => t.root.id === y)?.panes.some((p) => p.id === pane), 10000, "o painel na outra aba");
+      const left = tabsByWorkspace.value.get(A)?.find((t) => t.root.id === x);
+      check(left && left.panes.length === 1, `a aba de origem ficou com ${left?.panes.length} painéis`);
+      check(activeTab.value?.root.id === y, "a aba de destino não ficou em frente");
+      return `o painel ${pane} saiu da aba ${x} e entrou na ${y}, que abriu sob ele`;
     });
-    await waitFor(() => tabsByWorkspace.value.get(A)?.find((t) => t.root.id === y)?.panes.some((p) => p.id === pane), 10000, "o painel na outra aba");
-    const left = tabsByWorkspace.value.get(A)?.find((t) => t.root.id === x);
-    check(left && left.panes.length === 1, `a aba de origem ficou com ${left?.panes.length} painéis`);
-    check(activeTab.value?.root.id === y, "a aba de destino não ficou em frente");
-    return `o painel ${pane} saiu da aba ${x} e entrou na ${y}, que abriu sob ele`;
   });
 
   await step("painéis: fechar o painel raiz passa o nome e o lugar da aba ao herdeiro", async () => {
@@ -541,21 +561,25 @@ export async function tabsSteps(runStep: StepRunner, windows: boolean, home: str
       check(tab, `sem a aba ${id} na fileira`);
       return tab.querySelector<HTMLElement>(".tab-title")!;
     };
-    click(title(other));
-    await sleep(800);
-    check(!document.querySelector("input.inline-editor"), "o clique numa aba que não estava em frente abriu o campo");
-    await waitFor(() => activeTab.value?.root.id === other, 3000, "a aba clicada em frente");
-    click(title(other));
-    await waitFor(() => document.querySelector(".strip input.inline-editor"), 2000, "o campo aberto pelo clique lento");
-    document.querySelector(".strip input.inline-editor")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    await waitFor(() => !document.querySelector("input.inline-editor"), 3000, "o campo fechar");
-    // Anything done while it waits calls it off.
-    click(title(other));
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
-    await sleep(800);
-    check(!document.querySelector("input.inline-editor"), "uma tecla não chamou a espera de volta");
-    select(A, shown);
-    return "só a aba em frente, só depois da espera, e uma tecla cancela";
+    // The other tab is in the row only with the sidebar hidden.
+    return await withFullRow(async () => {
+      await waitFor(() => stripIds().includes(other), 3000, "a outra aba na fileira");
+      click(title(other));
+      await sleep(800);
+      check(!document.querySelector("input.inline-editor"), "o clique numa aba que não estava em frente abriu o campo");
+      await waitFor(() => activeTab.value?.root.id === other, 3000, "a aba clicada em frente");
+      click(title(other));
+      await waitFor(() => document.querySelector(".strip input.inline-editor"), 2000, "o campo aberto pelo clique lento");
+      document.querySelector(".strip input.inline-editor")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      await waitFor(() => !document.querySelector("input.inline-editor"), 3000, "o campo fechar");
+      // Anything done while it waits calls it off.
+      click(title(other));
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+      await sleep(800);
+      check(!document.querySelector("input.inline-editor"), "uma tecla não chamou a espera de volta");
+      select(A, shown);
+      return "só a aba em frente, só depois da espera, e uma tecla cancela";
+    });
   });
 
   await step("workspaces: remover da barra lateral guarda, e Ir para traz de volta", async () => {
@@ -573,7 +597,8 @@ export async function tabsSteps(runStep: StepRunner, windows: boolean, home: str
 
   await step("abas verticais: a fileira sai e as abas ficam na barra lateral", async () => {
     select(A, idsOf(A)[0]);
-    await waitFor(() => stripIds().length > 1, 3000, "a fileira com abas");
+    // With the sidebar in sight, the tab in use alone.
+    await waitFor(() => stripIds().length === (gui.value.sidebar.visible ? 1 : idsOf(A).length), 3000, "a fileira com abas");
     // From the empty stretch of the row itself, as a person would.
     one<HTMLElement>(".strip").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
     const item = await waitFor(() => document.querySelector<HTMLElement>(".context-menu .menu-item"), 3000, "o menu da fileira");
@@ -594,7 +619,7 @@ export async function tabsSteps(runStep: StepRunner, windows: boolean, home: str
     renameTab(A, root, "");
     toggleSidebar();
     toggleVerticalTabs();
-    await waitFor(() => stripIds().length === idsOf(A).length, 3000, "a fileira voltar");
+    await waitFor(() => stripIds().length === (gui.value.sidebar.visible ? 1 : idsOf(A).length), 3000, "a fileira voltar");
     return "sem a fileira, com as abas na barra lateral; sem ela, o nome é perguntado; e de volta";
   });
 
