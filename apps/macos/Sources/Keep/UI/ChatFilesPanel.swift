@@ -43,6 +43,9 @@ struct ChatFilesPanel: View {
                 .padding(.top, 10)
             }
         }
+        // Inside the rounded card the backdrop draws, and cut to it so a list scrolled under its corners stays in.
+        .clipShape(RoundedRectangle(cornerRadius: FloatingPanelBackdrop.radius, style: .continuous))
+        .padding(FloatingPanelBackdrop.inset)
         .environment(\.sidebarInUse, model.inUse)
         .accessibilityIdentifier("chat-files-panel")
     }
@@ -79,6 +82,8 @@ struct ChatFilesPanel: View {
                     .accessibilityLabel(item.url.lastPathComponent)
                     .accessibilityIdentifier("chat-file-" + item.url.lastPathComponent)
             }
+            // Ideals that add up to the default panel, so all four columns show without scrolling sideways.
+            .width(min: 50, ideal: 80)
             TableColumn("Tipo", value: \.type) { Text($0.type).foregroundStyle(UsageInk.inkResting) }
                 .width(min: 28, ideal: 40)
             TableColumn("Modificado", value: \.modified) { item in
@@ -94,7 +99,9 @@ struct ChatFilesPanel: View {
             .width(min: 50, ideal: 62)
         } rows: {
             ForEach(items) { item in
-                TableRow(item).itemProvider { NSItemProvider(contentsOf: item.url) }
+                // The file's own URL: `contentsOf:` handed other apps (and the conversation) a copy in SwiftUI's
+                // drag cache. The table offers other apps a copy only, so the Finder never moves the file away.
+                TableRow(item).itemProvider { NSItemProvider(object: item.url as NSURL) }
             }
         }
         .tableStyle(.inset(alternatesRowBackgrounds: false))

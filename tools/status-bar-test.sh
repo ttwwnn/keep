@@ -56,6 +56,7 @@ say "building $APP_NAME, the client, the daemon and the tools (yours is left alo
 swiftc -O tools/axpress.swift -o "$AXPRESS" 2>/dev/null || { say "could not build axpress"; exit 1; }
 swiftc -O tools/sendkey.swift -o "$SENDKEY" 2>/dev/null || { say "could not build sendkey"; exit 1; }
 swiftc -O tools/mousedrag.swift -o "$MOUSE" 2>/dev/null || { say "could not build mousedrag"; exit 1; }
+swiftc -O tools/drop-target.swift -o "$WORK/drop-target" 2>/dev/null || { say "could not build drop-target"; exit 1; }
 
 export KEEP_SOCKET=$SOCKET
 export KEEP_STATE_DIR=$WORK/state
@@ -98,7 +99,10 @@ def status():
         with open(os.path.join(os.environ["KEEP_STATUS_DIR"], "%d.json" % pid), "w") as f:
             json.dump({"model": {"id": model[0], "display_name": model[1]}, "effort": {"level": effort},
                        "transcript_path": os.environ["KEEP_BAR_TRANSCRIPT"], "session_id": "teste-da-barra"}, f)
+drawing, resized = False, False
 def draw():
+    global drawing, resized
+    drawing = True
     # As wide as the terminal, as Claude Code draws it: a fixed width wraps
     # in a narrower pane, and the box is not found.
     rule = "─" * os.get_terminal_size(0).columns
@@ -121,8 +125,22 @@ def draw():
         out.write("  ⏺ main\r\n  ◯ general-purpose  Reading files\r\n  ◯ Explore  Scanning\r\n  ◯ Plan  Thinking\r\n")
         out.write("\x1b[5;%dH" % (3 + len(typed)))
     out.flush()
+    drawing = False
+    if resized:
+        resized = False
+        draw()
+def on_resize(*_):
+    # A resize in the middle of a draw waits for it to end, or the two screens interleave.
+    global resized
+    if drawing:
+        resized = True
+    else:
+        draw()
 status()
 draw()
+# Redrawn at each resize, as Claude Code is: the window settles its sidebar after the first draw.
+import signal
+signal.signal(signal.SIGWINCH, on_resize)
 open(os.path.join(WORK, "ready"), "w").close()
 raw = b""
 while True:
@@ -325,11 +343,39 @@ check "and the one the conversation made" "yes" "$(found chat-file-gerado-pela-c
 # Dragged from the panel onto the conversation, a file arrives as a dropped one does: its path typed.
 read -r RX RY RW RH <<<"$("$AXPRESS" "$APP_NAME" frame chat-file-enviado-pela-pessoa.pdf 2>/dev/null)"
 read -r FX FY FW FH <<<"$("$MOUSE" frame)"
-: > "$WORK/bytes"
-"$MOUSE" drag "$(( ${RX%.*} + 20 ))" "$(( ${RY%.*} + ${RH%.*} / 2 ))" "$(( ${FX%.*} + ${FW%.*} / 3 ))" "$(( ${FY%.*} + ${FH%.*} / 2 ))" 30 15
-sleep 2
+for _ in 1 2; do
+    osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" >/dev/null 2>&1
+    sleep 1
+    : > "$WORK/bytes"
+    "$MOUSE" drag "$(( ${RX%.*} + 20 ))" "$(( ${RY%.*} + ${RH%.*} / 2 ))" "$(( ${FX%.*} + ${FW%.*} / 2 ))" "$(( ${FY%.*} + ${FH%.*} / 2 ))" 60 25
+    sleep 2
+    grep -q "enviado-pela-pessoa.pdf" "$WORK/bytes" 2>/dev/null && break
+done
 check "dragged onto the conversation, its path is typed" "yes" \
     "$(grep -q "enviado-pela-pessoa.pdf" "$WORK/bytes" 2>/dev/null && echo yes || echo no)"
+check "the path typed is the file's own, not a copy in a drag cache" "no" \
+    "$(grep -q "com.apple.SwiftUI.Drag" "$WORK/bytes" 2>/dev/null && echo yes || echo no)"
+# Dragged out to another app's window (the Finder, Mail), the file goes along, as a copy only: the Finder moves
+# a file dropped on the same volume when the source lets it.
+TX=$(( ${FX%.*} + 20 )); TY=$(( ${FY%.*} + 120 ))
+for _ in 1 2; do
+    rm -f "$WORK/dropped.ready"
+    "$WORK/drop-target" "$TX" "$TY" 220 220 "$WORK/dropped" 15 &
+    TARGET_PID=$!
+    for _ in $(seq 20); do [ -e "$WORK/dropped.ready" ] && break; sleep 0.25; done
+    # Never let go of a file over somebody else's window.
+    [ -e "$WORK/dropped.ready" ] || { kill "$TARGET_PID" 2>/dev/null; continue; }
+    sleep 1
+    osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" >/dev/null 2>&1
+    sleep 1
+    "$MOUSE" drag "$(( ${RX%.*} + 20 ))" "$(( ${RY%.*} + ${RH%.*} / 2 ))" "$(( TX + 110 ))" "$(( TY + 110 ))" 60 25
+    sleep 2
+    kill "$TARGET_PID" 2>/dev/null
+    [ -s "$WORK/dropped" ] && break
+done
+check "dragged to another app, the file arrives" "enviado-pela-pessoa.pdf" \
+    "$(basename "$(head -1 "$WORK/dropped" 2>/dev/null)")"
+check "and the other app may only copy it, never move it" "move=no" "$(tail -1 "$WORK/dropped" 2>/dev/null)"
 "$AXPRESS" "$APP_NAME" press claude-files >/dev/null 2>&1
 sleep 1
 check "pressed again, the panel goes" "no" "$("$AXPRESS" "$APP_NAME" frame chat-file-gerado-pela-conversa.html >/dev/null 2>&1 && echo yes || echo no)"
