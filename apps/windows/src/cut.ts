@@ -95,8 +95,7 @@ export function logical(box: string[], width: number): { text: string[]; starts:
     const nextChars = Array.from(box[i + 1]);
     let head = 0;
     while (head < nextChars.length && !isBlank(nextChars[head])) head++;
-    const cells = chars.reduce((sum, c) => sum + cellWidth(c), 0);
-    const cutMidWord = cells >= width && tail > 0 && head > 0 && tail + head > width;
+    const cutMidWord = cellsOf(row) >= width && tail > 0 && head > 0 && tail + head > width;
     if (!cutMidWord) text.push("\n");
   });
   return { text, starts };
@@ -178,25 +177,31 @@ const WIDE: [number, number][] = [
   [0xac00, 0xd7a3], [0xf900, 0xfaff], [0xfe30, 0xfe4f], [0xff00, 0xff60], [0xffe0, 0xffe6], [0x20000, 0x3fffd],
 ];
 
-/** The cells a character takes on screen: two for an emoji and the wide East Asian scripts, one for the rest. */
-export function cellWidth(c: string): number {
-  if (/\p{Emoji_Presentation}/u.test(c)) return 2;
-  const code = c.codePointAt(0) ?? 0;
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/**
+ * The cells a cluster takes on screen (graphemes.ts shares one cell between its code points): two for an emoji —
+ * a skin tone or a VS16 with it included — and the wide East Asian scripts, one for the rest.
+ */
+export function cellWidth(cluster: string): number {
+  const code = cluster.codePointAt(0) ?? 0;
+  if (/\p{Emoji_Presentation}/u.test(String.fromCodePoint(code)) || cluster.includes("\uFE0F")) return 2;
   return WIDE.some(([lo, hi]) => code >= lo && code <= hi) ? 2 : 1;
 }
 
+const cellsOf = (row: string) => Array.from(graphemes.segment(row)).reduce((sum, g) => sum + cellWidth(g.segment), 0);
+
 /**
- * How many characters of `row` come before the cell `cell`, which is where the
- * terminal puts the cursor: an emoji is one character over two cells. Past the
- * row's text, each cell is a blank.
+ * How many characters (code points, as everywhere in this file) of `row` come before the cell `cell`, which is where
+ * the terminal puts the cursor: an emoji is one cluster over two cells. Past the row's text, each cell is a blank.
  */
 export function charactersBeforeCell(row: string, cell: number): number {
   let cells = 0;
   let count = 0;
-  for (const c of row) {
+  for (const { segment } of graphemes.segment(row)) {
     if (cells >= cell) return count;
-    cells += cellWidth(c);
-    count++;
+    cells += cellWidth(segment);
+    count += Array.from(segment).length;
   }
   return count + Math.max(0, cell - cells);
 }

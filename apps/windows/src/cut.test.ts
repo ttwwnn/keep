@@ -108,6 +108,9 @@ describe("the cursor's cell and its character", () => {
     expect(charactersBeforeCell("❯ ola mundo", 6)).toBe(6);
     expect(charactersBeforeCell("❯ ola 😀 mundo", 9)).toBe(8);
     expect(charactersBeforeCell("❯ ola", 7)).toBe(7);
+    // A skin tone and a VS16 share the cluster's two cells.
+    expect(charactersBeforeCell("ola 👍🏽 x", 7)).toBe(7);
+    expect(charactersBeforeCell("a❤️b", 3)).toBe(3);
   });
 });
 

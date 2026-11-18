@@ -75,6 +75,8 @@ check("the real cases were read", String(tried), "10")
 check("cell to character, plain text", String(CutSelection.characters(in: "❯ ola mundo", beforeCell: 6)), "6")
 check("cell to character, after an emoji", String(CutSelection.characters(in: "❯ ola 😀 mundo", beforeCell: 9)), "8")
 check("cell to character, past the text", String(CutSelection.characters(in: "❯ ola", beforeCell: 7)), "7")
+check("cell to character, an emoji with a skin tone", String(CutSelection.characters(in: "ola 👍🏽 x", beforeCell: 7)), "6")
+check("cell to character, a heart with VS16", String(CutSelection.characters(in: "a❤️b", beforeCell: 3)), "2")
 let twice = ["─────────────────────", "❯\u{a0}alfa beta alfa beta", "─────────────────────"]
 check("words found twice in the box: not cut", CutSelection.keysAcrossRows(
     selected: "alfa", box: CutSelection.promptBox(twice, cursorRow: 1) ?? [], width: 17, cursorRow: 0, cursorColumn: 20), nil)
