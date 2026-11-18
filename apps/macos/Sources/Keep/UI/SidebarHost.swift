@@ -271,6 +271,8 @@ final class SidebarHost: NSViewController {
         let minimum = max(200, ceil(zoomEnd + batteryRoom + 10 + 26 + 12))
         guard item.minimumThickness != minimum else { return }
         item.minimumThickness = minimum
-        if item.maximumThickness < minimum { item.maximumThickness = minimum }
+        if item.maximumThickness != NSSplitViewItem.unspecifiedDimension, item.maximumThickness < minimum {
+            item.maximumThickness = minimum
+        }
     }
 }

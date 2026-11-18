@@ -226,7 +226,11 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
             }
         }
 
-        if let sidebar = sidebarBackdropView { filesBackdropView?.paint(like: sidebar) }
+        if let sidebar = sidebarBackdropView {
+            filesBackdropView?.paint(like: sidebar)
+        } else {
+            filesBackdropView?.isHidden = true
+        }
 
         Trace.log(
             "chrome",
