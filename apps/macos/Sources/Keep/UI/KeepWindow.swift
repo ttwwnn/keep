@@ -25,9 +25,9 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
     /// under it, the same as everything else in this row.
     private weak var sidebarToggleHost: CenteringHost?
     private var sidebarToggleZoomObserver: NSObjectProtocol?
-    private weak var sidebarBackdropView: NSView?
+    private weak var sidebarBackdropView: FloatingPanelBackdrop?
     /// The files panel at the right, a step behind the terminal as the sidebar is: painted as it is.
-    weak var filesBackdropView: NSView?
+    weak var filesBackdropView: FloatingPanelBackdrop?
     private var terminalBackgroundObserver: NSObjectProtocol?
 
     // The last appearance actually applied, so becomeMain and repeated
@@ -95,7 +95,7 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
         return ok
     }
 
-    func installUnifiedToolbar(chromeBackdrop: NSView, sidebarBackdrop: NSView) {
+    func installUnifiedToolbar(chromeBackdrop: NSView, sidebarBackdrop: FloatingPanelBackdrop) {
         chromeBackdropView = chromeBackdrop
         sidebarBackdropView = sidebarBackdrop
 
@@ -186,10 +186,12 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
                 // The sidebar sits a step behind the terminal rather than
                 // level with it. The chrome row above the content keeps the
                 // content's own colour, because it is the content's row.
-                sidebarBackdropView?.layer?.backgroundColor = Self
-                    .recessed(terminalBackground, inUse: isKeyWindow)
-                    .withAlphaComponent(CGFloat(next.opacity))
-                    .cgColor
+                // The card's margin is the window's: the same tint, the card cut out of it.
+                sidebarBackdropView?.paint(
+                    card: Self.recessed(terminalBackground, inUse: isKeyWindow)
+                        .withAlphaComponent(CGFloat(next.opacity)).cgColor,
+                    floor: tint,
+                    dark: GhosttyApp.isDark(terminalBackground))
                 chromeBackdropView?.isHidden = false
                 sidebarBackdropView?.isHidden = false
             } else {
@@ -214,16 +216,17 @@ final class KeepWindow: NSWindow, NSToolbarDelegate {
                 // Opaque or not, the sidebar is a step behind: the window's
                 // own colour paints the content, and the sidebar paints over
                 // it with the recessed one.
-                sidebarBackdropView?.layer?.backgroundColor = Self
-                    .recessed(terminalBackground, inUse: isKeyWindow).cgColor
+                sidebarBackdropView?.paint(
+                    card: Self.recessed(terminalBackground, inUse: isKeyWindow).cgColor,
+                    floor: nil,
+                    dark: GhosttyApp.isDark(terminalBackground))
                 sidebarBackdropView?.isHidden = false
             } else {
                 sidebarBackdropView?.isHidden = true
             }
         }
 
-        filesBackdropView?.layer?.backgroundColor = sidebarBackdropView?.layer?.backgroundColor
-        filesBackdropView?.isHidden = sidebarBackdropView?.isHidden ?? true
+        if let sidebar = sidebarBackdropView { filesBackdropView?.paint(like: sidebar) }
 
         Trace.log(
             "chrome",

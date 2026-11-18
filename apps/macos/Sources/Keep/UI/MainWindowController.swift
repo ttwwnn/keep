@@ -39,13 +39,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private let filesModel: ChatFilesModel
     private let filesPanel: NSHostingView<ChatFilesPanel>
     private var filesWidth: NSLayoutConstraint!
-    private let filesBackdrop = TerminalTintBackdropView()
+    private let filesBackdrop = FloatingPanelBackdrop()
     private let filesEdge = PanelEdge()
     /// The width the person left the panel at, kept across launches as the sidebar's is.
     private static let filesWidthKey = "keep.filesPanelWidth"
     private var filesChosenWidth: CGFloat = {
         let kept = UserDefaults.standard.double(forKey: MainWindowController.filesWidthKey)
-        return kept > 0 ? kept : 260
+        return kept > 0 ? kept : 360
     }()
     private var filesOpen = false
     private var filesTimer: Timer?
@@ -129,7 +129,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         // Sized by the window alone: a table's own minimum size pushed the terminal down to one row.
         filesPanel.sizingOptions = []
         filesPanel.isHidden = true
-        filesBackdrop.wantsLayer = true
         filesBackdrop.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(filesBackdrop)
         content.addSubview(filesPanel)
@@ -166,8 +165,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             filesPanel.topAnchor.constraint(equalTo: container.topAnchor),
             filesPanel.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
             filesWidth,
-            filesEdge.centerXAnchor.constraint(equalTo: filesPanel.leadingAnchor),
-            filesEdge.widthAnchor.constraint(equalToConstant: 8),
+            // The margin between the terminal and the card is the handle.
+            filesEdge.leadingAnchor.constraint(equalTo: filesPanel.leadingAnchor),
+            filesEdge.widthAnchor.constraint(equalToConstant: FloatingPanelBackdrop.inset),
             filesEdge.topAnchor.constraint(equalTo: filesPanel.topAnchor),
             filesEdge.bottomAnchor.constraint(equalTo: filesPanel.bottomAnchor),
             filesBackdrop.leadingAnchor.constraint(equalTo: filesPanel.leadingAnchor),

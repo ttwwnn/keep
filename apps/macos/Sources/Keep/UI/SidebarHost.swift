@@ -3,8 +3,81 @@ import SwiftUI
 
 /// A visual continuation of the terminal behind chrome. It must never take
 /// clicks away from the native titlebar controls or window drag.
-final class TerminalTintBackdropView: NSView {
+class TerminalTintBackdropView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+/// A side panel drawn as the Finder draws its sidebar on macOS 26: a card with
+/// rounded corners, held off the window's edges, the room's own colour in the
+/// margin around it.
+final class FloatingPanelBackdrop: TerminalTintBackdropView {
+    /// The margin between the card and the window's edges, and the card's corner: the two the Finder uses.
+    static let inset: CGFloat = 8
+    static let radius: CGFloat = 18
+    private let card = CALayer()
+    /// The margin: the window's colour, the card cut out of it so the two never stack.
+    private let floor = CAShapeLayer()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        floor.fillRule = .evenOdd
+        card.cornerRadius = Self.radius
+        card.cornerCurve = .continuous
+        card.borderWidth = 1
+        layer?.addSublayer(floor)
+        layer?.addSublayer(card)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    /// `floor` nil where the window already paints the margin (an opaque window); `dark` picks the rim.
+    func paint(card color: CGColor?, floor floorColor: CGColor?, dark: Bool) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        card.backgroundColor = color
+        card.borderColor = (dark ? NSColor.white.withAlphaComponent(0.08) : NSColor.black.withAlphaComponent(0.07)).cgColor
+        floor.fillColor = floorColor
+        CATransaction.commit()
+    }
+
+    func paint(like other: FloatingPanelBackdrop) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        card.backgroundColor = other.card.backgroundColor
+        card.borderColor = other.card.borderColor
+        floor.fillColor = other.floor.fillColor
+        CATransaction.commit()
+        isHidden = other.isHidden
+    }
+
+    var cardColor: CGColor? { card.backgroundColor }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        place()
+    }
+
+    override func layout() {
+        super.layout()
+        place()
+    }
+
+    private func place() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let inner = bounds.insetBy(dx: Self.inset, dy: Self.inset)
+        card.frame = inner.width > 0 && inner.height > 0 ? inner : .zero
+        floor.frame = bounds
+        let path = CGMutablePath()
+        path.addRect(bounds)
+        if card.frame != .zero {
+            path.addRoundedRect(in: inner, cornerWidth: Self.radius, cornerHeight: Self.radius)
+        }
+        floor.path = path
+        CATransaction.commit()
+    }
 }
 
 /// The window's split, with a divider that still drags but draws nothing.
@@ -35,15 +108,15 @@ final class SidebarRows: ObservableObject {
     @Published var inUse = true
 }
 
-/// The flat, full-height sidebar host.
+/// The full-height sidebar host.
 ///
-/// A default split item would get AppKit's Tahoe sidebar glass, inset and
-/// rounded floating container; this one owns a flat backdrop that reaches
-/// every window edge while the hosted SwiftUI list starts below the traffic
-/// lights via the safe-area guide.
+/// A default split item would get AppKit's Tahoe sidebar glass; this one owns
+/// its backdrop, a card inset and rounded as the Finder's sidebar is but in the
+/// terminal's own colours, while the hosted SwiftUI list starts below the
+/// traffic lights.
 @MainActor
 final class SidebarHost: NSViewController {
-    let backdropView = TerminalTintBackdropView()
+    let backdropView = FloatingPanelBackdrop()
     private var listTop: NSLayoutConstraint!
     /// The battery, in the sidebar's top row while the window is in full
     /// screen: the menu bar that carries the system's is out of sight there.
@@ -88,10 +161,11 @@ final class SidebarHost: NSViewController {
             backdropView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             backdropView.topAnchor.constraint(equalTo: container.topAnchor),
             backdropView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            content.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            // Inside the card, so the rows' pills and the footer stay off its rim.
+            content.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: FloatingPanelBackdrop.inset),
+            content.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -FloatingPanelBackdrop.inset),
             listTop,
-            content.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            content.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -FloatingPanelBackdrop.inset),
         ])
         battery.isHidden = true
         container.addSubview(battery)

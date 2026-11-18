@@ -43,6 +43,9 @@ struct ChatFilesPanel: View {
                 .padding(.top, 10)
             }
         }
+        // Inside the rounded card the backdrop draws, and cut to it so a list scrolled under its corners stays in.
+        .clipShape(RoundedRectangle(cornerRadius: FloatingPanelBackdrop.radius, style: .continuous))
+        .padding(FloatingPanelBackdrop.inset)
         .environment(\.sidebarInUse, model.inUse)
         .accessibilityIdentifier("chat-files-panel")
     }
@@ -79,6 +82,8 @@ struct ChatFilesPanel: View {
                     .accessibilityLabel(item.url.lastPathComponent)
                     .accessibilityIdentifier("chat-file-" + item.url.lastPathComponent)
             }
+            // Ideals that add up to the default panel, so all four columns show without scrolling sideways.
+            .width(min: 50, ideal: 80)
             TableColumn("Tipo", value: \.type) { Text($0.type).foregroundStyle(UsageInk.inkResting) }
                 .width(min: 28, ideal: 40)
             TableColumn("Modificado", value: \.modified) { item in
