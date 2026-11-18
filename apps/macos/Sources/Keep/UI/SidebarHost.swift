@@ -148,6 +148,11 @@ final class SidebarHost: NSViewController {
         addChild(hosting)
         let content = hosting.view
         content.translatesAutoresizingMaskIntoConstraints = false
+        // Cut to the card's corners, so rows scrolled past the bottom stay inside it.
+        content.wantsLayer = true
+        content.layer?.cornerRadius = FloatingPanelBackdrop.radius
+        content.layer?.cornerCurve = .continuous
+        content.layer?.masksToBounds = true
 
         container.addSubview(backdropView)
         container.addSubview(content)
@@ -253,9 +258,10 @@ final class SidebarHost: NSViewController {
             ? self.batteryFrame(rowHeight: fullScreen ? Self.batteryRow : bar) : nil
         if battery.isHidden != (batteryFrame == nil) { battery.isHidden = batteryFrame == nil }
         if let batteryFrame, battery.frame != batteryFrame { battery.frame = batteryFrame }
-        let wanted = fullScreen
+        // Never above the card's top edge.
+        let wanted = max(FloatingPanelBackdrop.inset + 4, fullScreen
             ? (batteryFrame == nil ? 4 : Self.batteryRow + 4)
-            : bar + 4
+            : bar + 4)
         if abs(listTop.constant - wanted) > 0.5 {
             listTop.constant = wanted
         }
