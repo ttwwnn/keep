@@ -259,5 +259,18 @@ final class SidebarHost: NSViewController {
         if abs(listTop.constant - wanted) > 0.5 {
             listTop.constant = wanted
         }
+        holdMinimum(showsBattery: BatteryIndicator.menuBarHidden(for: window) && battery.isPresent)
+    }
+
+    /// The sidebar never gets narrower than its top row needs (pedido de 17/11/2026): the traffic lights, the whole
+    /// zoom, the battery and the time where they show, and the toggle, by the room rules of `batteryFrame`.
+    private func holdMinimum(showsBattery: Bool) {
+        guard let item = (parent as? NSSplitViewController)?.splitViewItem(for: self) else { return }
+        let zoomEnd = Self.trafficLightsEnd + ZoomControl.width(compact: false)
+        let batteryRoom = showsBattery ? 10 + battery.fittingWidth : 0
+        let minimum = max(200, ceil(zoomEnd + batteryRoom + 10 + 26 + 12))
+        guard item.minimumThickness != minimum else { return }
+        item.minimumThickness = minimum
+        if item.maximumThickness < minimum { item.maximumThickness = minimum }
     }
 }

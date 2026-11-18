@@ -99,7 +99,9 @@ struct ChatFilesPanel: View {
             .width(min: 50, ideal: 62)
         } rows: {
             ForEach(items) { item in
-                TableRow(item).itemProvider { NSItemProvider(contentsOf: item.url) }
+                // The file's own URL: `contentsOf:` handed other apps (and the conversation) a copy in SwiftUI's
+                // drag cache. The table offers other apps a copy only, so the Finder never moves the file away.
+                TableRow(item).itemProvider { NSItemProvider(object: item.url as NSURL) }
             }
         }
         .tableStyle(.inset(alternatesRowBackgrounds: false))
