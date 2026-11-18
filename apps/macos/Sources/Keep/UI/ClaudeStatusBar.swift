@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 
 /// The bar at the foot of a Claude Code or Codex conversation: the model and
 /// the effort it runs with, both of which can be changed by clicking them,
@@ -32,6 +33,12 @@ final class ClaudeStatusBar: NSView {
     private let rule = NSBox()
     /// At the bar's right end, under the side the panel opens on.
     private let filesButton = NSButton(title: "Arquivos", target: nil, action: nil)
+    /// The Jev's monthly average and the button to buy credit, between the agents and the files (pedido de
+    /// 18/11/2026); hidden without a key of the Jev's on this Mac.
+    private let jevDot = ClaudeStatusBar.dot()
+    private let jevLabel = NSTextField(labelWithString: "")
+    private let creditButton = NSButton(title: "Pôr crédito", target: nil, action: nil)
+    private var jevWatch: AnyCancellable?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -56,7 +63,22 @@ final class ClaudeStatusBar: NSView {
         filesButton.setAccessibilityIdentifier("claude-files")
         filesButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(filesButton)
-        let stack = NSStackView(views: [modelButton, effortDot, effortButton, agentsDot, agentsLabel])
+        jevLabel.font = Self.font
+        jevLabel.textColor = .secondaryLabelColor
+        jevLabel.toolTip = "Gasto médio por mês do Jev (a chave dele no OpenRouter), pelos últimos 30 dias"
+        jevLabel.setAccessibilityIdentifier("claude-jev-average")
+        // Short of room, the average gives way first, cut at its end: never over "Arquivos".
+        jevLabel.lineBreakMode = .byTruncatingTail
+        jevLabel.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
+        creditButton.isBordered = false
+        creditButton.setButtonType(.momentaryChange)
+        creditButton.target = self
+        creditButton.action = #selector(pressedCredit)
+        creditButton.toolTip = "Abre a página de créditos do OpenRouter"
+        creditButton.setAccessibilityIdentifier("claude-jev-credit")
+        let stack = NSStackView(views: [
+            modelButton, effortDot, effortButton, agentsDot, agentsLabel, jevDot, jevLabel, creditButton,
+        ])
         stack.orientation = .horizontal
         stack.spacing = 6
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -70,10 +92,28 @@ final class ClaudeStatusBar: NSView {
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             stack.centerYAnchor.constraint(equalTo: centerYAnchor, constant: 0.5),
             filesButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: filesButton.leadingAnchor, constant: -12),
             filesButton.centerYAnchor.constraint(equalTo: centerYAnchor, constant: 0.5),
         ])
         setAccessibilityIdentifier("claude-status-bar")
+        jevWatch = UsageMonitor.shared.$jev.sink { [weak self] jev in
+            MainActor.assumeIsolated { self?.showJev(jev) }
+        }
     }
+
+    private func showJev(_ jev: JevLine?) {
+        jevLabel.font = Self.font
+        creditButton.attributedTitle = NSAttributedString(
+            string: "Pôr crédito", attributes: [.font: Self.font, .foregroundColor: NSColor.linkColor])
+        if let average = jev?.dailyAverage30d {
+            jevLabel.stringValue = "Gasto médio: \(UsageText.perMonth(dailyAverage: average))"
+        }
+        jevLabel.isHidden = jev?.dailyAverage30d == nil
+        creditButton.isHidden = jev == nil
+        jevDot.isHidden = jevLabel.isHidden && creditButton.isHidden
+    }
+
+    @objc private func pressedCredit() { NSWorkspace.shared.open(openRouterCreditsURL) }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not supported") }
@@ -106,7 +146,8 @@ final class ClaudeStatusBar: NSView {
         self.status = status
         isHidden = status == nil
         guard let status else { return }
-        for label in [agentsLabel, effortDot, agentsDot] { label.font = Self.font }
+        for label in [agentsLabel, effortDot, agentsDot, jevDot] { label.font = Self.font }
+        showJev(UsageMonitor.shared.jev)
         modelButton.attributedTitle = title(status.modelName)
         modelButton.toolTip = "Modelo: \(status.modelID). Clique para trocar."
         effortButton.isHidden = status.effort == nil
