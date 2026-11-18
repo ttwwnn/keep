@@ -46,15 +46,16 @@ check("the whole prompt selected, wrapped or not: emptied",
 check("part of it across rows: not emptied",
       CutSelection.keysEmptying(selected: "pedido que\ncontinua", box: ["primeira linha do pedido que", "continua aqui"]), nil)
 
-// Claude Code 2.1.296's prompt box, as it was on screen (12/10), each cut
-// tried on the real editor and found right (tools/cut-test/claude-prompt-box.jsonl:
-// the box between its rules, the cursor, the selection and the keys).
+// Claude Code 2.1.296's prompt box, as it was on screen (12/10), and
+// 2.1.327's with an emoji before the cursor (18/11), each cut tried on the
+// real editor and found right (tools/cut-test/claude-prompt-box.jsonl: the
+// box between its rules, the cursor's cell, the selection and the keys).
 let fixtures = (try? String(contentsOfFile: "tools/cut-test/claude-prompt-box.jsonl", encoding: .utf8)) ?? ""
 var tried = 0
 for line in fixtures.split(separator: "\n") {
     guard let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
         let lines = json["lines"] as? [String], let row = json["cursorRow"] as? Int,
-        let column = json["cursorCol"] as? Int, let selected = json["selected"] as? String,
+        let cell = json["cursorCol"] as? Int, let selected = json["selected"] as? String,
         let want = json["keys"] as? String
     else { continue }
     tried += 1
@@ -63,12 +64,17 @@ for line in fixtures.split(separator: "\n") {
         check(name, "no box", want); continue
     }
     let width = lines[first - 1].trimmingCharacters(in: .whitespaces).count - 4
+    let column = CutSelection.characters(in: lines[row], beforeCell: cell)
     let keys = CutSelection.keysAcrossRows(
         selected: selected, box: box, width: width, cursorRow: row - first, cursorColumn: column - 2)
         ?? CutSelection.keysEmptying(selected: selected, box: box)
     check(name, keys.map { Data($0.utf8).map { String(format: "%02x", $0) }.joined() }, want)
 }
-check("the real cases were read", String(tried), "8")
+check("the real cases were read", String(tried), "10")
+// The cursor is put at a cell; an emoji is one character over two.
+check("cell to character, plain text", String(CutSelection.characters(in: "❯ ola mundo", beforeCell: 6)), "6")
+check("cell to character, after an emoji", String(CutSelection.characters(in: "❯ ola 😀 mundo", beforeCell: 9)), "8")
+check("cell to character, past the text", String(CutSelection.characters(in: "❯ ola", beforeCell: 7)), "7")
 let twice = ["─────────────────────", "❯\u{a0}alfa beta alfa beta", "─────────────────────"]
 check("words found twice in the box: not cut", CutSelection.keysAcrossRows(
     selected: "alfa", box: CutSelection.promptBox(twice, cursorRow: 1) ?? [], width: 17, cursorRow: 0, cursorColumn: 20), nil)

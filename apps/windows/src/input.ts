@@ -299,7 +299,10 @@ function cutSelection(view: TermView): void {
   const buffer = view.term.buffer.active;
   const keys = keysToCut(selected, view.screenText().split("\n"), buffer.cursorY, buffer.cursorX);
   view.term.clearSelection();
-  if (keys) void view.type(keys).catch(() => {});
+  if (!keys) return;
+  // Claude Code takes its own selection out on a single backspace: the keys worked out for the text would take it out on
+  // the first and then delete as many characters again before it.
+  void view.type(own === undefined ? "\x7f" : keys).catch(() => {});
 }
 
 const BROWSER_CHORDS = new Set(["KeyR", "KeyP", "KeyJ", "KeyU", "KeyS", "KeyO", "KeyG", "KeyH", "KeyF"]);

@@ -963,6 +963,9 @@ final class TerminalSurfaceView: NSView {
     /// as alt-b.
     override func keyDown(with event: NSEvent) {
         guard surface != nil else { return }
+        // A selection the program copied lasts until the next key: an arrow
+        // or a letter lets Claude Code's go, and typing later must not erase it.
+        defer { pasteboardAtPress = nil }
         let shiftSideArrow = [123, 124].contains(event.keyCode)
             && event.modifierFlags.intersection([.shift, .control, .option, .command]) == .shift
         // Any other key lets the mark go: typed over, deleted, or an arrow without Shift, as in a text box.
@@ -1060,7 +1063,7 @@ final class TerminalSurfaceView: NSView {
         if shiftSideArrow, markByArrow(left: event.keyCode == 123) { return }
         // Backspace or forward delete over a selection in the prompt deletes it.
         if [51, 117].contains(event.keyCode), event.modifierFlags.isDisjoint(with: [.shift, .control, .option, .command]),
-           eraseSelectionBeforeTyping() { return }
+           eraseSelectionBeforeTyping(deleting: true) { return }
         // Nothing committed: an ordinary key (return, the arrows, backspace),
         // or the dead key itself, which libghostty is told is composing so
         // that it encodes nothing for it.
@@ -2017,6 +2020,8 @@ final class TerminalSurfaceView: NSView {
         // ⌘V is the menu's, so keyDown never sees it: a quote left waiting
         // would otherwise land after the pasted text instead of before it.
         commitComposition()
+        // What is pasted is no selection: typing after it must not erase it.
+        pasteboardAtPress = nil
         // Text pastes as text; an image alone Claude Code reads itself.
         if NSPasteboard.general.string(forType: .string) == nil { notePastedImage() }
         perform("paste_from_clipboard")
@@ -2044,36 +2049,54 @@ final class TerminalSurfaceView: NSView {
     /// (the prompt being typed in), takes it out of that line with keys. See
     /// `CutSelection`. Anywhere else it only copies.
     @objc func cut(_ sender: Any?) {
-        guard let surface else { return }
-        let selected: String
-        if ghostty_surface_has_selection(surface) {
-            var text = ghostty_text_s()
-            guard ghostty_surface_read_selection(surface, &text), let raw = text.text else { return }
-            selected = String(cString: raw)
-            ghostty_surface_free_text(surface, &text)
+        if let selected = terminalSelection() {
             perform("copy_to_clipboard")
+            guard let keys = keysDeleting(selected: selected) else {
+                Trace.log("cut", "copied only: \(selected.count) chars")
+                return
+            }
+            Trace.log("cut", "cut \(selected.count) chars")
+            perform(CutSelection.action(for: keys))
+            perform("clear_selection")
         } else if let copied = selectionTheProgramCopied() {
             // Claude Code in full screen selects with the mouse itself and
             // copies on release: the terminal has no selection, the
             // clipboard has the text.
-            selected = copied
-        } else {
-            return
+            _ = deleteProgramSelection(copied)
         }
-        guard let keys = keysDeleting(selected: selected) else {
-            Trace.log("cut", "copied only: \(selected.count) chars")
-            return
-        }
-        Trace.log("cut", "cut \(selected.count) chars")
-        perform(CutSelection.action(for: keys))
-        perform("clear_selection")
+    }
+
+    /// The terminal's own selection, as text; nil when there is none.
+    private func terminalSelection() -> String? {
+        guard let surface, ghostty_surface_has_selection(surface) else { return nil }
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_selection(surface, &text) else { return nil }
+        defer { ghostty_surface_free_text(surface, &text) }
+        return text.text.map { String(cString: $0) }
+    }
+
+    /// Claude Code in full screen takes its own selection out of the prompt
+    /// on a single backspace (2.1.327), so that one key is all it is sent:
+    /// the arrows and backspaces worked out for the text would take the
+    /// selection out on the first backspace and then delete as many
+    /// characters again before it. Only when the copied text is in the
+    /// prompt; a selection elsewhere is left alone. Spent either way.
+    private func deleteProgramSelection(_ copied: String) -> Bool {
+        pasteboardAtPress = nil
+        guard keysDeleting(selected: copied) != nil else { return false }
+        Trace.log("type-over", "the program's selection taken out: \(copied.count) chars")
+        perform(CutSelection.action(for: CutSelection.backspace))
+        return true
     }
 
     /// The keys that take `selected` out of the line or prompt box the cursor
     /// is in, or nil where that cannot be told (see `CutSelection`).
     private func keysDeleting(selected: String) -> String? {
-        guard let (row, column) = cursorCell() else { return nil }
+        guard let (row, cell) = cursorCell() else { return nil }
         let lines = visibleText().lines
+        guard lines.indices.contains(row) else { return nil }
+        // The cursor's place in its row's text: an emoji is one character over two cells.
+        let column = CutSelection.characters(in: lines[row], beforeCell: cell)
         let keys: String?
         if let (box, first) = CutSelection.promptBoxRows(lines, cursorRow: row) {
             // Claude Code's prompt box: the selection may span its rows, and
@@ -2085,10 +2108,8 @@ final class TerminalSurfaceView: NSView {
                 selected: selected, box: box, width: width,
                 cursorRow: row - first, cursorColumn: column - 2)
                 ?? CutSelection.keysEmptying(selected: selected, box: box)
-        } else if lines.indices.contains(row) {
-            keys = CutSelection.keys(selected: selected, row: lines[row], cursorColumn: column)
         } else {
-            keys = nil
+            keys = CutSelection.keys(selected: selected, row: lines[row], cursorColumn: column)
         }
         return keys
     }
@@ -2096,28 +2117,19 @@ final class TerminalSurfaceView: NSView {
     /// Typing or deleting over a selection in the prompt replaces it, as in any
     /// text box: the selected text is taken out first, with keys. True when it
     /// was (a delete key then has nothing left to do). A selection that is not
-    /// in the prompt is left alone.
-    private func eraseSelectionBeforeTyping() -> Bool {
-        guard let surface else { return false }
-        let selected: String
-        if ghostty_surface_has_selection(surface) {
-            var text = ghostty_text_s()
-            guard ghostty_surface_read_selection(surface, &text) else { return false }
-            defer { ghostty_surface_free_text(surface, &text) }
-            guard let raw = text.text else { return false }
-            selected = String(cString: raw)
-        } else if let copied = selectionTheProgramCopied() {
-            // Claude Code's own mouse selection (full screen); spent below, so the next key does not erase it again.
-            selected = copied
-        } else {
-            return false
+    /// in the prompt is left alone. A delete key over Claude Code's own
+    /// selection (full screen) goes to it as it is: it takes the selection out
+    /// itself (`deleteProgramSelection`).
+    private func eraseSelectionBeforeTyping(deleting: Bool = false) -> Bool {
+        if let selected = terminalSelection() {
+            guard let keys = keysDeleting(selected: selected) else { return false }
+            Trace.log("type-over", "erased \(selected.count) chars before typing")
+            perform(CutSelection.action(for: keys))
+            perform("clear_selection")
+            return true
         }
-        guard let keys = keysDeleting(selected: selected) else { return false }
-        pasteboardAtPress = nil
-        Trace.log("type-over", "erased \(selected.count) chars before typing")
-        perform(CutSelection.action(for: keys))
-        perform("clear_selection")
-        return true
+        guard !deleting, let copied = selectionTheProgramCopied() else { return false }
+        return deleteProgramSelection(copied)
     }
 
     /// The mark Shift and the side arrows are making in Claude Code's prompt

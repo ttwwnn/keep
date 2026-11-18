@@ -95,7 +95,8 @@ enum CutSelection {
             let next = box[i + 1]
             let tail = row.reversed().prefix { !$0.isWhitespace }.count
             let head = next.prefix { !$0.isWhitespace }.count
-            let cutMidWord = row.count >= width && tail > 0 && head > 0 && tail + head > width
+            let cells = row.reduce(0) { $0 + Self.width(of: $1) }
+            let cutMidWord = cells >= width && tail > 0 && head > 0 && tail + head > width
             if !cutMidWord { text.append("\n") }
         }
         return (text, starts)
@@ -153,6 +154,36 @@ enum CutSelection {
         }
         if column < rowLengths[cell.row] { return (cell.row, column + 1) }
         return cell.row + 1 < rowLengths.count ? (cell.row + 1, 0) : (cell.row, column)
+    }
+
+    /// How many characters of `row` come before the cell `cell`, which is
+    /// where the terminal puts the cursor: an emoji is one character over two
+    /// cells. Past the row's text, each cell is a blank.
+    static func characters(in row: String, beforeCell cell: Int) -> Int {
+        var cells = 0
+        var count = 0
+        for character in row {
+            if cells >= cell { return count }
+            cells += width(of: character)
+            count += 1
+        }
+        return count + max(0, cell - cells)
+    }
+
+    /// The cells a character takes on screen: two for an emoji and the wide
+    /// East Asian scripts, one for the rest.
+    static func width(of character: Character) -> Int {
+        let scalars = character.unicodeScalars
+        guard let first = scalars.first else { return 1 }
+        if first.properties.isEmojiPresentation || scalars.contains(where: { $0.value == 0xFE0F }) { return 2 }
+        switch first.value {
+        case 0x1100...0x115F, 0x2E80...0x303E, 0x3041...0x33FF, 0x3400...0x4DBF, 0x4E00...0x9FFF,
+             0xA000...0xA4CF, 0xAC00...0xD7A3, 0xF900...0xFAFF, 0xFE30...0xFE4F, 0xFF00...0xFF60,
+             0xFFE0...0xFFE6, 0x20000...0x3FFFD:
+            return 2
+        default:
+            return 1
+        }
     }
 
     static let right = "\u{1B}[C"
