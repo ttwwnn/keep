@@ -22,7 +22,6 @@ final class FloatingPanelBackdrop: TerminalTintBackdropView {
         super.init(frame: frame)
         wantsLayer = true
         floor.fillRule = .evenOdd
-        card.cornerRadius = Self.radius
         card.cornerCurve = .continuous
         card.borderWidth = 1
         layer?.addSublayer(floor)
@@ -77,11 +76,14 @@ final class FloatingPanelBackdrop: TerminalTintBackdropView {
         CATransaction.setDisableActions(true)
         let inner = bounds.insetBy(dx: Self.inset, dy: Self.inset)
         card.frame = inner.width > 0 && inner.height > 0 ? inner : .zero
+        // No larger than half the card: Core Graphics refuses a rounded rect whose corners overlap.
+        let radius = max(0, min(Self.radius, inner.width / 2, inner.height / 2))
+        card.cornerRadius = radius
         floor.frame = bounds
         let path = CGMutablePath()
         path.addRect(bounds)
         if card.frame != .zero {
-            path.addRoundedRect(in: inner, cornerWidth: Self.radius, cornerHeight: Self.radius)
+            path.addRoundedRect(in: inner, cornerWidth: radius, cornerHeight: radius)
         }
         floor.path = path
         CATransaction.commit()

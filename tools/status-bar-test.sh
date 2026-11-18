@@ -99,7 +99,10 @@ def status():
         with open(os.path.join(os.environ["KEEP_STATUS_DIR"], "%d.json" % pid), "w") as f:
             json.dump({"model": {"id": model[0], "display_name": model[1]}, "effort": {"level": effort},
                        "transcript_path": os.environ["KEEP_BAR_TRANSCRIPT"], "session_id": "teste-da-barra"}, f)
+drawing, resized = False, False
 def draw():
+    global drawing, resized
+    drawing = True
     # As wide as the terminal, as Claude Code draws it: a fixed width wraps
     # in a narrower pane, and the box is not found.
     rule = "─" * os.get_terminal_size(0).columns
@@ -122,11 +125,22 @@ def draw():
         out.write("  ⏺ main\r\n  ◯ general-purpose  Reading files\r\n  ◯ Explore  Scanning\r\n  ◯ Plan  Thinking\r\n")
         out.write("\x1b[5;%dH" % (3 + len(typed)))
     out.flush()
+    drawing = False
+    if resized:
+        resized = False
+        draw()
+def on_resize(*_):
+    # A resize in the middle of a draw waits for it to end, or the two screens interleave.
+    global resized
+    if drawing:
+        resized = True
+    else:
+        draw()
 status()
 draw()
 # Redrawn at each resize, as Claude Code is: the window settles its sidebar after the first draw.
 import signal
-signal.signal(signal.SIGWINCH, lambda *_: draw())
+signal.signal(signal.SIGWINCH, on_resize)
 open(os.path.join(WORK, "ready"), "w").close()
 raw = b""
 while True:
