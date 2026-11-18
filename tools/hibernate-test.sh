@@ -108,6 +108,8 @@ export KEEP_HIB_WORK=$WORK
 # What a surface shows a few seconds after it is made goes into the trace.
 export KEEP_TRACE_SCREEN=1
 mkdir -p "$KEEP_STATE_DIR" "$KEEP_STATUS_DIR" "$WORK/tabs"
+# The sidebar shut: with it showing, the strip keeps only the tab in use, and this test presses the others there.
+echo '{"0":{"folded":[],"isCollapsed":true,"verticalTabs":false,"width":250}}' >"$KEEP_STATE_DIR/sidebar-state.json"
 require_scratch_socket
 rm -f "$SOCKET"
 

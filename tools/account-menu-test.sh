@@ -412,6 +412,9 @@ check "and no arrows" no "$(has "Subir ")"
 
 say ""
 say "Codex questions and the selected tab's account"
+# The sidebar shut: with it showing, the strip keeps only the tab in use, and this part reads the others there.
+"$AXPRESS" "$APP_NAME" menu View "Toggle Sidebar" >/dev/null 2>&1
+sleep 1
 cc -O -o "$WORK/bin/codex" tools/ia-test/fake-codex.c || exit 1
 printf 'Escolha uma opção\n» 1. Continuar\n  2. Parar\nenter to submit · esc to interrupt\n' >"$WORK/bin/codex.screen"
 for n in 1 2; do

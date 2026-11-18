@@ -502,7 +502,7 @@ check "both titles keep their zoom after relaunch" "$TITLES110" "$(title_heights
 check "and the tab has 110%'s grid" "$AT110" "$(grid 1)"
 
 say ""
-say "a narrow sidebar keeps the buttons and drops the percentage"
+say "a sidebar asked to be narrow keeps the whole zoom"
 quit_app
 python3 - "$STATE/sidebar-state.json" <<'PY'
 import json, os, sys
@@ -514,7 +514,8 @@ for window in state.values():
 json.dump(state, open(sys.argv[1], "w"))
 PY
 launch
-check "200 points wide: smaller, larger, no percentage" "yes yes no" \
+# Asked for 200 points, the sidebar holds the width its top row needs (0.3.55): the percentage stays.
+check "200 points asked: smaller, larger and the percentage, none hidden" "yes yes yes" \
     "$(present keep.zoom.out) $(present keep.zoom.in) $(present keep.zoom.reset)"
 nx=$(left_of keep.zoom.out)
 check "no nearer the traffic lights than the toggle's home" yes \
