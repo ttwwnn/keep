@@ -983,6 +983,13 @@ mod tests {
     }
 
     #[test]
+    fn a_trailing_escape_is_decoded() {
+        // O último %XX da string também: `i + 2 < len` já alcança o fim.
+        assert_eq!(percent_decoded("C:/Users/Jos%C3%A9"), "C:/Users/José");
+        assert_eq!(percent_decoded("a%2"), "a%2", "escape cortado fica como está");
+    }
+
+    #[test]
     fn two_pictures_without_ids_are_two_files() {
         let root = scratch("duas");
         let png = "iVBORw==";
