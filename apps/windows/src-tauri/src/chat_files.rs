@@ -317,7 +317,10 @@ impl Reader {
                 Some("image") => {
                     let id = ids.pop();
                     let uuid = json.get("uuid").and_then(Value::as_str).unwrap_or("imagem");
-                    let fallback = format!("{}-{index}", uuid.chars().take(8).collect::<String>());
+                    // Só letras, dígitos, "-" e "_": o uuid vem do transcrito e vira nome de arquivo.
+                    let limpo: String =
+                        uuid.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').take(8).collect();
+                    let fallback = format!("{}-{index}", if limpo.is_empty() { "imagem" } else { &limpo });
                     if let Some(path) = self.write_image(block, id, &fallback) {
                         self.add_sent(path);
                     }
@@ -995,6 +998,18 @@ mod tests {
         .unwrap();
         let names: Vec<String> = reader(&root, &two, "dois").read().sent.iter().map(|i| file_name(&i.path).to_string()).collect();
         assert_eq!(names, vec!["Imagem abcdef01-1.jpg", "Imagem abcdef01-0.jpg"]);
+        // Um uuid com barras e pontos não tira a imagem da pasta da conversa.
+        let fora = root.join("fora.jsonl");
+        fs::write(
+            &fora,
+            line(serde_json::json!({"type": "user", "timestamp": "2026-01-01T00:00:00Z", "uuid": "/../../a",
+                "message": {"role": "user", "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": png}}]}}))
+                + "\n",
+        )
+        .unwrap();
+        let sent = reader(&root, &fora, "fora").read().sent;
+        assert_eq!(sent.iter().map(|i| file_name(&i.path).to_string()).collect::<Vec<_>>(), vec!["Imagem a-0.jpg"]);
         fs::remove_dir_all(&root).unwrap();
     }
 

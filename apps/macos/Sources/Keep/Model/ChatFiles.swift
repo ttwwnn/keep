@@ -238,7 +238,11 @@ final class ChatFilesReader: @unchecked Sendable {
             case "image":
                 let id = ids.isEmpty ? nil : ids.removeFirst()
                 let uuid = json["uuid"] as? String ?? UUID().uuidString
-                if let path = writeImage(block, id: id, fallback: "\(uuid.prefix(8))-\(index)") { addSent(path) }
+                // Only letters, digits, "-" and "_": the uuid comes from the transcript and becomes a file name.
+                let clean = String(uuid.filter { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }.prefix(8))
+                if let path = writeImage(block, id: id, fallback: "\(clean.isEmpty ? "imagem" : clean)-\(index)") {
+                    addSent(path)
+                }
             default: break
             }
         }
