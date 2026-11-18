@@ -211,9 +211,14 @@ SAVED_CLIP=$(pbpaste)
 # above the line).
 BEFORE_AIM=$(grep -c 'plain click on nothing' "$WORK/app.log")
 "$MOUSE" click "$TX" "$TY"
-sleep 1.5
+# Under load the line can take seconds to be written: wait for it, not a fixed time.
+for _ in $(seq 40); do
+    [ "$(grep -ac 'plain click on nothing' "$WORK/app.log")" -gt "$BEFORE_AIM" ] && break
+    sleep 0.25
+done
 AIM_ROW=$(grep -a 'plain click on nothing: row' "$WORK/app.log" | tail -n +"$((BEFORE_AIM + 1))" \
     | sed -nE 's/.*row ([0-9]+),.*/\1/p' | tail -1)
+[ -n "$AIM_ROW" ] || { say "the click on the line was not heard: no row to aim at"; exit 1; }
 [ -n "$AIM_ROW" ] && printf %s "$AIM_ROW" >"$WORK/row"
 touch "$WORK/redraw"   # the program draws its line again, now the window is settled
 sleep 1
