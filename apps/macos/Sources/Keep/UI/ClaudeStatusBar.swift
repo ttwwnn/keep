@@ -96,7 +96,8 @@ final class ClaudeStatusBar: NSView {
             filesButton.centerYAnchor.constraint(equalTo: centerYAnchor, constant: 0.5),
         ])
         setAccessibilityIdentifier("claude-status-bar")
-        jevWatch = UsageMonitor.shared.$jev.sink { [weak self] jev in
+        // The monitor is the main actor's already; delivered on main all the same, so a change there cannot trap.
+        jevWatch = UsageMonitor.shared.$jev.receive(on: DispatchQueue.main).sink { [weak self] jev in
             MainActor.assumeIsolated { self?.showJev(jev) }
         }
     }
