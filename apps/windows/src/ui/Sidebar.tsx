@@ -5,12 +5,13 @@
 // shape carries the state as well as the hue (DESIGN.md). Folded, a workspace
 // still says how many of its tabs wait on you.
 
-import { useRef, useState } from "preact/hooks";
+import { signal } from "@preact/signals";
+import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { SPLIT_DOWN, SPLIT_RIGHT } from "../api";
 import { endedADrag } from "../drag";
 import type { RootTab } from "../layout";
 import { mayArmRename, slowRename } from "../naming";
-import { SIDEBAR_MIN, sidebarMax, tabKey } from "../state";
+import { SIDEBAR_MIN, sidebarFloor, sidebarMax, tabKey } from "../state";
 import {
   activeTab,
   activeWorkspace,
@@ -398,7 +399,13 @@ function NewWorkspaceField() {
   );
 }
 
-/** The sidebar's right edge, dragged to make it wider or narrower. */
+/**
+ * The narrowest the sidebar may be: what its top row needs (the zoom, the battery when it shows, the button that
+ * hides the sidebar), measured as the zoom and the battery change it.
+ */
+const floor = signal(SIDEBAR_MIN);
+
+/** The sidebar's right edge, dragged to make it wider or narrower: the margin between its card and the terminal. */
 function Resizer() {
   const start = useRef<{ x: number; width: number } | null>(null);
   return (
@@ -406,12 +413,12 @@ function Resizer() {
       class="sidebar-resizer"
       onPointerDown={(e) => {
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-        start.current = { x: e.clientX, width: gui.value.sidebar.width };
+        start.current = { x: e.clientX, width: Math.max(gui.value.sidebar.width, floor.value) };
       }}
       onPointerMove={(e) => {
         if (!start.current) return;
         const width = start.current.width + e.clientX - start.current.x;
-        setSidebarWidth(Math.round(Math.min(sidebarMax(), Math.max(SIDEBAR_MIN, width))));
+        setSidebarWidth(Math.round(Math.min(Math.max(sidebarMax(), floor.value), Math.max(floor.value, width))));
       }}
       onPointerUp={() => (start.current = null)}
       onDblClick={() => setSidebarWidth(250)}
@@ -420,29 +427,49 @@ function Resizer() {
 }
 
 export function Sidebar() {
-  const width = gui.value.sidebar.width;
+  const width = Math.max(gui.value.sidebar.width, floor.value);
+  const items = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const row = items.current;
+    const head = row?.parentElement;
+    if (!row || !head) return;
+    const measure = () => {
+      const style = getComputedStyle(head);
+      const next = sidebarFloor(row.getBoundingClientRect().width, parseFloat(style.paddingLeft) + parseFloat(style.paddingRight));
+      if (next !== floor.value) floor.value = next;
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, []);
   return (
-    <aside class="sidebar" style={{ width: `${width}px` }}>
-      <div class={`sidebar-head ${isMac.value ? "inset" : ""}`} data-tauri-drag-region>
-        <Battery />
-        <ZoomControl />
-        <button class="round-button" title="Esconder a barra lateral" aria-label="Esconder a barra lateral" onClick={toggleSidebar}>
-          <icon.Sidebar />
-        </button>
-      </div>
-      <div class={`sidebar-list ${sidebarMove.value ? "moving" : ""}`}>
-        {shownWorkspaces.value.map((w) => (
-          <WorkspaceGroup key={w.name} name={w.name} />
-        ))}
-        <NewWorkspaceField />
-      </div>
-      <MemoryMeter />
-      <UsageFooter />
-      {notice.value && (
-        <div class="sidebar-foot">
-          <div class="notice">{notice.value}</div>
+    // The margin around the card drags the window, as the row at the top does.
+    <aside class="sidebar" style={{ width: `${width}px` }} data-tauri-drag-region>
+      <div class="sidebar-card">
+        <div class={`sidebar-head ${isMac.value ? "inset" : ""}`} data-tauri-drag-region>
+          <div class="sidebar-head-items" ref={items}>
+            <Battery />
+            <ZoomControl />
+            <button class="round-button" title="Esconder a barra lateral" aria-label="Esconder a barra lateral" onClick={toggleSidebar}>
+              <icon.Sidebar />
+            </button>
+          </div>
         </div>
-      )}
+        <div class={`sidebar-list ${sidebarMove.value ? "moving" : ""}`}>
+          {shownWorkspaces.value.map((w) => (
+            <WorkspaceGroup key={w.name} name={w.name} />
+          ))}
+          <NewWorkspaceField />
+        </div>
+        <MemoryMeter />
+        <UsageFooter />
+        {notice.value && (
+          <div class="sidebar-foot">
+            <div class="notice">{notice.value}</div>
+          </div>
+        )}
+      </div>
       <Resizer />
     </aside>
   );

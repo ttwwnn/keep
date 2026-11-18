@@ -580,3 +580,69 @@ e à mão (abrir, ir para, fechar, sair e reabrir com duas janelas). O que só o
   atalho global) falharam de vez em quando neste Mac com outras sessões usando a tela e o atalho.
 - [-] Tela cheia por janela no estado: o Mac também só guarda o quadro; a janela volta no quadro, não em tela cheia.
 - [~] Janela rápida global (Ctrl+`), com o workspace `quick` oculto: feita na fatia `quick`, acima.
+
+## Do Mac 0.3.50 a 0.3.56 (painel de arquivos, barras arredondadas, seleção com Shift)
+
+Feito em 18/11/2026 sem um Windows: provado pelo vitest, pelo `cargo test` do app (no Mac) e pelo `cargo check
+--target x86_64-pc-windows-msvc` do `chat_files.rs` isolado (o do app inteiro para no `llvm-rc` do ícone, que esta
+máquina não tem). Nada disto foi visto na WebView2 nem com um Claude Code de verdade no Windows.
+
+- [~] Painel de Arquivos da conversa (`ChatFilesPanel.swift`): botão "Arquivos" na ponta direita da barra do Claude
+  (`ui/AiStatusBar.tsx`, só para o Claude, aceso com o painel aberto), painel à direita do terminal
+  (`ui/FilesPanel.tsx`) com "Gerados", "Enviados" e "Downloads", cada um uma tabela de Nome (sem a extensão), Tipo,
+  Modificado (dd/MM HH:mm) e Tamanho; o clique no título ordena (uma ordem para as três, a mais nova primeiro até o
+  primeiro clique) e o segundo inverte a seta; duplo clique abre como o clique num caminho do terminal (`openFound`:
+  o que rodaria é mostrado no Explorer), menu de contexto Abrir / Mostrar no Explorer / Copiar caminho. Borda
+  esquerda arrastável (a margem entre o terminal e o cartão): no máximo 1/3 da tela, abaixo de 120 px fecha
+  guardando a largura de antes, largura lembrada (`localStorage`, a mesma em todas as janelas), padrão 360. Mostra a
+  conversa do painel em frente e só ao lado de um Claude Code; relido a cada 2 s com o painel aberto.
+  A regra das listas é a do `ChatFilesReader` do Mac, em Rust (`src-tauri/src/chat_files.rs`, comando `chat_files`,
+  um leitor por transcrito, os 16 últimos guardados): o transcrito (`transcript_path` e `session_id` do arquivo de
+  status que a barra já lê) é lido só no que cresceu; "Gerados" = entregue por SendUserFile, ou citado numa resposta
+  (pelo caminho, ou pelo nome quando único entre os candidatos) e escrito pela conversa (Write, NotebookEdit) ou
+  criado desde o início dela; "Enviados" = caminhos no texto humano (`origin.kind == "human"`, sem
+  `isCompactSummary`, sem começar com "<"), imagens coladas em base64 gravadas em
+  `%LOCALAPPDATA%\Keep\conversas\<sessão>` (apagadas 30 dias depois do último uso) e `~\.claude\uploads\<sessão>`;
+  "Downloads" = a pasta Downloads que o Windows diz (`SHGetKnownFolderPath`), sem ocultos nem arquivos de sistema.
+  O que muda do Mac: caminhos `C:\…`, `C:/…`, `\\servidor\…`, `file:///C:/…`, `~\…` e os do Git Bash e do WSL
+  (`/c/…`, `/mnt/c/…`, que é como o Bash do Claude Code no Windows escreve) entram; a barra invertida só escapa um
+  espaço; nomes comparados sem caixa; os comandos do PowerShell do Claude Code contam como os do Bash; nada que esteja
+  em outra máquina da rede é consultado (o Windows entregaria o login da pessoa ao servidor), e o transcrito também
+  não. Testes: os casos de `tools/chat-files-test/main.swift` em `chat_files::tests` (16 testes, a criação antiga
+  posta pelo `FileTimes::set_created`, que só existe no Mac e no Windows), mais caminhos do Windows, data ISO,
+  sessão como nome e não caminho; ordem, textos e largura em `chatFiles.test.ts`. Sabotagens conferidas: tirar a
+  exigência de citação dos Gerados e aceitar origem não humana nos Enviados derrubam os testes.
+- [~] Arrastar uma linha do painel para a conversa digita o caminho como um arquivo solto (`typeDropped` em
+  `input.ts`, o mesmo do arrasto do Explorer, com o painel sob o ponteiro aceso). Pelo ponteiro, não pelo arrasto do
+  HTML, que o WebView2 entrega ao soltar de arquivos da janela (`drag.ts`).
+- [ ] Arrastar uma linha do painel para fora (Explorer, outros apps) como cópia: pede um `DoDragDrop` do OLE com um
+  `CF_HDROP`, que o Tauri não tem; o plugin `tauri-plugin-drag` (ou código nativo novo em `src-tauri`) daria. Fica
+  para quando se aceitar o plugin nativo.
+- [~] Nome solto de arquivo na tela abre pela pasta citada perto dele (`LinkOpener.foldersNamed(in:near:)` e
+  `file(named:in:)`): `foldersNamed` e `inFolders` em `paths.ts`, as pastas das 20 linhas em volta, a mais perto
+  primeiro, tentadas depois da pasta do shell (`links.ts`, no sublinhado, no clique e no menu). Testes em
+  `paths.test.ts`, com sabotagem da ordem, do alcance e das grafias.
+- [~] Barras arredondadas como as do Finder (`FloatingPanelBackdrop`): a barra lateral e o painel de Arquivos são
+  cartões de cantos de 18 px, a 8 px das bordas da janela, aro de 1 px (branco 8% no escuro, preto 7% no claro,
+  `--panel-rim` em `theme.ts`), a margem na cor da janela, o conteúdo cortado pelos cantos. A margem é a sombra do
+  cartão cortada pela barra, para o fundo translúcido (fatia `glass`) não pintar duas vezes. A borda de arrastar da
+  barra lateral é a margem entre o cartão e o terminal; a margem da barra arrasta a janela.
+- [~] A barra lateral nunca esconde os ícones da fileira do topo (`SidebarHost.holdMinimum`): a largura mínima é a da
+  fileira medida (zoom, bateria quando aparece, botão de recolher) mais o recuo e o cartão, refeita quando o zoom ou a
+  bateria a mudam (`sidebarFloor` em `state.ts`, testado). O Windows não tem a hora na fileira.
+- [~] Rodapé "Jev · OpenRouter": "Gasto médio: US$ x/mês" e "Pôr crédito" também no modo dobrado; a dica curta diz
+  "Gasto médio por mês do Jev (a chave dele no OpenRouter), pelos últimos 30 dias" e a longa "Gasto médio do Jev: …".
+- [~] Shift+← / Shift+→ no prompt do Claude Code marcam texto: no xterm.js a tecla ia ao Claude Code, que só move o
+  cursor. Agora, dentro da caixa do prompt, a seta vai sem o Shift e a seleção do terminal é desenhada do começo da
+  marca até o cursor, depois que o cursor do programa chega lá (`markByArrow` em `input.ts`; `arrowStep` e `markSpan`
+  em `cut.ts`, testados com os casos do Mac e com sabotagem). Ctrl+C e Ctrl+X agem sobre ela; Backspace e Delete a
+  tiram (pelas teclas do `keysToCut`); qualquer outra tecla ou um clique a soltam. Fora da caixa, a tecla segue ao
+  programa (o PSReadLine tem a sua seleção). Digitar por cima da marca não a substitui (o Windows não tem o
+  `eraseSelectionBeforeTyping` do Mac).
+- [~] No tema escuro, a aba escolhida e o workspace em uso na barra lateral têm fundo sólido #222222, em foco e fora
+  dele, sem vidro nem contorno (`capsule(chosen:)` e `rowBackground`); o workspace ganhou a moldura atrás do
+  cabeçalho. O tema claro não muda.
+- [~] Com a barra lateral à vista, a fileira do topo mostra só a aba em uso; oculta, todas (`stripTabs` em
+  `tabOrder.ts`, testado). A aba sozinha ainda se arranca para outra janela; mudar a ordem fica na barra lateral. Os
+  passos do roteiro que mexem nas outras abas da fileira (`e2eTabs.ts`, `e2eWindows.ts`) escondem a barra lateral
+  enquanto rodam (`withFullRow`); não rodaram depois da mudança.

@@ -140,6 +140,8 @@ export KEEP_SCREEN_DUMP=$WORK/dump
 # What each client did: kept, handed over, took over (crates/keep/src/keeper.rs).
 export KEEP_CLIENT_LOG=$WORK/client.log
 mkdir -p "$KEEP_STATE_DIR" "$KEEP_STATUS_DIR" "$WORK/tabs" "$WORK/dump"
+# The sidebar shut: with it showing, the strip keeps only the tab in use, and this test presses the others there.
+echo '{"0":{"folded":[],"isCollapsed":true,"verticalTabs":false,"width":250}}' >"$KEEP_STATE_DIR/sidebar-state.json"
 require_scratch_socket
 rm -f "$SOCKET"
 

@@ -386,7 +386,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
 
         sidebarHost.render(snapshot.rows, accountListRevision: snapshot.accountListRevision)
-        tabStrip.apply(snapshot.strip)
+        // With the sidebar showing, the tabs are listed there: the row above keeps only the one in use
+        // (pedido de 17/11/2026). Shut, the row lists them all.
+        tabStrip.apply(snapshot.sidebar.isCollapsed ? snapshot.strip : snapshot.strip.filter(\.isActive))
         renderPicker(snapshot.picker)
         // The sidebar is one state for the whole app: applied here, once,
         // rather than restored per tab. The user's own toggle animates.

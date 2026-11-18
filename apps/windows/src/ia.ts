@@ -537,7 +537,7 @@ export interface JevLine {
   measuredAt: number | null;
   problem: string | null;
   pending: number | null;
-  /** Spent per day over the last 30 days, by this machine's decisions. */
+  /** Spent per day over the last 30 days by the Jev's own key on OpenRouter, as the core measures it. */
   dailyAverage30d: number | null;
 }
 
@@ -639,7 +639,7 @@ export function jevHelp(line: JevLine, nowMs: number): string {
     if (c.usedToday !== null) lines.push(`Gasto hoje: ${dollars(c.usedToday)}`);
     if (c.usedThisMonth !== null) lines.push(`Gasto no mês: ${dollars(c.usedThisMonth)}`);
   }
-  if (line.dailyAverage30d !== null) lines.push(`Gasto médio: ${perMonth(line.dailyAverage30d)} (últimos 30 dias)`);
+  if (line.dailyAverage30d !== null) lines.push(`Gasto médio do Jev: ${perMonth(line.dailyAverage30d)} (últimos 30 dias)`);
   if (line.pending !== null && line.pending > 0) {
     lines.push(`Inclui ${dollars(line.pending)} de decisões desta máquina que o OpenRouter ainda não contou`);
   }

@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import {
   expand,
   flatten,
+  foldersNamed,
+  inFolders,
   looksLikePath,
   normalize,
   pathTokens,
@@ -306,5 +308,44 @@ describe("opening", () => {
       expect(runsWhenOpened(file), file).toBe(true);
     }
     expect(runsWhenOpened("C:\\x\\notes.txt."), "a full stop after a harmless name").toBe(false);
+  });
+});
+
+describe("a bare name under a folder the screen names (LinkOpener.foldersNamed and file(named:in:))", () => {
+  const list = ["Encontrei 3 PDFs (em ~/Downloads):", "", "  - Relatorio-2026.pdf", "  - contrato.pdf", "  - notas.md"];
+
+  it("opens the name in the folder named in the heading", () => {
+    const folders = foldersNamed(list, 2, windows);
+    expect(folders).toEqual(["C:\\Users\\t\\Downloads"]);
+    const found = flatten(tokenAt(list, 2, list[2].indexOf("Relatorio"), windows, folders)!).map((f) => f.path);
+    // Where the shell is first, as before; the folder named nearby after it.
+    const atShell = found.indexOf("C:\\work\\Relatorio-2026.pdf");
+    expect(atShell).toBeGreaterThanOrEqual(0);
+    expect(found.indexOf("C:\\Users\\t\\Downloads\\Relatorio-2026.pdf")).toBeGreaterThan(atShell);
+    const tokens = pathTokens(list, 3, windows, foldersNamed(list, 3, windows));
+    expect(flatten(tokens[0]).map((f) => f.path)).toContain("C:\\Users\\t\\Downloads\\contrato.pdf");
+  });
+
+  it("the nearest folder first, each once, and none past twenty rows", () => {
+    const rows = ["Em C:\\longe\\pasta:", ...Array<string>(20).fill(""), "Em ~/perto e C:\\Dados.", "nota.pdf", "Em ~/perto"];
+    expect(foldersNamed(rows, 22, windows)).toEqual(["C:\\Users\\t\\perto", "C:\\Dados"]);
+    expect(foldersNamed(rows, 20, windows)).toEqual(["C:\\Users\\t\\perto", "C:\\Dados", "C:\\longe\\pasta"]);
+    expect(foldersNamed(rows, 99, windows)).toEqual([]);
+    expect(foldersNamed([], 0, windows)).toEqual([]);
+  });
+
+  it("only a bare name with an extension is looked for in them", () => {
+    expect(inFolders("nota.pdf", ["C:\\a", "D:\\b"], "windows")).toEqual(["C:\\a\\nota.pdf", "D:\\b\\nota.pdf"]);
+    expect(inFolders("sub\\nota.pdf", ["C:\\a"], "windows")).toEqual([]);
+    expect(inFolders("LEIAME", ["C:\\a"], "windows")).toEqual([]);
+    expect(inFolders("~nota.pdf", ["C:\\a"], "windows")).toEqual([]);
+    expect(inFolders("nota.pdf", [], "windows")).toEqual([]);
+    expect(inFolders("grafico.png", ["/tmp/x"], "posix")).toEqual(["/tmp/x/grafico.png"]);
+  });
+
+  it("a name with no folder named near it is looked for only where the shell is", () => {
+    expect(flatten(tokenAt(["  - Relatorio-2026.pdf"], 0, 4, windows, [])!).map((f) => f.path)).toEqual([
+      "C:\\work\\Relatorio-2026.pdf",
+    ]);
   });
 });

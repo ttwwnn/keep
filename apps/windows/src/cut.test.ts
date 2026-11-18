@@ -2,7 +2,40 @@
 // (tools/cut-test/main.swift), and the real prompt boxes it recorded from
 // Claude Code, each cut tried on the real editor and found right.
 import { describe, expect, it } from "vitest";
-import { keysAcrossRows, keysEmptying, keysToCut, logical, promptBoxRows } from "./cut";
+import { arrowStep, keysAcrossRows, keysEmptying, keysToCut, logical, markSpan, promptBoxRows } from "./cut";
+
+// Shift with an arrow: where the cursor goes, one character at a time (the macOS app's cases), and the terminal's
+// selection drawn for the mark.
+describe("Shift with the side arrows in Claude Code's prompt box", () => {
+  const stepped = (row: number, column: number, left: boolean) => {
+    const next = arrowStep({ row, column }, left, [5, 3]);
+    return `${next.row},${next.column}`;
+  };
+  it("moves one character, across the rows, and not past the box", () => {
+    expect(stepped(0, 3, true)).toBe("0,2");
+    expect(stepped(0, 3, false)).toBe("0,4");
+    expect(stepped(1, 0, true)).toBe("0,5");
+    expect(stepped(0, 5, false)).toBe("1,0");
+    expect(stepped(0, 0, true)).toBe("0,0");
+    expect(stepped(1, 3, false)).toBe("1,3");
+  });
+
+  it("selects from where the mark began to the cursor, the gutter put back", () => {
+    // The box's first row is screen row 10, 80 columns wide.
+    expect(markSpan({ row: 0, column: 2 }, { row: 0, column: 5 }, [8, 4], 10, 80)).toEqual({ row: 10, column: 4, length: 3 });
+    // Marked leftwards: the same cells.
+    expect(markSpan({ row: 0, column: 5 }, { row: 0, column: 2 }, [8, 4], 10, 80)).toEqual({ row: 10, column: 4, length: 3 });
+    // Across a row: from the anchor to the end of the screen row, then the next row's gutter and text.
+    expect(markSpan({ row: 0, column: 6 }, { row: 1, column: 2 }, [8, 4], 10, 80)).toEqual({ row: 10, column: 8, length: 76 });
+    // Stopping at a row's start: the mark ends with the row above.
+    expect(markSpan({ row: 0, column: 6 }, { row: 1, column: 0 }, [8, 4], 10, 80)).toEqual({ row: 10, column: 8, length: 2 });
+  });
+
+  it("an empty mark, or one the box no longer holds, selects nothing", () => {
+    expect(markSpan({ row: 0, column: 3 }, { row: 0, column: 3 }, [8], 10, 80)).toBeUndefined();
+    expect(markSpan({ row: 0, column: 3 }, { row: 2, column: 1 }, [8, 4], 10, 80)).toBeUndefined();
+  });
+});
 // The Mac's own recording, where it is kept: tools/cut-test.
 import recording from "../../../tools/cut-test/claude-prompt-box.jsonl?raw";
 

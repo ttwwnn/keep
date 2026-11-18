@@ -36,7 +36,7 @@ import {
 } from "./store";
 import { toggleOverlay } from "./palette/overlay";
 import type { TermView } from "./terminals";
-import { keysToCut } from "./cut";
+import { ARROW_LEFT, ARROW_RIGHT, arrowStep, keysToCut, markSpan, promptBoxRows, type BoxCell } from "./cut";
 import { dropText, lightPane, paneAt, shellKind } from "./drop";
 import { kittyKey, watchLayout } from "./kittyKeys";
 import { openNewWindow } from "./windowSync";
@@ -168,6 +168,29 @@ function chordOf(event: KeyboardEvent): Action | null {
 export function terminalKey(view: TermView, event: KeyboardEvent): boolean {
   const mac = isMac.value;
   if (chordOf(event)) return false;
+  const shiftSide =
+    (event.key === "ArrowLeft" || event.key === "ArrowRight") && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey;
+  if (shiftSide) {
+    // Shift with a side arrow marks text in Claude Code's prompt box, as in any text box.
+    if (event.type === "keydown" && markByArrow(view, event.key === "ArrowLeft")) {
+      event.preventDefault();
+      return false;
+    }
+    if (event.type !== "keydown" && marks.has(view)) return false;
+  } else if (event.type === "keydown" && marks.has(view) && !MODIFIERS.has(event.key)) {
+    // Any other key lets the mark go: an arrow without Shift moves off it, Backspace and Delete take it out.
+    marks.delete(view);
+    const erase = (event.key === "Backspace" || event.key === "Delete") && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey;
+    if (erase && view.term.hasSelection()) {
+      event.preventDefault();
+      const buffer = view.term.buffer.active;
+      const keys = keysToCut(view.term.getSelection(), view.screenText().split("\n"), buffer.cursorY, buffer.cursorX);
+      view.term.clearSelection();
+      if (keys) void view.type(keys).catch(() => {});
+      return false;
+    }
+    if (event.key.startsWith("Arrow")) view.term.clearSelection();
+  }
   if (isPlainCopy(event, mac) && view.term.hasSelection()) {
     if (event.type === "keydown") {
       event.preventDefault();
@@ -201,6 +224,62 @@ export function terminalKey(view: TermView, event: KeyboardEvent): boolean {
     return false;
   }
   return true;
+}
+
+const MODIFIERS = new Set(["Shift", "Control", "Alt", "AltGraph", "Meta", "CapsLock"]);
+
+/** The mark Shift and the side arrows are making in Claude Code's prompt box, per pane: where it began and where the cursor is. */
+const marks = new Map<TermView, { anchor: BoxCell; focus: BoxCell }>();
+/** Only the latest arrow's drawing runs. */
+let markTurn = 0;
+
+// A click lets every mark go: a selection made with the mouse is the person's own.
+if (typeof window !== "undefined") window.addEventListener("mousedown", () => marks.clear(), true);
+
+/**
+ * Shift with a side arrow in Claude Code's prompt box marks text from the cursor, as in any text box (the macOS app's
+ * `markByArrow`, 0.3.53). Claude Code only moves its cursor for it, so the arrow goes to it plain, and once its cursor
+ * has moved the terminal's selection is drawn from where the mark began to there, drawn whole each time (the program
+ * writes its line again at every arrow). Ctrl+C, Ctrl+X, Backspace and Delete act on it. False outside the box: the
+ * key goes to the program as it is.
+ */
+function markByArrow(view: TermView, left: boolean): boolean {
+  const buffer = view.term.buffer.active;
+  const box = promptBoxRows(view.screenText().split("\n"), buffer.cursorY);
+  if (!box) return false;
+  const lengths = box.rows.map((row) => Array.from(row).length);
+  const row = buffer.cursorY - box.first;
+  const here = { row, column: Math.min(Math.max(buffer.cursorX - 2, 0), lengths[row]) };
+  let mark = marks.get(view) ?? { anchor: here, focus: here };
+  // The box was drawn again with fewer rows than the mark spans: start over from the cursor.
+  if (mark.anchor.row >= lengths.length || mark.focus.row >= lengths.length) mark = { anchor: here, focus: here };
+  const next = arrowStep(mark.focus, left, lengths);
+  marks.set(view, mark);
+  // At the box's first or last character there is nowhere to go.
+  if (next.row === mark.focus.row && next.column === mark.focus.column) return true;
+  marks.set(view, { anchor: mark.anchor, focus: next });
+  void view.type(left ? ARROW_LEFT : ARROW_RIGHT).catch(() => {});
+  drawArrowMark(view, ++markTurn, 30);
+  return true;
+}
+
+/** The mark drawn once the program's cursor is where the mark ends (or after a third of a second, at a soft wrap where the two may differ). */
+function drawArrowMark(view: TermView, turn: number, tries: number): void {
+  setTimeout(() => {
+    const mark = marks.get(view);
+    if (turn !== markTurn || !mark) return;
+    const buffer = view.term.buffer.active;
+    const box = promptBoxRows(view.screenText().split("\n"), buffer.cursorY);
+    if (!box) return;
+    const at = { row: buffer.cursorY - box.first, column: buffer.cursorX - 2 };
+    if ((at.row !== mark.focus.row || at.column !== mark.focus.column) && tries > 0) {
+      drawArrowMark(view, turn, tries - 1);
+      return;
+    }
+    view.term.clearSelection();
+    const span = markSpan(mark.anchor, mark.focus, box.rows.map((row) => Array.from(row).length), box.first, view.term.cols);
+    if (span) view.term.select(span.column, buffer.baseY + span.row, span.length);
+  }, 10);
 }
 
 /**
@@ -326,15 +405,23 @@ export function installInput(): void {
       }
       carrying = false;
       lightPane(null);
-      if (payload.paths.length === 0) return;
-      const view =
-        (under?.dataset.workspace && under.dataset.pane
-          ? terminals.existing(under.dataset.workspace, Number(under.dataset.pane))
-          : undefined) ?? activeView();
-      if (!view) return;
-      const command = workspaces.value.find((w) => w.name === view.workspace)?.tabs.find((t) => t.id === view.tab)?.command ?? "";
-      view.paste(dropText(payload.paths, shellKind(command)) + " ");
-      view.focus();
+      typeDropped(payload.paths, under);
     })
     .catch(() => {});
+}
+
+/**
+ * Files let go over a pane (`under`, else the pane in front): their paths typed where the cursor is, said as the
+ * pane's shell reads them, and the keyboard given to it. From the system's drop and from the files panel's rows.
+ */
+export function typeDropped(paths: string[], under: HTMLElement | null): void {
+  if (paths.length === 0) return;
+  const view =
+    (under?.dataset.workspace && under.dataset.pane
+      ? terminals.existing(under.dataset.workspace, Number(under.dataset.pane))
+      : undefined) ?? activeView();
+  if (!view) return;
+  const command = workspaces.value.find((w) => w.name === view.workspace)?.tabs.find((t) => t.id === view.tab)?.command ?? "";
+  view.paste(dropText(paths, shellKind(command)) + " ");
+  view.focus();
 }

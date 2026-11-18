@@ -265,6 +265,49 @@ export function looksLikePath(word: string, flavor: Flavor): boolean {
   return isBareFile(shape);
 }
 
+// ---------------------------------------------------------------- folders named nearby
+
+/** How far from a bare name a folder the screen names still counts: a list under its heading, not a path from another command. */
+export const FOLDER_REACH = 20;
+
+/** A word that names a folder from the root: a drive, a share, the home, a POSIX root. */
+const FOLDER_ROOT = /^(?:[A-Za-z]:[\\/]|\\\\[^\\/\s]|~[\\/]|\/)/;
+
+/**
+ * The folders the rows around `row` name (`~\Downloads`, `C:\x`, `/mnt/c/x`), the nearest first, each once: the
+ * heading of a list of bare names says where they are ("PDFs (em ~/Downloads)"). The macOS app's
+ * `LinkOpener.foldersNamed(in:near:)`.
+ */
+export function foldersNamed(lines: string[], row: number, where: Where): string[] {
+  if (row < 0 || row >= lines.length) return [];
+  const rows: number[] = [];
+  for (let i = Math.max(0, row - FOLDER_REACH); i <= Math.min(lines.length - 1, row + FOLDER_REACH); i++) rows.push(i);
+  rows.sort((a, b) => Math.abs(a - row) - Math.abs(b - row) || a - b);
+  const found: string[] = [];
+  for (const i of rows) {
+    for (const word of lines[i].split(/\s+/)) {
+      let low = 0;
+      let high = word.length;
+      while (low < high && WRAPPING.has(word[low])) low++;
+      while (high > low && WRAPPING.has(word[high - 1])) high--;
+      const folder = word.slice(low, high);
+      if (!FOLDER_ROOT.test(folder)) continue;
+      const path = resolve(folder, where);
+      if (path !== undefined && !found.includes(path)) found.push(path);
+    }
+  }
+  return found;
+}
+
+/**
+ * A bare file name in each of the folders named near it, in their order: nothing for a word with a folder of its own
+ * or without an extension (the macOS app's `LinkOpener.file(named:in:)`).
+ */
+export function inFolders(name: string, folders: string[], flavor: Flavor): string[] {
+  if (folders.length === 0 || name === "" || /[\\/]/.test(name) || name.startsWith("~") || !/[^.]\.[^.\s]+$/.test(name)) return [];
+  return folders.map((folder) => normalize(join(folder, name, flavor), flavor));
+}
+
 // ---------------------------------------------------------------- candidates
 
 interface Part {
@@ -291,7 +334,14 @@ function startsAnother(word: string): boolean {
  * it ends it); and, for a rooted path, with the words after it that a space
  * in a folder's name would have put there.
  */
-function candidatesAround(lines: string[], line: number, low: number, high: number, where: Where): Candidate[] {
+function candidatesAround(
+  lines: string[],
+  line: number,
+  low: number,
+  high: number,
+  where: Where,
+  folders: string[] = [],
+): Candidate[] {
   const { flavor } = where;
   const text = lines[line];
   const middle: Part = { piece: { line, start: low, end: high }, text: text.slice(low, high) };
@@ -356,6 +406,8 @@ function candidatesAround(lines: string[], line: number, low: number, high: numb
         if (spelled === "") continue;
         for (const path of expand(spelled, where)) if (!paths.includes(path)) paths.push(path);
       }
+      // Not where the shell is: maybe in a folder the screen names near it, tried after the rest.
+      for (const path of inFolders(unescape(body, flavor), folders, flavor)) if (!paths.includes(path)) paths.push(path);
       const pieces = parts.map((p) => ({ ...p.piece }));
       if (cut) {
         pieces[0].start += Math.min(lead, pieces[0].end - pieces[0].start);
@@ -403,9 +455,10 @@ function quotedRuns(text: string, flavor: Flavor): [number, number][] {
  * The words of `lines[row]` that look like paths, each with the pieces of text
  * to try for it. `lines` are the logical lines around the row (a row the
  * terminal wrapped by itself is one line with the rest of its row): the rows
- * above and below let a path a program broke be pieced back together.
+ * above and below let a path a program broke be pieced back together. `folders`, the ones the screen names near the
+ * row (`foldersNamed`), are where a bare file name is also looked for.
  */
-export function pathTokens(lines: string[], row: number, where: Where): PathToken[] {
+export function pathTokens(lines: string[], row: number, where: Where, folders: string[] = []): PathToken[] {
   const text = lines[row] ?? "";
   if (text.length === 0 || text.length > 4000) return [];
   const { flavor } = where;
@@ -434,7 +487,7 @@ export function pathTokens(lines: string[], row: number, where: Where): PathToke
     const word = text.slice(low, high);
     const [lead, tail] = wrapped(word);
     if (!looksLikePath(word.slice(lead, word.length - tail), flavor) && !looksLikePath(word, flavor)) continue;
-    const candidates = candidatesAround(lines, row, low, high, where);
+    const candidates = candidatesAround(lines, row, low, high, where, folders);
     if (candidates.length > 0) tokens.push({ at: { line: row, start: low, end: high }, candidates });
   }
   // Where two cover the same text the longer comes first, and is the one kept.
@@ -446,12 +499,18 @@ export function pathTokens(lines: string[], row: number, where: Where): PathToke
  * one if the point is on it, else the plain word there — whatever its shape,
  * since the menu asks the file system and is only for what exists.
  */
-export function tokenAt(lines: string[], row: number, column: number, where: Where): PathToken | undefined {
-  const known = pathTokens(lines, row, where).find((t) => column >= t.at.start && column < t.at.end);
+export function tokenAt(
+  lines: string[],
+  row: number,
+  column: number,
+  where: Where,
+  folders: string[] = [],
+): PathToken | undefined {
+  const known = pathTokens(lines, row, where, folders).find((t) => column >= t.at.start && column < t.at.end);
   if (known) return known;
   const word = wordAt(lines[row] ?? "", column, where.flavor);
   if (!word) return undefined;
-  const candidates = candidatesAround(lines, row, word[0], word[1], where);
+  const candidates = candidatesAround(lines, row, word[0], word[1], where, folders);
   return candidates.length > 0 ? { at: { line: row, start: word[0], end: word[1] }, candidates } : undefined;
 }
 

@@ -273,6 +273,30 @@ export interface PathHit {
 export const findPaths = (groups: string[][]) => invoke<(PathHit | null)[]>("find_paths", { groups });
 /** The paths of the files on the clipboard (the Explorer's copy); empty when it holds anything else, and off Windows. */
 export const clipboardFiles = () => invoke<string[]>("clipboard_files");
+/** A file as a row of the files panel shows it (src-tauri `chat_files::Item`). */
+export interface ChatFile {
+  path: string;
+  /** The name without its extension. */
+  name: string;
+  /** The extension, in small letters; empty when there is none. */
+  type: string;
+  /** When it last changed, in milliseconds since 1970. */
+  modified: number;
+  size: number;
+  /** A folder (Downloads holds them too). */
+  dir: boolean;
+}
+
+export interface ChatFiles {
+  sent: ChatFile[];
+  made: ChatFile[];
+  downloads: ChatFile[];
+  /** The Downloads folder is there but could not be read. */
+  downloadsDenied: boolean;
+}
+
+/** A Claude Code conversation's files, read off its transcript (only what it gained since the last read), and Downloads. */
+export const chatFiles = (transcript: string, session: string) => invoke<ChatFiles>("chat_files", { transcript, session });
 /** Open a file with what the system opens it with, a folder in the file manager. */
 export const openPath = (path: string) => invoke<void>("open_path", { path });
 /** Show a file in the file manager, selected. */

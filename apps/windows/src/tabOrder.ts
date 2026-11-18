@@ -8,6 +8,16 @@
 import type { TabInfo } from "./api";
 
 /**
+ * The tabs the row at the top shows, each with its place among all of them (its Ctrl+number and where a drag starts
+ * from): with the sidebar in sight, which lists them all, only the one in use; with the sidebar hidden, all of them
+ * (pedido de 17/11/2026; `MainWindowController.render` in the macOS app).
+ */
+export function stripTabs<T>(tabs: readonly T[], current: T | null, sidebarShown: boolean): { tab: T; index: number }[] {
+  const all = tabs.map((tab, index) => ({ tab, index }));
+  return sidebarShown ? all.filter((entry) => entry.tab === current) : all;
+}
+
+/**
  * Items in the remembered order. Any it never heard of keep the daemon's
  * order and follow the ones it did — a tab made a moment ago appears where it
  * was made, at the end, rather than at the front of a row somebody arranged.

@@ -9,6 +9,7 @@ import { endedADrag } from "../drag";
 import type { RootTab } from "../layout";
 import { mayArmRename, slowRename } from "../naming";
 import { tabKey } from "../state";
+import { stripTabs } from "../tabOrder";
 import { toggleOverlay } from "../palette/overlay";
 import {
   activeTab,
@@ -197,13 +198,14 @@ export function TitleBar() {
       >
         {ws &&
           !vertical &&
-          tabs.map((tab, i) => (
+          // With the sidebar in sight, which lists every tab, the row holds the one in use alone.
+          stripTabs(tabs, current, !sidebarHidden).map(({ tab, index }) => (
             <TabCapsule
               key={tabKey(ws, tab.root.id)}
               workspace={ws}
               tab={tab}
               tabs={tabs}
-              index={i}
+              index={index}
               selected={tab === current}
               alone={tabs.length === 1}
               count={tabs.length}

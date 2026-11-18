@@ -2021,9 +2021,10 @@ dependencies = [
 
 [[package]]
 name = "keep-app"
-version = "0.3.56"
+version = "0.3.57"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "keep-proto",
  "serde",
  "serde_json",

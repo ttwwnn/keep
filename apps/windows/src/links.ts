@@ -11,7 +11,19 @@
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { IBuffer, IBufferCell, IDisposable, ILink, Terminal } from "@xterm/xterm";
 import * as api from "./api";
-import { flatten, pathTokens, runsWhenOpened, tokenAt, type Candidate, type Flavor, type PathToken, type Piece, type Where } from "./paths";
+import {
+  flatten,
+  FOLDER_REACH,
+  foldersNamed,
+  pathTokens,
+  runsWhenOpened,
+  tokenAt,
+  type Candidate,
+  type Flavor,
+  type PathToken,
+  type Piece,
+  type Where,
+} from "./paths";
 import type { MenuItem } from "./ui/common";
 import { addressesIn, filePath, isOpenable } from "./urls";
 
@@ -103,6 +115,18 @@ function around(buffer: IBuffer, y: number): { lines: Logical[]; row: number } {
     bottom = end;
   }
   return { lines: [...before, logicalFrom(buffer, first, last, scratch), ...after], row: before.length };
+}
+
+/** The folders the rows within `FOLDER_REACH` of buffer line `y` name, where a bare file name on it may be. */
+function foldersNear(buffer: IBuffer, y: number, where: Where): string[] {
+  const rows: string[] = [];
+  const first = Math.max(0, y - FOLDER_REACH);
+  for (let i = first; i <= y + FOLDER_REACH; i++) {
+    const line = buffer.getLine(i);
+    if (!line) break;
+    rows.push(line.translateToString(true));
+  }
+  return foldersNamed(rows, y - first, where);
 }
 
 /** The range on the screen that runs from the start of the first piece to the end of the last, from 1. */
@@ -280,7 +304,8 @@ export function installLinks(term: Terminal, host: HTMLElement, env: LinkEnv): L
         });
       }
 
-      const tokens = pathTokens(texts, row, where());
+      const here = where();
+      const tokens = pathTokens(texts, row, here, foldersNear(buffer, y - 1, here));
       if (tokens.length === 0) return callback(links.length > 0 ? links : undefined);
       void resolveTokens(tokens).then((found) => {
         for (const f of found) {
@@ -333,7 +358,8 @@ export function installLinks(term: Terminal, host: HTMLElement, env: LinkEnv): L
           { label: "Copiar link", action: () => void writeText(address.url).catch(() => navigator.clipboard?.writeText(address.url)) },
         ];
       }
-      const token = tokenAt(texts, row, index, where());
+      const here = where();
+      const token = tokenAt(texts, row, index, here, foldersNear(term.buffer.active, at.y, here));
       if (!token) return [];
       const [found] = await resolveTokens([token]);
       if (!found) return [];

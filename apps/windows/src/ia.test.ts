@@ -453,6 +453,8 @@ describe("the Jev's credit", () => {
     expect(jevHelp({ ...line, pending: 0.0002 }, now)).toContain(
       "Inclui < US$ 0,01 de decisões desta máquina que o OpenRouter ainda não contou",
     );
+    // The average is the Jev's key's, and the tooltip says whose.
+    expect(jevHelp({ ...line, dailyAverage30d: 0.25 }, now)).toContain("Gasto médio do Jev: US$ 7,50/mês (últimos 30 dias)");
   });
 });
 
