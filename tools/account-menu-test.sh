@@ -9,7 +9,7 @@
 #   - the strip's menu and the sidebar's are the same menu, in the order's
 #     order, ✓ on the account the core says the tab is on (`keep ia abas`),
 #     "no limite" on the one that is, and the sidebar saying
-#     "— claude · <name>" for a tab fixed on one;
+#     "(IA·n)", the account's place in the list, for a tab fixed on one;
 #   - following the order is asked as such (`--para=claude:ordem`) — the core
 #     resolves it; an account asks for that account, as `trocar --ws=…
 #     --aba=… --para=…`;
@@ -264,6 +264,17 @@ launch() {  # launch [log]: the app, its trace into $WORK/<log> (app.log)
     place_on_screen
     sleep 2
 }
+# With the sidebar showing, the strip keeps only the tab in use, and a lone tab is the window's title: its chevron
+# shows only under the pointer. The strip's checks are made with the sidebar shut, the sidebar's with it shown.
+SIDEBAR_SHOWN=yes
+sidebar() {  # sidebar shown|shut — the state is saved, and a relaunch keeps it
+    local want=no
+    [ "$1" = shown ] && want=yes
+    [ "$SIDEBAR_SHOWN" = "$want" ] && return
+    "$AXPRESS" "$APP_NAME" menu View "Toggle Sidebar" >/dev/null 2>&1
+    sleep 1
+    SIDEBAR_SHOWN=$want
+}
 say "starting $APP_NAME on its own daemon, with the stand-in core"
 launch
 # Every account measured, so that the one at its limit says so.
@@ -273,23 +284,25 @@ while ! grep -aqE "usage +uso devidas: .* 4/4 lidas" "$WORK/app.log" && [ "$wait
 done
 # And what the tabs run on asked of the core at least once since.
 waited=0
-while ! grep -aqF "— claude · reserva" "$WORK/ax.txt" 2>/dev/null && [ "$waited" -lt 40 ]; do
+while ! grep -aqF "(IA·4)" "$WORK/ax.txt" 2>/dev/null && [ "$waited" -lt 40 ]; do
     ax; sleep 0.25; waited=$((waited + 1))
 done
 
 say ""
 say "the same menu in the strip and in the sidebar"
 show_tab 2
+sidebar shown
 ax
-check "the sidebar says the account a tab is fixed on" yes "$(has "— claude · reserva")"
-check "a chevron beside the tab's title in the strip" yes "$(present "strip-ia-$WS/2")"
-check "and on its row in the sidebar" yes "$(present "sidebar-ia-$WS/2")"
+check "the sidebar says the account a tab is fixed on" yes "$(has "(IA·4)")"
+check "a chevron on the tab's row in the sidebar" yes "$(present "sidebar-ia-$WS/2")"
 check "named for the tab it opens the menu of" yes "$(has "Escolher a IA da aba claude-falso")"
+SIDEBAR=$(menu_of "sidebar-ia-$WS/2")
+sidebar shut
+check "and beside the tab's title in the strip" yes "$(present "strip-ia-$WS/2")"
 MARK=$'✓'
-WANTED=$(printf '\t1\tSeguir a ordem de prioridade\n---\n\t1\tClaude · cheia · tres@exemplo.com — no limite\n\t1\tGPT · principal · jose@exemplo.com\n\t1\tClaude · principal · um@exemplo.com\n%s\t1\tClaude · reserva · dois@exemplo.com' "$MARK")
+WANTED=$(printf '\t1\tSeguir a ordem de prioridade\n---\n\t1\tIA·1 · tres@exemplo.com — no limite\n\t1\tIA·2 · jose@exemplo.com\n\t1\tIA·3 · um@exemplo.com\n%s\t1\tIA·4 · dois@exemplo.com' "$MARK")
 STRIP=$(menu_of "strip-ia-$WS/2")
 check "the strip's menu: the order, ✓ on the tab's account, 'no limite' on the full one" "$WANTED" "$STRIP"
-SIDEBAR=$(menu_of "sidebar-ia-$WS/2")
 check "the sidebar's menu is the same menu" "$STRIP" "$SIDEBAR"
 check "opening them asked the core to change nothing" 0 "$(ncalls)"
 
@@ -300,12 +313,14 @@ choose "strip-ia-$WS/2" "Seguir a ordem de prioridade"
 check "following the order is asked as such; the core finds the account" \
     "trocar --ws=$WS --aba=2 --para=claude:ordem --json" "$(next_call "$before")"
 before=$(ncalls)
-choose "sidebar-ia-$WS/2" "Claude · principal"
+sidebar shown
+choose "sidebar-ia-$WS/2" "IA·3"
 check "an account asks for that account, from the sidebar too" \
     "trocar --ws=$WS --aba=2 --para=claude:principal --json" "$(next_call "$before")"
-check "and the sidebar says so" yes "$(until_text "— claude · principal")"
+check "and the sidebar says so" yes "$(until_text "(IA·3)")"
+sidebar shut
 before=$(ncalls)
-choose "strip-ia-$WS/2" "Claude · principal"
+choose "strip-ia-$WS/2" "IA·3"
 sleep 1.5
 check "choosing the account it is on asks nothing" "$before" "$(ncalls)"
 
@@ -313,7 +328,7 @@ say ""
 say "a tab at work"
 touch "$WORK/ia/ocupada"
 before=$(ncalls)
-choose "strip-ia-$WS/2" "Claude · reserva"
+choose "strip-ia-$WS/2" "IA·4"
 next_call "$before" >/dev/null
 check "the core says it is busy: a question goes up" yes "$(until_text "Interromper e trocar agora")"
 before=$(ncalls)
@@ -322,7 +337,7 @@ check "and a yes asks again, allowed to interrupt" \
     "trocar --ws=$WS --aba=2 --para=claude:reserva --interromper --json" "$(next_call "$before")"
 check "the question has gone" no "$(until_text "Interromper e trocar agora" no)"
 before=$(ncalls)
-choose "strip-ia-$WS/2" "Claude · cheia"
+choose "strip-ia-$WS/2" "IA·1"
 next_call "$before" >/dev/null
 until_text "Interromper e trocar agora" >/dev/null
 before=$(ncalls)
@@ -342,7 +357,7 @@ say ""
 say "a cell of the strip given to another tab"
 show_tab 4
 before=$(ncalls)
-choose "strip-ia-$WS/4" "Claude · cheia"
+choose "strip-ia-$WS/4" "IA·1"
 check "the last tab's menu acts on the last tab" \
     "trocar --ws=$WS --aba=4 --para=claude:cheia --json" "$(next_call "$before")"
 # The first tab closes: every tab after it moves one cell left, and the cell
@@ -361,20 +376,28 @@ while ! trace "row .*tabs=3" >/dev/null && [ "$waited" -lt 40 ]; do sleep 0.25; 
 REUSED=$(menu_of "strip-ia-$WS/4")
 check "its menu now is a shell's: everything can be chosen" 0 "$(printf '%s\n' "$REUSED" | grep -c "	0	")"
 before=$(ncalls)
-choose "strip-ia-$WS/4" "Claude · reserva"
+choose "strip-ia-$WS/4" "IA·4"
 check "and choosing in it acts on the tab it shows now" \
     "trocar --ws=$WS --aba=4 --para=claude:reserva --json" "$(next_call "$before")"
 
 say ""
 say "a real click on the chevron of the tab you are in"
-osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" \
-    >/dev/null 2>&1
-sleep 1
-read -r CX CY CW CH < <("$AXPRESS" "$APP_NAME" frame "strip-ia-$WS/4")
 opened_before=$(trace "menu open strip-ia-$WS/4" | wc -l | tr -d ' ')
-"$MOUSE" click $((CX + CW / 2)) $((CY + CH / 2))
-sleep 1
-check "opens the menu" yes "$([ "$(trace "menu open strip-ia-$WS/4" | wc -l | tr -d ' ')" -gt "$opened_before" ] && echo yes || echo no)"
+opened() { [ "$(trace "menu open strip-ia-$WS/4" | wc -l | tr -d ' ')" -gt "$opened_before" ]; }
+# A real click lands on whatever is in front: only with this app in front, and again when another app took it
+# (the trace says "visible=false" when a window of somebody else's covered it at the moment of the click).
+for _ in 1 2 3; do
+    osascript -e "tell application \"System Events\" to set frontmost of process \"$APP_NAME\" to true" \
+        >/dev/null 2>&1
+    sleep 1
+    front=$(osascript -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>/dev/null)
+    [ "$front" = "$APP_NAME" ] || continue
+    read -r CX CY CW CH < <("$AXPRESS" "$APP_NAME" frame "strip-ia-$WS/4")
+    "$MOUSE" click $((CX + CW / 2)) $((CY + CH / 2))
+    sleep 1
+    opened && break
+done
+check "opens the menu" yes "$(opened && echo yes || echo no)"
 "$AXPRESS" "$APP_NAME" cancel
 # Past the pause a single click on a name waits out before naming it.
 sleep 1.5
@@ -387,24 +410,25 @@ say ""
 say "an account with no login of its own for tabs yet"
 touch "$WORK/ia/precisa-login"
 before=$(ncalls)
-choose "strip-ia-$WS/4" "Claude · principal"
+choose "strip-ia-$WS/4" "IA·3"
 check "the core is asked for it all the same" \
     "trocar --ws=$WS --aba=4 --para=claude:principal --json" "$(next_call "$before")"
-check "a note says the login waits in the browser" yes "$(until_text "Falta aprovar Claude · principal no navegador")"
+check "a note says the login waits in the browser" yes "$(until_text "Falta aprovar IA·3 no navegador")"
 login_tab=$(trace "waits for a login to claude:principal in $WS/" | grep -aoE "in $WS/[0-9]+" | tail -1 | sed 's#.*/##')
 check "the tab the core opened the login in is the one shown" yes \
     "$([ -n "$login_tab" ] && grep -aqE "switch +→ $WS/$login_tab " "$WORK/app.log" && echo yes || echo no)"
 check "and not the failure's words" no "$(has "Não deu para trocar a IA da aba")"
 "$AXPRESS" "$APP_NAME" button OK >/dev/null 2>&1
-check "the note goes when read" no "$(until_text "Falta aprovar Claude · principal no navegador" no)"
+check "the note goes when read" no "$(until_text "Falta aprovar IA·3 no navegador" no)"
 rm -f "$WORK/ia/precisa-login"
 
 say ""
 say "without a keep to ask"
 export KEEP_IA_BIN=/var/empty
 launch app-without-helper.log
-ax
 check "no chevron in the strip" no "$(present "strip-ia-$WS/4")"
+sidebar shown
+ax
 check "none in the sidebar" no "$(present "sidebar-ia-$WS/4")"
 check "none anywhere" no "$(has "Escolher a IA da aba")"
 check "no way to sign in from the footer" no "$(has "Entrar em outra conta")"
@@ -412,9 +436,14 @@ check "and no arrows" no "$(has "Subir ")"
 
 say ""
 say "Codex questions and the selected tab's account"
-# The sidebar shut: with it showing, the strip keeps only the tab in use, and this part reads the others there.
-"$AXPRESS" "$APP_NAME" menu View "Toggle Sidebar" >/dev/null 2>&1
-sleep 1
+# The helper back: the part before ran without one, and the footer's accounts (and their mark) come from it.
+export KEEP_IA_BIN=$WORK/fake-keep-ia.py
+launch app-codex.log
+waited=0
+while ! grep -aqE "usage +uso devidas: .* 4/4 lidas" "$LOG" && [ "$waited" -lt 240 ]; do
+    sleep 0.25; waited=$((waited + 1))
+done
+sidebar shut
 cc -O -o "$WORK/bin/codex" tools/ia-test/fake-codex.c || exit 1
 printf 'Escolha uma opção\n» 1. Continuar\n  2. Parar\nenter to submit · esc to interrupt\n' >"$WORK/bin/codex.screen"
 for n in 1 2; do
@@ -471,8 +500,11 @@ sleep 2
 check "Codex question is announced as waiting" yes "$(until_text 'o Codex está esperando você')"
 check "first waiting tab is selected" selecionada "$("$AXPRESS" "$APP_NAME" value "strip-tab-$WS/$codex_one")"
 check "second waiting tab is not selected" "não selecionada" "$("$AXPRESS" "$APP_NAME" value "strip-tab-$WS/$codex_two")"
+# The footer that marks the account is in the sidebar.
+sidebar shown
 check "selected Codex marks the GPT account" yes "$(present 'usage-active-gpt:principal')"
 check "Claude does not keep the green mark" no "$(present 'usage-active-claude:reserva')"
+sidebar shut
 "$AXPRESS" "$APP_NAME" press "strip-tab-$WS/$codex_two"
 sleep 1
 check "another waiting Codex tab can be selected" selecionada "$("$AXPRESS" "$APP_NAME" value "strip-tab-$WS/$codex_two")"
@@ -490,6 +522,7 @@ sleep 3
 check "answered questions no longer ask for the user" no "$(until_text 'o Codex está esperando você' no)"
 "$AXPRESS" "$APP_NAME" press "strip-tab-$WS/2"
 sleep 2
+sidebar shown
 check "selecting Claude moves the mark back" yes "$(present 'usage-active-claude:reserva')"
 check "unselected Codex loses the mark" no "$(present 'usage-active-gpt:principal')"
 

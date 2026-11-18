@@ -79,7 +79,8 @@ def flag(name):
 
 
 def log(argv, group):
-    reads = (bool(argv) and argv[0] in READS) or argv == ["ordem", "--json"]
+    # The footer's switches asked as they are (`automacao --json`) change nothing: a read.
+    reads = (bool(argv) and argv[0] in READS) or argv in (["ordem", "--json"], ["automacao", "--json"])
     with open(flag("reads.jsonl" if reads else "calls.jsonl"), "a", encoding="utf-8") as out:
         out.write(json.dumps({"argv": argv, "grupo": group, "socket": os.environ.get("KEEP_SOCKET"),
                               "casa": os.environ.get("KEEP_IA_HOME")}) + "\n")
