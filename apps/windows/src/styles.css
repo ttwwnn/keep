@@ -2194,23 +2194,15 @@ button.danger.primary {
   font-size: min(1em, 4.4cqi);
 }
 
-/* The Jev's 30-day average and the button that opens OpenRouter's credit page (pedido de 12/11/2026). */
-.usage-jev-extra {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.usage-jev-credit {
-  margin-left: auto;
-  font: inherit;
-  font-size: inherit;
-  padding: 0 6px;
-  border: 1px solid var(--ink-faint);
-  border-radius: 4px;
+/* "Pôr crédito" in the bar under the conversation, as a link (pedido de 18/11/2026). */
+.ai-credit {
+  flex: none;
+  padding: 0;
+  border: 0;
   background: transparent;
-  color: inherit;
+  color: var(--accent, #4a9eff);
+  font: inherit;
   cursor: pointer;
-  white-space: nowrap;
 }
 
 /* The sidebar's tone follows the window's focus (theme.ts, watchWindowFocus). */

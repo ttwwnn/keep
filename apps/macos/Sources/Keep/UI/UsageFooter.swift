@@ -554,7 +554,6 @@ struct UsageFooter: View {
                 if let jev = monitor.jev {
                     if folded {
                         jevCompact(jev, now: now)
-                        jevSpend(jev)
                     } else {
                         jevBlock(jev, now: now)
                     }
@@ -914,7 +913,6 @@ struct UsageFooter: View {
                 }
                 .opacity(stale ? 0.55 : 1)
             }
-            jevSpend(jev)
             if let note = jevNote(jev, now: now) {
                 Text(note)
                     .font(numbers)
@@ -923,26 +921,6 @@ struct UsageFooter: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-    }
-
-    /// The Jev's monthly average and the button to buy credit, folded or not (pedido de 17/11/2026).
-    private func jevSpend(_ jev: JevLine) -> some View {
-        HStack(spacing: 6) {
-            if let average = jev.dailyAverage30d {
-                Text("Gasto médio: \(UsageText.perMonth(dailyAverage: average))")
-                    .font(numbers)
-                    .monospacedDigit()
-                    .foregroundStyle(UsageInk.inkFaint)
-                    .lineLimit(1)
-                    .help("Gasto médio por mês do Jev (a chave dele no OpenRouter), pelos últimos 30 dias")
-            }
-            Spacer(minLength: 4)
-            Link("Pôr crédito", destination: openRouterCreditsURL)
-                .font(numbers)
-                .lineLimit(1)
-                .help("Abre a página de créditos do OpenRouter")
-        }
-        .frame(height: 16 * scale)
     }
 
     /// One counter: `spent` is the bar, `figure` the dollars beside it, and

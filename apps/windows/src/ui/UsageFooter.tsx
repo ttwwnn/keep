@@ -9,7 +9,6 @@
 
 import {
   AUTOMATION_TITLES,
-  OPENROUTER_CREDITS_URL,
   STALE_AFTER_S,
   accountHelp,
   available,
@@ -26,7 +25,6 @@ import {
   numberedName,
   orderKeyOf,
   percentText,
-  perMonth,
   untilText,
   type AutomationSwitch,
   type CreditRow,
@@ -49,7 +47,6 @@ import {
   usageLines,
   usageNotice,
 } from "../iaStore";
-import { openUrl } from "../api";
 import { openSignInMenu } from "./AccountMenu";
 import * as icon from "./icons";
 
@@ -244,25 +241,7 @@ function JevBlock(props: { line: JevLine; nowMs: number }) {
           ))}
         </div>
       )}
-      <JevSpending line={line} />
       {note && <div class="usage-note">{note}</div>}
-    </div>
-  );
-}
-
-/** "Gasto médio: US$ x/mês" — what the Jev's key spends a month — and the link that buys credit; open or folded. */
-function JevSpending(props: { line: JevLine }) {
-  const { line } = props;
-  return (
-    <div class="usage-jev-extra">
-      {line.dailyAverage30d !== null && (
-        <span class="usage-note" title="Gasto médio por mês do Jev (a chave dele no OpenRouter), pelos últimos 30 dias">
-          Gasto médio: {perMonth(line.dailyAverage30d)}
-        </span>
-      )}
-      <button class="usage-jev-credit" title="Abre a página de créditos do OpenRouter" onClick={() => void openUrl(OPENROUTER_CREDITS_URL)}>
-        Pôr crédito
-      </button>
     </div>
   );
 }
@@ -283,7 +262,6 @@ function JevCompact(props: { line: JevLine; nowMs: number }) {
           <span class={`usage-percent-inline ${level(spent)}`}>{figure}</span>
         </span>
       </div>
-      <JevSpending line={line} />
     </>
   );
 }
