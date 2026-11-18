@@ -54,6 +54,14 @@ final class FloatingPanelBackdrop: TerminalTintBackdropView {
 
     var cardColor: CGColor? { card.backgroundColor }
 
+    /// The margin's cut-out is a path drawn at the layer's scale, which a sublayer added by hand keeps at 1x.
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        let scale = window?.backingScaleFactor ?? 2
+        floor.contentsScale = scale
+        card.contentsScale = scale
+    }
+
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         place()
@@ -148,9 +156,11 @@ final class SidebarHost: NSViewController {
         addChild(hosting)
         let content = hosting.view
         content.translatesAutoresizingMaskIntoConstraints = false
-        // Cut to the card's corners, so rows scrolled past the bottom stay inside it.
+        // Cut to the card's bottom corners, so rows scrolled past the bottom stay inside it; the top is the
+        // titlebar's, inside the card already. The hosting view's layer is flipped: max-Y is its bottom.
         content.wantsLayer = true
         content.layer?.cornerRadius = FloatingPanelBackdrop.radius
+        content.layer?.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
         content.layer?.cornerCurve = .continuous
         content.layer?.masksToBounds = true
 
