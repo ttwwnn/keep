@@ -182,7 +182,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let terminal = NSViewController()
         terminal.view = content
 
-        let split = NSSplitViewController()
+        let split = SeamlessSplitViewController()
         split.splitView = SeamlessSplitView()
         split.splitView.isVertical = true
         let sidebarSplitItem = NSSplitViewItem(viewController: sidebarHost)

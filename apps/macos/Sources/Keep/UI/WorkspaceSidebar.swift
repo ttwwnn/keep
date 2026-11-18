@@ -1170,8 +1170,8 @@ struct WorkspaceSidebar: View {
     ) -> some View {
         if wantsYou {
             AttentionCapsule(until: chosen ? nil : Attention.lastBreath(since: since))
-        } else if chosen && !model.inUse && scheme == .dark {
-            // At rest, the Finder's selection: a darker pill, no outline.
+        } else if chosen && scheme == .dark {
+            // The Finder's selection, in use or at rest: a darker pill, no outline (#222222 nos dois, 17/11/2026).
             Capsule(style: .continuous).fill(Palette.Resting.selection)
         } else if chosen {
             // The strip's selected tab, as it is drawn there: its glass tint
@@ -1247,7 +1247,10 @@ struct WorkspaceSidebar: View {
     /// that means "the pointer is here".
     @ViewBuilder
     private func rowBackground(for row: SessionSnapshot.SidebarRow) -> some View {
-        if row.isActive {
+        if row.isActive && scheme == .dark {
+            // The Finder's selection, in use or at rest (pedido de 17/11/2026, medido nas capturas: #222222 nos dois).
+            RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Palette.Resting.selection)
+        } else if row.isActive {
             GlassRow(cornerRadius: 12, tint: Palette.litRow)
         } else if hovered == row.name {
             RoundedRectangle(cornerRadius: 12, style: .continuous)

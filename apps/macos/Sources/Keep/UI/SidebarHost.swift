@@ -103,6 +103,20 @@ final class SeamlessSplitView: NSSplitView {
     override var dividerColor: NSColor { .clear }
 }
 
+/// The split's controller, whose divider is grabbed where it is seen: from the sidebar card's edge, inset
+/// `FloatingPanelBackdrop.inset` from the divider itself, across the gap to the terminal.
+final class SeamlessSplitViewController: NSSplitViewController {
+    override func splitView(
+        _ splitView: NSSplitView, effectiveRect proposedEffectiveRect: NSRect, forDrawnRect drawnRect: NSRect,
+        ofDividerAt dividerIndex: Int
+    ) -> NSRect {
+        let rect = super.splitView(
+            splitView, effectiveRect: proposedEffectiveRect, forDrawnRect: drawnRect, ofDividerAt: dividerIndex)
+        return NSRect(x: rect.minX - FloatingPanelBackdrop.inset - 2, y: rect.minY,
+                      width: rect.width + FloatingPanelBackdrop.inset + 4, height: rect.height)
+    }
+}
+
 /// The rows, observable. Exists so `render` can update the list WITHOUT
 /// replacing the hosting controller's rootView — a rootView swap rebuilds
 /// the whole view tree, and the rebuilt outline view grabs the keyboard from
