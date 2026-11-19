@@ -294,6 +294,9 @@ fn guarda_chave(chave: &str) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn chave_guardada() -> Option<String> {
+    if crate::contas::credencial::chaveiro_trancado().is_some() {
+        return None;
+    }
     let security = std::env::var("KEEP_IA_SECURITY").unwrap_or_else(|_| "/usr/bin/security".into());
     let mut filho = std::process::Command::new(security)
         .args(["find-generic-password", "-w", "-s", SERVICO])
@@ -512,8 +515,8 @@ fn media(historico: &[[f64; 2]], usado: f64, inicio: Option<f64>, minimo: f64, a
 }
 
 /// O gasto médio por dia do Jev: o da CHAVE dele, que o OpenRouter conta (`key_used`), não o da conta toda. A conta
-/// soma as outras chaves (a atendente da clínica, outras máquinas): em 17/11/2026 ela dava uns US$ 40/mês e a chave
-/// do Jev, US$ 0,11 em 23 dias. Sem um dia de histórico, o gasto da chave desde a primeira decisão dela no livro.
+/// soma as outras chaves da mesma conta do OpenRouter (outras máquinas e serviços), que gastam bem mais que a do
+/// Jev. Sem um dia de histórico, o gasto da chave desde a primeira decisão dela no livro.
 /// shortcut: a chave usada antes em outra máquina começa mais cedo que o livro e infla essa primeira média; some
 /// com um dia de histórico.
 fn media_30_dias(r: &Registro, usado_chave: f64, agora_s: f64) -> Option<f64> {
@@ -542,6 +545,11 @@ pub fn em_cache() -> Option<Saldo> {
 /// Uma rodada: mede se é devida (ou `forcar`). `None` quando não há chave,
 /// e o que sobrou de uma chave que foi embora some junto.
 pub fn medir(forcar: bool) -> Option<Saldo> {
+    // Chaveiro trancado (tela travada) não é chave que foi embora: apagar o
+    // arquivo aqui zeraria o livro de gastos. Fica o que já se sabia.
+    if crate::contas::credencial::chaveiro_trancado().is_some() {
+        return em_cache();
+    }
     let Some(chave) = chave() else {
         let _ = std::fs::remove_file(arquivo());
         return None;
