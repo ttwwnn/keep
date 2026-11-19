@@ -434,6 +434,11 @@ fn a_conta_acima_do_teto_da_semanal_nao_recebe_aba_nova() {
     let p = preparar("T", depois.pid(), None, None).unwrap();
     assert_eq!((p.conta.as_str(), acesso(&p.pasta)), ("claude:bia", "F".into()), "acima do teto, a próxima da fila");
     assert_eq!(conta_da_ordem(&contas::listar(false)).map(|c| c.order_key.as_str()), Some("claude:bia"));
+    // Nem com a Bia no limite: a aba nova espera na Bia, e não gasta o fim da semana da Ana.
+    crate::uso::testes::no_limite(contas::achar(&lista, "claude:bia").unwrap());
+    let sem_outra = Filho::novo(&[]);
+    let q = preparar("T", sem_outra.pid(), None, None).unwrap();
+    assert_eq!((q.conta.as_str(), acesso(&q.pasta)), ("claude:bia", "F".into()), "todas no limite: a que não passou do teto");
 }
 
 #[test]

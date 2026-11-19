@@ -114,9 +114,20 @@ impl Destino {
     }
 }
 
-/// As contas que podem receber trabalho agora, pela última medição.
-fn disponiveis() -> Vec<String> {
-    uso::em_cache().into_iter().filter(|l| l.disponivel()).map(|l| l.account.key).collect()
+/// As contas que podem receber trabalho agora e as acima do teto da semanal,
+/// pela última medição.
+fn disponiveis_e_reservadas() -> (Vec<String>, Vec<String>) {
+    let (mut livres, mut reservadas) = (Vec::new(), Vec::new());
+    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+    for l in uso::em_cache() {
+        if l.disponivel_em(t) {
+            livres.push(l.account.key.clone());
+        }
+        if l.reservada_em(t) {
+            reservadas.push(l.account.key);
+        }
+    }
+    (livres, reservadas)
 }
 
 fn destino(p: &Pedido, contas: &[Conta]) -> Result<Destino, Recusa> {
@@ -140,19 +151,23 @@ fn destino(p: &Pedido, contas: &[Conta]) -> Result<Destino, Recusa> {
         }
         // Seguir a ordem fica no Claude: o GPT só quando a pessoa o escolhe
         // no menu da aba, nunca por conta própria.
-        let livres = disponiveis();
+        let (livres, reservadas) = disponiveis_e_reservadas();
         let mut primeira_que_roda: Option<(&Conta, Vec<(String, String)>)> = None;
+        let mut primeira_reservada: Option<(&Conta, Vec<(String, String)>)> = None;
         for c in contas.iter().filter(|c| c.roda && c.engine == Motor::Claude) {
             let Ok(ambiente) = contas::ambiente(c) else { continue };
             if livres.contains(&c.key) {
                 return Ok(Destino { escolha: p.para.clone(), conta: c.clone(), ambiente });
             }
-            if primeira_que_roda.is_none() {
-                primeira_que_roda = Some((c, ambiente));
+            let vaga = if reservadas.contains(&c.key) { &mut primeira_reservada } else { &mut primeira_que_roda };
+            if vaga.is_none() {
+                *vaga = Some((c, ambiente));
             }
         }
-        // Todas no limite: a primeira Claude que roda, para a aba não ficar sem IA.
-        if let Some((c, ambiente)) = primeira_que_roda {
+        // Todas no limite: a primeira Claude que roda, para a aba não ficar sem
+        // IA. A acima do teto da semanal só quando não há outra: o fim da
+        // semana dela fica com quem divide a conta.
+        if let Some((c, ambiente)) = primeira_que_roda.or(primeira_reservada) {
             return Ok(Destino { escolha: p.para.clone(), conta: c.clone(), ambiente });
         }
         return Err(Recusa::nova(
@@ -1320,6 +1335,89 @@ mod ponta_a_ponta {
         assert!(tela_tem("T", tab, "continuing automatically"));
         assert_eq!(rodada("espera na tela"), (Some("claude:bia".into()), 1, vec![]));
         assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:bia"));
+
+        // SAFETY: a casa (e a trava) está de pé.
+        unsafe {
+            match shell_antes {
+                Some(s) => std::env::set_var("SHELL", s),
+                None => std::env::remove_var("SHELL"),
+            }
+            std::env::remove_var("PS1");
+        }
+    }
+
+    /// A conta acima do teto da semanal (`teto7d=80`) não fica com a aba que
+    /// segue a ordem nem quando nenhuma outra está livre: a sincronização e a
+    /// troca a levam para a primeira que roda sem passar do teto (no limite, a
+    /// aba espera ali), e o fim da semana fica com quem divide a conta.
+    #[test]
+    fn a_aba_que_segue_a_ordem_sai_da_conta_acima_do_teto_mesmo_sem_outra_livre() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let Some(falsa) = falsa() else {
+            eprintln!("sem a IA falsa (cargo build -p keep-ia --examples): pulado");
+            return;
+        };
+        let keep = falsa.parent().unwrap().parent().unwrap().join("keep");
+        assert!(keep.is_file(), "compile o launcher: cargo build -p keep -p keep-ia --examples --bins");
+        let c = casa("teto-seguidora");
+        perfis(&[("G", "u-1", "ana@x.com"), ("F", "u-2", "bia@y.com")]);
+        c.global("G", "r");
+        let _fixa = c.fixa("k-2", Some(("F", "r")), Some(("bia", "bia@y.com", "u-2")));
+        c.ordem(&["claude:ana teto7d=80", "claude:bia"]);
+        let bin = c.raiz.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::copy(&falsa, bin.join("claude")).unwrap();
+        let sock = daemon(&c.raiz);
+        let shell_antes = std::env::var_os("SHELL");
+        // SAFETY: a casa (e a trava) está de pé.
+        unsafe {
+            std::env::set_var("KEEP_IA_CLAUDE_BIN", bin.join("claude"));
+            std::env::set_var("KEEP_IA_KEEP_BIN", &keep);
+            std::env::set_var("KEEP_SOCKET", &sock);
+            std::env::set_var("SHELL", "/bin/sh");
+            std::env::set_var("PS1", "$ ");
+        }
+        // A semanal da Ana, que o teste muda; a Bia no limite da semanal.
+        let semanal_da_ana = std::sync::Arc::new(AtomicU64::new(10));
+        let da_ana = semanal_da_ana.clone();
+        let _uso = crate::uso::testes::servidor(move |p| match p.token.as_str() {
+            "G" => {
+                let pct = da_ana.load(Ordering::SeqCst);
+                let corpo = format!(
+                    r#"{{"five_hour":{{"utilization":1}},"seven_day":{{"utilization":{pct},"resets_at":"2030-03-17T17:46:40+00:00"}}}}"#
+                );
+                (200, vec![], corpo)
+            }
+            _ => (
+                200,
+                vec![],
+                r#"{"five_hour":{"utilization":1},"seven_day":{"utilization":100,"resets_at":"2030-03-17T17:46:40+00:00"}}"#.into(),
+            ),
+        });
+        let _ = contas::listar(true); // os donos ficam em cache
+        let _ = crate::uso::medir(false, None);
+        let tab = daemon::nova_aba("T", Some(&c.raiz.to_string_lossy()), 160, 40).unwrap();
+        assert!(tela_tem("T", tab, "$"), "o prompt do shell");
+        // Abaixo do teto, a Ana atende quem segue a ordem.
+        trocar(&Pedido { ws: "T".into(), aba: tab, para: "claude:ordem".into(), ..Default::default() }).unwrap();
+        assert!(tela_tem("T", tab, "FALSO claude"));
+        assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:ana"));
+
+        // A Ana passa do teto com a Bia no limite: a aba aberta sai da Ana e espera na Bia.
+        semanal_da_ana.store(85, Ordering::SeqCst);
+        let _ = crate::uso::medir(false, Some("claude:ana"));
+        let r = crate::sincronizar::rodada();
+        assert_eq!(r["alteradas"].as_array().map(Vec::len), Some(1), "{r}");
+        assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:bia"), "{r}");
+        let r = crate::sincronizar::rodada();
+        assert_eq!(r["alteradas"].as_array().map(Vec::len), Some(0), "e fica na Bia: {r}");
+
+        // Quem passa a seguir a ordem agora também vai para a Bia.
+        let outra = daemon::nova_aba("T", Some(&c.raiz.to_string_lossy()), 160, 40).unwrap();
+        assert!(tela_tem("T", outra, "$"), "o prompt do shell");
+        trocar(&Pedido { ws: "T".into(), aba: outra, para: "claude:ordem".into(), ..Default::default() }).unwrap();
+        assert!(tela_tem("T", outra, "FALSO claude"));
+        assert_eq!(ia_da_aba(outra).atual.as_deref(), Some("claude:bia"));
 
         // SAFETY: a casa (e a trava) está de pé.
         unsafe {

@@ -242,6 +242,14 @@ pub fn rodada() -> Value {
     // Só contas do Claude: a aba que segue a ordem nunca vai sozinha para o
     // GPT; sem nenhuma do Claude livre, ela espera ("todas-no-limite").
     let alvo: Option<&Conta> = contas.iter().find(|c| c.engine == contas::Motor::Claude && livre(c));
+    // Sem nenhuma livre, a aba numa conta acima do teto da semanal não espera
+    // nela: vai para a primeira do Claude que roda sem passar do teto (no
+    // limite, a aba espera ali), e o fim da semana fica com quem divide a conta.
+    let reservada =
+        |c: &Conta| linhas.iter().find(|l| l.account.key == c.key).is_some_and(|l| l.reservada_em(t));
+    let refugio: Option<&Conta> = contas
+        .iter()
+        .find(|c| c.engine == contas::Motor::Claude && c.roda && !reservada(c) && contas::ambiente(c).is_ok());
 
     let mut alteradas = Vec::new();
     let mut pendentes = Vec::new();
@@ -251,7 +259,7 @@ pub fn rodada() -> Value {
         let refe = |motivo: &str, detalhe: &str| json!({ "ws": i.workspace, "aba": i.aba, "motivo": motivo, "detalhe": detalhe });
         let atual = i.atual.as_deref().and_then(|k| contas::achar(&contas, k));
         let atual_livre = atual.is_some_and(|c| livre(c)) && !s.limite_da_atual;
-        let Some(alvo) = alvo else {
+        let Some(alvo) = alvo.or(refugio.filter(|_| atual.is_some_and(|c| reservada(c)))) else {
             if !atual_livre {
                 pendentes.push(refe("todas-no-limite", ""));
             }

@@ -420,6 +420,13 @@ pub fn disponiveis_de(lista: &[Conta]) -> Vec<String> {
     linhas(lista.to_vec(), &le_cache()).into_iter().filter(Linha::disponivel).map(|l| l.account.key).collect()
 }
 
+/// As contas (o `key`) acima do teto da semanal, pela última medição, entre
+/// as dadas: com todas no limite, elas só recebem aba se não houver outra.
+pub fn reservadas_de(lista: &[Conta]) -> Vec<String> {
+    let t = agora();
+    linhas(lista.to_vec(), &le_cache()).into_iter().filter(|l| l.reservada_em(t)).map(|l| l.account.key).collect()
+}
+
 /// Uma rodada: mede as contas devidas (ou `so` esta), em paralelo, e devolve
 /// todas as linhas. `forcar` é o "Medir agora".
 pub fn medir(forcar: bool, so: Option<&str>) -> Vec<Linha> {

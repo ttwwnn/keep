@@ -68,9 +68,12 @@ Uma conta do Claude é um **armazém de credenciais** do Claude Code:
 - Teto da semanal: depois da chave, na mesma linha, `teto7d=<0 a 100>` (ex.: `claude:x teto7d=80`).
   Com a janela 7d no teto ou acima (e antes do recomeço dela), a conta conta como cheia: aba nova,
   aba aberta que segue a ordem, troca no limite e restauração vão para a próxima da fila, e o
-  resto da semana fica para quem divide a conta. O núcleo dá o teto em `weeklyCap` (`null` sem
-  teto); o rodapé e o menu dizem "reservada: passou do teto de 80% da semana". Reordenar ou
-  acrescentar conta regrava o teto junto. Linha sem teto vale como antes.
+  resto da semana fica para quem divide a conta. Nem com todas no limite ela fica com quem segue a
+  ordem: a aba nova, a troca e a aba aberta vão para a primeira que roda sem passar do teto (no
+  limite, a aba espera ali); a conta acima do teto só recebe aba se não houver outra que rode. O
+  núcleo dá o teto em `weeklyCap` (`null` sem teto); o rodapé e o menu dizem "reservada: passou do
+  teto de 80% da semana". Reordenar ou acrescentar conta regrava o teto junto. Linha sem teto vale
+  como antes.
 - Disponível = sem aviso no login, sem `limitReached`, janelas 5h e 7d abaixo de 100% e a 7d abaixo do
   teto, quando há (sem medição = disponível).
 
