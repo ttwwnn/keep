@@ -65,8 +65,17 @@ Uma conta do Claude é um **armazém de credenciais** do Claude Code:
 - Ordem de prioridade: `~/.claude/contas/.ordem`, uma chave por linha (`#` e linhas vazias
   ignoradas). Contas que não estão no arquivo entram no fim (Claude: a global primeiro, depois por
   apelido; GPT: principal, depois por apelido; Claude antes de GPT).
-- Disponível = sem aviso no login, sem `limitReached` e janelas 5h e 7d abaixo de 100% (sem
-  medição = disponível).
+- Teto da semanal: depois da chave, na mesma linha, `teto7d=<0 a 100>` (ex.: `claude:x teto7d=80`).
+  Com a janela 7d no teto ou acima (e antes do recomeço dela), a conta conta como cheia: aba nova,
+  aba aberta que segue a ordem, troca no limite e restauração vão para a próxima da fila, e o
+  resto da semana fica para quem divide a conta. Nem com todas no limite ela fica com quem segue a
+  ordem: a aba nova, a troca e a aba aberta vão para a primeira que roda sem passar do teto (no
+  limite, a aba espera ali); a conta acima do teto só recebe aba se não houver outra que rode. O
+  núcleo dá o teto em `weeklyCap` (`null` sem teto); o rodapé e o menu dizem "reservada: passou do
+  teto de 80% da semana". Reordenar ou acrescentar conta regrava o teto junto. Linha sem teto vale
+  como antes.
+- Disponível = sem aviso no login, sem `limitReached`, janelas 5h e 7d abaixo de 100% e a 7d abaixo do
+  teto, quando há (sem medição = disponível).
 
 ### Gerente externo
 
@@ -712,8 +721,11 @@ Toda resposta é um objeto JSON numa linha, com `"versao": 1` e `"ok"`. Recusa: 
   (há um armazém em que uma aba pode rodar nela), `armazens`.
 - `uso` → `{"linhas": [Linha], "ordem": [chave], "gerenteExterno": bool, "medidoEm": s}`. Linha
   (`AccountUsage`): `account` (Conta), `reading` (`{"windows": [{"label", "title", "percent",
-  "resetsAt"}], "limitReached"}` ou `null`), `measuredAt`, `problem`. `--cache` responde sem rede;
-  `--agora` é o "Medir agora"; `--conta=<chave>` mede só essa.
+  "resetsAt"}], "limitReached"}` ou `null`), `measuredAt`, `problem`, `disponivel` (a conta pode
+  receber trabalho agora, pela mesma regra das abas) e `reservada` (a 7d passou do teto da fila).
+  Programas que rodam o Claude fora das abas seguem a `ordem` pulando as linhas com
+  `disponivel: false`. `--cache` responde sem rede; `--agora` é o "Medir agora"; `--conta=<chave>`
+  mede só essa.
 - `ordem [mover …]` → `{"ordem": [chave]}`.
 - `abas` → `{"keepd": {"pid", "inicioMs"}, "ia": [{"workspace", "aba", "agente"
   (`claude`|`codex`), "conta" (a escolha: `claude:ordem` ou a chave da conta), "atual" (a chave da

@@ -60,7 +60,7 @@ let respostaDoNucleo = """
  "linhas":[
   {"account":{"engine":"claude","key":"aaaa1111-uuid","alias":"reserva","aliases":["reserva"],
               "email":"ds@x.com","plan":"Max 20x","isActive":true,"isPreferred":true,"warning":null,
-              "orderKey":"claude:reserva","hasToken":true,"roda":true,
+              "orderKey":"claude:reserva","hasToken":true,"roda":true,"weeklyCap":80.0,
               "armazens":[{"tipo":"cofre","arquivo":"/x"},{"tipo":"global"}]},
    "reading":{"windows":[{"label":"5h","title":"Sessão (5h)","percent":82.0,"resetsAt":1791086400.0},
                          {"label":"Fable","title":"Semanal — Fable","percent":0.0,"resetsAt":null}],
@@ -92,6 +92,9 @@ confere(primeira?.reading?.windows.last?.resetsAt == nil && primeira?.reading?.w
         "núcleo: janela a 0% e sem reinício")
 confere(primeira?.account.hasToken == true && primeira?.account.isActive == true && primeira?.account.plan == "Max 20x",
         "núcleo: o resumo da conta, sem os campos que o app não usa")
+confere(primeira?.account.weeklyCap == 80 && resposta?.linhas[1].account.weeklyCap == nil,
+        "núcleo: o teto da semanal, e nenhum na conta sem ele")
+confere(primeira?.isAvailable == true, "núcleo: a sessão a 82% não passa pelo teto da semanal")
 let segunda = resposta?.linhas[1]
 confere(segunda?.reading == nil && segunda?.problem?.hasPrefix("consultas demais") == true && segunda?.account.email == nil,
         "núcleo: sem leitura, com o problema dito")
@@ -252,6 +255,24 @@ confere(!linha(conta(.claude, "a"), [("5h", 100)]).isAvailable, "indisponível: 
 confere(!linha(conta(.claude, "a"), [("5h", 33), ("7d", 100)]).isAvailable, "indisponível: 7d em 100%")
 confere(!linha(conta(.claude, "a"), [("5h", 10)], limite: true).isAvailable, "indisponível: limitReached")
 confere(!linha(conta(.claude, "a", aviso: "login recusado"), lida: false).isAvailable, "indisponível: aviso da conta")
+// O teto da semanal que a ordem dá à conta (`claude:x teto7d=80`): dele para
+// cima ela fica para quem divide a conta, e o Keep não põe aba nela.
+func comTeto(_ teto: Double?, _ janelas: [(String, Double)], recomeca: Date? = nil) -> AccountUsage {
+    var c = conta(.claude, "ana", email: "ana@x")
+    c.weeklyCap = teto
+    return AccountUsage(account: c, reading: UsageReading(
+        windows: janelas.map { UsageWindow(label: $0.0, title: $0.0, percent: $0.1, resetsAt: recomeca) }, limitReached: false))
+}
+confere(!comTeto(80, [("5h", 5), ("7d", 85)]).isAvailable, "indisponível: 7d acima do teto da ordem")
+confere(!comTeto(80, [("7d", 80)]).isAvailable, "indisponível: 7d no teto")
+confere(comTeto(80, [("7d", 79.9)]).isAvailable, "disponível: 7d abaixo do teto")
+confere(comTeto(nil, [("7d", 85)]).isAvailable, "disponível: sem teto, 7d em 85%")
+confere(comTeto(80, [("5h", 85), ("7d", 10)]).isAvailable, "disponível: o teto é só da semanal")
+confere(comTeto(80, [("7d", 85)], recomeca: Date(timeIntervalSinceNow: -60)).isAvailable, "disponível: a semanal acima do teto já recomeçou")
+confere(comTeto(80, [("7d", 85)], recomeca: Date(timeIntervalSinceNow: 3600)).isReserved, "reservada: a semanal acima do teto ainda não recomeçou")
+confere(comTeto(80, [("7d", 85)]).reservedNote == "reservada: passou do teto de 80% da semana",
+        "reservada: a nota diz o teto", String(describing: comTeto(80, [("7d", 85)]).reservedNote))
+confere(comTeto(80, [("7d", 79)]).reservedNote == nil && comTeto(nil, [("7d", 99)]).reservedNote == nil, "reservada: só acima do teto")
 
 // --- o menu da aba (AIChoices)
 let cheia = linha(conta(.claude, "cheia", email: "c@x"), [("5h", 100), ("7d", 20)])
@@ -314,6 +335,12 @@ confere(concha.allSatisfy { $0.kind == .separator || $0.enabled } && concha.allS
 confere(AIChoices.rows(lines: [], current: nil, program: .claude).map(\.kind) == [.follow], "sem contas: só seguir a ordem")
 let perto = linha(conta(.claude, "reserva", email: "r@x"), [("5h", 6), ("7d", 96)])
 confere(!AIChoices.title(perto, number: 1).contains("no limite"), "menu: conta perto do limite não diz 'no limite'", AIChoices.title(perto, number: 1))
+let reservada = comTeto(80, [("5h", 3), ("7d", 85)])
+confere(AIChoices.title(reservada, number: 3) == "IA·3 · ana@x — reservada: passou do teto de 80% da semana",
+        "menu: a conta acima do teto diz que está reservada", AIChoices.title(reservada, number: 3))
+let livreDepois = linha(conta(.claude, "bia", email: "bia@x"), [("5h", 3), ("7d", 20)])
+confere(AIChoices.followed(in: [reservada, livreDepois])?.account.alias == "bia",
+        "menu: seguir a ordem pula a conta acima do teto")
 // A lateral: a aba de IA leva só o número da conta em que roda, "(IA·n)" (13/10/2026).
 func rotulo(_ comando: String, _ conta: String?, _ rodando: String? = nil) -> String {
     AIChoices.tabLabel(command: comando, account: conta, running: rodando, lines: fila)
@@ -685,6 +712,20 @@ if let nucleo = ambiente["NUCLEO"], fm.isExecutableFile(atPath: nucleo) {
         confere(r.linhas.map(\.account.order) == ["gpt:principal", "claude:principal"] && r.linhas.last?.reading != nil,
                 "núcleo de verdade: a ordem nova e as leituras guardadas", "\(r.linhas.map(\.account.order))")
     } else { confere(false, "núcleo de verdade: --cache depois de mover") }
+    // O teto da semanal escrito na fila: a semanal do Claude, a 50%, passa
+    // dos 40% do teto; o teto chega ao app e fica quando a fila é regravada.
+    let fila = outra.appendingPathComponent(".claude/contas/.ordem")
+    try! "gpt:principal\nclaude:principal teto7d=40\n".write(to: fila, atomically: true, encoding: .utf8)
+    if case .success(let r) = AIHelper.usage(.cached) {
+        let claude = r.linhas.first { $0.account.engine == .claude }
+        confere(claude?.account.weeklyCap == 40 && claude?.isReserved == true && claude?.isAvailable == false,
+                "núcleo de verdade: a conta acima do teto da fila fica reservada", "\(String(describing: claude))")
+    } else { confere(false, "núcleo de verdade: --cache com teto") }
+    if case .success(let nova) = AIHelper.moveOrder("claude:principal", up: true) {
+        let texto = (try? String(contentsOf: fila, encoding: .utf8)) ?? ""
+        confere(nova == ["claude:principal", "gpt:principal"] && texto.hasSuffix("\nclaude:principal teto7d=40\ngpt:principal\n"),
+                "núcleo de verdade: mover na ordem não perde o teto", texto)
+    } else { confere(false, "núcleo de verdade: mover com teto respondeu") }
 } else {
     print("(pulado: sem NUCLEO, o keep de verdade)")
 }

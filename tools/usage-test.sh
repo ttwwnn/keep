@@ -168,6 +168,14 @@ sabotage "$USAGE" "an account at its limit still taking work" \
     '$0.percent >= 100 }|||$0.percent >= 101 }' || ok=1
 sabotage "$USAGE" "an account near its limit (95%) taken for one at it" \
     '$0.percent >= 100 }|||$0.percent >= 95 }' || ok=1
+sabotage "$USAGE" "an account past the weekly ceiling of the order still taking work" \
+    'if reading.limitReached || isReserved { return false }|||if reading.limitReached { return false }' || ok=1
+sabotage "$USAGE" "the ceiling read off the session rather than the week" \
+    '$0.label == "7d" && $0.percent >= cap|||$0.label == "5h" && $0.percent >= cap' || ok=1
+sabotage "$USAGE" "the ceiling still counted after the week started over" \
+    '$0.percent >= cap && ($0.resetsAt.map { $0 > now } ?? true)|||$0.percent >= cap' || ok=1
+sabotage "$CHOICE" "the menu saying 'no limite' of an account kept by its ceiling" \
+    'line.account.warning ?? line.reservedNote ?? "no limite"|||line.account.warning ?? "no limite"' || ok=1
 sabotage "$USAGE" "the watcher blind to the order" \
     '[".ativa", ".preferida", ".ordem"]|||[".ativa", ".preferida"]' || ok=1
 sabotage "$USAGE" "the watcher blind to Keep's own logins" \

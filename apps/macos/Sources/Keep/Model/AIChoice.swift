@@ -379,7 +379,7 @@ enum AIChoices {
     static func title(_ line: AccountUsage, number: Int) -> String {
         var title = name(number: number)
         if let email = line.account.email { title += " · \(email)" }
-        if !line.isAvailable { title += " — \(line.account.warning ?? "no limite")" }
+        if !line.isAvailable { title += " — \(line.account.warning ?? line.reservedNote ?? "no limite")" }
         return title
     }
 

@@ -416,6 +416,7 @@ mod testes {
             armazens: vec![],
             token: None,
             roda: true,
+            weekly_cap: None,
         }
     }
 

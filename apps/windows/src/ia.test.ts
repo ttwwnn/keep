@@ -12,6 +12,7 @@ import {
   fresh,
   holding,
   isAvailable,
+  isReserved,
   isUsedBy,
   isValidKey,
   iaName,
@@ -34,6 +35,7 @@ import {
   readStoredLines,
   readSwitch,
   refusalText,
+  reservedNote,
   untilText,
   available,
   creditRows,
@@ -85,6 +87,25 @@ describe("which accounts can take work", () => {
     const fableFull = line({}, { windows: [{ label: "Fable", title: "Semanal — Fable", percent: 100, resetsAt: null }], limitReached: false });
     expect(isAvailable(fableFull)).toBe(true);
     expect(isAvailable(line({ warning: "login recusado: entre de novo com /login" }))).toBe(false);
+  });
+  it("the weekly ceiling the order gives an account takes it out from there up, until the week starts over", () => {
+    const now = 1_900_000_000_000;
+    const capped = (cap: number | null, label: string, percent: number, resetsAt: number | null = null) =>
+      line({ weeklyCap: cap }, { windows: [{ label, title: label, percent, resetsAt }], limitReached: false });
+    expect(isAvailable(capped(80, "7d", 85))).toBe(false);
+    expect(isAvailable(capped(80, "7d", 80))).toBe(false);
+    expect(isAvailable(capped(80, "7d", 79.9))).toBe(true);
+    expect(isAvailable(capped(null, "7d", 85))).toBe(true);
+    expect(isAvailable(line({}, { windows: [{ label: "7d", title: "7d", percent: 85, resetsAt: null }], limitReached: false }))).toBe(true);
+    expect(isAvailable(capped(80, "5h", 85))).toBe(true);
+    expect(isReserved(capped(80, "7d", 85, now / 1000 - 60), now)).toBe(false);
+    expect(isReserved(capped(80, "7d", 85, now / 1000 + 3600), now)).toBe(true);
+    expect(reservedNote(capped(80, "7d", 85))).toBe("reservada: passou do teto de 80% da semana");
+    expect(reservedNote(capped(80, "7d", 79))).toBeNull();
+    expect(accountTitle(capped(80, "7d", 85), 3)).toBe("IA·3 · ana@exemplo.com — reservada: passou do teto de 80% da semana");
+    expect(noteText(capped(80, "7d", 85), now)).toBe("reservada: passou do teto de 80% da semana");
+    const rows = menuRows([capped(80, "7d", 85), gpt], FOLLOW_ORDER, { kind: "claude" });
+    expect(rows[0].help).toBe("Agora: IA·2");
   });
   it("keys are refused before anything runs", () => {
     expect(isValidKey("claude:ordem")).toBe(true);

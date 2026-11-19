@@ -84,16 +84,25 @@ pub struct Linha {
 impl Linha {
     /// Se a conta pode receber trabalho agora: nada errado com o login, e
     /// não está no limite (só 100% da janela de 5 h ou da semanal tira a
-    /// conta da fila). Sem medição, ganha o benefício da dúvida.
+    /// conta da fila, ou o teto da semanal que a ordem der a ela). Sem
+    /// medição, ganha o benefício da dúvida.
     pub fn disponivel(&self) -> bool {
         self.disponivel_em(agora())
+    }
+
+    /// Se a semanal passou do teto que a ordem dá à conta (`teto7d=80`): o
+    /// resto da semana fica para quem divide a conta, e para o Keep ela
+    /// está cheia. Como nos 100%, a medição de antes do recomeço não vale.
+    pub fn reservada_em(&self, agora: f64) -> bool {
+        let (Some(teto), Some(l)) = (self.account.weekly_cap, &self.reading) else { return false };
+        l.windows.iter().any(|j| j.label == "7d" && j.percent >= teto && j.resets_at.is_none_or(|r| r > agora))
     }
 
     /// O mesmo, num instante: uma janela cheia cujo recomeço já passou não
     /// conta mais (a medição é de antes dele), e o "no limite" de uma leitura
     /// com mais de 20 min também não.
     pub fn disponivel_em(&self, agora: f64) -> bool {
-        if self.account.warning.is_some() {
+        if self.account.warning.is_some() || self.reservada_em(agora) {
             return false;
         }
         let Some(l) = &self.reading else { return true };
@@ -411,6 +420,13 @@ pub fn disponiveis_de(lista: &[Conta]) -> Vec<String> {
     linhas(lista.to_vec(), &le_cache()).into_iter().filter(Linha::disponivel).map(|l| l.account.key).collect()
 }
 
+/// As contas (o `key`) acima do teto da semanal, pela última medição, entre
+/// as dadas: com todas no limite, elas só recebem aba se não houver outra.
+pub fn reservadas_de(lista: &[Conta]) -> Vec<String> {
+    let t = agora();
+    linhas(lista.to_vec(), &le_cache()).into_iter().filter(|l| l.reservada_em(t)).map(|l| l.account.key).collect()
+}
+
 /// Uma rodada: mede as contas devidas (ou `so` esta), em paralelo, e devolve
 /// todas as linhas. `forcar` é o "Medir agora".
 pub fn medir(forcar: bool, so: Option<&str>) -> Vec<Linha> {
@@ -500,13 +516,31 @@ pub fn medir(forcar: bool, so: Option<&str>) -> Vec<Linha> {
     linhas(lista, &cache)
 }
 
+/// As linhas como saem no JSON, cada uma com a decisão do núcleo: se a
+/// conta pode receber trabalho agora (`disponivel`, a mesma regra das abas)
+/// e se está acima do teto da semanal (`reservada`). Programas que rodam o
+/// Claude fora das abas seguem a fila por elas.
+fn linhas_json(lista: &[Linha], agora: f64) -> Vec<Value> {
+    lista
+        .iter()
+        .map(|l| {
+            let mut v = serde_json::to_value(l).unwrap_or(Value::Null);
+            if let Some(o) = v.as_object_mut() {
+                o.insert("disponivel".into(), json!(l.disponivel_em(agora)));
+                o.insert("reservada".into(), json!(l.reservada_em(agora)));
+            }
+            v
+        })
+        .collect()
+}
+
 /// `keep ia uso [--agora] [--conta=<chave>] [--cache]`.
 pub fn cli(a: &Args) -> i32 {
     let lista = if a.tem("cache") { em_cache() } else { medir(a.tem("agora"), a.opcao("conta")) };
     let ordem: Vec<String> = lista.iter().map(|l| l.account.order_key.clone()).collect();
     responde(json!({
         "ok": true,
-        "linhas": lista,
+        "linhas": linhas_json(&lista, agora()),
         "ordem": ordem,
         "gerenteExterno": contas::gerente_externo(),
         "medidoEm": agora(),
@@ -536,9 +570,14 @@ pub(crate) mod testes {
 
     /// Guarda, como a última medição desta conta, a semanal cheia.
     pub(crate) fn no_limite(conta: &Conta) {
+        semanal(conta, 100.0);
+    }
+
+    /// Guarda, como a última medição desta conta, a semanal em `pct`.
+    pub(crate) fn semanal(conta: &Conta, pct: f64) {
         let mut c = le_cache();
-        let semanal = Janela { label: "7d".into(), title: "Semanal (7 dias)".into(), percent: 100.0, resets_at: Some(agora() + 86_400.0) };
-        let reading = Leitura { windows: vec![semanal], limit_reached: true };
+        let semanal = Janela { label: "7d".into(), title: "Semanal (7 dias)".into(), percent: pct, resets_at: Some(agora() + 86_400.0) };
+        let reading = Leitura { windows: vec![semanal], limit_reached: pct >= 100.0 };
         c.contas.insert(id(conta), Registro { reading: Some(reading), measured_at: Some(agora()), ..Default::default() });
         grava_cache(&c);
     }
@@ -737,6 +776,35 @@ pub(crate) mod testes {
         let rotulos: Vec<&str> = l.windows.iter().map(|j| j.label.as_str()).collect();
         assert_eq!(rotulos, ["5h", "7d", "GPT-5 7d"]);
         assert!(l.limit_reached, "a semanal do plano a 100% fecha");
+    }
+
+    #[test]
+    fn o_teto_da_semanal_tira_a_conta_da_fila_antes_dos_100() {
+        let t = 1_900_000_000.0;
+        let com = |rotulo: &str, pct: f64, teto: Option<f64>, recomeca: f64| {
+            let mut l = crate::abas::testes::linha(Motor::Claude, "claude:x", &[(rotulo, recomeca)]);
+            l.reading.as_mut().unwrap().windows[0].percent = pct;
+            l.account.weekly_cap = teto;
+            l
+        };
+        let depois = t + 3600.0;
+        assert!(!com("7d", 85.0, Some(80.0), depois).disponivel_em(t), "acima do teto: cheia para o Keep");
+        assert!(com("7d", 85.0, Some(80.0), depois).reservada_em(t));
+        assert!(!com("7d", 80.0, Some(80.0), depois).disponivel_em(t), "no teto também");
+        assert!(com("7d", 79.9, Some(80.0), depois).disponivel_em(t), "abaixo do teto, livre");
+        assert!(com("7d", 85.0, None, depois).disponivel_em(t), "sem teto, só os 100% tiram da fila");
+        assert!(!com("7d", 85.0, None, depois).reservada_em(t));
+        assert!(com("7d", 85.0, Some(80.0), t - 1.0).disponivel_em(t), "a medição de antes do recomeço não vale");
+        assert!(com("5h", 85.0, Some(80.0), depois).disponivel_em(t), "o teto é só da semanal");
+        let mut sem_leitura = com("7d", 85.0, Some(80.0), depois);
+        sem_leitura.reading = None;
+        assert!(sem_leitura.disponivel_em(t), "sem medição, o benefício da dúvida");
+        // O JSON do `uso` leva a decisão, para quem roda o Claude fora das abas.
+        let json = linhas_json(&[com("7d", 85.0, Some(80.0), depois), com("7d", 79.0, Some(80.0), depois)], t);
+        assert_eq!((json[0]["disponivel"].as_bool(), json[0]["reservada"].as_bool()), (Some(false), Some(true)));
+        assert_eq!((json[1]["disponivel"].as_bool(), json[1]["reservada"].as_bool()), (Some(true), Some(false)));
+        assert_eq!(json[0]["account"]["weeklyCap"].as_f64(), Some(80.0));
+        assert!(json[0]["reading"]["windows"].is_array(), "o resto da linha segue como era");
     }
 
     #[test]

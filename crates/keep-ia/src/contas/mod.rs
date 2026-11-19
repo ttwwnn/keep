@@ -97,6 +97,10 @@ pub struct Conta {
     pub token: Option<Token>,
     /// Se há um armazém em que uma aba pode rodar nela agora.
     pub roda: bool,
+    /// O teto da semanal que a ordem dá a ela (`claude:x teto7d=80`): dele
+    /// para cima o Keep não põe aba nela, e o resto da semana fica para quem
+    /// divide a conta. Sem teto, só os 100% a tiram da fila.
+    pub weekly_cap: Option<f64>,
 }
 
 impl Conta {
@@ -571,6 +575,7 @@ fn juntar(achados: Vec<Achado>, ativa: Option<&str>) -> Vec<Conta> {
             armazens,
             token,
             roda,
+            weekly_cap: None,
         });
     }
     contas
@@ -578,17 +583,43 @@ fn juntar(achados: Vec<Achado>, ativa: Option<&str>) -> Vec<Conta> {
 
 // -------------------------------------------------------------------- ordem
 
-/// A ordem como está no arquivo: uma chave por linha.
-pub fn ler_ordem() -> Vec<String> {
+/// Uma linha da ordem: a chave e o teto da semanal, quando ela tem um.
+pub type LinhaDaOrdem = (String, Option<f64>);
+
+/// O teto escrito depois da chave: `teto7d=80` (ou `80%`), de 0 a 100.
+fn teto_de(resto: &str) -> Option<f64> {
+    resto.split_whitespace().find_map(|p| {
+        let v = p.strip_prefix("teto7d=")?.trim_end_matches('%').parse::<f64>().ok()?;
+        (0.0..=100.0).contains(&v).then_some(v)
+    })
+}
+
+/// A ordem como está no arquivo: uma chave por linha, e depois dela, se a
+/// conta tem, o teto da semanal (`claude:x teto7d=80`).
+pub fn ler_fila() -> Vec<LinhaDaOrdem> {
     let Ok(texto) = caminhos::ler_texto_ate(&caminhos::ordem(), caminhos::LEITURA_MAXIMA) else { return Vec::new() };
     let mut vistos = BTreeSet::new();
     texto
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .filter(|l| vistos.insert(l.to_string()))
-        .map(str::to_string)
+        .filter_map(|l| {
+            let (chave, resto) = l.split_once(char::is_whitespace).unwrap_or((l, ""));
+            vistos.insert(chave.to_string()).then(|| (chave.to_string(), teto_de(resto)))
+        })
         .collect()
+}
+
+/// As chaves da ordem, da primeira à última.
+pub fn ler_ordem() -> Vec<String> {
+    ler_fila().into_iter().map(|(k, _)| k).collect()
+}
+
+/// Dá a cada conta o teto que a ordem dá a um dos apelidos dela.
+fn aplicar_tetos(contas: &mut [Conta], fila: &[LinhaDaOrdem]) {
+    for c in contas {
+        c.weekly_cap = fila.iter().filter(|(k, _)| c.e(k)).find_map(|(_, t)| *t);
+    }
 }
 
 /// As contas na ordem: a de cada uma é a menor posição entre os apelidos
@@ -630,7 +661,11 @@ pub fn listar(perguntar: bool) -> Vec<Conta> {
     achados.extend(armazens_claude(perguntar));
     achados.extend(armazens_codex());
     let ativa = ativa_do_kit();
-    ordenar(juntar(achados, ativa.as_deref()), &ler_ordem())
+    let fila = ler_fila();
+    let chaves: Vec<String> = fila.iter().map(|(k, _)| k.clone()).collect();
+    let mut contas = ordenar(juntar(achados, ativa.as_deref()), &chaves);
+    aplicar_tetos(&mut contas, &fila);
+    contas
 }
 
 /// A conta que uma chave nomeia. Duas com a mesma chave (um login sem dono
@@ -649,14 +684,23 @@ pub fn ordem_efetiva(contas: &[Conta]) -> Vec<String> {
     contas.iter().map(|c| c.order_key.clone()).collect()
 }
 
-fn gravar_ordem(chaves: &[String]) -> std::io::Result<()> {
+/// A fila efetiva, com o teto de cada conta, para gravar de volta.
+fn fila_efetiva(contas: &[Conta]) -> Vec<LinhaDaOrdem> {
+    contas.iter().map(|c| (c.order_key.clone(), c.weekly_cap)).collect()
+}
+
+/// Grava a fila inteira; o teto de cada conta vai junto, na linha dela.
+fn gravar_ordem(fila: &[LinhaDaOrdem]) -> std::io::Result<()> {
     let caminho = caminhos::ordem();
     if let Some(dir) = caminho.parent() {
         std::fs::create_dir_all(dir)?;
     }
     let mut texto = String::from("# fila de prioridade das contas de IA (Keep); a 1a disponivel atende\n");
-    for c in chaves {
-        texto.push_str(c);
+    for (chave, teto) in fila {
+        texto.push_str(chave);
+        if let Some(t) = teto {
+            texto.push_str(&format!(" teto7d={t}"));
+        }
         texto.push('\n');
     }
     let tmp = caminho.with_extension("tmp");
@@ -671,23 +715,23 @@ pub fn mover(chave: &str, para_cima: bool) -> Result<Vec<String>, String> {
     let Some(i) = contas.iter().position(|c| c.e(chave)) else {
         return Err(format!("“{chave}” não é uma conta que o Keep conheça."));
     };
-    let mut ordem = ordem_efetiva(&contas);
-    let j = if para_cima { i.checked_sub(1) } else { Some(i + 1).filter(|j| *j < ordem.len()) };
+    let mut fila = fila_efetiva(&contas);
+    let j = if para_cima { i.checked_sub(1) } else { Some(i + 1).filter(|j| *j < fila.len()) };
     if let Some(j) = j {
-        ordem.swap(i, j);
+        fila.swap(i, j);
     }
-    gravar_ordem(&ordem).map_err(|e| e.to_string())?;
-    Ok(ordem)
+    gravar_ordem(&fila).map_err(|e| e.to_string())?;
+    Ok(fila.into_iter().map(|(k, _)| k).collect())
 }
 
 /// Põe uma conta nova no fim da ordem (se ela ainda não está).
 pub fn acrescentar_na_ordem(chave: &str) -> std::io::Result<()> {
     let contas = listar(false);
-    let mut ordem = ordem_efetiva(&contas);
-    if !ordem.iter().any(|k| k == chave) {
-        ordem.push(chave.to_string());
+    let mut fila = fila_efetiva(&contas);
+    if !fila.iter().any(|(k, _)| k == chave) {
+        fila.push((chave.to_string(), None));
     }
-    gravar_ordem(&ordem)
+    gravar_ordem(&fila)
 }
 
 // ----------------------------------------------------------------- rodar
