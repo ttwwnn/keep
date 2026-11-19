@@ -65,6 +65,10 @@ struct AIAccountSummary: Equatable, Codable {
     /// Whether the core found a token to measure it with — said apart from
     /// the token itself, which never leaves the core.
     var hasToken: Bool? = nil
+    /// The weekly ceiling the order gives it (`claude:x teto7d=80`): from
+    /// there up Keep puts no tab on it, and the rest of the week is left to
+    /// whoever else uses the account. Nil: only 100% takes it out.
+    var weeklyCap: Double? = nil
 
     /// The line's stable identity: the same account keeps its place and its
     /// fold across reads.
@@ -210,11 +214,30 @@ struct AccountUsage: Identifiable, Equatable, Codable {
     /// account with room; one past 95% still takes work, and taking it for
     /// one at its limit sent new tabs to GPT while a Claude account still
     /// answered. One not measured yet is given the benefit of the doubt.
+    /// An account with a weekly ceiling in the order leaves it at the
+    /// ceiling (`isReserved`), as the core's `Linha::reservada_em`.
     var isAvailable: Bool {
         guard account.warning == nil else { return false }
         guard let reading else { return true }
-        if reading.limitReached { return false }
+        if reading.limitReached || isReserved { return false }
         return !reading.windows.contains { ($0.label == "5h" || $0.label == "7d") && $0.percent >= 100 }
+    }
+
+    /// The weekly window is at or past the ceiling the order gives the
+    /// account: what is left of the week is kept for whoever else uses it.
+    var isReserved: Bool { reserved(at: Date()) }
+
+    func reserved(at now: Date) -> Bool {
+        guard let cap = account.weeklyCap, let reading else { return false }
+        return reading.windows.contains {
+            $0.label == "7d" && $0.percent >= cap && ($0.resetsAt.map { $0 > now } ?? true)
+        }
+    }
+
+    /// "reservada: passou do teto de 80% da semana".
+    var reservedNote: String? {
+        guard isReserved, let cap = account.weeklyCap else { return nil }
+        return "reservada: passou do teto de \(UsageText.percent(cap)) da semana"
     }
 }
 

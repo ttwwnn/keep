@@ -338,6 +338,7 @@ fn achar_prefere_a_conta_que_roda_entre_duas_com_a_mesma_chave() {
         armazens: vec![],
         token: None,
         roda,
+        weekly_cap: None,
     };
     let lista = [base("morta", false), base("viva", true)];
     assert_eq!(achar(&lista, "claude:principal").map(|c| c.key.as_str()), Some("viva"));
@@ -371,6 +372,42 @@ fn mover_troca_com_a_vizinha_e_grava_tudo() {
     assert!(mover("claude:ninguem", true).is_err());
     let contas = listar(false);
     assert!(contas[0].is_preferred);
+}
+
+#[test]
+fn o_teto_da_semanal_vem_da_ordem_e_fica_quando_ela_e_regravada() {
+    let c = casa("teto");
+    perfis(&[("G", "u-1", "ana@x.com"), ("F", "u-2", "bia@y.com")]);
+    c.global("G", "r");
+    c.fixa("k-2", Some(("F", "r")), Some(("bia", "bia@y.com", "u-2")));
+    c.ordem(&["# fila", "claude:bia teto7d=80", "claude:ana"]);
+    let contas = listar(true);
+    assert_eq!(chaves(&contas), ["claude:bia", "claude:ana"]);
+    assert_eq!(contas[0].weekly_cap, Some(80.0));
+    assert_eq!(contas[1].weekly_cap, None, "a linha sem teto vale como antes");
+    assert!(serde_json::to_string(&contas[0]).unwrap().contains(r#""weeklyCap":80.0"#), "o rodapé lê o teto");
+    // Reordenar pela barra não perde o teto.
+    assert_eq!(mover("claude:ana", true).unwrap(), ["claude:ana", "claude:bia"]);
+    assert_eq!(ler_fila(), [("claude:ana".to_string(), None), ("claude:bia".to_string(), Some(80.0))]);
+    assert_eq!(ler_ordem(), ["claude:ana", "claude:bia"]);
+    // Nem um login novo que entra no fim da fila.
+    c.codex(&c.raiz.join(".codex"), "ana@x.com", "acct-1");
+    acrescentar_na_ordem("gpt:principal").unwrap();
+    let texto = std::fs::read_to_string(crate::caminhos::ordem()).unwrap();
+    assert!(texto.ends_with("\nclaude:ana\nclaude:bia teto7d=80\ngpt:principal\n"), "{texto}");
+    assert_eq!(listar(false)[1].weekly_cap, Some(80.0));
+}
+
+#[test]
+fn o_teto_aceita_por_cento_e_recusa_o_que_nao_e_teto() {
+    assert_eq!(teto_de("teto7d=80"), Some(80.0));
+    assert_eq!(teto_de("teto7d=80%"), Some(80.0));
+    assert_eq!(teto_de("outra=1 teto7d=72.5"), Some(72.5));
+    assert_eq!(teto_de(""), None);
+    assert_eq!(teto_de("teto7d=abc"), None);
+    assert_eq!(teto_de("teto7d=150"), None, "acima de 100 não é teto");
+    assert_eq!(teto_de("teto7d=-1"), None);
+    assert_eq!(teto_de("teto5h=80"), None, "só a semanal tem teto");
 }
 
 #[test]

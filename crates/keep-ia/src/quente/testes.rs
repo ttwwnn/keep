@@ -419,6 +419,24 @@ fn com_o_kit_a_aba_nova_nasce_na_primeira_livre_da_fila() {
 }
 
 #[test]
+fn a_conta_acima_do_teto_da_semanal_nao_recebe_aba_nova() {
+    // Com `teto7d=80`, os 20% finais da semanal ficam para quem divide a conta.
+    let c = casa("teto-aba-nova");
+    duas_contas(&c);
+    c.ordem(&["claude:ana teto7d=80", "claude:bia"]);
+    let lista = contas::listar(false);
+    let ana = contas::achar(&lista, "claude:ana").unwrap();
+    crate::uso::testes::semanal(ana, 79.0);
+    let antes = Filho::novo(&[]);
+    assert_eq!(preparar("T", antes.pid(), None, None).unwrap().conta, "claude:ana", "abaixo do teto ela atende");
+    crate::uso::testes::semanal(ana, 81.0);
+    let depois = Filho::novo(&[]);
+    let p = preparar("T", depois.pid(), None, None).unwrap();
+    assert_eq!((p.conta.as_str(), acesso(&p.pasta)), ("claude:bia", "F".into()), "acima do teto, a próxima da fila");
+    assert_eq!(conta_da_ordem(&contas::listar(false)).map(|c| c.order_key.as_str()), Some("claude:bia"));
+}
+
+#[test]
 fn confirmar_uma_reconexao_nao_apaga_outra_troca() {
     let c = casa("reconectar-chrome");
     duas_contas(&c);

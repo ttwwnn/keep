@@ -31,6 +31,12 @@ export interface Account {
   hasToken: boolean;
   /** A tab can run on it now. */
   roda?: boolean;
+  /**
+   * The weekly ceiling the order gives it (`claude:x teto7d=80`): from there
+   * up Keep puts no tab on it, and the rest of the week is left to whoever
+   * else uses the account. Absent or null: only 100% takes it out.
+   */
+  weeklyCap?: number | null;
 }
 
 /** One allowance window: a bar in the footer. */
@@ -132,14 +138,34 @@ export const isValidKey = (key: string) => /^(claude|gpt):[^\s/:]+$/.test(key);
 /**
  * Whether an account can take work now: nothing wrong with its login, and
  * not at its limit — only 100% of the five-hour or the weekly window takes
- * an account out of the order. Not measured yet: the benefit of the doubt.
+ * an account out of the order, or the weekly ceiling the order gives it.
+ * Not measured yet: the benefit of the doubt.
  */
 export function isAvailable(line: UsageLine): boolean {
   if (line.account.warning) return false;
   const reading = line.reading;
   if (!reading) return true;
-  if (reading.limitReached) return false;
+  if (reading.limitReached || isReserved(line)) return false;
   return !reading.windows.some((w) => (w.label === "5h" || w.label === "7d") && w.percent >= 100);
+}
+
+/**
+ * The weekly window is at or past the ceiling the order gives the account,
+ * and has not started over: what is left of the week is kept for whoever
+ * else uses it (the core's `Linha::reservada_em`).
+ */
+export function isReserved(line: UsageLine, nowMs: number = Date.now()): boolean {
+  const cap = line.account.weeklyCap;
+  if (cap == null || !line.reading) return false;
+  return line.reading.windows.some(
+    (w) => w.label === "7d" && w.percent >= cap && (w.resetsAt === null || w.resetsAt * 1000 > nowMs),
+  );
+}
+
+/** "reservada: passou do teto de 80% da semana", or null when it is not. */
+export function reservedNote(line: UsageLine, nowMs: number = Date.now()): string | null {
+  const cap = line.account.weeklyCap;
+  return cap != null && isReserved(line, nowMs) ? `reservada: passou do teto de ${percentText(cap)} da semana` : null;
 }
 
 /**
@@ -261,7 +287,7 @@ export function menuRows(
 export function accountTitle(line: UsageLine, number: number): string {
   let title = iaName(number);
   if (line.account.email) title += ` · ${line.account.email}`;
-  if (!isAvailable(line)) title += ` — ${line.account.warning ?? "no limite"}`;
+  if (!isAvailable(line)) title += ` — ${line.account.warning ?? reservedNote(line) ?? "no limite"}`;
   return title;
 }
 
@@ -418,7 +444,9 @@ export const STALE_AFTER_S = 15 * 60;
 /** The line under an account: at its limit, its warning, what went wrong, how old. */
 export function noteText(line: UsageLine, nowMs: number): string | null {
   const parts: string[] = [];
+  const reserved = reservedNote(line, nowMs);
   if (line.reading?.limitReached) parts.push("no limite");
+  else if (reserved) parts.push(reserved);
   if (line.account.warning) parts.push(line.account.warning);
   if (line.problem) parts.push(line.problem);
   else if (!line.reading) parts.push("medindo…");

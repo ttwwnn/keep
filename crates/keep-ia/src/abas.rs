@@ -346,6 +346,7 @@ pub(crate) mod testes {
                 armazens: vec![],
                 token: None,
                 roda: true,
+                weekly_cap: None,
             },
             reading: Some(crate::uso::Leitura {
                 windows: janelas

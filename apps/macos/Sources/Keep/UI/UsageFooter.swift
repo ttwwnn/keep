@@ -1017,7 +1017,11 @@ struct UsageFooter: View {
 
     private func note(_ line: AccountUsage, now: Date) -> String? {
         var parts: [String] = []
-        if line.reading?.limitReached == true { parts.append("no limite") }
+        if line.reading?.limitReached == true {
+            parts.append("no limite")
+        } else if let reserved = line.reservedNote {
+            parts.append(reserved)
+        }
         if let warning = line.account.warning { parts.append(warning) }
         if let problem = line.problem {
             parts.append(problem)
