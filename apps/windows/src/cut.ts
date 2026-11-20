@@ -95,7 +95,7 @@ export function logical(box: string[], width: number): { text: string[]; starts:
     const nextChars = Array.from(box[i + 1]);
     let head = 0;
     while (head < nextChars.length && !isBlank(nextChars[head])) head++;
-    const cutMidWord = chars.length >= width && tail > 0 && head > 0 && tail + head > width;
+    const cutMidWord = cellsOf(row) >= width && tail > 0 && head > 0 && tail + head > width;
     if (!cutMidWord) text.push("\n");
   });
   return { text, starts };
@@ -156,7 +156,10 @@ export function keysAcrossRows(
  * Claude Code's prompt box when it is in one, else on the cursor's own row.
  * Undefined when that cannot be told, where a cut is only a copy.
  */
-export function keysToCut(selected: string, lines: string[], cursorRow: number, cursorColumn: number): string | undefined {
+export function keysToCut(selected: string, lines: string[], cursorRow: number, cursorCell: number): string | undefined {
+  if (cursorRow < 0 || cursorRow >= lines.length) return undefined;
+  // The cursor's place in its row's text: an emoji is one character over two cells.
+  const cursorColumn = charactersBeforeCell(lines[cursorRow], cursorCell);
   const box = promptBoxRows(lines, cursorRow);
   if (box) {
     // The box's text is as wide as the rule over it, less the gutter and the margin.
@@ -165,8 +168,42 @@ export function keysToCut(selected: string, lines: string[], cursorRow: number, 
       keysAcrossRows(selected, box.rows, width, cursorRow - box.first, cursorColumn - 2) ?? keysEmptying(selected, box.rows)
     );
   }
-  if (cursorRow < 0 || cursorRow >= lines.length) return undefined;
   return cutKeys(selected, lines[cursorRow], cursorColumn);
+}
+
+/** The ranges of the wide East Asian scripts, two cells to a character. */
+const WIDE: [number, number][] = [
+  [0x1100, 0x115f], [0x2e80, 0x303e], [0x3041, 0x33ff], [0x3400, 0x4dbf], [0x4e00, 0x9fff], [0xa000, 0xa4cf],
+  [0xac00, 0xd7a3], [0xf900, 0xfaff], [0xfe30, 0xfe4f], [0xff00, 0xff60], [0xffe0, 0xffe6], [0x20000, 0x3fffd],
+];
+
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/**
+ * The cells a cluster takes on screen (graphemes.ts shares one cell between its code points): two for an emoji —
+ * a skin tone or a VS16 with it included — and the wide East Asian scripts, one for the rest.
+ */
+export function cellWidth(cluster: string): number {
+  const code = cluster.codePointAt(0) ?? 0;
+  if (/\p{Emoji_Presentation}/u.test(String.fromCodePoint(code)) || cluster.includes("\uFE0F")) return 2;
+  return WIDE.some(([lo, hi]) => code >= lo && code <= hi) ? 2 : 1;
+}
+
+const cellsOf = (row: string) => Array.from(graphemes.segment(row)).reduce((sum, g) => sum + cellWidth(g.segment), 0);
+
+/**
+ * How many characters (code points, as everywhere in this file) of `row` come before the cell `cell`, which is where
+ * the terminal puts the cursor: an emoji is one cluster over two cells. Past the row's text, each cell is a blank.
+ */
+export function charactersBeforeCell(row: string, cell: number): number {
+  let cells = 0;
+  let count = 0;
+  for (const { segment } of graphemes.segment(row)) {
+    if (cells >= cell) return count;
+    cells += cellWidth(segment);
+    count += Array.from(segment).length;
+  }
+  return count + Math.max(0, cell - cells);
 }
 
 // ---------------------------------------------------------------- Shift and the side arrows

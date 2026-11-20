@@ -2,7 +2,7 @@
 // (tools/cut-test/main.swift), and the real prompt boxes it recorded from
 // Claude Code, each cut tried on the real editor and found right.
 import { describe, expect, it } from "vitest";
-import { arrowStep, keysAcrossRows, keysEmptying, keysToCut, logical, markSpan, promptBoxRows } from "./cut";
+import { arrowStep, charactersBeforeCell, keysAcrossRows, keysEmptying, keysToCut, logical, markSpan, promptBoxRows } from "./cut";
 
 // Shift with an arrow: where the cursor goes, one character at a time (the macOS app's cases), and the terminal's
 // selection drawn for the mark.
@@ -103,17 +103,28 @@ describe("the prompt box", () => {
   });
 });
 
+describe("the cursor's cell and its character", () => {
+  it("counts an emoji as one character over two cells", () => {
+    expect(charactersBeforeCell("❯ ola mundo", 6)).toBe(6);
+    expect(charactersBeforeCell("❯ ola 😀 mundo", 9)).toBe(8);
+    expect(charactersBeforeCell("❯ ola", 7)).toBe(7);
+    // A skin tone and a VS16 share the cluster's two cells.
+    expect(charactersBeforeCell("ola 👍🏽 x", 7)).toBe(7);
+    expect(charactersBeforeCell("a❤️b", 3)).toBe(3);
+  });
+});
+
 describe("Claude Code's prompt box, as recorded", () => {
   const recorded = recording
     .split("\n")
     .filter((line: string) => line.trim() !== "")
     .map((line: string) => JSON.parse(line) as { lines: string[]; cursorRow: number; cursorCol: number; selected: string; keys: string });
 
-  it("has the eight cases the Mac was tried on", () => {
-    expect(recorded.length).toBe(8);
+  it("has the ten cases the Mac was tried on", () => {
+    expect(recorded.length).toBe(10);
   });
 
-  for (const [index, c] of [...Array(8).keys()].entries()) {
+  for (const [index, c] of [...Array(10).keys()].entries()) {
     it(`cut ${index + 1}: the same keys the Mac sent`, () => {
       const fixture = recorded[c];
       const keys = keysToCut(fixture.selected, fixture.lines, fixture.cursorRow, fixture.cursorCol);

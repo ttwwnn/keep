@@ -6,8 +6,9 @@
 #
 #   tools/cut-test.sh             the check
 #   tools/cut-test.sh --sabotage  and then the cursor always taken to be at the
-#                                 selection's start, and an ambiguous match
-#                                 taken as the first, each of which it must fail
+#                                 selection's start, an ambiguous match taken
+#                                 as the first, the cursor's cell taken for its
+#                                 character, each of which it must fail
 set -uo pipefail
 cd "$(dirname "$0")/.."
 WORK=$(mktemp -d /tmp/keep-cut-XXXXXX)
@@ -41,8 +42,14 @@ sed 's/guard !squeezed(selected).isEmpty, squeezed(selected) == squeezed(all) el
 build "$WORK/Sabotaged.swift" || exit 1
 if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
 
+echo "sabotage: the cursor's cell is taken for its character"
+sed 's/if cells >= cell { return count }/if count >= cell { return count }/' "$SOURCE" > "$WORK/Sabotaged.swift"
+grep -q 'if count >= cell' "$WORK/Sabotaged.swift" || { echo "sabotage did not apply"; exit 1; }
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
 echo "sabotage: a word cut where the row ends is taken for two words"
-sed 's/let cutMidWord = row.count >= width \&\& tail > 0 \&\& head > 0 \&\& tail + head > width/let cutMidWord = false/' "$SOURCE" > "$WORK/Sabotaged.swift"
+sed 's/let cutMidWord = cells >= width \&\& tail > 0 \&\& head > 0 \&\& tail + head > width/let cutMidWord = false/' "$SOURCE" > "$WORK/Sabotaged.swift"
 grep -q 'let cutMidWord = false' "$WORK/Sabotaged.swift" || { echo "sabotage did not apply"; exit 1; }
 build "$WORK/Sabotaged.swift" || exit 1
 if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
