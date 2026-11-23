@@ -41,7 +41,6 @@ import {
   dollars,
   jevHelp,
   jevNote,
-  spentIn,
   type Account,
   type UsageLine,
 } from "./ia";
@@ -452,27 +451,24 @@ describe("the Jev's credit", () => {
       measuredAt: null,
       problem: "sem rede",
       pending: null,
-      spent30d: null, spentDays: null,
+      spent30d: null,
     });
     expect(line?.pending).toBeNull();
     expect(readJev({ credit: credit(), measuredAt: 1, problem: null, pending: 0.0002 })?.pending).toBe(0.0002);
-    expect(readJev({ credit: credit(), measuredAt: 1, problem: null, spent30d: 0.0049, spentDays: 4 })).toMatchObject({ spent30d: 0.0049, spentDays: 4 });
+    expect(readJev({ credit: credit(), measuredAt: 1, problem: null, spent30d: 0.0049 })?.spent30d).toBe(0.0049);
   });
   it("the note and the tooltip say it as the macOS footer does", () => {
     const now = Date.UTC(2026, 9, 5, 12);
-    const line = { credit: credit({ keyLimit: null }), measuredAt: now / 1000 - 3600, problem: null, pending: null, spent30d: null, spentDays: null };
+    const line = { credit: credit({ keyLimit: null }), measuredAt: now / 1000 - 3600, problem: null, pending: null, spent30d: null };
     expect(jevNote(line, now)).toBe("medido há 1h");
-    expect(jevNote({ credit: null, measuredAt: null, problem: null, pending: null, spent30d: null, spentDays: null }, now)).toBe("medindo…");
+    expect(jevNote({ credit: null, measuredAt: null, problem: null, pending: null, spent30d: null }, now)).toBe("medindo…");
     expect(jevHelp(line, now)).toContain("Chave: sem teto, gastou < US$ 0,01");
     expect(jevHelp(line, now)).not.toContain("ainda não contou");
     expect(jevHelp({ ...line, pending: 0.0002 }, now)).toContain(
       "Inclui < US$ 0,01 de decisões desta máquina que o OpenRouter ainda não contou",
     );
     // The spend is the OpenRouter account's in 30 days, not a projection, and the tooltip says whose.
-    expect(jevHelp({ ...line, spent30d: 7.5, spentDays: 30 }, now)).toContain("Gasto da conta do OpenRouter em 30 dias: US$ 7,50");
-    // While the history is short, it says over how many days, not a projection to 30.
-    expect(jevHelp({ ...line, spent30d: 8.66, spentDays: 4 }, now)).toContain("Gasto da conta do OpenRouter em 4 dias: US$ 8,66");
-    expect(spentIn(0.5, 1)).toBe("em 1 dia: US$ 0,50");
+    expect(jevHelp({ ...line, spent30d: 7.5 }, now)).toContain("Gasto da conta do OpenRouter em 30 dias: US$ 7,50");
   });
 });
 

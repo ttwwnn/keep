@@ -336,8 +336,6 @@ struct JevLine: Equatable, Codable {
     var pending: Double?
     /// What the OpenRouter account (every key) spent over the last 30 days, as the core measures it.
     var spent30d: Double?
-    /// Over how many days (1 to 30): fewer while the core's history does not cover the 30 yet.
-    var spentDays: Int?
 }
 
 /// Where the OpenRouter account buys credit.
@@ -434,12 +432,6 @@ enum UsageText {
         let value = max(0, value)
         if value > 0, value < 0.01 { return "< US$ 0,01" }
         return "US$ " + String(format: "%.2f", value).replacingOccurrences(of: ".", with: ",")
-    }
-
-    /// "em 4 dias: US$ 8,66": what the OpenRouter account spent, over the days the core measured (30 once it can).
-    static func spent(_ value: Double, days: Int?) -> String {
-        let days = days ?? 30
-        return "em \(days) \(days == 1 ? "dia" : "dias"): \(dollars(value))"
     }
 
     /// How long until a window starts over, in the fewest characters that

@@ -567,14 +567,6 @@ export interface JevLine {
   pending: number | null;
   /** What the OpenRouter account (every key) spent over the last 30 days, as the core measures it. */
   spent30d: number | null;
-  /** Over how many days (1 to 30): fewer while the core's history does not cover the 30 yet. */
-  spentDays: number | null;
-}
-
-/** "em 4 dias: US$ 8,66": what the OpenRouter account spent, over the days the core measured (30 once it can). */
-export function spentIn(value: number, days: number | null): string {
-  const d = days ?? 30;
-  return `em ${d} ${d === 1 ? "dia" : "dias"}: ${dollars(value)}`;
 }
 
 /** Where the OpenRouter account buys credit. */
@@ -670,7 +662,7 @@ export function jevHelp(line: JevLine, nowMs: number): string {
     if (c.usedToday !== null) lines.push(`Gasto hoje: ${dollars(c.usedToday)}`);
     if (c.usedThisMonth !== null) lines.push(`Gasto no mês: ${dollars(c.usedThisMonth)}`);
   }
-  if (line.spent30d !== null) lines.push(`Gasto da conta do OpenRouter ${spentIn(line.spent30d, line.spentDays)}`);
+  if (line.spent30d !== null) lines.push(`Gasto da conta do OpenRouter em 30 dias: ${dollars(line.spent30d)}`);
   if (line.pending !== null && line.pending > 0) {
     lines.push(`Inclui ${dollars(line.pending)} de decisões desta máquina que o OpenRouter ainda não contou`);
   }
@@ -697,7 +689,7 @@ export function readJev(value: unknown): JevLine | null {
       : null;
   const problem = typeof v.problem === "string" ? v.problem : null;
   if (!credit && !problem) return null;
-  return { credit, measuredAt: num(v.measuredAt), problem, pending: num(v.pending), spent30d: num(v.spent30d), spentDays: num(v.spentDays) };
+  return { credit, measuredAt: num(v.measuredAt), problem, pending: num(v.pending), spent30d: num(v.spent30d) };
 }
 
 // ------------------------------------------------------------------ the switches
