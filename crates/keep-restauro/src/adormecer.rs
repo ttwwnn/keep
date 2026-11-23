@@ -233,7 +233,15 @@ fn rodada(vistas: &HashSet<(String, u32)>, seco: bool, so_do: Option<(&str, Opti
             diz("conversa em segundo plano anexada".into());
             continue;
         }
-        if let Some(motivo) = impedimento(aba, i.pid) {
+        // Com rascunho de feedback na fila, o `/exit` para na pergunta dele (enviar ou descartar), e a conversa que
+        // saísse dali depois ficaria sem a entrada de adormecida: a aba volta só com o shell.
+        let com_rascunho = [Some(conversa.as_str()), i.conversa.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(|c| keep_ia::sessoes::rascunhos_de_feedback(c, Some(i.pid)) > 0);
+        let impede = impedimento(aba, i.pid)
+            .or_else(|| com_rascunho.then(|| "a conversa tem rascunho de feedback na fila (o /exit pararia na pergunta dele)".to_string()));
+        if let Some(motivo) = impede {
             // Pedida pela pessoa, o motivo vai sozinho: "parada há 0 h" não explica nada.
             diz(if so_do.is_some() { motivo } else { format!("parada há {} h, mas {motivo}", parada_ha / 3_600_000) });
             continue;

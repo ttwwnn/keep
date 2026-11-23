@@ -217,6 +217,54 @@ fn so_a_aba_parada_e_livre_fora_de_vista_adormece_e_volta_ao_ser_mostrada() {
     assert_eq!(nome_no_app(parada), None, "o nome posto sai: o Claude diz o título de novo");
     assert_eq!(adormecer::acordar("A", parada).unwrap()["acordadas"], 0, "nada em dobro");
 
+    // ---- rascunho de feedback na fila: o /exit pararia na pergunta dele, que só sai enviando ou descartando o
+    // rascunho, e a conversa que saísse dali depois ficaria sem a entrada de adormecida. Ela fica no Claude.
+    let (com_rascunho, id_rascunho) = abre();
+    envelhece(&casa, &id_rascunho);
+    let fila = casa.join(".claude/feedback/drafts");
+    std::fs::create_dir_all(&fila).unwrap();
+    let rascunho = "10000000-0000-4000-8000-000000000001";
+    let grava = |status: &str| {
+        let d = serde_json::json!({
+            "draft_id": rascunho, "created_at": chrono::Utc::now().to_rfc3339(), "source_session_id": id_rascunho,
+            "type": "bug", "title": "x", "details": "y", "status": status
+        });
+        std::fs::write(fila.join(format!("{rascunho}.json")), d.to_string()).unwrap();
+    };
+    grava("queued");
+    let seco = adormecer::adormecer(&vistas, true).unwrap();
+    assert!(situacao(&seco, com_rascunho).contains("mas a conversa tem rascunho de feedback na fila"), "{seco:#}");
+    let r = adormecer::adormecer_agora("A", Some(com_rascunho), &vistas).unwrap();
+    assert_eq!(r["adormecidas"], 0, "{r:#}");
+    assert!(situacao(&r, com_rascunho).starts_with("a conversa tem rascunho de feedback na fila"), "{r:#}");
+    assert!(!tela_tem("A", com_rascunho, "unsent feedback draft", 1), "nem mandou o /exit");
+    assert!(!adormecer::do_keepd(&k1).iter().any(|a| a.aba == com_rascunho));
+    // Enviado (ou descartado), o rascunho sai da fila, e a conversa dorme como as outras.
+    grava("submitted");
+    let r = adormecer::adormecer_agora("A", Some(com_rascunho), &vistas).unwrap();
+    assert_eq!(r["adormecidas"], 1, "{r:#}");
+    assert!(tela_tem("A", com_rascunho, "Resume this session", 10));
+
+    // ---- a pergunta na tela sem o rascunho à vista do Keep: ele para ao vê-la, sem esperar os 20 s do /exit e
+    // sem responder; a resposta é da pessoa.
+    let saida = daemon::nova_aba("A", Some(&raiz.to_string_lossy()), 120, 30).unwrap();
+    assert!(tela_tem("A", saida, "$", 15), "o prompt");
+    let linha = format!(r"printf '\033]0;✳ Conversa {saida}\007'; FALSA_RASCUNHO_NA_SAIDA=1 {claude}");
+    assert!(keep_ia::trocar::digita("A", saida, &linha, true).unwrap());
+    assert!(tela_tem("A", saida, "Pronto.", 15));
+    let _ = conversa_da_aba(saida);
+    let inicio = std::time::Instant::now();
+    let r = adormecer::adormecer_agora("A", Some(saida), &vistas).unwrap();
+    assert_eq!(r["adormecidas"], 0, "{r:#}");
+    assert!(situacao(&r, saida).contains("parou na pergunta do rascunho de feedback"), "{r:#}");
+    assert!(inicio.elapsed() < Duration::from_secs(15), "parou ao ver a pergunta: {:?}", inicio.elapsed());
+    assert!(tela_tem("A", saida, "Esc to discard and exit", 1), "o Keep não respondeu a pergunta");
+    keep_ia::trocar::tecla("A", saida, b"\x1b").unwrap();
+    assert!(tela_tem("A", saida, "Resume this session", 10));
+    for t in [com_rascunho, saida] {
+        daemon::fecha_aba("A", t).unwrap();
+    }
+
     // ---- adormece de novo e o computador reinicia
     assert!(tela_tem("A", parada, "Pronto.", 15));
     for t in [vista, recente, ocupada] {
