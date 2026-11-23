@@ -475,11 +475,13 @@ perguntas de decisão, no Claude Code e no Codex) gasta crédito do OpenRouter a
   arredondamento; a sobra que não cobre uma chamada inteira fica para a leitura seguinte). Chamada não
   contada em 10 min sai da soma; chave nova começa o livro do zero. Os dois apps vigiam o livro no
   olhar de 2 s e pedem `--cache`: uma decisão aparece no rodapé em uns 2 s, sem ir à rede.
-- Gasto de 30 dias (`spent30d`): o que a CHAVE do Jev (`keyUsed`) gastou nos últimos 30 dias, de fato, sem
-  média nem projeção (pedido de 23/11/2026). O cache guarda um ponto por hora do `keyUsed` (31 dias); o gasto é a
-  diferença até o ponto mais velho dentro dos 30 dias, mais as decisões da chave no livro de antes desse ponto; sem
-  ponto, só as decisões do livro. O rodapé mostra "Gasto em 30 dias: US$ xx,xx" e um botão "Pôr crédito", que abre
-  `https://openrouter.ai/settings/credits` (pedido de 12/11/2026).
+- Gasto de 30 dias (`spent30d`, `spentDays`): o que a CONTA do OpenRouter (todas as chaves, não só a do Jev)
+  gastou, de fato, sem média (pedido de 23/11/2026): a subida do `used` desde o ponto mais velho do histórico (um
+  ponto por hora, 31 dias) dentro dos 30 dias. Enquanto o histórico não cobre os 30, `spentDays` diz quantos (1 a 30),
+  e o rodapé mostra "Gasto em 4 dias: US$ 8,66"; com 30, "Gasto em 30 dias: US$ xx,xx". Com menos de um dia de
+  histórico, nada. O `GET /api/v1/activity` daria os 30 dias de uma vez, mas só responde a chave de gestão (a do Jev
+  é de inferência: HTTP 403, "Only management keys can fetch activity for an account"). Ao lado, o botão
+  "Pôr crédito", que abre `https://openrouter.ai/settings/credits` (pedido de 12/11/2026).
 - Os valores do Jev têm duas casas decimais: o número na tela muda quando o gasto acumulado das decisões
   completa um centavo (uma decisão custa de US$ 0,00002 a US$ 0,0002).
 - Resposta: `{"jev": {"credit": {"total", "used", "keyLimit", "keyUsed", "usedToday", "usedThisMonth"},

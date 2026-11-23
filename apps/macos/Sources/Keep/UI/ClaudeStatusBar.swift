@@ -65,7 +65,7 @@ final class ClaudeStatusBar: NSView {
         addSubview(filesButton)
         jevLabel.font = Self.font
         jevLabel.textColor = .secondaryLabelColor
-        jevLabel.toolTip = "O que o Jev (a chave dele no OpenRouter) gastou nos últimos 30 dias"
+        jevLabel.toolTip = "O que a conta do OpenRouter (todas as chaves) gastou de fato nos últimos dias, até 30"
         jevLabel.setAccessibilityIdentifier("claude-jev-average")
         // Short of room, the spend gives way first, cut at its end: never over "Arquivos".
         jevLabel.lineBreakMode = .byTruncatingTail
@@ -107,7 +107,7 @@ final class ClaudeStatusBar: NSView {
         creditButton.attributedTitle = NSAttributedString(
             string: "Pôr crédito", attributes: [.font: Self.font, .foregroundColor: NSColor.linkColor])
         if let spent = jev?.spent30d {
-            jevLabel.stringValue = "Gasto em 30 dias: \(UsageText.dollars(spent))"
+            jevLabel.stringValue = "Gasto \(UsageText.spent(spent, days: jev?.spentDays))"
         }
         jevLabel.isHidden = jev?.spent30d == nil
         creditButton.isHidden = jev == nil

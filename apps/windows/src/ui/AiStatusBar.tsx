@@ -19,7 +19,7 @@ import {
   type Choice,
 } from "../aiStatus";
 import { filesOpen, toggleFiles } from "../chatFiles";
-import { OPENROUTER_CREDITS_URL, dollars } from "../ia";
+import { OPENROUTER_CREDITS_URL, spentIn } from "../ia";
 import { jev } from "../iaStore";
 import { openUrl } from "../api";
 import { viewKey } from "../terminals";
@@ -116,9 +116,9 @@ export function AiStatusBar(props: { workspace: string; root: number; pane: numb
             <span
               class="ai-agents"
               data-chip="jev-average"
-              title="O que o Jev (a chave dele no OpenRouter) gastou nos últimos 30 dias"
+              title="O que a conta do OpenRouter (todas as chaves) gastou de fato nos últimos dias, até 30"
             >
-              Gasto em 30 dias: {dollars(jev.value.spent30d)}
+              Gasto {spentIn(jev.value.spent30d, jev.value.spentDays)}
             </span>
           )}
           <button
