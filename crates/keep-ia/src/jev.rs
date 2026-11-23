@@ -125,9 +125,6 @@ struct Registro {
     /// O gasto da conta (`used`, todas as chaves) medido no tempo: um ponto por hora, 31 dias. Dá o gasto médio.
     #[serde(default)]
     historico: Vec<[f64; 2]>,
-    /// O gasto da chave do Jev (`key_used`) medido no tempo, como `historico`: dá o gasto médio do Jev.
-    #[serde(default)]
-    historico_chave: Vec<[f64; 2]>,
 }
 
 fn agora() -> f64 {
@@ -493,35 +490,27 @@ pub struct Saldo {
     pub problem: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending: Option<f64>,
-    /// O que o Jev (a chave dele no OpenRouter) gastou nos últimos 30 dias (`gasto_30_dias`).
+    /// O que a conta do OpenRouter gastou nos últimos 30 dias (`gasto_30_dias`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spent_30d: Option<f64>,
 }
 
 const TRINTA_DIAS: f64 = 30.0 * 86_400.0;
 
-/// O que um gasto acumulado (`usado`) subiu nos últimos 30 dias: a diferença até o ponto mais velho do
-/// `historico` dentro deles, mais as chamadas do livro (`livro`) de antes desse ponto que ainda caem nos 30 dias;
-/// sem ponto, só as chamadas do livro. O gasto de fato, não uma média projetada (pedido de 23/11/2026).
-fn gasto_30_dias(historico: &[[f64; 2]], usado: f64, livro: &[Chamada], agora_s: f64) -> f64 {
-    let desde = agora_s - TRINTA_DIAS;
-    let ponto = historico.iter().find(|p| p[0] >= desde);
-    let ate = ponto.map_or(f64::INFINITY, |p| p[0]);
-    let antes: f64 = livro.iter().filter(|c| c.quando > desde && c.quando <= ate).map(|c| c.custo).sum();
-    ponto.map_or(0.0, |p| (usado - p[1]).max(0.0)) + antes
-}
-
-/// O gasto do Jev nos últimos 30 dias: o da CHAVE dele, que o OpenRouter conta (`key_used`), não o da conta toda. A
-/// conta soma as outras chaves da mesma conta do OpenRouter (outras máquinas e serviços), que gastam bem mais que a
-/// do Jev. Antes do histórico, as decisões da chave no livro.
-fn gasto_30_dias_da_chave(r: &Registro, usado_chave: f64, agora_s: f64) -> f64 {
-    let livro = r.chave_id.as_deref().map(|id| chamadas(Some(id), agora_s - TRINTA_DIAS)).unwrap_or_default();
-    gasto_30_dias(&r.historico_chave, usado_chave, &livro, agora_s)
+/// O que a CONTA do OpenRouter gasta em 30 dias (pedido de 23/11/2026: "o custo do OpenRouter", não o da chave do
+/// Jev): a subida do `used` desde o ponto mais velho do `historico` dentro dos 30 dias; com menos de 30 dias de
+/// histórico, na proporção ("gastou 8,66 em 4 dias vai gastar 63,3 em 30"). Com menos de um dia, nada.
+/// shortcut: os 30 dias de uma vez só viriam do `/api/v1/activity`, que pede chave de gestão (a do Jev é de
+/// inferência: HTTP 403); com uma chave dessas no Chaveiro, perguntar a ele.
+fn gasto_30_dias(historico: &[[f64; 2]], usado: f64, agora_s: f64) -> Option<f64> {
+    let velho = historico.iter().find(|p| agora_s - p[0] <= TRINTA_DIAS)?;
+    let dias = (agora_s - velho[0]) / 86_400.0;
+    (dias >= 1.0).then(|| (usado - velho[1]).max(0.0) * 30.0 / dias.min(30.0))
 }
 
 fn saldo(r: Registro) -> Saldo {
     let p = pendente(&r, agora());
-    let gasto = r.credit.as_ref().and_then(|c| c.key_used).map(|k| gasto_30_dias_da_chave(&r, k + p, agora()));
+    let gasto = r.credit.as_ref().and_then(|c| gasto_30_dias(&r.historico, c.used + p, agora()));
     Saldo {
         credit: r.credit.map(|c| c.com_pendente(p)),
         measured_at: r.measured_at,
@@ -603,15 +592,6 @@ pub fn medir(forcar: bool) -> Option<Saldo> {
                 r.historico.push([agora_s, usado]);
             }
             r.historico.retain(|p| agora_s - p[0] <= 31.0 * 86_400.0);
-            if let Some(k) = r.credit.as_ref().and_then(|c| c.key_used) {
-                if outra_chave || r.historico_chave.last().is_some_and(|p| k + 1e-9 < p[1]) {
-                    r.historico_chave.clear();
-                }
-                if r.historico_chave.last().is_none_or(|p| agora_s - p[0] >= 3600.0) {
-                    r.historico_chave.push([agora_s, k]);
-                }
-                r.historico_chave.retain(|p| agora_s - p[0] <= 31.0 * 86_400.0);
-            }
         }
         Resultado::Falha(problema, pausa) => {
             r.problem = Some(problema);
@@ -1041,8 +1021,8 @@ mod testes {
         assert!(s.pending.is_none());
         assert!(perto(s.credit.unwrap().key_used.unwrap(), 0.01));
         assert_eq!(le_cache().historico.len(), 1, "a leitura entra no histórico do gasto da conta");
-        assert_eq!(le_cache().historico_chave, vec![[le_cache().historico_chave[0][0], 0.01]], "e o da chave do Jev");
         assert!(perto(le_cache().historico[0][1], 0.03));
+        assert_eq!(s.spent_30d, None, "menos de um dia de histórico: sem gasto de 30 dias");
         // O gasto que desce (outra conta) zera o histórico: só o ponto novo fica.
         let mut r = le_cache();
         r.historico = vec![[agora() - 7200.0, 5.0]];
@@ -1127,22 +1107,20 @@ mod testes {
     }
 
     #[test]
-    fn o_gasto_dos_ultimos_30_dias() {
+    fn o_gasto_dos_ultimos_30_dias_e_o_da_conta() {
         let dia = 86_400.0;
         let hoje = 100.0 * dia;
-        let c = |d: f64, custo: f64| Chamada { quando: hoje - d * dia, custo };
-        // Sem histórico nem livro: nada gasto.
-        assert_eq!(gasto_30_dias(&[], 19.9, &[], hoje), 0.0);
-        // Sem histórico: as decisões do livro nos 30 dias; a de 31 dias fica de fora.
-        assert!(perto(gasto_30_dias(&[], 19.9, &[c(31.0, 5.0), c(10.0, 0.5), c(1.0, 0.25)], hoje), 0.75));
-        // Histórico de 30 dias: a diferença até o ponto mais velho dentro deles; o de 31 dias fica de fora. Não divide.
-        let historico = [[hoje - 31.0 * dia, 1.0], [hoje - 29.9 * dia, 10.0], [hoje - 5.0 * dia, 20.0]];
-        assert!(perto(gasto_30_dias(&historico, 25.0, &[c(29.95, 0.5), c(10.0, 9.0)], hoje), 15.5));
-        // Histórico curto (2 dias): a diferença nele, mais o livro de antes dele.
-        let curto = [[hoje - 2.0 * dia, 24.0]];
-        assert!(perto(gasto_30_dias(&curto, 25.0, &[c(20.0, 0.25), c(1.0, 1.0)], hoje), 1.25));
-        // O gasto acumulado que voltou para trás não dá gasto negativo.
-        assert_eq!(gasto_30_dias(&curto, 20.0, &[], hoje), 0.0);
+        // 4 dias de histórico: na proporção, 8,66 em 4 dias são 64,95 em 30.
+        let curto = [[hoje - 4.0 * dia, 34.55], [hoje - dia, 40.0]];
+        assert!(perto(gasto_30_dias(&curto, 43.21, hoje).unwrap(), 64.95));
+        // 30 dias: do ponto mais velho dentro deles, sem proporção; o de 31 dias fica de fora.
+        let longo = [[hoje - 31.0 * dia, 1.0], [hoje - 29.9 * dia, 10.0], [hoje - dia, 40.0]];
+        assert!(perto(gasto_30_dias(&longo, 43.0, hoje).unwrap(), 33.0 * 30.0 / 29.9));
+        // Menos de um dia, ou nada: sem número.
+        assert_eq!(gasto_30_dias(&[[hoje - 0.5 * dia, 40.0]], 43.0, hoje), None);
+        assert_eq!(gasto_30_dias(&[], 43.0, hoje), None);
+        // O gasto que voltou para trás não fica negativo.
+        assert_eq!(gasto_30_dias(&curto, 30.0, hoje), Some(0.0));
     }
 
     #[test]

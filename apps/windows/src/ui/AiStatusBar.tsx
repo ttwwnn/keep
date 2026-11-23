@@ -116,7 +116,7 @@ export function AiStatusBar(props: { workspace: string; root: number; pane: numb
             <span
               class="ai-agents"
               data-chip="jev-average"
-              title="O que o Jev (a chave dele no OpenRouter) gastou nos últimos 30 dias"
+              title="O que a conta do OpenRouter (todas as chaves) gasta em 30 dias; com menos histórico, na proporção"
             >
               Gasto em 30 dias: {dollars(jev.value.spent30d)}
             </span>

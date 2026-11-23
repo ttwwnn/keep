@@ -467,8 +467,8 @@ describe("the Jev's credit", () => {
     expect(jevHelp({ ...line, pending: 0.0002 }, now)).toContain(
       "Inclui < US$ 0,01 de decisões desta máquina que o OpenRouter ainda não contou",
     );
-    // The spend is the Jev's key's, what it spent in 30 days, not a projection, and the tooltip says whose.
-    expect(jevHelp({ ...line, spent30d: 7.5 }, now)).toContain("Gasto do Jev nos últimos 30 dias: US$ 7,50");
+    // The spend is the OpenRouter account's in 30 days, not a projection, and the tooltip says whose.
+    expect(jevHelp({ ...line, spent30d: 7.5 }, now)).toContain("Gasto da conta do OpenRouter em 30 dias: US$ 7,50");
   });
 });
 
