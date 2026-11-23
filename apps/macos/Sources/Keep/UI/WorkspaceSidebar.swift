@@ -693,7 +693,7 @@ struct WorkspaceSidebar: View {
                 workspace: row.name, roots: row.tabRows.map(\.id.root))
             return NSItemProvider(object: payload as NSString)
         }
-        .onDrop(of: [.plainText], delegate: TabDropDelegate(
+        .onDrop(of: [.plainText, .fileURL], delegate: TabDropDelegate(
             workspace: row.name,
             targetRoot: tab.id.root,
             targetKey: tabHoverKey(tab),
@@ -707,6 +707,9 @@ struct WorkspaceSidebar: View {
             moveTabHere: { id in
                 Trace.log("sidebar", "moved \(id) into \(row.name)")
                 dispatch(.moveTab(id, to: row.name, before: tab.id.root))
+            },
+            dropFiles: { paths in
+                DroppedFiles.deliver(paths, workspace: row.name, tab: tab.id.root, asleep: tab.asleep)
             },
             clear: cancelDrag))
         .opacity(dragged == "tab\u{1F}\(row.name)\u{1F}\(tab.id.root)" ? 0.4 : 1)
@@ -1323,7 +1326,13 @@ private struct TabDropDelegate: DropDelegate {
     @Binding var dropTarget: String?
     let commitOrder: ([UInt32]) -> Void
     let moveTabHere: (TabID) -> Void
+    /// Files let go here (the files panel's, the Finder's): their paths go to this tab's conversation.
+    let dropFiles: ([String]) -> Void
     let clear: () -> Void
+
+    /// Files and not one of the sidebar's own rows, which travel as plain text. Asked first: a cancelled row drag
+    /// can leave `dragged` behind.
+    private func carriesFiles(_ info: DropInfo) -> Bool { info.hasItemsConforming(to: [.fileURL]) }
 
     private func draggedTab() -> (workspace: String, root: UInt32)? {
         guard let payload = dragged else { return nil }
@@ -1334,6 +1343,10 @@ private struct TabDropDelegate: DropDelegate {
     }
 
     func dropEntered(info: DropInfo) {
+        if carriesFiles(info) {
+            dropTarget = targetKey
+            return
+        }
         guard let tab = draggedTab() else { return }
         if tab.workspace == workspace, var live = liveOrder, live.workspace == workspace {
             guard let from = live.roots.firstIndex(of: tab.root),
@@ -1354,10 +1367,29 @@ private struct TabDropDelegate: DropDelegate {
     }
 
     /// `.move`, or macOS shows a copy cursor for the whole gesture.
-    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: carriesFiles(info) ? .copy : .move) }
 
     func performDrop(info: DropInfo) -> Bool {
         defer { clear() }
+        if carriesFiles(info) {
+            let providers = info.itemProviders(for: [.fileURL])
+            let group = DispatchGroup()
+            let lock = NSLock()
+            var found: [(Int, String)] = []
+            for (index, provider) in providers.enumerated() {
+                group.enter()
+                _ = provider.loadObject(ofClass: NSURL.self) { url, _ in
+                    defer { group.leave() }
+                    guard let url = url as? URL, url.isFileURL else { return }
+                    lock.lock()
+                    found.append((index, url.path))
+                    lock.unlock()
+                }
+            }
+            // In the order they were picked up, as on the terminal.
+            group.notify(queue: .main) { dropFiles(found.sorted { $0.0 < $1.0 }.map(\.1)) }
+            return true
+        }
         guard let tab = draggedTab() else { return false }
         if tab.workspace == workspace {
             if let live = liveOrder, live.workspace == workspace {
@@ -1367,6 +1399,55 @@ private struct TabDropDelegate: DropDelegate {
             moveTabHere(TabID(workspace: tab.workspace, root: tab.root))
         }
         return true
+    }
+}
+
+extension DroppedFiles {
+    /// Files let go over a tab's name in the sidebar (pedido de 23/11/2026: a file of the files panel dragged
+    /// onto another conversation): their paths go into that tab's terminal, pasted as a drop on it pastes them,
+    /// and the tab on screen stays on screen. A tab whose conversation was put to sleep is woken first, and
+    /// the paths go in once Claude Code's prompt is back.
+    static func deliver(_ paths: [String], workspace: String, tab: UInt32, asleep: Bool) {
+        // Framed as a paste by hand (the daemon does not know the program asked): a control character in a name
+        // could end the frame early and type the rest as keys, so such a path is refused instead.
+        guard !paths.isEmpty, !paths.joined().unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F })
+        else { NSSound.beep(); return }
+        let bytes = Array(("\u{1b}[200~" + text(for: paths) + " \u{1b}[201~").utf8)
+        if asleep { TabRestore.wake(workspace: workspace, tab: tab) }
+        DispatchQueue.global(qos: .userInitiated).async {
+            if asleep, !waitForPrompt(workspace: workspace, tab: tab) {
+                Trace.log("drop", "\(workspace)/\(tab) woke without a prompt; \(paths.count) path(s) not pasted")
+                DispatchQueue.main.async { NSSound.beep() }
+                return
+            }
+            do {
+                try Daemon.sendInput(bytes, workspace: workspace, tab: tab)
+                Trace.log("drop", "\(workspace)/\(tab) \(paths.count) path(s) pasted from the sidebar")
+            } catch {
+                Trace.log("drop", "\(workspace)/\(tab) could not be pasted into: \(error)")
+                DispatchQueue.main.async { NSSound.beep() }
+            }
+        }
+    }
+
+    /// Up to 90 s for the woken conversation: a program running in the tab, and Claude Code's prompt on its screen.
+    private static func waitForPrompt(workspace: String, tab: UInt32) -> Bool {
+        for _ in 0..<180 {
+            Thread.sleep(forTimeInterval: 0.5)
+            let running = (try? Daemon.list())?.first { $0.name == workspace }?.tabs.first { $0.id == tab }?.busy == true
+            if running, let screen = try? Daemon.preview(workspace: workspace, tab: tab), showsPrompt(screen) {
+                // The box drawn is not yet the box reading: a moment for its input to start.
+                Thread.sleep(forTimeInterval: 1)
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Claude Code's prompt is on screen: a `❯` row and the rules around the box.
+    static func showsPrompt(_ screen: String) -> Bool {
+        let lines = screen.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        return lines.contains { $0.hasPrefix("❯") } && lines.contains { $0.hasPrefix(String(repeating: "─", count: 12)) }
     }
 }
 

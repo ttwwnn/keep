@@ -17,7 +17,9 @@
 #   - text, which is what the sidebar drags its rows as: refused, nothing typed;
 #   - a file an app promises (Mail's attachments): written to a folder of its
 #     own, then its path typed;
-#   - the escaping itself, on names with every character a shell reads.
+#   - the escaping itself, on names with every character a shell reads;
+#   - files let go over another tab's name in the sidebar: pasted into that
+#     tab, the one on screen staying on screen and getting nothing.
 #
 # It takes the pointer for a few seconds, three times. Your app and your
 # daemon are never touched.
@@ -65,6 +67,7 @@ say "building $APP_NAME, the client, the daemon and the tools (yours is left alo
 ./tools/build-dev.sh >/dev/null || { say "could not build $APP_NAME — run tools/build-dev.sh"; exit 1; }
 swiftc -O tools/mousedrag.swift -o "$MOUSE" 2>/dev/null || { say "could not build mousedrag"; exit 1; }
 swiftc -O tools/dragsource.swift -o "$SOURCE" 2>/dev/null || { say "could not build dragsource"; exit 1; }
+swiftc -O tools/axpress.swift -o "$WORK/axpress" 2>/dev/null || { say "could not build axpress"; exit 1; }
 
 # ------------------------------------------------------------ the escaping
 say ""
@@ -99,16 +102,18 @@ require_scratch_socket
 rm -f "$SOCKET"
 
 # The tab's program: asks for bracketed paste and keeps every byte it is sent.
+# The first tab's go to $RECORDED, the second's to $RECORDED.2.
 cat >"$WORK/recorder" <<PY
 #!/usr/bin/env python3
 import os, select, sys, time, tty
+path = "$RECORDED" if not os.path.exists("$RECORDED.ready") else "$RECORDED.2"
 sys.stdout.write("recorder ready\r\n\x1b[?2004h")
 sys.stdout.flush()
 fd = sys.stdin.fileno()
 tty.setraw(fd)
-open("$RECORDED.ready", "w").close()
+open(path + ".ready", "w").close()
 end = time.time() + 300
-with open("$RECORDED", "ab", buffering=0) as out:
+with open(path, "ab", buffering=0) as out:
     while time.time() < end:
         if select.select([fd], [], [], 1)[0]:
             data = os.read(fd, 4096)
@@ -192,6 +197,31 @@ PROMISED=$(printf '%s' "$GOT" | sed -E $'s/^\x1b\\[200~//; s/ \x1b\\[201~$//')
 check "a path in a folder of its own for the drop arrives, bracketed, ending in a space" "yes" \
     "$(printf '%s' "$GOT" | grep -qE $'^\x1b\\[200~/.*/keep-drops/[0-9A-F-]+/prometido\\.txt \x1b\\[201~$' && echo yes || echo no)"
 check "and the file is there, with what was promised" "conteúdo" "$(cat "$PROMISED" 2>/dev/null)"
+
+# ------------------------------------------------------------ onto another tab's name
+say ""
+say "files let go over another tab's name in the sidebar"
+./target/release/keep new drop >/dev/null 2>&1
+waited=0
+while [ ! -e "$RECORDED.2.ready" ] && [ "$waited" -lt 40 ]; do sleep 0.25; waited=$((waited + 1)); done
+: >"$RECORDED.2"
+waited=0
+until read -r NX NY NW NH < <("$WORK/axpress" "$APP_NAME" frame "sidebar-title-drop/2" 2>/dev/null) || [ "$waited" -ge 20 ]; do
+    sleep 0.5; waited=$((waited + 1))
+done
+if [ -n "${NH:-}" ]; then
+    TX=$(( ${NX%.*} + ${NW%.*} / 2 ))
+    TY=$(( ${NY%.*} + ${NH%.*} / 2 ))
+    check "the drop is taken" "ended copy" "$(drop files "$A")"
+    sleep 1
+    WANT=$(python3 -c 'import sys; print(repr(("\x1b[200~" + sys.argv[1] + "/files/a\\ b.txt \x1b[201~").encode()))' "$WORK")
+    check "the path arrives in that tab, as one bracketed paste ending in a space" "$WANT" \
+        "$(python3 -c 'import sys; print(repr(open(sys.argv[1], "rb").read()))' "$RECORDED.2")"
+    check "the tab on screen gets nothing" "b''" "$(recorded)"
+else
+    say "  FAIL  the second tab's name is not in the sidebar"
+    FAILED=$((FAILED + 1))
+fi
 
 stop_app
 say ""
