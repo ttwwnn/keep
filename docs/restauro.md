@@ -288,6 +288,13 @@ a conversa volta quando a aba é mostrada.
 - **Antes de sair**, a conversa, a conta e as opções vão para
   `adormecidas.json` (por keepd, na pasta do restauro). Se a saída falha, a
   aba sai da lista e segue como estava.
+- **Rascunho de feedback na fila** (`<config>/feedback/drafts/<id>.json` da
+  conversa, `queued`, de até 30 dias): a conversa não adormece (`a conversa
+  tem rascunho de feedback na fila`). No `/exit` o Claude Code (2.1.330)
+  pergunta por ele, e só sai enviando (Enter) ou descartando (Esc) o
+  rascunho; a conversa que saísse dali depois ficaria sem a entrada de
+  adormecida, e a aba, só com o shell. Se a pergunta aparece mesmo assim, o
+  `/exit` para ao vê-la, sem responder.
 - **O nome**: sem o Claude a aba perderia o título da conversa. A que não tem
   nome dado pela pessoa recebe o título como nome (`names.json`), e o nome sai
   quando ela acorda, se ninguém o trocou. O nome que a pessoa deu nunca muda.
@@ -328,7 +335,8 @@ keep restauro acordar --workspace W --aba N
 Testes: `cargo build -p keep-ia --examples && cargo test -p keep-restauro
 --test adormecer` (daemon do teste, IA falsa em quatro abas: só a parada,
 livre e fora de vista adormece; o retrato a leva; acordar a retoma; o reinício
-a mantém adormecida) e `tools/adormecer-test.sh` (o KeepDev de verdade: a aba
+a mantém adormecida; com rascunho de feedback na fila ela fica, e a pergunta
+do rascunho na tela para o `/exit` sem resposta) e `tools/adormecer-test.sh` (o KeepDev de verdade: a aba
 fora de vista adormece, a da frente não, mostrar a aba a acorda, e o zzz da
 aba, clicado com o mouse, a adormece sem esperar as 12 h e sem entrar nela) e,
 no Windows, o passo do zzz do roteiro do app (`apps/windows/src/e2e.ts`).

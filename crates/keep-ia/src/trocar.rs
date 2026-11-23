@@ -447,6 +447,13 @@ pub fn sai_do_claude(ws: &str, tab: u32, interromper: bool, sintaxe: linha::Sint
         if pronto.agora() {
             return Ok(());
         }
+        if tela::rascunho_na_saida(&linhas) {
+            // O Enter abre o envio do rascunho e o Esc o descarta: nenhum dos dois cabe ao Keep.
+            return Err(Recusa::nova(
+                "rascunho-de-feedback",
+                "O Claude parou na pergunta do rascunho de feedback na fila da conversa (o Enter revisa e envia; o Esc descarta e sai); o Keep não a responde.",
+            ));
+        }
         if let Some(p) = tela::pergunta_de_saida(&linhas) {
             if !respondida {
                 let tarefas = if p.tarefas.is_empty() { "sem a lista".to_string() } else { p.tarefas.join(", ") };
@@ -820,6 +827,13 @@ pub fn trocar(p: &Pedido) -> Result<String, Recusa> {
                 ));
             }
             let sid = sessao.as_ref().map(|s| s.id.clone()).or_else(|| frente.and_then(|f| abas::conversa_do_processo(f, "claude")));
+            if sid.as_deref().is_some_and(|id| sessoes::rascunhos_de_feedback(id, frente) > 0) {
+                // O `/exit` pararia na pergunta dele, que só sai enviando ou descartando o rascunho.
+                return Err(Recusa::nova(
+                    "rascunho-de-feedback",
+                    "A conversa tem rascunho de feedback na fila, e o /exit pararia na pergunta dele. Envie ou descarte o rascunho pelo /feedback do Claude e troque de novo; nada foi trocado.",
+                ));
+            }
             if agente_alvo != "claude" {
                 if let Some(id) = &sid {
                     preparado = Some(prepara("claude", id, conta_agora.as_deref())?);

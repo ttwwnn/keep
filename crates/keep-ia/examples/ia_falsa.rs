@@ -16,6 +16,11 @@
 //! (`conta=<token>`): é como os testes veem a troca de conta a quente. Só
 //! tokens de teste aparecem inteiros; um comprido sai pela impressão.
 //!
+//! Com rascunho de feedback da conversa na fila (`<config>/feedback/drafts`)
+//! ou `FALSA_RASCUNHO_NA_SAIDA=1`, o `/exit` do Claude falso pergunta por ele
+//! como o 2.1.330: o Esc descarta o rascunho e sai; o Enter abre o envio, e o
+//! Esc nele sai sem descartar.
+//!
 //! `/limite <recomeço> <frase>` finge a parada no limite de uso: a frase na
 //! tela e, no fim do transcrito, a fala de erro como o Claude Code 2.1.318 a
 //! grava (`error: rate_limit` e a recusa da janela de 5 h, com o recomeço em
@@ -60,6 +65,21 @@ mod falsa {
             },
             _ => "-".into(),
         }
+    }
+
+    /// Os rascunhos de feedback desta conversa na fila, onde o Claude os guarda (`<config>/feedback/drafts`).
+    fn rascunhos_na_fila(id: &str) -> Vec<PathBuf> {
+        let config = std::env::var("CLAUDE_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|_| casa().join(".claude"));
+        let Ok(dir) = std::fs::read_dir(config.join("feedback/drafts")) else { return vec![] };
+        dir.flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                std::fs::read_to_string(p)
+                    .ok()
+                    .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+                    .is_some_and(|d| d["source_session_id"] == id && d["status"] == "queued")
+            })
+            .collect()
     }
 
     fn agora_ms() -> u64 {
@@ -226,6 +246,35 @@ mod falsa {
                     let cmd = std::mem::take(&mut buf);
                     match cmd.trim() {
                         "/exit" if !codex => {
+                            let rascunhos = rascunhos_na_fila(&id);
+                            if !rascunhos.is_empty() || var("FALSA_RASCUNHO_NA_SAIDA") == "1" {
+                                // Como o 2.1.330: o /exit não volta atrás; o Esc descarta e sai, o Enter abre o
+                                // envio (e o Esc nele sai sem descartar).
+                                let _ = write!(
+                                    out,
+                                    "\r\n▔▔▔▔▔▔▔▔▔▔\r\n  You have 1 unsent feedback draft\r\n  Enter to review & send · Esc to discard and exit\r\n"
+                                );
+                                let _ = out.flush();
+                                let mut painel = false;
+                                while std::io::stdin().read(&mut byte).unwrap_or(0) == 1 {
+                                    match byte[0] {
+                                        0x1b => {
+                                            if !painel {
+                                                for r in &rascunhos {
+                                                    let _ = std::fs::remove_file(r);
+                                                }
+                                            }
+                                            break;
+                                        }
+                                        b'\r' if !painel => {
+                                            painel = true;
+                                            let _ = write!(out, "\r\n  Feedback: 1 rascunho\r\n");
+                                            let _ = out.flush();
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
                             let _ = std::fs::remove_file(&sessao);
                             let _ = write!(out, "\r\n\r\nResume this session with:\r\nclaude --resume {id}\r\n");
                             let _ = out.flush();

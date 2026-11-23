@@ -342,6 +342,47 @@ pub fn conversa_claude_existe(id: &str) -> bool {
     })
 }
 
+/// Por quantos dias o Claude Code guarda um rascunho de feedback na fila: o mais velho não conta.
+const RASCUNHO_VALE_DIAS: i64 = 30;
+/// O maior rascunho de feedback que o Claude Code lê: um maior não conta.
+const RASCUNHO_MAXIMO: u64 = 32 * 1024;
+
+/// Os rascunhos de feedback da conversa `conversa` que esperam envio na fila do Claude Code. Com algum, o `/exit`
+/// não sai: o Claude pergunta por eles ("Enter to review & send · Esc to discard and exit"), e o único jeito de sair
+/// sem enviar descarta o rascunho. Conta como o Claude Code conta ao sair: `<config>/feedback/drafts/<draft_id>.json`,
+/// com `status` "queued", da conversa, de até 30 dias e 32 KB. `pid` é o Claude que roda a conversa: a fila fica na
+/// pasta de configuração dele (o `CLAUDE_CONFIG_DIR`, o de uma IA presa); sem ele, ou sem a variável, `~/.claude`.
+pub fn rascunhos_de_feedback(conversa: &str, pid: Option<u32>) -> usize {
+    let config = pid
+        .and_then(|p| processos::variavel(p, "CLAUDE_CONFIG_DIR"))
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(caminhos::claude);
+    rascunhos_em(&config.join("feedback").join("drafts"), conversa, chrono::Utc::now())
+}
+
+fn rascunhos_em(pasta: &Path, conversa: &str, agora: chrono::DateTime<chrono::Utc>) -> usize {
+    let Ok(dir) = std::fs::read_dir(pasta) else { return 0 };
+    dir.flatten()
+        .filter(|e| {
+            let nome = e.file_name().to_string_lossy().into_owned();
+            let Some(id) = nome.strip_suffix(".json") else { return false };
+            // Até um byte além do máximo: assim o maior se mostra maior, e não cortado no ponto.
+            let Ok(texto) = caminhos::ler_texto_ate(&e.path(), RASCUNHO_MAXIMO + 1) else { return false };
+            if texto.len() as u64 > RASCUNHO_MAXIMO {
+                return false;
+            }
+            let Ok(d) = serde_json::from_str::<Value>(&texto) else { return false };
+            // A data que não se lê não vence, como no Claude Code.
+            let vencido = d["created_at"]
+                .as_str()
+                .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+                .is_some_and(|c| agora.signed_duration_since(c) > chrono::Duration::days(RASCUNHO_VALE_DIAS));
+            d["draft_id"] == id && d["status"] == "queued" && d["source_session_id"] == conversa && !vencido
+        })
+        .count()
+}
+
 /// Os rollouts da conversa `id` do Codex em `home` (`sessions/AAAA/MM/DD/rollout-…-<id>.jsonl`).
 pub fn rollouts_codex(home: &Path, id: &str) -> Vec<PathBuf> {
     let mut saida = Vec::new();
@@ -471,6 +512,45 @@ mod testes {
         assert_eq!(parada(&t).map(|p| p.uuid), Some("u-2026-11-04T18:00:00Z".into()), "subagente e comando local não contam");
         std::fs::write(&t, format!("{texto}{}\n", serde_json::json!({"type": "assistant", "timestamp": "2026-11-04T18:05:00Z", "message": {"content": [{"type": "text", "text": "pronto"}]}}))).unwrap();
         assert!(parada(&t).is_none(), "o Claude respondeu depois");
+    }
+
+    #[test]
+    fn so_conta_o_rascunho_da_conversa_que_o_claude_poe_na_fila() {
+        let dir = tempfile::tempdir().unwrap();
+        let pasta = dir.path();
+        let conversa = "aaaaaaaa-0000-4000-8000-000000000001";
+        let agora = chrono::DateTime::parse_from_rfc3339("2026-11-23T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        let grava = |id: &str, mudar: &dyn Fn(&mut Value)| {
+            let mut d = serde_json::json!({
+                "draft_id": id, "created_at": "2026-11-20T15:25:19.662Z", "source_session_id": conversa,
+                "type": "bug", "title": "x", "details": "y", "status": "queued"
+            });
+            mudar(&mut d);
+            std::fs::write(pasta.join(format!("{id}.json")), d.to_string()).unwrap();
+        };
+        let conta = || rascunhos_em(pasta, conversa, agora);
+        assert_eq!(rascunhos_em(&pasta.join("nao-existe"), conversa, agora), 0, "sem a pasta, nenhum");
+        grava("10000000-0000-4000-8000-000000000001", &|_| {});
+        assert_eq!(conta(), 1);
+        // Outra conversa, ou o que já saiu da fila: não contam.
+        grava("10000000-0000-4000-8000-000000000002", &|d| d["source_session_id"] = "bbbbbbbb-0000-4000-8000-000000000002".into());
+        for status in ["submitted", "discarded", "expired"] {
+            grava("10000000-0000-4000-8000-000000000003", &|d| d["status"] = status.into());
+            assert_eq!(conta(), 1, "{status}");
+        }
+        // Vencido (mais de 30 dias) não conta; a data que não se lê não vence.
+        grava("10000000-0000-4000-8000-000000000004", &|d| d["created_at"] = "2026-10-23T11:59:59Z".into());
+        assert_eq!(conta(), 1);
+        grava("10000000-0000-4000-8000-000000000004", &|d| d["created_at"] = "2026-10-24T12:00:00Z".into());
+        assert_eq!(conta(), 2, "30 dias certos ainda valem");
+        grava("10000000-0000-4000-8000-000000000005", &|d| d["created_at"] = "ontem".into());
+        assert_eq!(conta(), 3);
+        // O nome do arquivo tem de ser o do rascunho; maior que 32 KB, ou que não se lê, fica de fora.
+        grava("10000000-0000-4000-8000-000000000006", &|d| d["draft_id"] = "10000000-0000-4000-8000-000000000099".into());
+        grava("10000000-0000-4000-8000-000000000007", &|d| d["details"] = "z".repeat(33 * 1024).into());
+        std::fs::write(pasta.join("10000000-0000-4000-8000-000000000008.json"), "{").unwrap();
+        std::fs::write(pasta.join("10000000-0000-4000-8000-000000000009.json.tmp.1"), "{}").unwrap();
+        assert_eq!(conta(), 3);
     }
 
     #[test]

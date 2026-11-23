@@ -338,6 +338,16 @@ pub fn pergunta_de_saida(linhas: &[String]) -> Option<PerguntaDeSaida> {
     Some(PerguntaDeSaida { tarefas, sair: acha("exit and stop"), ficar: acha("stay") })
 }
 
+/// A pergunta que o `/exit` abre quando a conversa tem rascunho de feedback na fila ("You have 1 unsent feedback
+/// draft", com "Enter to review & send · Esc to discard and exit" embaixo), no pé da tela. Depois dela o `/exit` não
+/// volta atrás: o Enter abre o envio, e o Esc descarta o rascunho e sai. As linhas vêm com o esmaecido (o rodapé
+/// dela é esmaecido).
+pub fn rascunho_na_saida(linhas: &[String]) -> bool {
+    let fim: Vec<&str> = linhas.iter().map(|l| l.trim()).filter(|l| !l.is_empty()).rev().take(3).collect();
+    fim.first().is_some_and(|l| l.contains("Esc to discard and exit"))
+        && fim.iter().skip(1).any(|l| l.contains("unsent feedback draft"))
+}
+
 /// Os jobs que a tela diz terem ido para segundo plano ("backgrounded · 7fb66140").
 pub fn jobs_na_tela(linhas: &[String]) -> Vec<String> {
     static R: OnceLock<Regex> = OnceLock::new();
@@ -488,6 +498,25 @@ mod testes {
         assert_eq!(p.sair.as_deref(), Some("1"));
         assert_eq!(p.ficar.as_deref(), Some("3"));
         assert_eq!(jobs_na_tela(&l("⎿ backgrounded · 7fb66140")), ["7fb66140"]);
+    }
+
+    #[test]
+    fn a_pergunta_do_rascunho_de_feedback_no_exit() {
+        // A tela do Claude Code 2.1.330 depois do /exit: a conversa em cima, a pergunta no pé.
+        let regua = "▔".repeat(40);
+        let tela = l(&format!(
+            "⏺ Pronto.\n{regua}\n  You have 1 unsent feedback draft\n  Enter to review & send · Esc to discard and exit\n\n"
+        ));
+        assert!(rascunho_na_saida(&tela));
+        assert!(rascunho_na_saida(&l("You have 2 unsent feedback drafts\nEnter to review & send · Esc to discard and exit")));
+        // Só no pé da tela: a mesma frase citada na conversa, com a caixa de entrada embaixo, não é ela.
+        let citada = l(&format!(
+            "● Ele mostra \"You have 1 unsent feedback draft\" e \"Esc to discard and exit\".\n{regua}\n❯ \n{regua}\n  ⏵⏵ bypass permissions on · 1 feedback draft"
+        ));
+        assert!(!rascunho_na_saida(&citada));
+        // O rodapé sem o aviso, ou outra pergunta do /exit, não é ela.
+        assert!(!rascunho_na_saida(&l("Enter to review & send · Esc to discard and exit")));
+        assert!(!rascunho_na_saida(&l("Background work is running\n❯ 1. Exit and stop tasks\n  3. Stay\nEnter to confirm · Esc to cancel")));
     }
 
     #[test]

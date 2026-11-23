@@ -518,7 +518,9 @@ perguntas de decisão, no Claude Code e no Codex) gasta crédito do OpenRouter a
 
 `trocar` (aba, para): de uma conta do Claude para outra com o Claude aberto, a troca a quente (acima):
 nada sai, nada é digitado, vale com a aba trabalhando. Nos outros casos, confere a tela (trabalhando,
-diálogo, trabalho em segundo plano = `ocupada`, a não ser com `--interromper`), sai do programa
+diálogo, trabalho em segundo plano = `ocupada`, a não ser com `--interromper`; conversa do Claude com
+rascunho de feedback na fila = `rascunho-de-feedback`, porque o `/exit` pararia na pergunta dele, que só sai
+enviando ou descartando o rascunho), sai do programa
 (`/exit` ou `/quit`), espera o shell, e digita a linha do shell da aba (zsh/bash/fish, PowerShell, cmd)
 com o ambiente da conta (para o Claude, o armazém da aba) e a retomada
 (`claude --resume <id>` / `codex resume <id>`). Se a pasta da aba sumiu (uma worktree apagada), a
