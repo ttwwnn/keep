@@ -334,7 +334,7 @@ struct JevLine: Equatable, Codable {
     var measuredAt: Date?
     var problem: String?
     var pending: Double?
-    /// What the OpenRouter account (every key) spent over the last 30 days, as the core measures it.
+    /// What the Jev spends on OpenRouter through Keep on this machine in 30 days, as the core measures it.
     var spent30d: Double?
 }
 

@@ -65,7 +65,7 @@ final class ClaudeStatusBar: NSView {
         addSubview(filesButton)
         jevLabel.font = Self.font
         jevLabel.textColor = .secondaryLabelColor
-        jevLabel.toolTip = "O que a conta do OpenRouter (todas as chaves) gasta em 30 dias; com menos histórico, na proporção"
+        jevLabel.toolTip = "O que o Jev gasta no OpenRouter pelo Keep desta máquina em 30 dias; com menos histórico, na proporção"
         jevLabel.setAccessibilityIdentifier("claude-jev-average")
         // Short of room, the spend gives way first, cut at its end: never over "Arquivos".
         jevLabel.lineBreakMode = .byTruncatingTail
