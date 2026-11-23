@@ -257,12 +257,19 @@ fn rodada(vistas: &HashSet<(String, u32)>, seco: bool, so_do: Option<(&str, Opti
         // Sem o Claude o título some da aba: a que não tem nome dado fica com o da conversa.
         let nome = titulo(aba).filter(|_| !nomes.contains_key(&(i.workspace.clone(), i.aba)));
         // Guardada antes de sair: o que cair no meio não perde a conversa da aba.
-        registrar(&keepd, &i.workspace, i.aba, ia, nome.clone());
+        registrar(&keepd, &i.workspace, i.aba, ia.clone(), nome.clone());
         let vinculo = keep_ia::vinculo::vincular(&lista).get(&(i.workspace.clone(), i.aba)).map(|v| v.shell);
         let sintaxe = keep_ia::trocar::sintaxe_da_aba(aba, vinculo);
         match keep_ia::trocar::sai_do_claude(&i.workspace, i.aba, false, sintaxe) {
             Ok(()) => {
                 feitas += 1;
+                // Saiu de uma worktree (mantida pelo `sai_do_claude`): a conversa acorda dentro dela.
+                let tela = keep_ia::trocar::tela_de(&i.workspace, i.aba).0;
+                if let Some(w) = keep_ia::tela::worktree_ao_retomar(&tela).filter(|_| !ia.parametros.iter().any(|p| p == "--worktree")) {
+                    let mut ia = ia;
+                    ia.parametros.extend(["--worktree".to_string(), w]);
+                    registrar(&keepd, &i.workspace, i.aba, ia, nome.clone());
+                }
                 if let Some(n) = nome {
                     crate::nomear_no_app(&amb, keepd.socket_nasceu, &[(i.workspace.clone(), i.aba, n)], false);
                 }

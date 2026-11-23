@@ -348,6 +348,31 @@ pub fn rascunho_na_saida(linhas: &[String]) -> bool {
         && fim.iter().skip(1).any(|l| l.contains("unsent feedback draft"))
 }
 
+/// A pergunta que o `/exit` abre numa conversa que entrou numa worktree ("Exiting worktree session", com "1. Keep
+/// worktree" e "2. Remove worktree"): o número de manter. Manter é o que cabe ao Keep: a conversa volta nela ao
+/// acordar (`claude --worktree X --resume`), e remover apagaria trabalho (pedido de 23/11/2026: "não era pra eu ter
+/// que escolher nada").
+pub fn worktree_na_saida(linhas: &[String]) -> Option<String> {
+    static R: OnceLock<Regex> = OnceLock::new();
+    let opcao = re(r"^(\d)\.\s+(.+)$", &R);
+    let inicio = linhas.iter().rposition(|l| l.contains("Exiting worktree session"))?;
+    linhas[inicio + 1..].iter().find_map(|l| {
+        let s = l.replace('\u{a0}', " ");
+        let s = s.trim().trim_start_matches(['❯', '›', '>']).trim();
+        let c = opcao.captures(s)?;
+        c[2].trim().to_lowercase().starts_with("keep worktree").then(|| c[1].to_string())
+    })
+}
+
+/// A worktree em que a conversa volta, como o Claude a ensina ao sair dela ("claude --worktree "X" --resume <id>"):
+/// sem o `--worktree`, o `--resume` subiria na pasta do repositório, fora dela.
+pub fn worktree_ao_retomar(linhas: &[String]) -> Option<String> {
+    static R: OnceLock<Regex> = OnceLock::new();
+    let r = re(r#"claude\s+--worktree\s+"?([^"\s]+)"?\s+--resume\s"#, &R);
+    let texto = linhas[linhas.len().saturating_sub(30)..].join(" ");
+    r.captures_iter(&texto).last().map(|c| c[1].to_string())
+}
+
 /// Os jobs que a tela diz terem ido para segundo plano ("backgrounded · 7fb66140").
 pub fn jobs_na_tela(linhas: &[String]) -> Vec<String> {
     static R: OnceLock<Regex> = OnceLock::new();
@@ -517,6 +542,25 @@ mod testes {
         // O rodapé sem o aviso, ou outra pergunta do /exit, não é ela.
         assert!(!rascunho_na_saida(&l("Enter to review & send · Esc to discard and exit")));
         assert!(!rascunho_na_saida(&l("Background work is running\n❯ 1. Exit and stop tasks\n  3. Stay\nEnter to confirm · Esc to cancel")));
+    }
+
+    #[test]
+    fn a_pergunta_da_worktree_na_saida_mantem_a_worktree() {
+        // A tela de 23/11/2026, da aba Brokerfy #14.
+        let tela = l("✻ Baked for 46s · done 12:29 PM\n  Exiting worktree session\n  You are working in a worktree. Keep it to continue working there, or remove it to clean up.\n\n  ❯ 1. Keep worktree    Stays at\n                        /Users/x/Projetos/p/.claude/worktrees/w\n    2. Remove worktree  Clean up the worktree directory.\n\n  Enter to confirm · Esc to cancel");
+        assert_eq!(worktree_na_saida(&tela).as_deref(), Some("1"));
+        // Na outra ordem, o número de manter, não o primeiro.
+        let trocada = l("Exiting worktree session\n  1. Remove worktree  Clean up\n❯ 2. Keep worktree    Stays at /w");
+        assert_eq!(worktree_na_saida(&trocada).as_deref(), Some("2"));
+        // A pergunta do trabalho em segundo plano não é ela.
+        assert_eq!(worktree_na_saida(&l("Background work is running\n❯ 1. Exit and stop tasks\n  3. Stay")), None);
+    }
+
+    #[test]
+    fn a_worktree_em_que_a_conversa_volta() {
+        let saida = l("Resume this session with:\nclaude --worktree \"ferias-trava-30-dias-2311\" --resume 3026fe32-56c0-4502-a570-eb68d3c1e7c0\nWorktree kept.");
+        assert_eq!(worktree_ao_retomar(&saida).as_deref(), Some("ferias-trava-30-dias-2311"));
+        assert_eq!(worktree_ao_retomar(&l("claude --resume 3026fe32-56c0-4502-a570-eb68d3c1e7c0")), None);
     }
 
     #[test]
