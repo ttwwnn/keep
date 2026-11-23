@@ -565,17 +565,12 @@ export interface JevLine {
   measuredAt: number | null;
   problem: string | null;
   pending: number | null;
-  /** Spent per day over the last 30 days by the Jev's own key on OpenRouter, as the core measures it. */
-  dailyAverage30d: number | null;
+  /** What the Jev's own key on OpenRouter spent over the last 30 days, as the core measures it. */
+  spent30d: number | null;
 }
 
 /** Where the OpenRouter account buys credit. */
 export const OPENROUTER_CREDITS_URL = "https://openrouter.ai/settings/credits";
-
-/** A spend per month: the 30-day average per day, times 30 (pedido de 12/11/2026: "Gasto médio: US$ xx,xx/mês"). */
-export function perMonth(dailyAverage: number): string {
-  return `${dollars(dailyAverage * 30)}/mês`;
-}
 
 export const accountLeft = (c: JevCredit) => Math.max(0, c.total - c.used);
 export const keyLeft = (c: JevCredit) => (c.keyLimit === null ? null : Math.max(0, c.keyLimit - (c.keyUsed ?? 0)));
@@ -667,7 +662,7 @@ export function jevHelp(line: JevLine, nowMs: number): string {
     if (c.usedToday !== null) lines.push(`Gasto hoje: ${dollars(c.usedToday)}`);
     if (c.usedThisMonth !== null) lines.push(`Gasto no mês: ${dollars(c.usedThisMonth)}`);
   }
-  if (line.dailyAverage30d !== null) lines.push(`Gasto médio do Jev: ${perMonth(line.dailyAverage30d)} (últimos 30 dias)`);
+  if (line.spent30d !== null) lines.push(`Gasto do Jev nos últimos 30 dias: ${dollars(line.spent30d)}`);
   if (line.pending !== null && line.pending > 0) {
     lines.push(`Inclui ${dollars(line.pending)} de decisões desta máquina que o OpenRouter ainda não contou`);
   }
@@ -694,7 +689,7 @@ export function readJev(value: unknown): JevLine | null {
       : null;
   const problem = typeof v.problem === "string" ? v.problem : null;
   if (!credit && !problem) return null;
-  return { credit, measuredAt: num(v.measuredAt), problem, pending: num(v.pending), dailyAverage30d: num(v.dailyAverage30d) };
+  return { credit, measuredAt: num(v.measuredAt), problem, pending: num(v.pending), spent30d: num(v.spent30d) };
 }
 
 // ------------------------------------------------------------------ the switches
