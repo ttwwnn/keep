@@ -19,7 +19,7 @@ import {
   type Choice,
 } from "../aiStatus";
 import { filesOpen, toggleFiles } from "../chatFiles";
-import { OPENROUTER_CREDITS_URL, perMonth } from "../ia";
+import { OPENROUTER_CREDITS_URL, dollars } from "../ia";
 import { jev } from "../iaStore";
 import { openUrl } from "../api";
 import { viewKey } from "../terminals";
@@ -112,13 +112,13 @@ export function AiStatusBar(props: { workspace: string; root: number; pane: numb
         // 18/11/2026); none without a key of the Jev's here.
         <>
           <span class="ai-dot">·</span>
-          {jev.value.dailyAverage30d !== null && (
+          {jev.value.spent30d !== null && (
             <span
               class="ai-agents"
               data-chip="jev-average"
-              title="Gasto médio por mês do Jev (a chave dele no OpenRouter), pelos últimos 30 dias"
+              title="O que o Jev (a chave dele no OpenRouter) gastou nos últimos 30 dias"
             >
-              Gasto médio: {perMonth(jev.value.dailyAverage30d)}
+              Gasto em 30 dias: {dollars(jev.value.spent30d)}
             </span>
           )}
           <button

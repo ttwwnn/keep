@@ -334,8 +334,8 @@ struct JevLine: Equatable, Codable {
     var measuredAt: Date?
     var problem: String?
     var pending: Double?
-    /// Spent per day over the last 30 days, by this Mac's decisions.
-    var dailyAverage30d: Double?
+    /// What the Jev's key spent over the last 30 days, as the core measures it.
+    var spent30d: Double?
 }
 
 /// Where the OpenRouter account buys credit.
@@ -432,11 +432,6 @@ enum UsageText {
         let value = max(0, value)
         if value > 0, value < 0.01 { return "< US$ 0,01" }
         return "US$ " + String(format: "%.2f", value).replacingOccurrences(of: ".", with: ",")
-    }
-
-    /// A spend per month: the 30-day average per day, times 30 (pedido de 12/11/2026: "Gasto médio: US$ xx,xx/mês").
-    static func perMonth(dailyAverage: Double) -> String {
-        dollars(dailyAverage * 30) + "/mês"
     }
 
     /// How long until a window starts over, in the fewest characters that

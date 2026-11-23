@@ -630,8 +630,8 @@ máquina não tem). Nada disto foi visto na WebView2 nem com um Claude Code de v
 - [~] A barra lateral nunca esconde os ícones da fileira do topo (`SidebarHost.holdMinimum`): a largura mínima é a da
   fileira medida (zoom, bateria quando aparece, botão de recolher) mais o recuo e o cartão, refeita quando o zoom ou a
   bateria a mudam (`sidebarFloor` em `state.ts`, testado). O Windows não tem a hora na fileira.
-- [~] Rodapé "Jev · OpenRouter": "Gasto médio: US$ x/mês" e "Pôr crédito" também no modo dobrado; a dica curta diz
-  "Gasto médio por mês do Jev (a chave dele no OpenRouter), pelos últimos 30 dias" e a longa "Gasto médio do Jev: …".
+- [~] Rodapé "Jev · OpenRouter": "Gasto em 30 dias: US$ x" e "Pôr crédito" também no modo dobrado; a dica curta diz
+  "O que o Jev (a chave dele no OpenRouter) gastou nos últimos 30 dias" e a longa "Gasto do Jev nos últimos 30 dias: …".
 - [~] Shift+← / Shift+→ no prompt do Claude Code marcam texto: no xterm.js a tecla ia ao Claude Code, que só move o
   cursor. Agora, dentro da caixa do prompt, a seta vai sem o Shift e a seleção do terminal é desenhada do começo da
   marca até o cursor, depois que o cursor do programa chega lá (`markByArrow` em `input.ts`; `arrowStep` e `markSpan`

@@ -1007,7 +1007,7 @@ struct UsageFooter: View {
             if let today = credit.usedToday { lines.append("Gasto hoje: \(UsageText.dollars(today))") }
             if let month = credit.usedThisMonth { lines.append("Gasto no mês: \(UsageText.dollars(month))") }
         }
-        if let average = jev.dailyAverage30d { lines.append("Gasto médio do Jev: \(UsageText.perMonth(dailyAverage: average)) (últimos 30 dias)") }
+        if let spent = jev.spent30d { lines.append("Gasto do Jev nos últimos 30 dias: \(UsageText.dollars(spent))") }
         if let pending = jev.pending, pending > 0 {
             lines.append("Inclui \(UsageText.dollars(pending)) de decisões desta máquina que o OpenRouter ainda não contou")
         }
