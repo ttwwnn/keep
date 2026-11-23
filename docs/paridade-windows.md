@@ -156,6 +156,9 @@ caixa da linha, rolagem da lista, estado do movimento, fim do arrasto por `point
 - [x] Mover aba (com os painéis) para outro workspace arrastando na barra lateral (`api.moveTab`): o terminal é
   religado, não refeito, e o nome, o lugar, o painel com o teclado e o estado do Claude vão junto. Soltar
   no cabeçalho põe no fim; soltar sobre uma aba põe antes dela.
+- [ ] Arquivo (do painel Arquivos ou do Explorer) solto sobre o nome de outra aba na barra lateral: o caminho
+  vai colado para a conversa daquela aba, sem trocar a aba na tela; a adormecida acorda e recebe quando a caixa
+  do Claude volta (macOS 0.3.68, `DroppedFiles.deliver`; pedido de 23/11/2026).
 - [x] Arrastar o cabeçalho do workspace reordena a lista, com a mesma lacuna.
 - [x] Lista mais longa que a janela: com o ponteiro a menos de 36 px da borda de cima ou de baixo a lista rola
   sozinha, mais depressa quanto mais perto (no máximo 14 px por quadro, também além da borda), o pouso é
