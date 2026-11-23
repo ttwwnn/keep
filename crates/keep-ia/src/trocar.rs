@@ -424,6 +424,7 @@ pub fn sai_do_claude(ws: &str, tab: u32, interromper: bool, sintaxe: linha::Sint
     }
     let mut pronto = ShellPronto::novo(ws, tab);
     let mut respondida = false;
+    let mut worktree_respondida = false;
     let fim = std::time::Instant::now() + Duration::from_secs(20);
     while std::time::Instant::now() < fim {
         let linhas = tela_de(ws, tab).0;
@@ -446,6 +447,13 @@ pub fn sai_do_claude(ws: &str, tab: u32, interromper: bool, sintaxe: linha::Sint
         }
         if pronto.agora() {
             return Ok(());
+        }
+        if let Some(manter) = tela::worktree_na_saida(&linhas) {
+            if !worktree_respondida {
+                tecla(ws, tab, manter.as_bytes())?;
+                worktree_respondida = true;
+            }
+            continue;
         }
         if tela::rascunho_na_saida(&linhas) {
             // O Enter abre o envio do rascunho e o Esc o descarta: nenhum dos dois cabe ao Keep.
