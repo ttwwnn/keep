@@ -80,6 +80,8 @@ struct WorkspaceSidebar: View {
     /// A header's +, which brightens under the pointer. Apart from `hovered`,
     /// which the header itself sets while the pointer is anywhere on it.
     @State private var hoveredNewTab: String?
+    /// A header's zzz or ×, by its identifier, which brightens under the pointer as the + does.
+    @State private var hoveredHeaderButton: String?
     /// The tab a drag is currently held over, keyed like `hovered`.
     @State private var dropTarget: String?
     /// The payload in flight. Set in `onDrag` and read from here everywhere:
@@ -368,7 +370,7 @@ struct WorkspaceSidebar: View {
                 Spacer(minLength: 8)
                 // The zzz's, the ×'s, the lock's and the +'s room, kept here so
                 // the fold stays at the far end.
-                Color.clear.frame(width: 16 + 8 + 16 + 8 + 14 + 8 + 14, height: 1)
+                Color.clear.frame(width: 14 + 8 + 14 + 8 + 14 + 8 + 14, height: 1)
                 disclosure(row)
             }
             .padding(.horizontal, 12)
@@ -396,13 +398,12 @@ struct WorkspaceSidebar: View {
         .overlay(alignment: .trailing) {
             HStack(spacing: 8) {
                 // The general tab's own zzz and ×, which are the workspace's: it and every tab under it, after a yes.
-                let sleeping = generalTab(of: row)?.sleeping == true
                 headerButton(
-                    symbol: "zzz", busy: sleeping, visible: sleeping || (hovered == row.name && dragged == nil),
+                    symbol: "zzz", busy: generalTab(of: row)?.sleeping == true,
                     help: "Hibernar o workspace: a aba geral e as abas dele saem da memória",
                     id: "sleep-workspace-\(row.name)") { dispatch(.sleepWorkspace(row.name)) }
                 headerButton(
-                    symbol: "xmark", busy: false, visible: hovered == row.name && dragged == nil,
+                    symbol: "xmark", busy: false,
                     help: "Fechar o workspace: a aba geral e todas as abas dele",
                     id: "close-workspace-\(row.name)") { dispatch(.killWorkspace(row.name)) }
                 confinementButton(row)
@@ -836,12 +837,10 @@ struct WorkspaceSidebar: View {
             }
     }
 
-    /// The row's zzz, beside the ×: puts this tab's Claude conversation out
-    /// of memory now, as twelve hours alone would. The tab stays, its title
-    /// struck through, and the conversation comes back as the tab is shown.
-    /// A round button on the header, shown under the pointer, in the tab row's style.
+    /// A header's zzz or ×: always there, drawn as the folder and the + beside
+    /// it are, faint at rest and brighter under the pointer.
     private func headerButton(
-        symbol: String, busy: Bool, visible: Bool, help: String, id: String, action: @escaping () -> Void
+        symbol: String, busy: Bool, help: String, id: String, action: @escaping () -> Void
     ) -> some View {
         Button {
             lastClicked = nil
@@ -852,23 +851,25 @@ struct WorkspaceSidebar: View {
                     ProgressView().controlSize(.mini)
                 } else {
                     Image(systemName: symbol)
-                        .font(.system(size: symbol == "xmark" ? 8 : 9, weight: .bold))
-                        .foregroundStyle(Palette.inkResting)
+                        .font(.system(size: 12 * titleZoom, weight: .semibold))
+                        .foregroundStyle(hoveredHeaderButton == id ? Palette.inkResting : Palette.inkFaint)
                 }
             }
-            .frame(width: 16, height: 16)
-            .background(Circle().fill(Palette.wash(0.08)))
-            .contentShape(Circle())
+            .frame(width: 14)
+            .contentShape(Rectangle().inset(by: -6))
         }
         .buttonStyle(.plain)
         .disabled(busy)
         .help(help)
         .accessibilityIdentifier(id)
-        .opacity(visible ? 1 : 0)
-        .allowsHitTesting(visible)
-        .animation(.easeOut(duration: 0.12), value: visible)
+        .onHover { inside in
+            hoveredHeaderButton = inside ? id : (hoveredHeaderButton == id ? nil : hoveredHeaderButton)
+        }
     }
 
+    /// The row's zzz, beside the ×: puts this tab's Claude conversation out
+    /// of memory now, as twelve hours alone would. The tab stays, its title
+    /// struck through, and the conversation comes back as the tab is shown.
     private func sleepButton(
         _ tab: SessionSnapshot.SidebarTab, visible: Bool, onBadge: Bool = false
     ) -> some View {

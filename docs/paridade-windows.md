@@ -667,3 +667,5 @@ máquina não tem). Nada disto foi visto na WebView2 nem com um Claude Code de v
 - [x] 0.3.76: no cabeçalho do workspace, sob o ponteiro, o zzz (hibernar o workspace: a aba geral e as de baixo, com
   aviso; `sleepWorkspace` em `iaChores.ts`) e o × (o `closeWorkspace` de sempre, com o aviso dele). O workspace novo já
   nasce desenhado com a aba geral, sem a aba que aparecia e sumia da lista. Não visto no app do Windows.
+- [x] 0.3.77: o zzz e o × do cabeçalho do workspace ficam sempre à mostra, na tinta da pasta e do + (mais clara sob o
+  ponteiro), sem o círculo; o zzz apertado pulsa até o núcleo responder, como o da aba. Não visto no app do Windows.
