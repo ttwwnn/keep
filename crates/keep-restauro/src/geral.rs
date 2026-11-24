@@ -310,12 +310,14 @@ fn arquivo() -> std::path::PathBuf {
 
 /// Pode digitar na conversa `c`? A sessão parada, a tela na conversa, a caixa à vista e vazia.
 fn livre(c: &Conversa) -> Result<(), String> {
+    let t = continuar::tela_da_aba(&c.ws, c.tab).ok_or("não li a tela da aba")?;
     match keep_ia::sessoes::sessao_claude(c.pid).map(|s| s.status) {
         Some(s) if s == "idle" => {}
+        // `busy` com o turno parado e um workflow ou shell em segundo plano: a tela decide.
+        Some(s) if s == "busy" && continuar::turno_parado_na_tela(&t) => {}
         Some(s) => return Err(format!("a aba não está parada ({s})")),
         None => return Err("sem a sessão do Claude da aba".into()),
     }
-    let t = continuar::tela_da_aba(&c.ws, c.tab).ok_or("não li a tela da aba")?;
     if let Some((oque, _)) = continuar::vista_desviada(&t) {
         return Err(format!("a vista está {oque}"));
     }
@@ -479,7 +481,11 @@ pub fn rodada(seco: bool) -> Result<Value, String> {
         }
         // Parada num erro da API (rede, servidor, limite, o que for) que o `keep continuar` não curou em 2 min.
         if let Some((uuid, quando, texto)) = erro_da_conversa(&caminho) {
-            if status == "idle" && uuid != x.erro && agora.saturating_sub(quando) >= prazo("KEEP_GERAL_ERRO_S", ERRO_MS) {
+            // `busy` também, quando a tela diz que o turno parou (um workflow ou shell segue em segundo plano).
+            let parada = status == "idle"
+                || (status == "busy"
+                    && continuar::tela_da_aba(&c.ws, c.tab).is_some_and(|t| continuar::turno_parado_na_tela(&t)));
+            if parada && uuid != x.erro && agora.saturating_sub(quando) >= prazo("KEEP_GERAL_ERRO_S", ERRO_MS) {
                 eventos.push(evento("erro", quando, comeco(&texto, PEDIDO_MAX)));
                 x.erro = uuid;
                 x.visto_ms = agora;

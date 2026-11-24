@@ -303,6 +303,19 @@ fn dialogo_do_limite(ultimas: &[&String]) -> bool {
         && ultimas.last().is_some_and(|l| l.contains("Esc to cancel"))
 }
 
+/// A tela diz que o turno acabou, mesmo com a sessão `busy` (o Claude Code a deixa assim enquanto um workflow ou um
+/// shell roda em segundo plano): a caixa à vista, sem "esc to interrupt" no rodapé e sem a linha do spinner
+/// ("✶ Imagining… (36m 2s") logo acima da caixa, que o Claude mostra enquanto o turno roda.
+pub fn turno_parado_na_tela(t: &Tela) -> bool {
+    static SPINNER: OnceLock<Regex> = OnceLock::new();
+    let Some(caixa) = t.caixa else { return false };
+    if t.linhas[t.rodape.min(t.linhas.len())..].join("\n").contains("esc to interrupt") {
+        return false;
+    }
+    let spinner = re(r"…\s*\(\d", &SPINNER);
+    !t.linhas[caixa.saturating_sub(8)..caixa].iter().any(|l| spinner.is_match(l))
+}
+
 /// Pode digitar? (sim, por quê, só falta o Enter).
 pub fn tela_segura(t: &Tela, erro: &Erro) -> (bool, String, bool) {
     let Some(caixa) = t.caixa else { return (false, "sem caixa de entrada à vista".into(), false) };
@@ -701,7 +714,11 @@ pub fn rodada(seco: bool, status: bool) -> Result<Value, String> {
         // Sem isto, o "continue" ia para a caixa de um Claude trabalhando (cuja última fala principal ainda era a
         // parada) e ficava lá sem Enter, dobrado na rodada seguinte (uma aba em 06/11/2026).
         // Antes de qualquer tecla: o Esc que volta a vista interromperia o trabalho.
-        if keep_ia::sessoes::sessao_claude(c.pid).is_some_and(|s| s.status == "busy") {
+        // Mas a sessão segue `busy` enquanto um workflow ou um shell roda em segundo plano, com o turno já parado no
+        // erro (uma aba ficou assim 3 h em 24/11/2026, sem ninguém retomar): aí quem decide é a tela.
+        if keep_ia::sessoes::sessao_claude(c.pid).is_some_and(|s| s.status == "busy")
+            && !tela_da_aba(&c.ws, c.tab).is_some_and(|t| turno_parado_na_tela(&t))
+        {
             let texto = "parada no transcrito, mas a sessão diz que o Claude trabalha";
             aviso(r, "trabalhando", texto.to_string());
             vistas.push(json!({ "aba": c.rotulo, "situacao": texto }));
@@ -997,5 +1014,24 @@ mod testes {
         let limite = ler_tela(" What do you want to do?\r\n ❯ 1. Stop and wait for limit to reset\r\n   2. Wait here\r\n Esc to cancel");
         assert_eq!(vista_desviada(&limite).map(|v| v.1), Some(&b"\x1b"[..]));
         assert!(vista_desviada(&ler_tela(TELA_PARADA)).is_none());
+    }
+
+    #[test]
+    fn com_a_sessao_busy_a_tela_diz_se_o_turno_parou() {
+        let linha = "─".repeat(40);
+        let tela = |acima: &str, rodape: &str| ler_tela(&format!("{acima}\n{linha}\n❯ \n{linha}\n{rodape}"));
+        // um workflow em segundo plano: o turno parou no erro, a sessão segue busy
+        let fundo = tela(
+            "● Rodei os testes.\n  ⎿  API Error: Connection error.",
+            "  ⏵⏵ bypass permissions on (shift+tab to cycle)\n  ◯ fluxo  ██████░░░░  5/7 · 4h09m",
+        );
+        assert!(turno_parado_na_tela(&fundo));
+        // o turno roda: a linha do spinner acima da caixa, com ou sem "esc to interrupt"
+        let roda = tela("● Rodando.\n✶ Imagining… (36m 2s · ↓ 82.5k tokens)\n  ⎿  Tip: Use /btw", "  ⏵⏵ bypass permissions on");
+        assert!(!turno_parado_na_tela(&roda));
+        assert!(!turno_parado_na_tela(&tela("● Rodando.", "  ⏵⏵ bypass permissions on · esc to interrupt")));
+        // um "…" de texto cortado não é spinner; sem caixa à vista, nada se decide
+        assert!(turno_parado_na_tela(&tela("     git status re…", "  ⏵⏵ bypass permissions on")));
+        assert!(!turno_parado_na_tela(&ler_tela("Showing detailed transcript")));
     }
 }
