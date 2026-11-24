@@ -152,6 +152,14 @@ struct WorkspaceSidebar: View {
         return live.roots.compactMap { root in listed.first { $0.id.root == root } }
     }
 
+    /// Whether the header wears its general tab's coloured capsule (waiting on you, or done out of sight): its
+    /// buttons then take the capsule's dark ink, as a tab row's do.
+    private func headerOnBadge(_ row: SessionSnapshot.SidebarRow) -> Bool {
+        guard let general = generalTab(of: row) else { return false }
+        return general.claudeActivity?.wantsYou == true
+            || (general.claudeActivity == .doneUnseen && !(general.isActive && row.isActive))
+    }
+
     /// The workspace's general tab, which its header stands for.
     private func generalTab(of row: SessionSnapshot.SidebarRow) -> SessionSnapshot.SidebarTab? {
         row.tabRows.first(where: \.general)
@@ -180,10 +188,6 @@ struct WorkspaceSidebar: View {
     /// The terminal's own face, for the strings the terminal would also print.
     private var identifier: Font {
         Font(GhosttyApp.shared.terminalFont(size: 12.5 * textZoom))
-    }
-
-    private var counter: Font {
-        Font(GhosttyApp.shared.terminalFont(size: 10.5))
     }
 
     var body: some View {
@@ -355,11 +359,16 @@ struct WorkspaceSidebar: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .onHover { inside in notePointer(inside, onNameOf: .workspace(row.name)) }
-                if row.working {
-                    // The one fact worth carrying up from the tabs: something
-                    // is at work in here, visible with the group folded shut.
-                    ForEach(row.workingPrograms.isEmpty ? [""] : row.workingPrograms, id: \.self) { program in
-                        BusyMark(program: program, font: counter)
+                let atWork = shownTabs(of: row).filter(\.busy)
+                if !atWork.isEmpty {
+                    // One dot for each tab under the header at work, in that tab's colour, folded or not: the header
+                    // is never grey while something in here works. Ringed in black, for a dot the capsule's colour.
+                    HStack(spacing: 3) {
+                        ForEach(atWork, id: \.id) { tab in
+                            Circle().fill(dotInk(for: tab))
+                                .overlay(Circle().strokeBorder(Color.black, lineWidth: 0.75))
+                                .frame(width: 7 * titleZoom, height: 7 * titleZoom)
+                        }
                     }
                 }
                 if row.needsYou > 0 && !row.expanded {
@@ -399,11 +408,11 @@ struct WorkspaceSidebar: View {
             HStack(spacing: 8) {
                 // The general tab's own zzz and ×, which are the workspace's: it and every tab under it, after a yes.
                 headerButton(
-                    symbol: "zzz", busy: generalTab(of: row)?.sleeping == true,
+                    symbol: "zzz", busy: generalTab(of: row)?.sleeping == true, onBadge: headerOnBadge(row),
                     help: "Hibernar o workspace: a aba geral e as abas dele saem da memória",
                     id: "sleep-workspace-\(row.name)") { dispatch(.sleepWorkspace(row.name)) }
                 headerButton(
-                    symbol: "xmark", busy: false,
+                    symbol: "xmark", busy: false, onBadge: headerOnBadge(row),
                     help: "Fechar o workspace: a aba geral e todas as abas dele",
                     id: "close-workspace-\(row.name)") { dispatch(.killWorkspace(row.name)) }
                 confinementButton(row)
@@ -506,7 +515,7 @@ struct WorkspaceSidebar: View {
             } label: {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10.5 * titleZoom, weight: .semibold))
-                    .foregroundStyle(Palette.inkFaint)
+                    .foregroundStyle(headerOnBadge(row) ? RestingInk(Palette.attentionInk) : Palette.inkFaint)
                     .rotationEffect(.degrees(row.expanded ? 90 : 0))
                     .frame(width: 14)
                     .contentShape(Rectangle().inset(by: -6))
@@ -531,7 +540,8 @@ struct WorkspaceSidebar: View {
         let hovering = hoveredLock == row.name
         let glyph = Image(systemName: row.confinedTo == nil ? "folder" : "folder.fill")
             .font(.system(size: 12 * titleZoom, weight: .semibold))
-            .foregroundStyle(row.confinedTo != nil || hovering ? Palette.inkResting : Palette.inkFaint)
+            .foregroundStyle(headerOnBadge(row) ? RestingInk(Palette.attentionInk)
+                : row.confinedTo != nil || hovering ? Palette.inkResting : Palette.inkFaint)
             .frame(width: 14)
             .contentShape(Rectangle().inset(by: -6))
         Group {
@@ -564,7 +574,8 @@ struct WorkspaceSidebar: View {
         } label: {
             Image(systemName: "plus")
                 .font(.system(size: 12 * titleZoom, weight: .semibold))
-                .foregroundStyle(hoveredNewTab == row.name ? Palette.inkResting : Palette.inkFaint)
+                .foregroundStyle(headerOnBadge(row) ? RestingInk(Palette.attentionInk)
+                    : hoveredNewTab == row.name ? Palette.inkResting : Palette.inkFaint)
                 .frame(width: 14)
                 .contentShape(Rectangle().inset(by: -6))
         }
@@ -611,6 +622,8 @@ struct WorkspaceSidebar: View {
         let chosen = tab.isActive && row.isActive
         let hoveredHere = hovered == tabHoverKey(tab) || dropTarget == tabHoverKey(tab)
         let wantsYou = tab.claudeActivity?.wantsYou == true
+        // On either coloured capsule, the orange or the lime, the buttons and the program's name take dark ink.
+        let onBadge = wantsYou || (tab.claudeActivity == .doneUnseen && !chosen)
         return Button {
             clickTab(tab, chosen: chosen)
         } label: {
@@ -653,7 +666,7 @@ struct WorkspaceSidebar: View {
                 if !program.isEmpty {
                     Text(program)
                         .font(.system(size: 12 * textZoom))
-                        .foregroundStyle(wantsYou ? RestingInk(Palette.attentionInk.opacity(0.62)) : Palette.inkFaint)
+                        .foregroundStyle(onBadge ? RestingInk(Palette.attentionInk.opacity(0.62)) : Palette.inkFaint)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                 }
@@ -668,7 +681,7 @@ struct WorkspaceSidebar: View {
                 if tab.isElsewhere {
                     Image(systemName: "macwindow.on.rectangle")
                         .font(.system(size: 9))
-                        .foregroundStyle(wantsYou ? RestingInk(Palette.attentionInk.opacity(0.62)) : Palette.inkFaint)
+                        .foregroundStyle(onBadge ? RestingInk(Palette.attentionInk.opacity(0.62)) : Palette.inkFaint)
                 }
                 Spacer(minLength: 0)
                 // The close button's room, kept whether or not it is showing,
@@ -696,7 +709,7 @@ struct WorkspaceSidebar: View {
                     accountGlyph(
                         tab,
                         visible: tab.offersAccounts && dragged == nil && (chosen || hoveredHere),
-                        onBadge: wantsYou)
+                        onBadge: onBadge)
                         .frame(width: 14, height: 16)
                         .position(x: rect.midX, y: rect.midY)
                 }
@@ -711,9 +724,9 @@ struct WorkspaceSidebar: View {
                     sleepButton(
                         tab,
                         visible: tab.sleeping || (hoveredHere && dragged == nil && !tab.busy && !wantsYou),
-                        onBadge: wantsYou)
+                        onBadge: onBadge)
                 }
-                closeButton(tab, visible: hoveredHere && dragged == nil, onBadge: wantsYou)
+                closeButton(tab, visible: hoveredHere && dragged == nil, onBadge: onBadge)
             }
             .padding(.trailing, 9)
         }
@@ -840,7 +853,7 @@ struct WorkspaceSidebar: View {
     /// A header's zzz or ×: always there, drawn as the folder and the + beside
     /// it are, faint at rest and brighter under the pointer.
     private func headerButton(
-        symbol: String, busy: Bool, help: String, id: String, action: @escaping () -> Void
+        symbol: String, busy: Bool, onBadge: Bool, help: String, id: String, action: @escaping () -> Void
     ) -> some View {
         Button {
             lastClicked = nil
@@ -852,7 +865,8 @@ struct WorkspaceSidebar: View {
                 } else {
                     Image(systemName: symbol)
                         .font(.system(size: 12 * titleZoom, weight: .semibold))
-                        .foregroundStyle(hoveredHeaderButton == id ? Palette.inkResting : Palette.inkFaint)
+                        .foregroundStyle(onBadge ? RestingInk(Palette.attentionInk)
+                            : hoveredHeaderButton == id ? Palette.inkResting : Palette.inkFaint)
                 }
             }
             .frame(width: 14)
@@ -982,6 +996,13 @@ struct WorkspaceSidebar: View {
         // outshine — work under way must not read as the quietest thing here.
         if tab.claudeActivity == .working { return chosen ? Palette.ink.live : Palette.inkResting.live }
         return chosen ? Palette.ink.live : hovered ? Palette.inkResting.live : Palette.inkFaint.live
+    }
+
+    /// A tab at work, as its dot on the header: the colour of its title, or where the title has none of its own (a
+    /// turn in the manual mode, a program other than an AI) the colour of the mark before it.
+    private func dotInk(for tab: SessionSnapshot.SidebarTab) -> RestingInk {
+        tab.claudeActivity?.dynamicColor != nil || tab.claudeMode != nil
+            ? titleInk(for: tab, chosen: false, hovered: false) : BusyMark.ink(of: tab.command)
     }
 
     /// At rest, the Finder's way: the mode's tone where the tab has one, the
@@ -1587,17 +1608,16 @@ private struct CleanupDropDelegate: DropDelegate {
 private struct BusyMark: View {
     let program: String
     let font: Font
-    @Environment(\.sidebarInUse) private var inUse
-    @Environment(\.colorScheme) private var scheme
+
+    /// The program's colour: Codex's, Claude's, or any other program's.
+    static func ink(of program: String) -> RestingInk {
+        program == "codex" ? RestingInk(Palette.codexMark, rest: Palette.Resting.blue)
+            : program == "claude" ? RestingInk(Palette.claudeMark, rest: Palette.Resting.orange)
+            : RestingInk(Palette.busy, rest: Palette.Resting.yellow)
+    }
 
     var body: some View {
-        let resting = !inUse && scheme == .dark
-        Text(program == "codex" ? "◆" : "✳")
-            .font(font)
-            .foregroundStyle(
-                program == "codex" ? (resting ? Palette.Resting.blue : Palette.codexMark)
-                    : program == "claude" ? (resting ? Palette.Resting.orange : Palette.claudeMark)
-                    : (resting ? Palette.Resting.yellow : Palette.busy))
+        Text(program == "codex" ? "◆" : "✳").font(font).foregroundStyle(Self.ink(of: program))
     }
 }
 

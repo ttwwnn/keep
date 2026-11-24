@@ -834,16 +834,6 @@ struct SessionSnapshot: Hashable {
         /// When the latest of them started waiting: the header's badge
         /// breathes for a while after that, as a tab's does.
         let needsYouSince: Date?
-        /// Whether anything in here is at work: a command running in a
-        /// shell, or Claude Code in the middle of a turn or waiting on work
-        /// it handed off. Claude Code sitting at its prompt is a program that
-        /// is running, and not work — every tab it is open in would
-        /// otherwise be marked busy for as long as it stays open.
-        let working: Bool
-        /// Which AIs are at work in there (`claude`, `codex`), for the mark
-        /// the header wears: each has its own. Empty when what works is a
-        /// plain command.
-        let workingPrograms: [String]
         let isActive: Bool
         /// The tabs themselves, for the sidebar that nests them under the
         /// workspace. Always carried — a handful of small values — and the
