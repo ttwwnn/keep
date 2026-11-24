@@ -657,4 +657,6 @@ máquina não tem). Nada disto foi visto na WebView2 nem com um Claude Code de v
   O app pergunta qual é a cada 5 s (`readGeneral` em `iaChores.ts`) e a põe primeiro (`generalFirst` em
   `tabOrder.ts`, testado). Desde a 0.3.73 o cabeçalho do workspace é a aba geral, na mesma linha, como no Mac: o
   clique entra nela, a cápsula de escolhida (ou a cor de "espera você") vai ao cabeçalho, e ela não se repete
-  embaixo (`WorkspaceGroup` em `Sidebar.tsx`, `styles.css`). Sem símbolo. Não visto no app do Windows.
+  embaixo (`WorkspaceGroup` em `Sidebar.tsx`, `styles.css`). Sem símbolo. Na 0.3.74 o nome leva a cor e a mão da
+  aba geral, e o workspace criado (`createWorkspace` em `store.ts`) chama `keep geral iniciar`: a primeira aba já é a
+  geral, no Claude. Não visto no app do Windows.

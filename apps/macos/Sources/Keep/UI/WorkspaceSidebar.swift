@@ -336,12 +336,20 @@ struct WorkspaceSidebar: View {
             clickHeader(row)
         } label: {
             HStack(spacing: 8) {
+                // Standing for the general tab, the name wears that tab's marks and inks, as a tab row does.
+                let general = generalTab(of: row)
+                let generalWants = general?.claudeActivity?.wantsYou == true
+                if generalWants {
+                    Image(systemName: Attention.symbol)
+                        .font(.system(size: 10 * textZoom, weight: .semibold))
+                        .foregroundStyle(Palette.attentionInk)
+                }
                 Text(row.title)
                     .font(identifier)
                     .foregroundStyle(
-                        row.isActive
-                            ? Palette.ink
-                            : hovered == row.name ? Palette.inkResting : Palette.inkFaint)
+                        generalWants ? RestingInk(Palette.attentionInk)
+                            : general.map { titleInk(for: $0, chosen: $0.isActive && row.isActive, hovered: hovered == row.name) }
+                            ?? (row.isActive ? Palette.ink : hovered == row.name ? Palette.inkResting : Palette.inkFaint))
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .onHover { inside in notePointer(inside, onNameOf: .workspace(row.name)) }

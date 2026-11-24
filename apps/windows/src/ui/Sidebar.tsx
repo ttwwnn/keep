@@ -296,9 +296,21 @@ function WorkspaceGroup(props: { name: string }) {
             onDone={(value, keyboard) => finishWorkspaceName(name, value, keyboard)}
           />
         ) : (
-          <span class="workspace-name" onPointerLeave={() => slowRename.disarm()}>
-            {workspaceLabel(name)}
-          </span>
+          <>
+            {/* Standing for the general tab, the name wears that tab's hand and ink, as a tab row does. */}
+            {generalLook?.wantsYou && (
+              <span class="hand">
+                <icon.Hand />
+              </span>
+            )}
+            <span
+              class="workspace-name"
+              style={generalLook?.color ? { color: generalLook.color } : undefined}
+              onPointerLeave={() => slowRename.disarm()}
+            >
+              {workspaceLabel(name)}
+            </span>
+          </>
         )}
         {marks.length > 0 && (
           <span class="header-marks" aria-label="rodando">
