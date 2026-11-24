@@ -124,6 +124,9 @@ pub fn papel(ws: &str, nome: &str) -> String {
         "Você é a aba geral do workspace {chamado} no Keep: a do topo da lista, com o nome do workspace. A pessoa conduz \
          por aqui o trabalho das demais abas deste workspace e pode também falar direto com qualquer uma; o Keep conta \
          a você, a cada mensagem, o que ela pediu nas outras abas e o que cada uma terminou.\n\
+         - Você gerencia as outras abas e não executa tarefas: delegue. Trabalho novo vai a uma aba nova (`keep nova`); o \
+         de um assunto que já tem aba vai a ela (`keep geral mandar`). Você só coordena: lê telas, repassa perguntas, \
+         retoma abas paradas e fecha as resolvidas.\n\
          - As abas do workspace: `keep geral abas --workspace \"{ws}\"`. A tela de uma: `keep ia aba tela --ws=\"{ws}\" --aba=N`.\n\
          - Trabalho novo vai para uma aba nova, aberta por você: `keep nova --workspace \"{ws}\" --pasta <pasta do projeto> \
          --nome \"<rótulo curto>\" --pedido \"<o pedido completo>\"`.\n\
@@ -142,7 +145,9 @@ pub fn papel(ws: &str, nome: &str) -> String {
 
 fn lembrete(ws: &str, nome: &str) -> String {
     format!(
-        "Aba geral do workspace {} no Keep (comandos: keep geral abas | mandar | fechar --workspace \"{ws}\"; keep nova --workspace \"{ws}\").",
+        "Aba geral do workspace {} no Keep: gerencia as outras abas e não executa tarefas; delega (aba nova com `keep nova \
+         --workspace \"{ws}\"`, ou a aba que já cuida do assunto com `keep geral mandar`) e só coordena: lê telas, repassa \
+         perguntas, retoma abas paradas e fecha as resolvidas (keep geral abas | mandar | responder | fechar --workspace \"{ws}\").",
         chamado(ws, nome)
     )
 }
@@ -230,6 +235,7 @@ mod testes {
 
         let primeira = contexto("W", "c-1").unwrap();
         assert!(primeira.starts_with("Você é a aba geral do workspace «W»"), "{primeira}");
+        assert!(primeira.contains("não executa tarefas: delegue"), "{primeira}");
         assert!(primeira.contains("aba 7 «Compras», a pessoa pediu: faça X"), "{primeira}");
         assert!(primeira.contains("aba 7 «Compras», terminou: feito"), "{primeira}");
         assert!(!primeira.contains("pedido do outro workspace"), "{primeira}");
@@ -237,6 +243,8 @@ mod testes {
         // a seguinte: o lembrete, sem repetir o que já foi
         let segunda = contexto("W", "c-1").unwrap();
         assert!(segunda.starts_with("Aba geral do workspace «W»") && !segunda.contains("faça X"), "{segunda}");
+        // as gerais já abertas só recebem o lembrete: ele também diz que ela delega e só coordena
+        assert!(segunda.contains("não executa tarefas; delega") && segunda.contains("só coordena"), "{segunda}");
         anotar(&[ev(agora_ms() + 10, "W", "pedido", "agora Y")]);
         let terceira = contexto("W", "c-1").unwrap();
         assert!(terceira.contains("agora Y") && !terceira.contains("faça X"), "{terceira}");
