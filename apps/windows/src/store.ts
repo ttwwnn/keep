@@ -1125,6 +1125,8 @@ export async function createWorkspace(name: string, cwd: string | null): Promise
     if (!s.order.includes(clean)) s.order.push(clean);
   });
   await refresh();
+  // Drawn as the general tab at once: listed under the header until the core said so, it flashed in and out.
+  generalTabs.value = new Set([...generalTabs.value, tabKey(clean, id)]);
   select(clean, id);
   // A workspace made now enters Claude at once: its first tab is its general tab (`keep geral iniciar`); others open
   // only from the + or from that tab's AI.

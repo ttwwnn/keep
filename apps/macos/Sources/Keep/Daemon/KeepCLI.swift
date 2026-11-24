@@ -524,9 +524,10 @@ enum TabRestore {
     /// hours (`keep restauro adormecer --agora`), on the person's word: on
     /// screen or not, but not while it is at work. Blocking. Nil when it
     /// left; otherwise why not, in the core's words, for the person to read.
-    static func sleepNow(workspace: String, tab: UInt32) -> String? {
+    static func sleepNow(workspace: String, tab: UInt32?) -> String? {
         guard let helper else { return "o Keep não achou o ajudante do app" }
-        let args = ["restauro", "adormecer", "--agora", workspace, "--aba", String(tab)]
+        // No tab: every tab of the workspace, the general one and those under it.
+        let args = ["restauro", "adormecer", "--agora", workspace] + (tab.map { ["--aba", String($0)] } ?? [])
         let answer = KeepCLI.run(helper, args, within: 300, name: "keep restauro")
         log(answer)
         let output: KeepCLI.Output

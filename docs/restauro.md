@@ -364,6 +364,9 @@ arquivos e o que o gancho entrega).
   (`keep geral`, a cada 5 s). Na barra lateral, o cabeçalho do workspace é a aba geral, na mesma linha: o clique no
   nome entra nela, ele ganha a cápsula de aba escolhida (ou a cor de "espera você") e ela não se repete embaixo.
   Sem símbolo (24/11/2026: os quatro quadrados "parecem Windows", a casa também não agradou).
+  No cabeçalho, sob o ponteiro, o zzz e o × da aba geral, que valem para o workspace: hibernar (`keep restauro
+  adormecer --agora W`, sem aba) e fechar (o fechar o workspace do botão direito) levam a aba geral e as de baixo,
+  cada um depois de um aviso que diz isso.
 - **O que ela sabe**: a cada rodada, o último pedido da pessoa em cada outra aba de conversa viva e a resposta com
   que ela terminou (parada há 10 min, sem a pessoa voltar a ela) vão a `geral-eventos.jsonl`. O gancho
   `UserPromptSubmit` do Keep (`keep ia conta-da-aba --gancho`, já instalado nos dois sistemas) entrega à aba geral, a

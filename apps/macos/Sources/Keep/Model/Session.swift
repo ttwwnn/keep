@@ -643,6 +643,10 @@ final class Session {
             // A workspace made now enters Claude at once: its first tab is its general tab (`keep geral iniciar`),
             // and others open only from the + or from that tab's AI.
             if isNew, let first = views[window]?.tab, first.workspace == name {
+                // Drawn as the general tab at once: listed under the header until the core said so, it flashed in
+                // and out of the list (24/11/2026).
+                general.insert(first)
+                publish()
                 DispatchQueue.global(qos: .userInitiated).async { TabRestore.startGeneral(workspace: name, tab: first.root) }
             }
 
@@ -778,6 +782,36 @@ final class Session {
         case .confineWorkspace(let workspace, let folder):
             WorkspaceConfinement.set(folder, for: workspace)
             publish()
+
+        case .sleepWorkspace(let name):
+            let ids = workspaces.first { $0.name == name }?.tabs.map(\.id) ?? []
+            guard !ids.isEmpty, sleepingNow.isDisjoint(with: ids) else { return }
+            let label = nameStore.workspace(name) ?? name
+            renderer(window)?.confirm(Confirmation(
+                title: "Hibernar o workspace “\(label)”?",
+                detail: ids.count == 1
+                    ? "A conversa da aba geral sai da memória e para. Ela volta quando você abrir o workspace."
+                    : "A aba geral e as outras \(ids.count - 1) abas dele saem da memória: as conversas param e cada "
+                        + "uma volta quando você abrir a aba. As que estiverem trabalhando ou esperando você ficam como estão.",
+                action: "Hibernar Workspace"
+            )) { [weak self] in
+                guard let self else { return }
+                self.sleepingNow.formUnion(ids)
+                self.publish()
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    let refusal = TabRestore.sleepNow(workspace: name, tab: nil)
+                    DispatchQueue.main.async {
+                        guard let self else { return }
+                        self.sleepingNow.subtract(ids)
+                        if let now = self.sleepingTabs.refresh() { self.asleep = now }
+                        self.publish()
+                        if let refusal {
+                            let said = refusal.trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+                            self.renderer(window)?.present(error: "Não deu para hibernar o workspace “\(label)”: \(said).")
+                        }
+                    }
+                }
+            }
 
         case .sleepTab(let id):
             guard !sleepingNow.contains(id) else { return }

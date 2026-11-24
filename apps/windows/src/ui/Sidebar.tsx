@@ -47,7 +47,7 @@ import {
 } from "../store";
 import { busyMark, plainTitle, programOf } from "../claude";
 import { tabAccountLabel } from "../ia";
-import { isSleeping, sleepTab } from "../iaChores";
+import { isSleeping, sleepTab, sleepWorkspace } from "../iaChores";
 import { iaAvailable, tabAccount, usageLines } from "../iaStore";
 import { homeRelative } from "../text";
 import { info } from "../store";
@@ -207,6 +207,7 @@ function WorkspaceGroup(props: { name: string }) {
   const listed = tabs.filter((t) => t !== general);
   const folded = gui.value.folded.includes(name);
   const current = activeWorkspace.value === name;
+  const workspaceSleeping = tabs.some((t) => isSleeping(name, t));
   const generalLook = general && tabLook(name, general, 0, current && general === activeTab.value, true);
   // One mark for each program at work in the workspace, as the header says it.
   const marks = [
@@ -329,6 +330,30 @@ function WorkspaceGroup(props: { name: string }) {
           </span>
         )}
         <span class="header-spacer" />
+        {/* The general tab's own zzz and ×, which are the workspace's: it and every tab under it, after a yes. */}
+        <button
+          class={`hdr-btn hdr-hover zzz ${workspaceSleeping ? "sleeping" : ""}`}
+          title="Hibernar o workspace: a aba geral e as abas dele saem da memória"
+          aria-label="Hibernar o workspace"
+          disabled={workspaceSleeping}
+          onClick={(e) => {
+            e.stopPropagation();
+            void sleepWorkspace(name, workspaceLabel(name), tabs.length);
+          }}
+        >
+          <icon.Zzz />
+        </button>
+        <button
+          class="hdr-btn hdr-hover"
+          title="Fechar o workspace: a aba geral e todas as abas dele"
+          aria-label="Fechar o workspace"
+          onClick={(e) => {
+            e.stopPropagation();
+            void closeWorkspace(name);
+          }}
+        >
+          <icon.Close />
+        </button>
         <ConfineButton name={name} />
         <button
           class="hdr-btn plus"

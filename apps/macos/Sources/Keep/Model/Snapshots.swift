@@ -478,6 +478,8 @@ enum Intent {
     /// Put a tab's Claude conversation out of memory now, the way twelve
     /// hours alone does; it comes back as the tab is shown.
     case sleepTab(TabID)
+    /// Every tab of a workspace leaves memory now, the general one and those under it, after a yes.
+    case sleepWorkspace(String)
     case split(UInt8)                 // protocol values: 1 = right, 2 = down
     /// A surface took the keyboard. The tab travels with it: rebuilding an
     /// arrangement makes AppKit reassign the first responder, and a surface

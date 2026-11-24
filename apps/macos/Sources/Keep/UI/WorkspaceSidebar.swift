@@ -366,9 +366,9 @@ struct WorkspaceSidebar: View {
                     attentionBadge(count: row.needsYou, since: row.needsYouSince)
                 }
                 Spacer(minLength: 8)
-                // The lock's and the +'s room, kept here so the fold stays at
-                // the far end.
-                Color.clear.frame(width: 14 + 8 + 14, height: 1)
+                // The zzz's, the ×'s, the lock's and the +'s room, kept here so
+                // the fold stays at the far end.
+                Color.clear.frame(width: 16 + 8 + 16 + 8 + 14 + 8 + 14, height: 1)
                 disclosure(row)
             }
             .padding(.horizontal, 12)
@@ -395,6 +395,16 @@ struct WorkspaceSidebar: View {
         // and the gap between them.
         .overlay(alignment: .trailing) {
             HStack(spacing: 8) {
+                // The general tab's own zzz and ×, which are the workspace's: it and every tab under it, after a yes.
+                let sleeping = generalTab(of: row)?.sleeping == true
+                headerButton(
+                    symbol: "zzz", busy: sleeping, visible: sleeping || (hovered == row.name && dragged == nil),
+                    help: "Hibernar o workspace: a aba geral e as abas dele saem da memória",
+                    id: "sleep-workspace-\(row.name)") { dispatch(.sleepWorkspace(row.name)) }
+                headerButton(
+                    symbol: "xmark", busy: false, visible: hovered == row.name && dragged == nil,
+                    help: "Fechar o workspace: a aba geral e todas as abas dele",
+                    id: "close-workspace-\(row.name)") { dispatch(.killWorkspace(row.name)) }
                 confinementButton(row)
                 newTabButton(row)
             }
@@ -829,6 +839,36 @@ struct WorkspaceSidebar: View {
     /// The row's zzz, beside the ×: puts this tab's Claude conversation out
     /// of memory now, as twelve hours alone would. The tab stays, its title
     /// struck through, and the conversation comes back as the tab is shown.
+    /// A round button on the header, shown under the pointer, in the tab row's style.
+    private func headerButton(
+        symbol: String, busy: Bool, visible: Bool, help: String, id: String, action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            lastClicked = nil
+            action()
+        } label: {
+            ZStack {
+                if busy {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: symbol)
+                        .font(.system(size: symbol == "xmark" ? 8 : 9, weight: .bold))
+                        .foregroundStyle(Palette.inkResting)
+                }
+            }
+            .frame(width: 16, height: 16)
+            .background(Circle().fill(Palette.wash(0.08)))
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(busy)
+        .help(help)
+        .accessibilityIdentifier(id)
+        .opacity(visible ? 1 : 0)
+        .allowsHitTesting(visible)
+        .animation(.easeOut(duration: 0.12), value: visible)
+    }
+
     private func sleepButton(
         _ tab: SessionSnapshot.SidebarTab, visible: Bool, onBadge: Bool = false
     ) -> some View {
