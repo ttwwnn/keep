@@ -271,6 +271,11 @@ Teste: `cargo build -p keep-restauro --examples && cargo test -p keep-restauro
 --test continuar` (daemon do teste, Claude parado de mentira em quatro abas).
 Era o `cc-continuar` do kit-mac até 13/10/2026.
 
+Sessão `busy` com o turno parado: o Claude Code deixa a sessão `busy` enquanto um workflow ou um shell roda em
+segundo plano, mesmo com o turno já parado no erro. Aí quem decide é a tela (`turno_parado_na_tela`): caixa à vista,
+sem "esc to interrupt" e sem a linha do spinner ("✶ Imagining… (36m 2s") logo acima da caixa é turno parado, e o
+"continue" vai. O mesmo critério vale para o aviso de erro à aba geral e para o `keep geral mandar`.
+
 # A conversa parada há 12 h sai da memória, e a aba fica
 
 Cada Claude Code aberto pesa de 200 a 400 MB, e as abas esquecidas há um dia
