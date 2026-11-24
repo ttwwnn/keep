@@ -105,6 +105,17 @@ describe("Claude Code's turn", () => {
     expect(readActivity(screen("✻ Waiting for 1 dynamic workflow to finish", mode))).toBe("done");
   });
 
+  // The turn ended in its own words, the workflow still listed under the box: no `Waiting for` line to go by.
+  const listedWorkflow = `${mode}\n\n  ◯ revisao-do-texto…  ██████░░░░  2/5 · 3m · ↓ 40k tokens · ⚠ Large workflow`;
+
+  it("a workflow listed under the box after a plain ended turn: waiting", () => {
+    expect(readActivity(screen("✻ Cooked for 3m 12s", listedWorkflow))).toBe("waitingForWorkflow");
+  });
+
+  it("a workflow listed under the box, no status line in sight: waiting", () => {
+    expect(readActivity(screen("", listedWorkflow))).toBe("waitingForWorkflow");
+  });
+
   it("a plain ended turn: over", () => {
     expect(readActivity(screen("✻ Baked for 23s", mode))).toBe("done");
   });

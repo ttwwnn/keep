@@ -348,8 +348,10 @@ enum ClaudeActivity: Hashable {
         // running` on the turn's last line is not read — it stays after they
         // end. Not decided yet: Claude Code no longer prints `esc to
         // interrupt` there, and a turn still running next to a shell is a
-        // turn running (the status line below says so).
-        let background = footer.contains(where: isRunningBackgroundWork)
+        // turn running (the status line below says so). A workflow or an
+        // agent listed running there (`◯ name ▰▰ 1/2`) is such work too, even
+        // when the turn ended in its own words, with no `Waiting for` line.
+        let background = footer.contains { isRunningBackgroundWork($0) || trimmed($0).hasPrefix("◯") }
         // Above it, the conversation — unless it is scrolled back, where the
         // last status line in sight is an old one.
         let conversation = lines[..<opening]
@@ -368,7 +370,7 @@ enum ClaudeActivity: Hashable {
             // while one is listed running under the footer (`◯ name ▰▰ 1/2`);
             // a turn that went on and was interrupted writes no new line, and
             // the old one would otherwise stand for good.
-            return background || footer.contains(where: { trimmed($0).hasPrefix("◯") }) ? .waitingForWorkflow : .done
+            return background ? .waitingForWorkflow : .done
         }
         if status.contains("…") { return .working }
         return background ? .waitingForWorkflow : .done
