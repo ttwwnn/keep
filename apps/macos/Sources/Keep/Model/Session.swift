@@ -55,6 +55,8 @@ final class Session {
     /// Where Claude Code's turn stands in each tab that runs it, as last read
     /// off its screen. Absent: not Claude Code, or not read yet.
     private var claudeActivities: [TabID: ClaudeActivity] = [:]
+    /// Tabs whose turn ended while no window showed them, until one does: drawn `.doneUnseen`.
+    private var unseenDone: Set<TabID> = []
     /// The model, effort and agents of each Claude Code tab, for the bar
     /// under its conversation.
     private var claudeStatuses: [TabID: ClaudeStatus] = [:]
@@ -1509,6 +1511,8 @@ final class Session {
     /// app-wide pair it replaces. Entering a workspace also puts it in the
     /// window's list: the list is the record of where this window has been.
     private func activate(_ id: TabID?, in window: WindowID) {
+        // Entered: what ended out of sight has been seen.
+        if let id { unseenDone.remove(id) }
         guard let id, let workspace = workspaces.first(where: { $0.name == id.workspace }),
               workspace.tabs.contains(where: { $0.id == id }), views[window] != nil
         else { return }
@@ -1797,7 +1801,7 @@ final class Session {
     private func isAtWork(_ tab: TabEntity) -> Bool {
         switch claudeActivities[tab.id] {
         case .working, .waitingForWorkflow: return true
-        case .done, .waitingForYou: return false
+        case .done, .doneUnseen, .waitingForYou: return false
         case nil: return tab.busy
         }
     }
@@ -1850,6 +1854,13 @@ final class Session {
             since[id] = Date()
         }
         waitingSince = since
+        // A turn that ends out of sight is news until the tab is entered; one that ends on screen is seen.
+        let shown = Set(views.values.compactMap(\.tab))
+        for (id, activity) in nextActivities where activity == .done
+            && claudeActivities[id] != nil && claudeActivities[id] != .done && !shown.contains(id) {
+            unseenDone.insert(id)
+        }
+        unseenDone = unseenDone.filter { nextActivities[$0] == .done }
         claudeModes = next
         claudeActivities = nextActivities
         publish()
@@ -1917,6 +1928,12 @@ final class Session {
     static func generalFirst(_ ids: [UInt32], in workspace: String, general: Set<TabID>) -> [UInt32] {
         let first = ids.filter { general.contains(TabID(workspace: workspace, root: $0)) }
         return first + ids.filter { !first.contains($0) }
+    }
+
+    /// The turn as the rows draw it: an ended one nobody has entered since is `.doneUnseen`.
+    private func shownActivity(_ id: TabID) -> ClaudeActivity? {
+        let activity = claudeActivities[id]
+        return activity == .done && unseenDone.contains(id) ? .doneUnseen : activity
     }
 
     private func isAsleep(_ tab: TabEntity) -> Bool {
@@ -2118,7 +2135,7 @@ final class Session {
                             $0.key != window && $0.value.tab == tab.id
                         },
                         claudeMode: claudeModes[tab.id],
-                        claudeActivity: claudeActivities[tab.id],
+                        claudeActivity: shownActivity(tab.id),
                         wantsYouSince: waitingSince[tab.id],
                         account: aiAccount(of: tab),
                         offersAccounts: aiHelperPresent,
@@ -2148,7 +2165,7 @@ final class Session {
                 isActive: tab.id == view.tab,
                 isElsewhere: views.contains { $0.key != window && $0.value.tab == tab.id },
                 claudeMode: claudeModes[tab.id],
-                claudeActivity: claudeActivities[tab.id],
+                claudeActivity: shownActivity(tab.id),
                 wantsYouSince: waitingSince[tab.id],
                 command: aiProgram(of: tab),
                 account: aiAccount(of: tab),

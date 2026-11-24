@@ -660,3 +660,7 @@ máquina não tem). Nada disto foi visto na WebView2 nem com um Claude Code de v
   embaixo (`WorkspaceGroup` em `Sidebar.tsx`, `styles.css`). Sem símbolo. Na 0.3.74 o nome leva a cor e a mão da
   aba geral, e o workspace criado (`createWorkspace` em `store.ts`) chama `keep geral iniciar`: a primeira aba já é a
   geral, no Claude. Não visto no app do Windows.
+- [x] 0.3.75: a aba cujo turno acabou fora de vista fica com a cápsula verde-limão das mensagens da pessoa (#a3e635),
+  letra preta, até ser aberta (Mac: `ClaudeActivity.doneUnseen` e `unseenDone` na `Session`; Windows: `unseenDone` em
+  `store.ts`, `unseen` em `tabLook.ts`); vale também para o nome do workspace, que é a aba geral. Não visto no app do
+  Windows.

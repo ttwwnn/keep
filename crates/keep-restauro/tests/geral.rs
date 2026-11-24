@@ -145,7 +145,8 @@ fn a_aba_geral_abre_sabe_das_outras_confere_as_novas_e_fecha_as_resolvidas() {
     let r = geral::rodada(false).unwrap();
     assert_eq!(r["eventos"], 4, "pedido e fim de cada uma: {r:#}");
     assert_eq!(r["avisadas"], serde_json::json!([{ "workspace": "A", "abas": [nova_aba] }]), "só a nova vai conferir: {r:#}");
-    assert!(tela_tem("A", g, "[Keep] Terminaram e esperam sua", 10), "digitado na aba geral");
+    assert!(tela_tem("A", g, "[Keep] Pedem sua ação", 10), "digitado na aba geral");
+    assert!(tela_tem("A", g, "terminou (confira e feche se resolvida)", 2));
     assert!(tela_tem("A", g, &format!("aba {nova_aba}"), 2));
     // a mesma resposta não volta
     let r = geral::rodada(false).unwrap();
@@ -181,6 +182,34 @@ fn a_aba_geral_abre_sabe_das_outras_confere_as_novas_e_fecha_as_resolvidas() {
     // ---- mandar: entra na aba parada de caixa vazia
     geral::mandar("A", antiga, "e agora isto").unwrap();
     assert!(tela_tem("A", antiga, "Feito: e agora isto", 10));
+
+    // ---- a aba parada num erro da API vai à aba geral, para retomá-la
+    unsafe { std::env::set_var("KEEP_GERAL_ERRO_S", "0") };
+    assert!(keep_ia::trocar::digita("A", antiga, "/limite 9999999999 You've hit your limit", true).unwrap());
+    assert!(tela_tem("A", antiga, "You've hit your limit", 10));
+    std::thread::sleep(Duration::from_millis(300));
+    let r = geral::rodada(false).unwrap();
+    assert_eq!(r["avisadas"], serde_json::json!([{ "workspace": "A", "abas": [antiga] }]), "{r:#}");
+    assert!(tela_tem("A", g, "parou com erro (retome-a)", 10));
+    let ctx = keep_ia::geral::contexto("A", &conversa_g).unwrap();
+    assert!(ctx.contains("parou com erro (retome-a): You've hit your limit"), "{ctx}");
+
+    // ---- a pergunta de uma aba à pessoa vai à aba geral, que a responde na aba
+    let pid = keep_ia::abas::ler().unwrap().1.into_iter().find(|i| i.workspace == "A" && i.aba == antiga).unwrap().pid;
+    let sessao = casa.join(".claude/sessions").join(format!("{pid}.json"));
+    let idle = std::fs::read_to_string(&sessao).unwrap();
+    assert!(geral::responder("A", antiga, Some(1), None).unwrap_err().contains("não espera resposta"));
+    std::fs::write(&sessao, idle.replace("\"status\":\"idle\"", "\"status\":\"waiting\"")).unwrap();
+    let r = geral::rodada(false).unwrap();
+    assert_eq!(r["avisadas"], serde_json::json!([{ "workspace": "A", "abas": [antiga] }]), "{r:#}");
+    assert!(tela_tem("A", g, "pergunta (repita à pessoa e responda na aba)", 10));
+    let ctx = keep_ia::geral::contexto("A", &conversa_g).unwrap();
+    assert!(ctx.contains("pergunta à pessoa") && ctx.contains("You've hit your limit"), "a tela da aba vai junto: {ctx}");
+    geral::responder("A", antiga, Some(1), None).unwrap();
+    if !tela_tem("A", antiga, "Feito: 1", 10) {
+        panic!("o número e o Enter chegaram à aba:\n{}", daemon::tela("A", antiga).unwrap_or_default());
+    }
+    std::fs::write(&sessao, idle).unwrap();
 
     // ---- workspace novo: a única aba vira a geral, já no Claude; não a de um workspace com mais abas
     let unica = daemon::nova_aba("N", Some(&raiz.to_string_lossy()), 220, 30).unwrap();

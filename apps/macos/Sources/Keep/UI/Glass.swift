@@ -280,6 +280,7 @@ extension ClaudeActivity {
         case (.waitingForYou, _): return Attention.ink
         case (.done, true): return srgb(153, 153, 153)
         case (.done, false): return srgb(102, 102, 102)
+        case (.doneUnseen, _): return srgb(20, 20, 20)
         }
     }
 

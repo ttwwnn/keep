@@ -238,6 +238,9 @@ enum ClaudeActivity: Hashable {
     case waitingForYou
     /// The turn is over.
     case done
+    /// The turn is over and nobody has entered the tab since: the lime of the person's own messages, black ink,
+    /// until the tab is shown (pedido de 24/11/2026). Never read off the screen: the session sets it.
+    case doneUnseen
 
     /// Codex's final status above its prompt uses the same blue as a Claude
     /// workflow while it says Working. Older mentions in the transcript do

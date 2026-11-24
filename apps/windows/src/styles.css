@@ -374,8 +374,15 @@ button {
 }
 
 .tab-row.selected .tab-title,
-.tab-row.wants .tab-title {
+.tab-row.wants .tab-title,
+.tab-row.unseen .tab-title {
   font-weight: 600;
+}
+
+/* A turn that ended out of sight, until the tab is entered: the lime of the person's own messages, black ink. */
+.tab-row.unseen,
+.workspace-row.unseen {
+  color: rgb(20, 20, 20);
 }
 
 .tab-row .busy-mark,

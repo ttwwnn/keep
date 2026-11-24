@@ -60,6 +60,7 @@ import { InlineEditor, openMenu } from "./common";
 import * as icon from "./icons";
 import { PaneMark } from "./paneIcons";
 import { sidebarMove, startSidebarTabDrag, startWorkspaceDrag } from "./tabDrag";
+import { LIME_GREEN } from "../theme";
 import { tabLook, useBreath } from "./tabLook";
 import { WindowMark } from "./windowMark";
 import { shownElsewhere } from "../windowModel";
@@ -99,8 +100,8 @@ function TabRow(props: { workspace: string; tab: RootTab; tabs: RootTab[]; index
   return (
     <div
       ref={badge as never}
-      class={`tab-row ${selected ? "selected" : ""} ${look.wantsYou ? "wants" : ""} ${carried ? "carried" : ""} ${offered ? "offered" : ""} ${offersSleep ? "has-zzz" : ""}`}
-      style={look.wantsYou || shown ? { background: look.wantsYou ? look.fill : undefined, transform: shown ? `translateY(${shown}px)` : undefined } : undefined}
+      class={`tab-row ${selected ? "selected" : ""} ${look.wantsYou ? "wants" : ""} ${carried ? "carried" : ""} ${offered ? "offered" : ""} ${offersSleep ? "has-zzz" : ""} ${look.unseen ? "unseen" : ""}`}
+      style={look.wantsYou || look.unseen || shown ? { background: look.wantsYou ? look.fill : look.unseen ? LIME_GREEN : undefined, transform: shown ? `translateY(${shown}px)` : undefined } : undefined}
       title={where || undefined}
       data-row={tabKey(workspace, tab.root.id)}
       onPointerDown={(e) => startSidebarTabDrag(e, workspace, tabs, index)}
@@ -249,8 +250,8 @@ function WorkspaceGroup(props: { name: string }) {
       <div
         class={`workspace-row ${carried ? "carried" : ""} ${offered ? "offered" : ""} ${general ? "is-general" : ""} ${
           general && current && general === selectedTab ? "general-chosen" : ""
-        } ${generalLook?.wantsYou ? "wants" : ""}`}
-        style={generalLook?.wantsYou ? { background: generalLook.fill } : undefined}
+        } ${generalLook?.wantsYou ? "wants" : ""} ${generalLook?.unseen ? "unseen" : ""}`}
+        style={generalLook?.wantsYou ? { background: generalLook.fill } : generalLook?.unseen ? { background: LIME_GREEN } : undefined}
         title={tooltip}
         onPointerDown={(e) => !renaming && startWorkspaceDrag(e, name)}
         onClick={(e) => {
