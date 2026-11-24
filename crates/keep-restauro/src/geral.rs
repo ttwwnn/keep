@@ -323,7 +323,7 @@ pub fn rodada(seco: bool) -> Result<Value, String> {
         let nome = if chamado == ws { String::new() } else { chamado.clone() };
         if let Some(g) = achar(&ws, anterior, mesmo_keepd, &abas, agora) {
             let g = Geral { nome: nome.clone(), ..g };
-            if anterior.is_none_or(|a| a.aba != g.aba || !mesmo_keepd || a.nome != g.nome) {
+            if !seco && anterior.is_none_or(|a| a.aba != g.aba || !mesmo_keepd || a.nome != g.nome) {
                 nomear.push((ws.clone(), g.aba, chamado.clone()));
                 registrar(&format!("{ws}: a aba {} é a geral", g.aba));
             }

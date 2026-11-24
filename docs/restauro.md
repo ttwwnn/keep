@@ -357,7 +357,7 @@ arquivos e o que o gancho entrega).
   adormecidas fica sem, porque não há o que coordenar e um Claude parado em cada um pesaria na memória. A aba
   adotada ou aberta recebe o nome do workspace. Fechada, outra é aberta (uma tentativa a cada 10 min).
 - **No app**: `geral.json` (o formato de `adormecidas.json`), lido pelo Mac e perguntado pelo Windows
-  (`keep geral`, a cada 5 s). A aba geral vai para o topo da lista, com a marca de quatro quadrados na cor de
+  (`keep geral`, a cada 5 s). A aba geral vai para o topo da lista, com a marca de uma casa na cor de
   destaque, o título em negrito e um fio embaixo.
 - **O que ela sabe**: a cada rodada, o último pedido da pessoa em cada outra aba de conversa viva e a resposta com
   que ela terminou (parada há 10 min, sem a pessoa voltar a ela) vão a `geral-eventos.jsonl`. O gancho

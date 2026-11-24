@@ -140,7 +140,7 @@ function TabRow(props: { workspace: string; tab: RootTab; tabs: RootTab[]; index
         <span class="tab-label">
           {look.general && (
             <span class="general-mark" title="Aba geral: conduz as demais abas deste workspace">
-              <icon.Grid />
+              <icon.House />
             </span>
           )}
           {look.wantsYou ? (

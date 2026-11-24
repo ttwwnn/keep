@@ -586,7 +586,7 @@ struct WorkspaceSidebar: View {
                 // The general tab (`keep geral`) wears its own mark first: it
                 // runs the others, and the eye should find it before them.
                 if tab.general {
-                    Image(systemName: "square.grid.2x2.fill")
+                    Image(systemName: "house.fill")
                         .font(.system(size: 10 * textZoom, weight: .semibold))
                         .foregroundStyle(RestingInk(Color.accentColor, rest: Palette.Resting.blue))
                         .accessibilityLabel("Aba geral")
