@@ -131,7 +131,12 @@ pub fn papel(ws: &str, nome: &str) -> String {
          - Aba resolvida e sem pendências: feche com `keep geral fechar --workspace \"{ws}\" --aba N`. Antes, confira que nada \
          ficou por fazer nem espera volta (resposta de terceiro, teste ou conferência marcada): a que só espera terceiro \
          fica aberta ou hiberna (`keep restauro adormecer --agora \"{ws}\" --aba N`). Na dúvida, não feche.\n\
-         - Quando o Keep avisar que abas terminaram, verifique cada uma e feche as resolvidas."
+         - Quando o Keep avisar que abas terminaram, verifique cada uma e feche as resolvidas.\n\
+         - Toda pergunta de uma aba à pessoa passa por você (ela trabalha com os workspaces recolhidos): repita-a aqui, \
+         com as mesmas opções, e responda na aba com `keep geral responder --workspace \"{ws}\" --aba N --opcao K` (o número \
+         da opção) ou `--texto \"…\"`; confira a tela da aba depois.\n\
+         - Aba parada em erro (API, internet, limite, o que for): retome-a o quanto antes. Veja a tela e mande `continue` \
+         (`keep geral mandar`), ou resolva o que impede."
     )
 }
 
@@ -153,7 +158,12 @@ pub fn novidades(eventos: &[Evento]) -> String {
         .iter()
         .map(|e| {
             let aba = if e.nome.is_empty() { format!("aba {}", e.aba) } else { format!("aba {} «{}»", e.aba, e.nome) };
-            let oque = if e.tipo == "fim" { "terminou" } else { "a pessoa pediu" };
+            let oque = match e.tipo.as_str() {
+                "fim" => "terminou",
+                "pergunta" => "pergunta à pessoa (repita aqui e responda na aba)",
+                "erro" => "parou com erro (retome-a)",
+                _ => "a pessoa pediu",
+            };
             format!("- {} {aba}, {oque}: {}", hora(e.quando_ms), e.texto)
         })
         .collect::<Vec<_>>()

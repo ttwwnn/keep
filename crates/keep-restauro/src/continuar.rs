@@ -597,7 +597,7 @@ pub(crate) fn tela_da_aba(ws: &str, tab: u32) -> Option<Tela> {
     daemon::tela_vt(ws, tab).ok().map(|vt| ler_tela(&vt))
 }
 
-fn manda(ws: &str, tab: u32, dados: &[u8]) -> bool {
+pub(crate) fn manda(ws: &str, tab: u32, dados: &[u8]) -> bool {
     let Ok(l) = daemon::listar() else { return false };
     let Some(a) = l.aba(ws, tab) else { return false };
     let Ok(mut t) = daemon::Teclado::liga(a) else { return false };

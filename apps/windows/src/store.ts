@@ -89,6 +89,9 @@ export const codexModels = signal<readonly CodexModel[]>([]);
 export const picking = signal<ReadonlySet<string>>(new Set());
 /** When each pane began waiting on you, in seconds: what its badge breathes from. */
 export const waitingSince = signal<ReadonlyMap<string, number>>(new Map());
+/** Panes (`viewKey`) whose turn ended while this window did not show them, until the tab is entered: drawn as the lime
+ * capsule of the person's own messages, black ink (pedido de 24/11/2026). */
+export const unseenDone = signal<ReadonlySet<string>>(new Set());
 /** The general tab of each workspace (`keep geral`), by `tabKey`: first in its list, and drawn apart (iaChores.ts). */
 export const generalTabs = signal<ReadonlySet<string>>(new Set());
 
@@ -781,7 +784,16 @@ function readScreensFrom(unseen: ReadonlyMap<string, string>): void {
   }
   const same = <V,>(a: ReadonlyMap<string, V>, b: ReadonlyMap<string, V>) =>
     a.size === b.size && [...a].every(([k, v]) => b.get(k) === v);
+  // A turn that ends out of sight is news until the tab is entered; one that ends on screen is seen.
+  const shownWs = activeWorkspace.value;
+  const shown = new Set(shownWs && activeTab.value ? activeTab.value.panes.map((p) => viewKey(shownWs, p.id)) : []);
+  const unseenNow = new Set([...unseenDone.value].filter((k) => nextActivities.get(k) === "done"));
+  for (const [key, activity] of nextActivities) {
+    const before = previousActivities.get(key);
+    if (activity === "done" && before !== undefined && before !== "done" && !shown.has(key)) unseenNow.add(key);
+  }
   batch(() => {
+    if (unseenNow.size !== unseenDone.value.size || [...unseenNow].some((k) => !unseenDone.value.has(k))) unseenDone.value = unseenNow;
     if (!same(nextActivities, previousActivities)) activities.value = nextActivities;
     if (!same(nextModes, previousModes)) modes.value = nextModes;
     if (!same(since, waitingSince.value)) waitingSince.value = since;
@@ -1011,7 +1023,12 @@ export function select(workspace: string, tab?: number): void {
     s.active = { workspace, tab: id };
     s.lastTab[workspace] = id;
   });
-  if (id !== undefined) noteVisit(workspace, id);
+  if (id !== undefined) {
+    noteVisit(workspace, id);
+    // Entered: what ended out of sight has been seen.
+    const panes = tabs.find((t) => t.root.id === id)?.panes.map((p) => viewKey(workspace, p.id)) ?? [];
+    if (panes.some((k) => unseenDone.value.has(k))) unseenDone.value = new Set([...unseenDone.value].filter((k) => !panes.includes(k)));
+  }
   requestAnimationFrame(() => focusActive());
 }
 

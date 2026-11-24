@@ -372,6 +372,11 @@ arquivos e o que o gancho entrega).
   dela, parada e vazia, com a pessoa há 20 s sem teclado nem mouse, "[Keep] Terminaram e esperam sua conferência: aba N «nome»…" (adormecida, ela é acordada
   antes). A aba geral confere e fecha a que ficou sem pendências; a que só espera terceiro fica ou hiberna. As abas
   que já existiam quando a aba geral chegou só entram nas novidades.
+- **Perguntas pela aba geral**: a aba que espera a pessoa (uma pergunta, uma permissão: a sessão do Claude diz
+  `waiting`) tem a pergunta da tela levada às novidades e avisada à aba geral na hora; ela a repete à pessoa, que
+  trabalha com os workspaces recolhidos, e responde na aba (`keep geral responder`).
+- **Erros**: a aba parada num erro da API (rede, servidor, limite, o que for) que o `keep continuar` não curou em
+  2 min vai à aba geral, que a retoma.
 - **Só o Claude**: as novidades vêm do transcrito do Claude; o Codex não entra.
 
 ```
@@ -381,6 +386,7 @@ keep geral abas --workspace W                      número, nome, programa e sit
 keep geral mandar --workspace W --aba N --texto T  digita T na aba parada de caixa vazia, e Enter
 keep geral fechar --workspace W --aba N            /exit e fecha a aba (nunca a geral, nem a ocupada)
 keep geral iniciar --workspace W --aba N           a única aba do workspace novo vira a geral, já no Claude
+keep geral responder --workspace W --aba N (--opcao K | --texto T)   responde a pergunta em que a aba espera
 ```
 
 O que a rodada fez vai a `geral.log`, ao lado das adormecidas. Testes: `cargo test -p keep-ia --lib geral` (o papel

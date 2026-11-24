@@ -22,6 +22,7 @@
 //! keep geral mandar --workspace W --aba N --texto T  → digita T na aba parada de caixa vazia, e Enter
 //! keep geral fechar --workspace W --aba N            → fecha a aba (nunca a geral, nem a que trabalha)
 //! keep geral iniciar --workspace W --aba N           → a única aba do workspace novo vira a geral, já no Claude
+//! keep geral responder --workspace W --aba N (--opcao K | --texto T)  → responde a pergunta em que a aba espera
 //! ```
 
 use std::collections::BTreeMap;
@@ -53,6 +54,10 @@ const IDADE_MS: u64 = 5 * 60_000;
 const NOVA_TENTATIVA_MS: u64 = 10 * 60_000;
 /// Uma conversa que sumiu sai do estado depois disto.
 const ESQUECE_MS: u64 = 30 * 24 * 3600 * 1000;
+/// Uma aba parada num erro vai à aba geral depois deste tanto: o `keep continuar` tem a primeira chance.
+const ERRO_MS: u64 = 2 * 60_000;
+/// O tanto da pergunta que vai às novidades.
+const PERGUNTA_MAX: usize = 1500;
 /// Segundos sem teclado nem mouse antes de digitar o aviso na aba geral.
 const OCIOSA_S: f64 = 20.0;
 const PEDIDO_MAX: usize = 300;
@@ -82,6 +87,11 @@ struct Vista {
     /// Aberta depois da aba geral do workspace: ao terminar, vai a ela para conferir.
     #[serde(default)]
     nova: bool,
+    /// A pergunta à pessoa que já foi levada à aba geral (o texto da tela), e o erro (uuid da fala).
+    #[serde(default)]
+    pergunta: String,
+    #[serde(default)]
+    erro: String,
     #[serde(default)]
     visto_ms: u64,
 }
@@ -90,9 +100,9 @@ struct Vista {
 struct Estado {
     #[serde(default)]
     conversas: BTreeMap<String, Vista>,
-    /// Por workspace, as abas que terminaram e esperam a aba geral conferir.
+    /// Por workspace, o que levar à aba geral: (aba, motivo), motivo `terminou`, `pergunta` ou `erro`.
     #[serde(default)]
-    verificar: BTreeMap<String, Vec<u32>>,
+    avisar: BTreeMap<String, Vec<(u32, String)>>,
     /// Por workspace, quando a aba geral foi aberta por último (para não abrir uma atrás da outra).
     #[serde(default)]
     tentativas: BTreeMap<String, u64>,
@@ -159,6 +169,28 @@ fn ultimas(caminho: &Path) -> (Option<Fala>, Option<Fala>) {
         vistas < 3000
     });
     (pedido, fim)
+}
+
+/// A pergunta na tela de uma aba que espera a pessoa: as últimas linhas com texto, sem as bordas.
+fn pergunta_da_tela(linhas: &[String]) -> String {
+    let cheias: Vec<&str> =
+        linhas.iter().map(|l| l.trim()).filter(|l| !l.is_empty() && !l.chars().all(|c| "─━│ ".contains(c))).collect();
+    let texto = cheias[cheias.len().saturating_sub(25)..].join("\n");
+    let total = texto.chars().count();
+    if total <= PERGUNTA_MAX { texto } else { texto.chars().skip(total - PERGUNTA_MAX).collect() }
+}
+
+/// A conversa parou num erro da API: a última fala é a de erro que o Claude Code grava. (marca, quando, texto).
+fn erro_da_conversa(caminho: &Path) -> Option<Fala> {
+    let d = keep_ia::sessoes::ultima_fala(caminho)?;
+    let de_erro = d.get("isApiErrorMessage").and_then(Value::as_bool) == Some(true)
+        || d.get("error").and_then(Value::as_str).is_some_and(|e| !e.is_empty());
+    if d.get("type").and_then(Value::as_str) != Some("assistant") || !de_erro {
+        return None;
+    }
+    let quando = keep_ia::sessoes::carimbo_ms(&d);
+    let uuid = d.get("uuid").and_then(Value::as_str).filter(|u| !u.is_empty()).map_or_else(|| quando.to_string(), String::from);
+    Some((uuid, quando, texto_da_fala(&d)))
 }
 
 fn uma_linha(t: &str) -> String {
@@ -406,6 +438,7 @@ pub fn rodada(seco: bool) -> Result<Value, String> {
                 fim: if nova { String::new() } else { fim.as_ref().map(|f| f.0.clone()).unwrap_or_default() },
                 nova,
                 visto_ms: agora,
+                ..Default::default()
             }
         });
         let nome = v.nome(&c.ws, c.tab);
@@ -424,31 +457,55 @@ pub fn rodada(seco: bool) -> Result<Value, String> {
                 x.visto_ms = agora;
             }
         }
-        let Some((uuid, quando, texto)) = &fim else { continue };
-        if *uuid == x.fim || agora.saturating_sub(*quando) < prazo("KEEP_GERAL_QUIETO_S", QUIETO_MS) {
+        let status = keep_ia::sessoes::sessao_claude(c.pid).map(|s| s.status).unwrap_or_default();
+        let mut avisa = |motivo: &str| {
+            let lista = estado.avisar.entry(c.ws.clone()).or_default();
+            if !lista.iter().any(|(t, m)| *t == c.tab && m == motivo) {
+                lista.push((c.tab, motivo.to_string()));
+            }
+        };
+        // A aba espera a pessoa (uma pergunta, uma permissão): a pergunta vai à aba geral, que a repete à pessoa
+        // (pedido de 24/11/2026: trabalhar com os workspaces recolhidos).
+        if status == "waiting" {
+            let tela = continuar::tela_da_aba(&c.ws, c.tab).map(|t| pergunta_da_tela(&t.linhas)).unwrap_or_default();
+            if !tela.is_empty() && tela != x.pergunta {
+                eventos.push(evento("pergunta", agora, tela.clone()));
+                x.pergunta = tela;
+                x.visto_ms = agora;
+                avisa("pergunta");
+            }
+        } else {
+            x.pergunta.clear();
+        }
+        // Parada num erro da API (rede, servidor, limite, o que for) que o `keep continuar` não curou em 2 min.
+        if let Some((uuid, quando, texto)) = erro_da_conversa(&caminho) {
+            if status == "idle" && uuid != x.erro && agora.saturating_sub(quando) >= prazo("KEEP_GERAL_ERRO_S", ERRO_MS) {
+                eventos.push(evento("erro", quando, comeco(&texto, PEDIDO_MAX)));
+                x.erro = uuid;
+                x.visto_ms = agora;
+                avisa("erro");
+            }
             continue;
         }
-        if keep_ia::sessoes::sessao_claude(c.pid).is_none_or(|s| s.status != "idle") {
+        let Some((uuid, quando, texto)) = &fim else { continue };
+        if *uuid == x.fim || agora.saturating_sub(*quando) < prazo("KEEP_GERAL_QUIETO_S", QUIETO_MS) || status != "idle" {
             continue;
         }
         eventos.push(evento("fim", *quando, final_de(texto, FIM_MAX)));
         x.fim = uuid.clone();
         x.visto_ms = agora;
         if x.nova {
-            let lista = estado.verificar.entry(c.ws.clone()).or_default();
-            if !lista.contains(&c.tab) {
-                lista.push(c.tab);
-            }
+            avisa("terminou");
         }
     }
     if !seco {
         keep_ia::geral::anotar(&eventos);
     }
 
-    // As que terminaram vão à aba geral.
+    // O que pede a aba geral vai a ela.
     let mut avisadas = Vec::new();
-    for (ws, abas) in estado.verificar.iter_mut() {
-        abas.retain(|t| v.lista.aba(ws, *t).is_some());
+    for (ws, abas) in estado.avisar.iter_mut() {
+        abas.retain(|(t, _)| v.lista.aba(ws, *t).is_some());
         let Some(g) = gerais.iter().find(|g| &g.workspace == ws && g.aba != 0) else { continue };
         if abas.is_empty() {
             continue;
@@ -457,7 +514,7 @@ pub fn rodada(seco: bool) -> Result<Value, String> {
             if !seco {
                 let _ = adormecer::acordar(ws, g.aba);
             }
-            relato.push(json!({ "workspace": ws, "situacao": "acordei a aba geral para conferir as que terminaram" }));
+            relato.push(json!({ "workspace": ws, "situacao": "acordei a aba geral para o que pede a ela" }));
             continue;
         }
         let Some(c) = abertas.iter().find(|c| &c.ws == ws && c.tab == g.aba) else { continue };
@@ -472,15 +529,19 @@ pub fn rodada(seco: bool) -> Result<Value, String> {
         }
         let lista: Vec<String> = abas
             .iter()
-            .map(|t| match v.nome(ws, *t) {
-                n if n.is_empty() => format!("aba {t}"),
-                n => format!("aba {t} «{n}»"),
+            .map(|(t, motivo)| {
+                let aba = match v.nome(ws, *t) {
+                    n if n.is_empty() => format!("aba {t}"),
+                    n => format!("aba {t} «{n}»"),
+                };
+                match motivo.as_str() {
+                    "pergunta" => format!("{aba} pergunta (repita à pessoa e responda na aba)"),
+                    "erro" => format!("{aba} parou com erro (retome-a)"),
+                    _ => format!("{aba} terminou (confira e feche se resolvida)"),
+                }
             })
             .collect();
-        let texto = format!(
-            "[Keep] Terminaram e esperam sua conferência: {}. Veja o que cada uma fez e feche as que não têm pendência.",
-            lista.join(", ")
-        );
+        let texto = format!("[Keep] Pedem sua ação: {}. Detalhes nas novidades.", lista.join("; "));
         if seco {
             relato.push(json!({ "workspace": ws, "situacao": format!("digitaria: {texto}") }));
             continue;
@@ -488,13 +549,13 @@ pub fn rodada(seco: bool) -> Result<Value, String> {
         match continuar::digitar(c, &texto, false) {
             Ok(()) => {
                 registrar(&format!("{ws}: levei à aba geral: {}", lista.join(", ")));
-                avisadas.push(json!({ "workspace": ws, "abas": abas.clone() }));
+                avisadas.push(json!({ "workspace": ws, "abas": abas.iter().map(|(t, _)| *t).collect::<Vec<_>>() }));
                 abas.clear();
             }
             Err(e) => relato.push(json!({ "workspace": ws, "situacao": format!("não digitei na aba geral: {e}") })),
         }
     }
-    estado.verificar.retain(|_, a| !a.is_empty());
+    estado.avisar.retain(|_, a| !a.is_empty());
     if !seco && estado != estado_antes {
         let _ = crate::gravar(&crate::pasta().join(ESTADO), &estado);
     }
@@ -609,6 +670,39 @@ pub fn mandar(ws: &str, aba: u32, texto: &str) -> Result<Value, String> {
     Ok(json!({ "versao": crate::VERSAO, "ok": true, "workspace": ws, "aba": aba }))
 }
 
+/// Responde a pergunta em que a aba espera a pessoa: `opcao` aperta o número da opção (e o Enter, se o diálogo não
+/// fechou com ele); `texto` digita e aperta Enter (o texto livre, depois de escolher a opção de digitar).
+pub fn responder(ws: &str, aba: u32, opcao: Option<u32>, texto: Option<&str>) -> Result<Value, String> {
+    let c = conversa_na(ws, aba).ok_or_else(|| format!("a aba {aba} de {ws} não tem conversa do Claude aberta"))?;
+    let esperando = || keep_ia::sessoes::sessao_claude(c.pid).is_some_and(|s| s.status == "waiting");
+    if !esperando() {
+        return Err(format!("a aba {aba} não espera resposta"));
+    }
+    let antes = continuar::tela_da_aba(ws, aba).map(|t| t.linhas).unwrap_or_default();
+    match (opcao, texto) {
+        (Some(n), None) if (1..=9).contains(&n) => {
+            continuar::manda(ws, aba, n.to_string().as_bytes()).then_some(()).ok_or("não consegui teclar na aba")?;
+            // A tela mostra a escolha (sob carga, em até uns segundos); se o diálogo não fechou com ela, o Enter.
+            let mudou = daemon::espera(Duration::from_secs(3), Duration::from_millis(150), || {
+                continuar::tela_da_aba(ws, aba).filter(|t| t.linhas != antes).map(|_| ())
+            });
+            std::thread::sleep(Duration::from_millis(300));
+            if mudou.is_some() && esperando() {
+                continuar::manda(ws, aba, b"\r");
+            }
+        }
+        (None, Some(t)) => {
+            let t = uma_linha(t);
+            continuar::manda(ws, aba, t.as_bytes()).then_some(()).ok_or("não consegui teclar na aba")?;
+            std::thread::sleep(Duration::from_millis(300));
+            continuar::manda(ws, aba, b"\r");
+        }
+        _ => return Err("diga --opcao N (1 a 9) ou --texto T".into()),
+    }
+    registrar(&format!("{ws}: respondi a pergunta da aba {aba}"));
+    Ok(json!({ "versao": crate::VERSAO, "ok": true, "workspace": ws, "aba": aba }))
+}
+
 /// Fecha a aba `aba` de `ws`: a conversa sai pelo `/exit` (a worktree dela fica para a varredura das órfãs) e a
 /// aba fecha. Nunca a aba geral, nem a que trabalha, espera a pessoa ou tem texto na caixa.
 pub fn fechar(ws: &str, aba: u32) -> Result<Value, String> {
@@ -647,7 +741,7 @@ fn opcao<'a>(args: &'a [String], nome: &str) -> Option<&'a str> {
 }
 
 pub fn cli(args: &[String]) -> i32 {
-    const USO: &str = "keep geral [rodada [--seco] | abas --workspace W | mandar --workspace W --aba N --texto T | fechar --workspace W --aba N | iniciar --workspace W --aba N]";
+    const USO: &str = "keep geral [rodada [--seco] | abas --workspace W | mandar --workspace W --aba N --texto T | fechar --workspace W --aba N | iniciar --workspace W --aba N | responder --workspace W --aba N (--opcao K | --texto T)]";
     let ws = opcao(args, "--workspace");
     let aba = opcao(args, "--aba").and_then(|n| n.parse::<u32>().ok());
     let resposta = match (args.first().map(String::as_str), ws, aba) {
@@ -660,6 +754,9 @@ pub fn cli(args: &[String]) -> i32 {
         },
         (Some("fechar"), Some(ws), Some(aba)) => fechar(ws, aba),
         (Some("iniciar"), Some(ws), Some(aba)) => iniciar(ws, aba),
+        (Some("responder"), Some(ws), Some(aba)) => {
+            responder(ws, aba, opcao(args, "--opcao").and_then(|n| n.parse().ok()), opcao(args, "--texto"))
+        }
         _ => {
             eprintln!("uso: {USO}");
             return 2;

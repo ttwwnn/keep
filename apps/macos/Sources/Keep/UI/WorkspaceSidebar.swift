@@ -380,7 +380,8 @@ struct WorkspaceSidebar: View {
                 if let general = generalTab(of: row) {
                     capsule(
                         chosen: general.isActive && row.isActive, hovered: false,
-                        wantsYou: general.claudeActivity?.wantsYou == true, since: general.wantsYouSince)
+                        wantsYou: general.claudeActivity?.wantsYou == true, since: general.wantsYouSince,
+                        unseen: general.claudeActivity == .doneUnseen)
                         .padding(.top, 6)
                 }
             }
@@ -616,7 +617,8 @@ struct WorkspaceSidebar: View {
                     BusyMark(program: tab.command, font: .system(size: 10 * textZoom))
                 }
                 Text(tab.title)
-                    .font(.system(size: 12 * textZoom, weight: wantsYou || chosen ? .semibold : .regular))
+                    .font(.system(size: 12 * textZoom,
+                                  weight: wantsYou || chosen || tab.claudeActivity == .doneUnseen ? .semibold : .regular))
                     // Struck through: its conversation is out of memory and
                     // comes back as the tab is shown.
                     .strikethrough(tab.asleep)
@@ -667,7 +669,8 @@ struct WorkspaceSidebar: View {
             .padding(.vertical, 5)
             .contentShape(Rectangle())
             .background(capsule(
-                chosen: chosen, hovered: hoveredHere, wantsYou: wantsYou, since: tab.wantsYouSince))
+                chosen: chosen, hovered: hoveredHere, wantsYou: wantsYou, since: tab.wantsYouSince,
+                unseen: tab.claudeActivity == .doneUnseen))
         }
         .buttonStyle(.plain)
         // The chevron that opens the menu of the tab's AI and account, where
@@ -1199,10 +1202,13 @@ struct WorkspaceSidebar: View {
     /// one being shown.
     @ViewBuilder
     private func capsule(
-        chosen: Bool, hovered: Bool, wantsYou: Bool = false, since: Date? = nil
+        chosen: Bool, hovered: Bool, wantsYou: Bool = false, since: Date? = nil, unseen: Bool = false
     ) -> some View {
         if wantsYou {
             AttentionCapsule(until: chosen ? nil : Attention.lastBreath(since: since))
+        } else if unseen && !chosen {
+            // A turn that ended out of sight: the lime of the person's own messages (#a3e635), until it is entered.
+            Capsule(style: .continuous).fill(Color(red: 0xa3 / 255, green: 0xe6 / 255, blue: 0x35 / 255))
         } else if chosen && scheme == .dark {
             // The Finder's selection, in use or at rest: a darker pill, no outline (#222222 nos dois, 17/11/2026).
             Capsule(style: .continuous).fill(Palette.Resting.selection)
@@ -1677,7 +1683,12 @@ private enum Palette {
 
         /// The turn's, where it has a hue: waiting on a workflow is the blue.
         static func tone(of activity: ClaudeActivity) -> Color? {
-            activity == .waitingForWorkflow ? blue : nil
+            switch activity {
+            case .waitingForWorkflow: return blue
+            // Black on the lime capsule, at rest too.
+            case .doneUnseen: return Color(red: 20 / 255, green: 20 / 255, blue: 20 / 255)
+            default: return nil
+            }
         }
     }
 
