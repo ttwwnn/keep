@@ -192,18 +192,6 @@ button {
 
 /* The header of a workspace with a general tab (`keep geral`) is that tab: chosen, it wears the chosen tab's capsule;
    waiting on you, the badge's colour (set inline) and dark ink. */
-/* The header's zzz and ×: there under the pointer, as a tab row's are; a zzz at work stays. */
-.workspace-row .hdr-hover {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.workspace-row:hover .hdr-hover,
-.workspace-row .hdr-hover.sleeping {
-  opacity: 1;
-  pointer-events: auto;
-}
-
 .workspace-row.is-general {
   border-radius: 999px;
 }
@@ -272,7 +260,10 @@ button {
   stroke-width: 1.7;
 }
 
-.hdr-btn.plus:hover {
+/* The header's zzz and × are there all the time, in the ink of the + and the folder beside them. */
+.hdr-btn.plus:hover,
+.hdr-btn.zzz:hover,
+.hdr-btn.close:hover {
   color: var(--ink-resting);
 }
 
@@ -485,8 +476,9 @@ button {
   pointer-events: auto;
 }
 
-/* Pressed and waiting for the core: kept in sight, pulsing. */
-.row-zzz.sleeping {
+/* Pressed and waiting for the core: kept in sight, pulsing; the header's too. */
+.row-zzz.sleeping,
+.hdr-btn.zzz.sleeping {
   opacity: 1;
   pointer-events: none;
   animation: zzz-pulse 1s ease-in-out infinite;
@@ -499,7 +491,8 @@ button {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .row-zzz.sleeping {
+  .row-zzz.sleeping,
+  .hdr-btn.zzz.sleeping {
     animation: none;
   }
 }

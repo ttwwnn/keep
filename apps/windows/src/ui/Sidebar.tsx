@@ -332,7 +332,7 @@ function WorkspaceGroup(props: { name: string }) {
         <span class="header-spacer" />
         {/* The general tab's own zzz and ×, which are the workspace's: it and every tab under it, after a yes. */}
         <button
-          class={`hdr-btn hdr-hover zzz ${workspaceSleeping ? "sleeping" : ""}`}
+          class={`hdr-btn zzz ${workspaceSleeping ? "sleeping" : ""}`}
           title="Hibernar o workspace: a aba geral e as abas dele saem da memória"
           aria-label="Hibernar o workspace"
           disabled={workspaceSleeping}
@@ -344,7 +344,7 @@ function WorkspaceGroup(props: { name: string }) {
           <icon.Zzz />
         </button>
         <button
-          class="hdr-btn hdr-hover"
+          class="hdr-btn close"
           title="Fechar o workspace: a aba geral e todas as abas dele"
           aria-label="Fechar o workspace"
           onClick={(e) => {
