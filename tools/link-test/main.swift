@@ -79,6 +79,15 @@ check(
     recovered("trabalho/Captura", ["❯ olha " + escaped]), shot)
 check("inside backticks, a full stop after", recovered(root + "/a.txt", ["Gravei em `" + root + "/a.txt`."]), root + "/a.txt")
 check("relative, with the gutter", recovered("sub\\ dir/b.md:3", ["  ⎿  sub\\ dir/b.md:3"], nil, root), root + "/sub dir/b.md")
+// As Claude Code prints a file it sends: plain blanks in the name, the size after it.
+let sent = root + "/Área de trabalho/MacLag em 5 minutos.pptx"
+FileManager.default.createFile(atPath: sent, contents: Data())
+let sentRow = ["  › [file] " + sent + " (1.5MB)", "", "O arquivo está em " + sent + ". Sigo."]
+let cutAtBlank = root + "/Área"
+check("plain blanks in a sent file's name, clicked on its start", recovered(cutAtBlank, sentRow, 0), sent)
+check("the same, clicked on a word inside the name", recovered("minutos.pptx", sentRow, 0), sent)
+check("the same in a sentence, a full stop after", recovered("minutos.pptx.", sentRow, 2), sent)
+check("prose after a path names nothing longer", recovered(root + "/a.txt", ["  veja " + root + "/a.txt e depois"]), root + "/a.txt")
 check("nothing on screen", recovered(head, []), nil)
 check("nothing there to piece together", recovered("nope/x.txt", ["  nope/x.txt", "  y"], nil, root), nil)
 
