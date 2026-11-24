@@ -100,7 +100,7 @@ fn a_aba_geral_abre_sabe_das_outras_confere_as_novas_e_fecha_as_resolvidas() {
 
     let seco = geral::rodada(true).unwrap();
     assert_eq!(seco["relato"][0]["situacao"], "abriria a aba geral", "{seco:#}");
-    assert!(!restauro.join("geral.json").exists(), "o seco não grava");
+    assert!(!restauro.join("geral.json").exists() && !restauro.join("geral.log").exists(), "o seco não grava nem registra");
 
     let r = geral::rodada(false).unwrap();
     let lista = r["gerais"].as_array().unwrap();

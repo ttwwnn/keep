@@ -655,5 +655,5 @@ máquina não tem). Nada disto foi visto na WebView2 nem com um Claude Code de v
 
 - [x] A aba geral (`keep geral`, docs/restauro.md) vem do núcleo, que roda com o `keep continuar` que o app já pede.
   O app pergunta qual é a cada 5 s (`readGeneral` em `iaChores.ts`), põe-na no topo da lista (`generalFirst` em
-  `tabOrder.ts`, testado) e a marca: quatro quadrados na cor de destaque, título em negrito, um fio embaixo
+  `tabOrder.ts`, testado) e a marca: uma casa na cor de destaque, título em negrito, um fio embaixo
   (`Sidebar.tsx`, `styles.css`). Não visto no app do Windows.
