@@ -672,3 +672,6 @@ máquina não tem). Nada disto foi visto na WebView2 nem com um Claude Code de v
 - [x] 0.3.78: aba do Claude com workflow ou agente listado rodando sob a caixa (`◯ nome ███░░ 5/7`) fica na cor de
   espera mesmo quando o turno terminou com texto, sem a linha "Waiting for … to finish" (`readActivity` em
   `claude.ts`). Não visto no app do Windows.
+- [x] 0.3.79: no cabeçalho do workspace, um ponto por aba de baixo em atividade, na cor do título dela (ou da marca ✳/◆),
+  com borda preta fina; sobre a cápsula verde-limão e a laranja, botões e nome do programa em tinta escura
+  (`Sidebar.tsx`, `styles.css`). Não visto no app do Windows.

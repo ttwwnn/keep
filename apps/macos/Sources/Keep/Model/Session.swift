@@ -2154,9 +2154,6 @@ final class Session {
                 dot: workspace.dot,
                 needsYou: workspace.tabs.filter { claudeActivities[$0.id] == .waitingForYou }.count,
                 needsYouSince: workspace.tabs.compactMap { waitingSince[$0.id] }.max(),
-                working: workspace.tabs.contains { isAtWork($0) },
-                workingPrograms: Set(workspace.tabs.filter { isAtWork($0) }.map { aiProgram(of: $0) })
-                    .intersection(["claude", "codex"]).sorted(),
                 isActive: workspace.name == view.workspace,
                 tabRows: workspace.tabs.map { tab in
                     SessionSnapshot.SidebarTab(
