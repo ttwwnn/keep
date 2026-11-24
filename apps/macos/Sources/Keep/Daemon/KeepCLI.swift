@@ -548,6 +548,14 @@ enum TabRestore {
     /// One at a time, in the order the tabs were shown.
     private static let waking = DispatchQueue(label: "keep.restore.wake", qos: .userInitiated)
 
+    /// The first tab of a workspace just made becomes its general tab, with
+    /// Claude started in it (`keep geral iniciar`). Blocking.
+    static func startGeneral(workspace: String, tab: UInt32) {
+        guard let helper else { return }
+        log(KeepCLI.run(helper, ["geral", "iniciar", "--workspace", workspace, "--aba", String(tab)],
+                        within: 60, name: "keep geral"))
+    }
+
     /// The conversation of a tab put to sleep comes back in it as the tab is
     /// shown (`keep restauro acordar`); nothing for any other tab.
     static func wake(workspace: String, tab: UInt32) {

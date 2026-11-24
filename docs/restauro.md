@@ -358,6 +358,8 @@ arquivos e o que o gancho entrega).
   roteiro abre e fecha em instantes não ganha uma): o workspace só com conversas
   adormecidas fica sem, porque não há o que coordenar e um Claude parado em cada um pesaria na memória. A aba
   adotada ou aberta recebe o nome do workspace. Fechada, outra é aberta (uma tentativa a cada 10 min).
+- **Workspace novo**: criado pela pessoa no app, a primeira aba dele já é a aba geral, com o Claude subindo nela
+  (`keep geral iniciar`, que os dois apps chamam ao criar); outras abas só pelo + ou pela IA da aba geral.
 - **No app**: `geral.json` (o formato de `adormecidas.json`), lido pelo Mac e perguntado pelo Windows
   (`keep geral`, a cada 5 s). Na barra lateral, o cabeçalho do workspace é a aba geral, na mesma linha: o clique no
   nome entra nela, ele ganha a cápsula de aba escolhida (ou a cor de "espera você") e ela não se repete embaixo.
@@ -378,6 +380,7 @@ keep geral rodada [--seco]                         a rodada (o --seco só diz o 
 keep geral abas --workspace W                      número, nome, programa e situação de cada aba de W
 keep geral mandar --workspace W --aba N --texto T  digita T na aba parada de caixa vazia, e Enter
 keep geral fechar --workspace W --aba N            /exit e fecha a aba (nunca a geral, nem a ocupada)
+keep geral iniciar --workspace W --aba N           a única aba do workspace novo vira a geral, já no Claude
 ```
 
 O que a rodada fez vai a `geral.log`, ao lado das adormecidas. Testes: `cargo test -p keep-ia --lib geral` (o papel

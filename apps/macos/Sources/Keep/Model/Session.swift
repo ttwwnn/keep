@@ -636,7 +636,13 @@ final class Session {
         case .newWorkspace(let raw):
             let name = raw.trimmingCharacters(in: .whitespaces)
             guard !name.isEmpty else { return }
+            let isNew = !workspaces.contains { $0.name == name }
             dispatch(.newTab(in: name), from: window)
+            // A workspace made now enters Claude at once: its first tab is its general tab (`keep geral iniciar`),
+            // and others open only from the + or from that tab's AI.
+            if isNew, let first = views[window]?.tab, first.workspace == name {
+                DispatchQueue.global(qos: .userInitiated).async { TabRestore.startGeneral(workspace: name, tab: first.root) }
+            }
 
         case .closeTab(let id):
             guard let id = id ?? views[window]?.tab else { return }

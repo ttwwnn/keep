@@ -1109,6 +1109,9 @@ export async function createWorkspace(name: string, cwd: string | null): Promise
   });
   await refresh();
   select(clean, id);
+  // A workspace made now enters Claude at once: its first tab is its general tab (`keep geral iniciar`); others open
+  // only from the + or from that tab's AI.
+  void api.iaAsk(["geral", "iniciar", "--workspace", clean, "--aba", String(id)]).catch(() => {});
 }
 
 export async function newWorkspace(): Promise<void> {

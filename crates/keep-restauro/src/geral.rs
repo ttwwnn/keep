@@ -21,6 +21,7 @@
 //! keep geral abas --workspace W                      → as abas de W: número, nome, programa, situação
 //! keep geral mandar --workspace W --aba N --texto T  → digita T na aba parada de caixa vazia, e Enter
 //! keep geral fechar --workspace W --aba N            → fecha a aba (nunca a geral, nem a que trabalha)
+//! keep geral iniciar --workspace W --aba N           → a única aba do workspace novo vira a geral, já no Claude
 //! ```
 
 use std::collections::BTreeMap;
@@ -506,6 +507,37 @@ pub fn rodada(seco: bool) -> Result<Value, String> {
     }))
 }
 
+/// A primeira aba de um workspace que a pessoa acabou de criar vira a aba geral dele (pedido de 24/11/2026: o
+/// workspace novo já entra no Claude, sem uma aba a mais): o Claude sobe no shell dela, ela leva o nome do workspace
+/// e fica guardada. Os apps chamam logo depois de criar o workspace; só a aba sozinha de um workspace sem aba geral.
+pub fn iniciar(ws: &str, aba: u32) -> Result<Value, String> {
+    let _trava = crate::Trava::esperar(".geral.lock", Duration::from_secs(60)).ok_or("outra rodada não terminou")?;
+    let v = Visao::agora()?;
+    let soltas: Vec<u32> = v.abas(ws).iter().map(|a| a.aba).collect();
+    if soltas != [aba] {
+        return Err(format!("a aba {aba} não é a única aba de {ws}"));
+    }
+    let mut a: Arquivo = crate::ler(&arquivo()).filter(|a: &Arquivo| a.keepd.mesmo(&v.keepd)).unwrap_or_default();
+    if a.abas.iter().any(|g| g.workspace == ws && g.aba != 0) {
+        return Err(format!("{ws} já tem aba geral"));
+    }
+    let shell = crate::restaurar::espera_shell(ws, aba).ok_or_else(|| format!("a aba {aba} de {ws} não mostrou o prompt do shell"))?;
+    let subida = keep_ia::linha::Subida { programa: "claude".into(), ..Default::default() };
+    let texto = keep_ia::linha::linha(keep_ia::linha::sintaxe(&shell), &subida);
+    if !keep_ia::trocar::digita(ws, aba, &texto, true).map_err(|r| r.json().to_string())? {
+        return Err(format!("o comando não apareceu inteiro na aba {aba} de {ws}"));
+    }
+    let chamado = v.nome_ws(ws);
+    let nome = if chamado == ws { String::new() } else { chamado.clone() };
+    a.keepd = v.keepd.clone();
+    a.abas.retain(|g| g.workspace != ws);
+    a.abas.push(Geral { workspace: ws.into(), aba, conversa: String::new(), desde_ms: crate::agora_ms(), nome });
+    crate::gravar(&arquivo(), &a).map_err(|e| format!("não gravei {ARQUIVO}: {e}"))?;
+    crate::nomear_no_app(&v.amb, v.nasceu, &[(ws.to_string(), aba, chamado)], true);
+    registrar(&format!("{ws}: a aba {aba}, a primeira do workspace novo, é a geral"));
+    Ok(json!({ "versao": crate::VERSAO, "ok": true, "workspace": ws, "aba": aba }))
+}
+
 /// As abas gerais deste keepd, para o app desenhar (o do macOS lê o arquivo; o do Windows pergunta).
 pub fn listar() -> Result<Value, String> {
     let lista = daemon::listar()?;
@@ -615,7 +647,7 @@ fn opcao<'a>(args: &'a [String], nome: &str) -> Option<&'a str> {
 }
 
 pub fn cli(args: &[String]) -> i32 {
-    const USO: &str = "keep geral [rodada [--seco] | abas --workspace W | mandar --workspace W --aba N --texto T | fechar --workspace W --aba N]";
+    const USO: &str = "keep geral [rodada [--seco] | abas --workspace W | mandar --workspace W --aba N --texto T | fechar --workspace W --aba N | iniciar --workspace W --aba N]";
     let ws = opcao(args, "--workspace");
     let aba = opcao(args, "--aba").and_then(|n| n.parse::<u32>().ok());
     let resposta = match (args.first().map(String::as_str), ws, aba) {
@@ -627,6 +659,7 @@ pub fn cli(args: &[String]) -> i32 {
             None => Err(format!("falta --texto. uso: {USO}")),
         },
         (Some("fechar"), Some(ws), Some(aba)) => fechar(ws, aba),
+        (Some("iniciar"), Some(ws), Some(aba)) => iniciar(ws, aba),
         _ => {
             eprintln!("uso: {USO}");
             return 2;

@@ -182,11 +182,20 @@ fn a_aba_geral_abre_sabe_das_outras_confere_as_novas_e_fecha_as_resolvidas() {
     geral::mandar("A", antiga, "e agora isto").unwrap();
     assert!(tela_tem("A", antiga, "Feito: e agora isto", 10));
 
+    // ---- workspace novo: a única aba vira a geral, já no Claude; não a de um workspace com mais abas
+    let unica = daemon::nova_aba("N", Some(&raiz.to_string_lossy()), 220, 30).unwrap();
+    assert!(tela_tem("N", unica, "$", 15));
+    geral::iniciar("N", unica).unwrap();
+    assert!(tela_tem("N", unica, "Pronto.", 15), "o Claude subiu na aba");
+    assert!(geral::listar().unwrap()["abas"].as_array().unwrap().iter().any(|g| g["workspace"] == "N" && g["aba"] == unica));
+    assert!(geral::iniciar("N", unica).unwrap_err().contains("já tem aba geral"));
+    assert!(geral::iniciar("A", antiga).unwrap_err().contains("não é a única aba"));
+
     // ---- fechada a aba geral, outra é aberta (sem os 10 min entre tentativas)
     daemon::fecha_aba("A", g).unwrap();
     unsafe { std::env::set_var("KEEP_GERAL_NOVA_TENTATIVA_S", "0") };
     let r = geral::rodada(false).unwrap();
-    let nova_g = r["gerais"][0]["aba"].as_u64().unwrap() as u32;
+    let nova_g = r["gerais"].as_array().unwrap().iter().find(|g| g["workspace"] == "A").unwrap()["aba"].as_u64().unwrap() as u32;
     assert!(nova_g != g && nova_g != antiga, "{r:#}");
     assert!(tela_tem("A", nova_g, "Pronto.", 15));
 }
