@@ -183,7 +183,12 @@ fn a_aba_geral_abre_sabe_das_outras_confere_as_novas_e_fecha_as_resolvidas() {
     geral::mandar("A", antiga, "e agora isto").unwrap();
     assert!(tela_tem("A", antiga, "Feito: e agora isto", 10));
 
-    // ---- a aba parada num erro da API vai à aba geral, para retomá-la
+    // ---- a aba parada num erro da API vai à aba geral, para retomá-la; com a sessão "busy" também (um workflow
+    // em segundo plano), quando a tela diz que o turno parou
+    let pid = keep_ia::abas::ler().unwrap().1.into_iter().find(|i| i.workspace == "A" && i.aba == antiga).unwrap().pid;
+    let sessao = casa.join(".claude/sessions").join(format!("{pid}.json"));
+    let idle = std::fs::read_to_string(&sessao).unwrap();
+    std::fs::write(&sessao, idle.replace("\"status\":\"idle\"", "\"status\":\"busy\"")).unwrap();
     unsafe { std::env::set_var("KEEP_GERAL_ERRO_S", "0") };
     assert!(keep_ia::trocar::digita("A", antiga, "/limite 9999999999 You've hit your limit", true).unwrap());
     assert!(tela_tem("A", antiga, "You've hit your limit", 10));
@@ -193,11 +198,9 @@ fn a_aba_geral_abre_sabe_das_outras_confere_as_novas_e_fecha_as_resolvidas() {
     assert!(tela_tem("A", g, "parou com erro (retome-a)", 10));
     let ctx = keep_ia::geral::contexto("A", &conversa_g).unwrap();
     assert!(ctx.contains("parou com erro (retome-a): You've hit your limit"), "{ctx}");
+    std::fs::write(&sessao, &idle).unwrap();
 
     // ---- a pergunta de uma aba à pessoa vai à aba geral, que a responde na aba
-    let pid = keep_ia::abas::ler().unwrap().1.into_iter().find(|i| i.workspace == "A" && i.aba == antiga).unwrap().pid;
-    let sessao = casa.join(".claude/sessions").join(format!("{pid}.json"));
-    let idle = std::fs::read_to_string(&sessao).unwrap();
     assert!(geral::responder("A", antiga, Some(1), None).unwrap_err().contains("não espera resposta"));
     std::fs::write(&sessao, idle.replace("\"status\":\"idle\"", "\"status\":\"waiting\"")).unwrap();
     let r = geral::rodada(false).unwrap();

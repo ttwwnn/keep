@@ -132,6 +132,8 @@ fn so_a_aba_parada_e_segura_recebe_o_continue_quando_a_causa_volta() {
     let ocupada = abre("FALSO_OCUPADO=1");
     // Trabalhando sem "esc to interrupt" na tela (o 2.1.312+): só a sessão diz "busy".
     let trabalhando = abre("FALSO_TRABALHANDO=1");
+    // Parada na rede com a sessão "busy" por um workflow em segundo plano: a tela diz que o turno parou.
+    let fundo = abre("FALSO_ERRO=rede FALSO_FUNDO=1");
     // No limite, num armazém de aba que o Keep regravou com o Claude já aberto (a troca a quente).
     let armazem = raiz.join("armazem-da-aba");
     std::fs::create_dir_all(&armazem).unwrap();
@@ -175,9 +177,10 @@ fn so_a_aba_parada_e_segura_recebe_o_continue_quando_a_causa_volta() {
     assert!(situacao(&seco, &rot(login)).starts_with("mandaria continuar"), "{seco:#}");
     assert!(!tela_tem("C", login, "Retomado", 1), "o seco não digita");
 
-    // ---- de verdade: só as duas paradas e seguras
+    // ---- de verdade: só as três paradas e seguras (a de workflow em segundo plano também)
     let r = continuar::rodada(false, false).unwrap();
-    assert_eq!((r["enviadas"].as_u64(), r["confirmadas"].as_u64()), (Some(2), Some(2)), "{r:#}");
+    assert_eq!((r["enviadas"].as_u64(), r["confirmadas"].as_u64()), (Some(3), Some(3)), "{r:#}");
+    assert!(tela_tem("C", fundo, &format!("> {MSG_REDE}"), 5), "a sessão busy com o turno parado recebe o continue");
     assert!(tela_tem("C", login, &format!("> {MSG_LOGIN}"), 5));
     assert!(tela_tem("C", rede, &format!("> {MSG_REDE}"), 5));
     assert!(situacao(&r, &rot(rascunho)).contains("caixa com texto"), "{r:#}");

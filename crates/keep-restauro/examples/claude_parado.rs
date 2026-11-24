@@ -4,7 +4,9 @@
 //! digitar e confirmar com Enter vira fala da pessoa no transcrito, seguida de uma resposta sem erro.
 //!
 //!   FALSO_ERRO=login|rede|limite   a queda (login, se nada)
-//!   FALSO_TRABALHANDO=1            a sessão diz "busy", sem "esc to interrupt" na tela (o 2.1.312+)
+//!   FALSO_TRABALHANDO=1            a sessão diz "busy", sem "esc to interrupt" na tela, com a linha do spinner
+//!                                  ("✶ Imagining… (12s") acima da caixa, como o de verdade enquanto o turno roda
+//!   FALSO_FUNDO=1                  a sessão diz "busy" com o turno parado: um workflow em segundo plano no rodapé
 //!   FALSO_RECOMECO=<segundos unix>  no limite, a recusa da janela de 5 h como o 2.1.318 a grava (quotaLimits)
 //!   FALSO_RASCUNHO=<texto>         a caixa já começa com isto digitado
 //!   FALSO_OCUPADO=1                o rodapé diz "esc to interrupt"
@@ -76,7 +78,9 @@ mod parado {
         let sessao = casa().join(".claude/sessions").join(format!("{pid}.json"));
         let _ = std::fs::create_dir_all(sessao.parent().unwrap());
         let cwd = std::env::current_dir().unwrap_or_default();
-        let status = if std::env::var("FALSO_TRABALHANDO").as_deref() == Ok("1") { "busy" } else { "idle" };
+        let trabalhando = std::env::var("FALSO_TRABALHANDO").as_deref() == Ok("1");
+        let fundo = std::env::var("FALSO_FUNDO").as_deref() == Ok("1");
+        let status = if trabalhando || fundo { "busy" } else { "idle" };
         let _ = std::fs::write(
             &sessao,
             format!(
@@ -120,16 +124,19 @@ mod parado {
         let mut out = std::io::stdout();
         let rodape = if std::env::var("FALSO_OCUPADO").is_ok() {
             "  ⏵⏵ bypass permissions on · esc to interrupt"
+        } else if fundo {
+            "  ⏵⏵ bypass permissions on (shift+tab to cycle)\r\n  ◯ fluxo-de-teste  ██████░░░░  3/7 · 4m10s"
         } else {
             "  ⏵⏵ bypass permissions on · ← for agents"
         };
+        let spinner = if trabalhando { "✶ Imagining… (12s · ↓ 1.2k tokens)\r\n" } else { "" };
         let caixa = |out: &mut std::io::Stdout, acima: &str, digitado: &str| {
             let linha = "─".repeat(60);
             let _ = write!(out, "{acima}\r\n{linha}\r\n❯\u{a0}{digitado}\x1b7\r\n{linha}\r\n{rodape}\x1b8");
             let _ = out.flush();
         };
         let mut buf: Vec<u8> = std::env::var("FALSO_RASCUNHO").unwrap_or_default().into_bytes();
-        caixa(&mut out, &format!("● Rodei os testes.\r\n  ⎿  {texto}\r\n"), &String::from_utf8_lossy(&buf));
+        caixa(&mut out, &format!("● Rodei os testes.\r\n  ⎿  {texto}\r\n{spinner}"), &String::from_utf8_lossy(&buf));
         let mut byte = [0u8; 1];
         while std::io::stdin().read(&mut byte).unwrap_or(0) == 1 {
             match byte[0] {
