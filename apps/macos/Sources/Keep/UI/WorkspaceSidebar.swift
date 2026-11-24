@@ -140,11 +140,19 @@ struct WorkspaceSidebar: View {
         return order.compactMap { name in rows.first { $0.name == name } }
     }
 
+    /// The tabs listed under the header. Not the workspace's general tab
+    /// (`keep geral`): the header is that tab, on the same line (24/11/2026).
     private func shownTabs(of row: SessionSnapshot.SidebarRow)
         -> [SessionSnapshot.SidebarTab]
     {
-        guard let live = liveTabOrder, live.workspace == row.name else { return row.tabRows }
-        return live.roots.compactMap { root in row.tabRows.first { $0.id.root == root } }
+        let listed = row.tabRows.filter { !$0.general }
+        guard let live = liveTabOrder, live.workspace == row.name else { return listed }
+        return live.roots.compactMap { root in listed.first { $0.id.root == root } }
+    }
+
+    /// The workspace's general tab, which its header stands for.
+    private func generalTab(of row: SessionSnapshot.SidebarRow) -> SessionSnapshot.SidebarTab? {
+        row.tabRows.first(where: \.general)
     }
 
     /// What the fold animation is keyed on: only the facts that change the
@@ -359,6 +367,15 @@ struct WorkspaceSidebar: View {
             .padding(.top, 10)
             .padding(.bottom, 4)
             .contentShape(Rectangle())
+            // Standing for the general tab, the header wears that tab's capsule: chosen, or waiting on you.
+            .background {
+                if let general = generalTab(of: row) {
+                    capsule(
+                        chosen: general.isActive && row.isActive, hovered: false,
+                        wantsYou: general.claudeActivity?.wantsYou == true, since: general.wantsYouSince)
+                        .padding(.top, 6)
+                }
+            }
         }
         .buttonStyle(.plain)
         // Over the header and not inside its label, for the reason the tab's
@@ -462,7 +479,7 @@ struct WorkspaceSidebar: View {
     /// otherwise, so every name in the column starts at the same x.
     @ViewBuilder
     private func disclosure(_ row: SessionSnapshot.SidebarRow) -> some View {
-        if row.tabRows.count > 0 {
+        if !shownTabs(of: row).isEmpty {
             Button {
                 lastClicked = nil
                 dispatch(.toggleDisclosure(row.name))
@@ -583,14 +600,6 @@ struct WorkspaceSidebar: View {
                 // as Claude Code does, were showing it twice — so the row
                 // draws the one mark, and it is this one. Or the raised hand,
                 // when the tab is waiting on you: see `Attention`.
-                // The general tab (`keep geral`) wears its own mark first: it
-                // runs the others, and the eye should find it before them.
-                if tab.general {
-                    Image(systemName: "house.fill")
-                        .font(.system(size: 10 * textZoom, weight: .semibold))
-                        .foregroundStyle(RestingInk(Color.accentColor, rest: Palette.Resting.blue))
-                        .accessibilityLabel("Aba geral")
-                }
                 if wantsYou {
                     Image(systemName: Attention.symbol)
                         .font(.system(size: 10 * textZoom, weight: .semibold))
@@ -599,7 +608,7 @@ struct WorkspaceSidebar: View {
                     BusyMark(program: tab.command, font: .system(size: 10 * textZoom))
                 }
                 Text(tab.title)
-                    .font(.system(size: 12 * textZoom, weight: wantsYou || chosen || tab.general ? .semibold : .regular))
+                    .font(.system(size: 12 * textZoom, weight: wantsYou || chosen ? .semibold : .regular))
                     // Struck through: its conversation is out of memory and
                     // comes back as the tab is shown.
                     .strikethrough(tab.asleep)
@@ -651,12 +660,6 @@ struct WorkspaceSidebar: View {
             .contentShape(Rectangle())
             .background(capsule(
                 chosen: chosen, hovered: hoveredHere, wantsYou: wantsYou, since: tab.wantsYouSince))
-            // A hairline under the general tab sets the tabs it runs apart from it.
-            .overlay(alignment: .bottom) {
-                if tab.general {
-                    Rectangle().fill(Palette.wash(0.12)).frame(height: 1).padding(.horizontal, 10).offset(y: 2)
-                }
-            }
         }
         .buttonStyle(.plain)
         // The chevron that opens the menu of the tab's AI and account, where
@@ -704,7 +707,7 @@ struct WorkspaceSidebar: View {
             let payload = "tab\u{1F}\(row.name)\u{1F}\(tab.id.root)"
             dragged = payload
             liveTabOrder = LiveTabOrder(
-                workspace: row.name, roots: row.tabRows.map(\.id.root))
+                workspace: row.name, roots: shownTabs(of: row).map(\.id.root))
             return NSItemProvider(object: payload as NSString)
         }
         .onDrop(of: [.plainText, .fileURL], delegate: TabDropDelegate(
@@ -971,7 +974,12 @@ struct WorkspaceSidebar: View {
             return
         }
         if row.isActive && pointerOnName == target { armRename(target) }
-        dispatch(.activateWorkspace(row.name))
+        // The header is the workspace's general tab when it has one: a click enters that tab.
+        if let general = generalTab(of: row) {
+            dispatch(.activateTab(general.id))
+        } else {
+            dispatch(.activateWorkspace(row.name))
+        }
     }
 
     /// Whether the click being answered is the second of a double-click, read

@@ -322,7 +322,8 @@ a conversa volta quando a aba é mostrada.
 - **Quais estão adormecidas**: o app do Mac lê `adormecidas.json` e o do Windows
   pergunta (`keep restauro adormecidas`, a cada 5 s); ambos riscam o título da
   aba, na barra lateral e na faixa de abas. Vale só para o keepd em uso.
-- **Só o Claude**: o Codex fica de pé.
+- **Só o Claude**: o Codex fica de pé. A conversa que nunca falou (sem transcrito, como a aba geral recém-aberta)
+  também fica: não haveria o que retomar.
 
 ```
 keep restauro adormecer [--seco] [--agora W [--aba N]] [--vista W/N]…
@@ -353,12 +354,14 @@ arquivos e o que o gancho entrega).
   restauração tem 15 min para trazê-la antes de outra ser aberta). Na primeira vez, a que a pessoa já usava assim é
   adotada: a aba chamada "Geral", com conversa (a de mesmo nome do workspace não: pode ser uma conversa de trabalho
   sobre ele). Sem nenhuma, a rodada abre uma
-  (`keep nova`, na pasta de casa) assim que uma conversa do workspace está viva: o workspace só com conversas
+  (`keep nova`, na pasta de casa) assim que uma conversa do workspace está viva há 5 min (um workspace que um
+  roteiro abre e fecha em instantes não ganha uma): o workspace só com conversas
   adormecidas fica sem, porque não há o que coordenar e um Claude parado em cada um pesaria na memória. A aba
   adotada ou aberta recebe o nome do workspace. Fechada, outra é aberta (uma tentativa a cada 10 min).
 - **No app**: `geral.json` (o formato de `adormecidas.json`), lido pelo Mac e perguntado pelo Windows
-  (`keep geral`, a cada 5 s). A aba geral vai para o topo da lista, com a marca de uma casa na cor de
-  destaque, o título em negrito e um fio embaixo.
+  (`keep geral`, a cada 5 s). Na barra lateral, o cabeçalho do workspace é a aba geral, na mesma linha: o clique no
+  nome entra nela, ele ganha a cápsula de aba escolhida (ou a cor de "espera você") e ela não se repete embaixo.
+  Sem símbolo (24/11/2026: os quatro quadrados "parecem Windows", a casa também não agradou).
 - **O que ela sabe**: a cada rodada, o último pedido da pessoa em cada outra aba de conversa viva e a resposta com
   que ela terminou (parada há 10 min, sem a pessoa voltar a ela) vão a `geral-eventos.jsonl`. O gancho
   `UserPromptSubmit` do Keep (`keep ia conta-da-aba --gancho`, já instalado nos dois sistemas) entrega à aba geral, a

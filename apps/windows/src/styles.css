@@ -190,6 +190,21 @@ button {
   color: var(--ink);
 }
 
+/* The header of a workspace with a general tab (`keep geral`) is that tab: chosen, it wears the chosen tab's capsule;
+   waiting on you, the badge's colour (set inline) and dark ink. */
+.workspace-row.is-general {
+  border-radius: 999px;
+}
+
+.workspace-row.general-chosen {
+  background: var(--tab-fill);
+  box-shadow: inset 0 0 0 1px var(--tab-edge);
+}
+
+.workspace-row.wants {
+  color: rgb(33, 22, 12);
+}
+
 .workspace-name {
   flex: 0 1 auto;
   min-width: 0;
@@ -359,32 +374,8 @@ button {
 }
 
 .tab-row.selected .tab-title,
-.tab-row.wants .tab-title,
-.tab-row.general .tab-title {
+.tab-row.wants .tab-title {
   font-weight: 600;
-}
-
-/* The general tab of the workspace (`keep geral`): its mark in the accent, and a hairline setting the tabs it runs apart. */
-.tab-row .general-mark {
-  flex: none;
-  display: inline-flex;
-  color: var(--accent, #4a9eff);
-}
-
-.tab-row .general-mark svg {
-  width: calc(10px * var(--zoom));
-  height: calc(10px * var(--zoom));
-}
-
-.tab-row.general::after {
-  content: "";
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  bottom: -2px;
-  height: 1px;
-  background: var(--tab-hover);
-  pointer-events: none;
 }
 
 .tab-row .busy-mark,

@@ -72,6 +72,8 @@ fn a_aba_geral_abre_sabe_das_outras_confere_as_novas_e_fecha_as_resolvidas() {
         std::env::set_var("KEEP_IA_CLAUDE_BIN", bin.join("claude"));
         // A resposta vai à aba geral sem os 10 min de espera.
         std::env::set_var("KEEP_GERAL_QUIETO_S", "0");
+        // Conversa nova demais: ainda sem aba geral (o teste muda para 0 depois de ver).
+        std::env::set_var("KEEP_GERAL_IDADE_S", "3600");
         // A pessoa longe do teclado: o aviso pode ser digitado.
         std::env::set_var("KEEP_CONTINUAR_OCIOSO_S", "999");
         std::env::set_var("SHELL", "/bin/sh");
@@ -97,6 +99,10 @@ fn a_aba_geral_abre_sabe_das_outras_confere_as_novas_e_fecha_as_resolvidas() {
 
     // O nome que a pessoa deu ao workspace no app é o da aba geral.
     std::fs::write(app.join("names.json"), r#"{"workspaces":{"A":"Projeto A"}}"#).unwrap();
+
+    let cedo = geral::rodada(true).unwrap();
+    assert_eq!(cedo["relato"][0]["situacao"], "conversas novas demais; espero", "{cedo:#}");
+    unsafe { std::env::set_var("KEEP_GERAL_IDADE_S", "0") };
 
     let seco = geral::rodada(true).unwrap();
     assert_eq!(seco["relato"][0]["situacao"], "abriria a aba geral", "{seco:#}");
@@ -154,6 +160,16 @@ fn a_aba_geral_abre_sabe_das_outras_confere_as_novas_e_fecha_as_resolvidas() {
     assert!(ctx.contains("a pessoa pediu: outra coisa"), "a antiga também entra nas novidades: {ctx}");
     let outra = gerais(&restauro); // a conversa da nova não é a geral
     assert!(keep_ia::geral::contexto("A", "outra-conversa").is_none() && outra.len() == 1);
+
+    // ---- a aba geral que ainda não falou não hiberna: o Claude de verdade só grava o transcrito na 1ª mensagem
+    let transcrito = keep_ia::sessoes::transcrito_claude(&conversa_g).unwrap();
+    let guardado = std::fs::read(&transcrito).unwrap();
+    std::fs::remove_file(&transcrito).unwrap();
+    unsafe { std::env::set_var("KEEP_ADORMECER_PARADA_S", "0") };
+    let r = keep_restauro::adormecer::adormecer_agora("A", Some(g), &Default::default()).unwrap();
+    assert_eq!(r["adormecidas"], 0, "{r:#}");
+    assert!(r.to_string().contains("conversa sem nenhuma fala"), "{r:#}");
+    std::fs::write(&transcrito, guardado).unwrap();
 
     // ---- fechar: nunca a aba geral; a resolvida, sim
     assert!(geral::fechar("A", g).unwrap_err().contains("aba geral"));

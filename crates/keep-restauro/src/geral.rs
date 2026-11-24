@@ -5,7 +5,7 @@
 //! que os dois apps já rodam):
 //!
 //! - acha a aba geral de cada workspace: a guardada (pelo número no mesmo keepd, pela conversa depois de um
-//!   reinício) ou, na primeira vez, a que a pessoa já usava assim (a aba chamada "Geral", com conversa); sem nenhuma, abre uma (`keep nova`) assim que o workspace tem uma conversa viva — o que só
+//!   reinício) ou, na primeira vez, a que a pessoa já usava assim (a aba chamada "Geral", com conversa); sem nenhuma, abre uma (`keep nova`) assim que o workspace tem uma conversa viva há 5 min — o que só
 //!   dorme não pede coordenação, e um Claude parado em cada workspace pesaria na memória;
 //! - grava qual é em `geral.json` (o formato das adormecidas: o app a põe no topo, com destaque);
 //! - anota o que a pessoa pediu em cada outra aba e o que ela respondeu ao terminar (`geral-eventos.jsonl`), que a
@@ -45,6 +45,9 @@ const QUIETO_MS: u64 = 10 * 60_000;
 /// Num keepd novo, a restauração ainda traz as conversas de volta: a aba geral de antes tem este prazo para voltar
 /// antes de outra ser aberta.
 const ESPERA_RESTAURO_MS: u64 = 15 * 60_000;
+/// A aba geral só é aberta num workspace com uma conversa viva há este tanto: um workspace que um roteiro abre e
+/// fecha em instantes (um teste no keepd de verdade, 24/11/2026) não ganha uma.
+const IDADE_MS: u64 = 5 * 60_000;
 /// Entre duas tentativas de abrir a aba geral de um workspace.
 const NOVA_TENTATIVA_MS: u64 = 10 * 60_000;
 /// Uma conversa que sumiu sai do estado depois disto.
@@ -313,6 +316,8 @@ pub fn rodada(seco: bool) -> Result<Value, String> {
     let estado_antes = estado.clone();
     let keepd_novo = agora.saturating_sub(v.keepd.inicio_ms) < ESPERA_RESTAURO_MS;
 
+    let (abertas, _) = continuar::conversas(&v.lista);
+    let idade = prazo("KEEP_GERAL_IDADE_S", IDADE_MS);
     let mut gerais = Vec::new();
     let mut relato = Vec::new();
     let mut nomear = Vec::new();
@@ -330,8 +335,12 @@ pub fn rodada(seco: bool) -> Result<Value, String> {
             gerais.push(g);
             continue;
         }
-        // Ninguém a coordenar enquanto nenhuma conversa do workspace está viva.
+        // Ninguém a coordenar enquanto nenhuma conversa do workspace está viva; e a de um workspace recém-aberto espera.
         if !abas.iter().any(|a| a.viva) {
+            continue;
+        }
+        if !abertas.iter().any(|c| c.ws == ws && agora.saturating_sub(c.inicio_ms) >= idade) {
+            relato.push(json!({ "workspace": ws, "situacao": "conversas novas demais; espero" }));
             continue;
         }
         if let Some(g) = anterior.filter(|g| !g.conversa.is_empty() && !mesmo_keepd && keepd_novo) {
@@ -376,7 +385,6 @@ pub fn rodada(seco: bool) -> Result<Value, String> {
     }
 
     // As novidades das outras abas.
-    let (abertas, _) = continuar::conversas(&v.lista);
     let mut eventos = Vec::new();
     let vivas: Vec<&str> = abertas.iter().map(|c| c.sid.as_str()).collect();
     estado.conversas.retain(|sid, x| vivas.contains(&sid.as_str()) || agora.saturating_sub(x.visto_ms) < ESQUECE_MS);
