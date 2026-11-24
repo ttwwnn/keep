@@ -27,6 +27,13 @@ export const Close = ({ size = 10 }: { size?: number }) => (
   </svg>
 );
 
+/** The general tab's mark (`keep geral`): four squares, the tabs it runs. */
+export const Grid = () => (
+  <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+    <path d="M1 1h3.2v3.2H1zM5.8 1H9v3.2H5.8zM1 5.8h3.2V9H1zM5.8 5.8H9V9H5.8z" fill="currentColor" />
+  </svg>
+);
+
 /** The sleep button's glyph: a small z beside a larger one. */
 export const Zzz = ({ size = 10 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 10 10" aria-hidden="true">

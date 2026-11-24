@@ -872,6 +872,9 @@ struct SessionSnapshot: Hashable {
         /// Its conversation left memory (twelve hours alone, or the sleep
         /// button) and comes back when the tab is shown: the title is struck.
         var asleep: Bool = false
+        /// The workspace's general tab (`keep geral`): the one that runs the
+        /// others, at the top of the list and drawn apart.
+        var general: Bool = false
         /// A Claude Code runs here: the row offers to put it to sleep.
         var canSleep: Bool = false
         /// The zzz was pressed and the core has not answered: the row says so.

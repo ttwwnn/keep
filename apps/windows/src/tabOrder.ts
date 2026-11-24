@@ -33,6 +33,11 @@ export function arrangeTabs<T>(items: readonly T[], remembered: readonly number[
   return [...placed, ...items.filter((item) => !known.has(idOf(item)))];
 }
 
+/** The workspace's general tab (`keep geral`) first, the rest as they were: it runs the others. */
+export function generalFirst<T>(items: readonly T[], isGeneral: (item: T) => boolean): T[] {
+  return [...items.filter(isGeneral), ...items.filter((item) => !isGeneral(item))];
+}
+
 /** `ids` with `moved` taken out and put at index `to` of the result (clamped). */
 export function moveId(ids: readonly number[], moved: number, to: number): number[] {
   const rest = ids.filter((id) => id !== moved);

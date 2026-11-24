@@ -23,6 +23,7 @@ pub mod cli;
 pub mod continuar;
 pub mod daemon;
 pub mod deeplink;
+pub mod geral;
 pub mod importar;
 pub mod links;
 pub mod membro_json;
@@ -117,11 +118,7 @@ pub struct Retrato {
 /// Onde o Keep guarda os retratos: `KEEP_RESTAURO_ESTADO`, senão `restauro`
 /// ao lado do estado da IA (no macOS, `~/Library/Application Support/Keep/restauro`).
 pub fn pasta() -> PathBuf {
-    if let Some(d) = std::env::var_os("KEEP_RESTAURO_ESTADO").filter(|v| !v.is_empty()) {
-        return PathBuf::from(d);
-    }
-    let ia = keep_ia::caminhos::estado();
-    ia.parent().map(|p| p.join("restauro")).unwrap_or_else(|| ia.join("restauro"))
+    keep_ia::caminhos::restauro()
 }
 
 pub fn agora_ms() -> u64 {

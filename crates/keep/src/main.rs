@@ -102,6 +102,7 @@ fn run() -> Result<()> {
         Some("nova") => std::process::exit(keep_restauro::nova::cli(&args[1..])),
         Some("links") => std::process::exit(keep_restauro::links::cli(&args[1..])),
         Some("continuar") => std::process::exit(keep_restauro::continuar::cli(&args[1..])),
+        Some("geral") => std::process::exit(keep_restauro::geral::cli(&args[1..])),
         Some("-h" | "--help" | "help") => {
             print_help();
             Ok(())
@@ -362,6 +363,8 @@ USAGE
   keep links …         the claude-cli:// links opening a tab (keep links conferir)
   keep continuar       continue the conversations a dropped login, network or
                        usage limit stopped (the app runs it; --status, --seco)
+  keep geral …         the general tab at the top of each workspace, which runs
+                       the others (abas | mandar | fechar --workspace W; rodada)
 
 IN A TAB
   ctrl-\\               detach, leaving everything running

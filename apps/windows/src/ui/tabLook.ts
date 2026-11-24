@@ -15,8 +15,9 @@ import {
 } from "../claude";
 import { isDormant } from "../iaChores";
 import type { RootTab } from "../layout";
+import { tabKey } from "../state";
 import { RESTING, windowIdle } from "../theme";
-import { now, palette, tabActivity, tabBusy, tabLabel, tabMode, tabWaitingSince } from "../store";
+import { generalTabs, now, palette, tabActivity, tabBusy, tabLabel, tabMode, tabWaitingSince } from "../store";
 
 export interface TabLook {
   label: string;
@@ -31,6 +32,8 @@ export interface TabLook {
   breathing: boolean;
   /** Its conversation is out of memory (twelve hours alone, or the zzz): the title is struck through. */
   asleep: boolean;
+  /** The workspace's general tab (`keep geral`): its own mark, the title in bold and a line under it. */
+  general: boolean;
   fill: string;
 }
 
@@ -60,7 +63,8 @@ export function tabLook(workspace: string, tab: RootTab, index: number, selected
   const since = tabWaitingSince(workspace, tab);
   const until = lastBreath(since);
   const breathing = wantsYou && !selected && !idle && until !== undefined && now.value / 1000 < until;
-  return { label, color, wantsYou, atWork, mark, breathing, asleep, fill: idle ? RESTING.orange : css(attentionFill(dark)) };
+  const general = generalTabs.value.has(tabKey(workspace, tab.root.id));
+  return { label, color, wantsYou, atWork, mark, breathing, asleep, general, fill: idle ? RESTING.orange : css(attentionFill(dark)) };
 }
 
 /**

@@ -593,7 +593,7 @@ fn registrar(texto: &str) {
     }
 }
 
-fn tela_da_aba(ws: &str, tab: u32) -> Option<Tela> {
+pub(crate) fn tela_da_aba(ws: &str, tab: u32) -> Option<Tela> {
     daemon::tela_vt(ws, tab).ok().map(|vt| ler_tela(&vt))
 }
 
@@ -605,7 +605,7 @@ fn manda(ws: &str, tab: u32, dados: &[u8]) -> bool {
 }
 
 /// Digita a mensagem e só aperta Enter se a caixa mostrar exatamente ela.
-fn digitar(c: &Conversa, mensagem: &str, so_enter: bool) -> Result<(), String> {
+pub(crate) fn digitar(c: &Conversa, mensagem: &str, so_enter: bool) -> Result<(), String> {
     let l = daemon::listar().map_err(|e| e.to_string())?;
     let a = l.aba(&c.ws, c.tab).ok_or("a aba sumiu")?;
     let mut t = daemon::Teclado::liga(a)?;
@@ -802,7 +802,13 @@ pub fn rodada(seco: bool, status: bool) -> Result<Value, String> {
 
 pub fn cli(args: &[String]) -> i32 {
     let tem = |o: &str| args.iter().any(|a| a == o);
-    match rodada(tem("--seco"), tem("--status")) {
+    let resposta = rodada(tem("--seco"), tem("--status"));
+    // A aba geral de cada workspace anda com esta rodada, que os dois apps já pedem a cada 15 s (`geral`). O que ela
+    // faz vai ao `geral.log`; um erro dela não muda a resposta desta.
+    if !tem("--seco") && !tem("--status") {
+        let _ = crate::geral::rodada(false);
+    }
+    match resposta {
         Ok(v) => {
             println!("{v}");
             0

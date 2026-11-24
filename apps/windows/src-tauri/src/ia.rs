@@ -132,6 +132,8 @@ pub fn deadline(args: &[String]) -> Option<Duration> {
         ("restauro", "adormecer") => 300.0,
         ("restauro", "acordar") => 120.0,
         ("restauro", "adormecidas") => 10.0,
+        // Which tab is each workspace's general one, for the sidebar to put it first and mark it (`keep geral`).
+        ("geral", "") => 10.0,
         // The conversations a dropped login, network or usage limit stopped.
         ("continuar", _) => 120.0,
         _ => return None,
@@ -817,6 +819,9 @@ mod tests {
         assert_eq!(deadline(&args("restauro adormecer --agora a --aba 2")), Some(Duration::from_secs(300)));
         assert_eq!(deadline(&args("restauro acordar --workspace a --aba 2")), Some(Duration::from_secs(120)));
         assert_eq!(deadline(&args("restauro adormecidas")), Some(Duration::from_secs(10)));
+        // The general tab's listing, never its commands: closing or typing into a tab is the general tab's, not the page's.
+        assert_eq!(deadline(&args("geral")), Some(Duration::from_secs(10)));
+        assert_eq!(deadline(&args("geral fechar --workspace W --aba 2")), None);
         assert_eq!(deadline(&args("restauro restaurar")), None);
         assert_eq!(deadline(&args("restauro retrato --print")), None);
         assert_eq!(deadline(&args("continuar")), Some(Duration::from_secs(120)));

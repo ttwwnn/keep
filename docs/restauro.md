@@ -340,3 +340,43 @@ do rascunho na tela para o `/exit` sem resposta) e `tools/adormecer-test.sh` (o 
 fora de vista adormece, a da frente não, mostrar a aba a acorda, e o zzz da
 aba, clicado com o mouse, a adormece sem esperar as 12 h e sem entrar nela) e,
 no Windows, o passo do zzz do roteiro do app (`apps/windows/src/e2e.ts`).
+
+# A aba geral de cada workspace
+
+Pedido de 24/11/2026: a aba do topo de cada workspace, com o nome dele, conduz as demais. A pessoa fala com ela e
+pode também falar direto com qualquer outra; o que ela pede nas outras chega à aba geral, e é a aba geral quem abre
+abas novas e fecha as resolvidas. Mora em `keep_restauro::geral` (a rodada e os comandos) e `keep_ia::geral` (os
+arquivos e o que o gancho entrega).
+
+- **Qual é**: a rodada anda com o `keep continuar`, que os dois apps já pedem a cada 15 s. A guardada vale pelo número
+  no mesmo keepd (um `/clear` troca a conversa e a aba segue geral), e pela conversa depois de um reinício (a
+  restauração tem 15 min para trazê-la antes de outra ser aberta). Na primeira vez, a que a pessoa já usava assim é
+  adotada: a aba chamada "Geral", com conversa (a de mesmo nome do workspace não: pode ser uma conversa de trabalho
+  sobre ele). Sem nenhuma, a rodada abre uma
+  (`keep nova`, na pasta de casa) assim que uma conversa do workspace está viva: o workspace só com conversas
+  adormecidas fica sem, porque não há o que coordenar e um Claude parado em cada um pesaria na memória. A aba
+  adotada ou aberta recebe o nome do workspace. Fechada, outra é aberta (uma tentativa a cada 10 min).
+- **No app**: `geral.json` (o formato de `adormecidas.json`), lido pelo Mac e perguntado pelo Windows
+  (`keep geral`, a cada 5 s). A aba geral vai para o topo da lista, com a marca de quatro quadrados na cor de
+  destaque, o título em negrito e um fio embaixo.
+- **O que ela sabe**: a cada rodada, o último pedido da pessoa em cada outra aba de conversa viva e a resposta com
+  que ela terminou (parada há 10 min, sem a pessoa voltar a ela) vão a `geral-eventos.jsonl`. O gancho
+  `UserPromptSubmit` do Keep (`keep ia conta-da-aba --gancho`, já instalado nos dois sistemas) entrega à aba geral, a
+  cada mensagem, o que chegou desde a anterior, e na primeira mensagem da conversa o papel dela, com os comandos.
+- **Fechar as resolvidas**: a aba aberta depois da aba geral, ao terminar, vai à aba geral: a rodada digita na caixa
+  dela, parada e vazia, com a pessoa há 20 s sem teclado nem mouse, "[Keep] Terminaram e esperam sua conferência: aba N «nome»…" (adormecida, ela é acordada
+  antes). A aba geral confere e fecha a que ficou sem pendências; a que só espera terceiro fica ou hiberna. As abas
+  que já existiam quando a aba geral chegou só entram nas novidades.
+- **Só o Claude**: as novidades vêm do transcrito do Claude; o Codex não entra.
+
+```
+keep geral                                         as gerais deste keepd (para o app)
+keep geral rodada [--seco]                         a rodada (o --seco só diz o que faria)
+keep geral abas --workspace W                      número, nome, programa e situação de cada aba de W
+keep geral mandar --workspace W --aba N --texto T  digita T na aba parada de caixa vazia, e Enter
+keep geral fechar --workspace W --aba N            /exit e fecha a aba (nunca a geral, nem a ocupada)
+```
+
+O que a rodada fez vai a `geral.log`, ao lado das adormecidas. Testes: `cargo test -p keep-ia --lib geral` (o papel
+uma vez, depois só as novidades, só na aba geral do workspace) e `cargo test -p keep-restauro --lib geral` (achar a
+guardada, adotar a da pessoa, o último pedido e a resposta depois dele).
