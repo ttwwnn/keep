@@ -56,6 +56,15 @@ check(read(screen(status: "✻ Waiting for 1 dynamic workflow to finish", footer
       "a dynamic workflow listed running: waiting")
 check(read(screen(status: "✻ Waiting for 1 dynamic workflow to finish", footer: mode)) == .done,
       "“Waiting for” with nothing listed: over")
+// The turn ended in its own words, the workflow still listed under the box: no `Waiting for` line to go by.
+let listedWorkflow = "\(mode)\n\n  ◯ revisao-do-texto…  ██████░░░░  2/5 · 3m · ↓ 40k tokens · ⚠ Large workflow"
+check(read(screen(status: "✻ Cooked for 3m 12s", footer: listedWorkflow)) == .waitingForWorkflow,
+      "a workflow listed under the box after a plain ended turn: waiting")
+check(read(screen(status: "", footer: listedWorkflow)) == .waitingForWorkflow,
+      "a workflow listed under the box, no status line in sight: waiting")
+// Agents listed under the box (`⏺ main`, `◯ Explore  Scanning`) are told by a `Waiting for` line, not by being listed.
+check(read(screen(status: "✻ Cooked for 3m 12s", footer: "\(mode) · ← for agents\n\n  ⏺ main\n  ◯ Explore  Scanning")) == .done,
+      "agents listed under the box after a plain ended turn: over")
 check(read(screen(status: "✻ Baked for 23s", footer: mode)) == .done, "a plain ended turn: over")
 check(read("Deseja continuar?\n❯ 1. Sim\n  2. Não\n\nEsc to cancel") == .waitingForYou, "a dialog: waiting for you")
 

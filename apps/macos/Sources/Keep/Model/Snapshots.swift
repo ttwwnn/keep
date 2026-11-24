@@ -348,8 +348,12 @@ enum ClaudeActivity: Hashable {
         // running` on the turn's last line is not read — it stays after they
         // end. Not decided yet: Claude Code no longer prints `esc to
         // interrupt` there, and a turn still running next to a shell is a
-        // turn running (the status line below says so).
-        let background = footer.contains(where: isRunningBackgroundWork)
+        // turn running (the status line below says so). A workflow listed
+        // there with its steps (`◯ name ███░░ 5/7 · 3h`) is such work too,
+        // even when the turn ended in its own words, with no `Waiting for`
+        // line; an agent listed there (`◯ Explore  Scanning`) is told by that
+        // line, below.
+        let background = footer.contains { isRunningBackgroundWork($0) || isWorkflowInProgress($0) }
         // Above it, the conversation — unless it is scrolled back, where the
         // last status line in sight is an old one.
         let conversation = lines[..<opening]
@@ -400,6 +404,12 @@ enum ClaudeActivity: Hashable {
                     && backgroundWork.contains(String(words[1]))
             }
         }
+    }
+
+    /// `◯ name ███░░ 5/7 · 3h27m · ↓ 2.5m tokens`: a workflow listed under the box, its steps counted.
+    static func isWorkflowInProgress(_ line: Substring) -> Bool {
+        let t = line.trimmingCharacters(in: .whitespaces)
+        return t.hasPrefix("◯") && t.range(of: #"\d+/\d+"#, options: .regularExpression) != nil
     }
 
     /// `❯ 1. Yes`: the pointer of one of Claude Code's numbered choices.
