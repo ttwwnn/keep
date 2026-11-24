@@ -116,6 +116,11 @@ describe("Claude Code's turn", () => {
     expect(readActivity(screen("", listedWorkflow))).toBe("waitingForWorkflow");
   });
 
+  // Agents listed under the box (`⏺ main`, `◯ Explore  Scanning`) are told by a `Waiting for` line, not by being listed.
+  it("agents listed under the box after a plain ended turn: over", () => {
+    expect(readActivity(screen("✻ Cooked for 3m 12s", `${mode} · ← for agents\n\n  ⏺ main\n  ◯ Explore  Scanning`))).toBe("done");
+  });
+
   it("a plain ended turn: over", () => {
     expect(readActivity(screen("✻ Baked for 23s", mode))).toBe("done");
   });

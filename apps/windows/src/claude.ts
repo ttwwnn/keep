@@ -164,8 +164,9 @@ export function readActivity(text: string): ClaudeActivity | undefined {
   }
   if (footer.some((l) => l.toLowerCase().includes("esc to interrupt"))) return "working";
   // Not decided yet: Claude Code no longer prints `esc to interrupt`, and a turn still running next to a shell is working.
-  // A workflow or an agent listed running there (`◯ name ▰▰ 1/2`) too, even when the turn ended in its own words.
-  const background = footer.some((l) => isRunningBackgroundWork(l) || trimmed(l).startsWith("◯"));
+  // A workflow listed there with its steps (`◯ name ███░░ 5/7`) too, even when the turn ended in its own words; an agent
+  // listed there (`◯ Explore  Scanning`) is told by the `Waiting for` line, below.
+  const background = footer.some((l) => isRunningBackgroundWork(l) || (trimmed(l).startsWith("◯") && /\d+\/\d+/.test(l)));
   const conversation = lines.slice(0, opening);
   if (conversation.some((l) => l.includes("Jump to bottom") || l.includes(" new message"))) {
     return background ? "waitingForWorkflow" : undefined;
@@ -174,7 +175,7 @@ export function readActivity(text: string): ClaudeActivity | undefined {
   if (at < 0) return background ? "waitingForWorkflow" : "done";
   const status = conversation[at];
   if (status.includes("Waiting for") && status.includes("to finish")) {
-    return background ? "waitingForWorkflow" : "done";
+    return background || footer.some((l) => trimmed(l).startsWith("◯")) ? "waitingForWorkflow" : "done";
   }
   if (status.includes("…")) return "working";
   return background ? "waitingForWorkflow" : "done";
