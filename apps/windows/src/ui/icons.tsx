@@ -27,13 +27,6 @@ export const Close = ({ size = 10 }: { size?: number }) => (
   </svg>
 );
 
-/** The general tab's mark (`keep geral`): a house, the workspace's base (the macOS app's `house.fill`). */
-export const House = () => (
-  <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-    <path d="M5 0.8 0.6 4.7h1.3V9.2h2.4V6.4h1.4v2.8h2.4V4.7h1.3z" fill="currentColor" />
-  </svg>
-);
-
 /** The sleep button's glyph: a small z beside a larger one. */
 export const Zzz = ({ size = 10 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 10 10" aria-hidden="true">

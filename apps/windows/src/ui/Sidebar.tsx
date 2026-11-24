@@ -18,6 +18,7 @@ import {
   closeTab,
   closeWorkspace,
   createWorkspace,
+  generalTabs,
   editing,
   editingTabOn,
   finishTabName,
@@ -98,7 +99,7 @@ function TabRow(props: { workspace: string; tab: RootTab; tabs: RootTab[]; index
   return (
     <div
       ref={badge as never}
-      class={`tab-row ${selected ? "selected" : ""} ${look.wantsYou ? "wants" : ""} ${carried ? "carried" : ""} ${offered ? "offered" : ""} ${offersSleep ? "has-zzz" : ""} ${look.general ? "general" : ""}`}
+      class={`tab-row ${selected ? "selected" : ""} ${look.wantsYou ? "wants" : ""} ${carried ? "carried" : ""} ${offered ? "offered" : ""} ${offersSleep ? "has-zzz" : ""}`}
       style={look.wantsYou || shown ? { background: look.wantsYou ? look.fill : undefined, transform: shown ? `translateY(${shown}px)` : undefined } : undefined}
       title={where || undefined}
       data-row={tabKey(workspace, tab.root.id)}
@@ -138,11 +139,6 @@ function TabRow(props: { workspace: string; tab: RootTab; tabs: RootTab[]; index
         />
       ) : (
         <span class="tab-label">
-          {look.general && (
-            <span class="general-mark" title="Aba geral: conduz as demais abas deste workspace">
-              <icon.House />
-            </span>
-          )}
           {look.wantsYou ? (
             <span class="hand">
               <icon.Hand />
@@ -205,8 +201,12 @@ function TabRow(props: { workspace: string; tab: RootTab; tabs: RootTab[]; index
 function WorkspaceGroup(props: { name: string }) {
   const { name } = props;
   const tabs = tabsByWorkspace.value.get(name) ?? [];
+  // The workspace's general tab (`keep geral`) is the header itself, on the same line (24/11/2026): not listed under it.
+  const general = tabs.find((t) => generalTabs.value.has(tabKey(name, t.root.id)));
+  const listed = tabs.filter((t) => t !== general);
   const folded = gui.value.folded.includes(name);
   const current = activeWorkspace.value === name;
+  const generalLook = general && tabLook(name, general, 0, current && general === activeTab.value, true);
   // One mark for each program at work in the workspace, as the header says it.
   const marks = [
     ...new Map(
@@ -247,13 +247,18 @@ function WorkspaceGroup(props: { name: string }) {
       style={shown ? { transform: `translateY(${shown}px)` } : undefined}
     >
       <div
-        class={`workspace-row ${carried ? "carried" : ""} ${offered ? "offered" : ""}`}
+        class={`workspace-row ${carried ? "carried" : ""} ${offered ? "offered" : ""} ${general ? "is-general" : ""} ${
+          general && current && general === selectedTab ? "general-chosen" : ""
+        } ${generalLook?.wantsYou ? "wants" : ""}`}
+        style={generalLook?.wantsYou ? { background: generalLook.fill } : undefined}
         title={tooltip}
         onPointerDown={(e) => !renaming && startWorkspaceDrag(e, name)}
         onClick={(e) => {
           // The click that ends a drag is not a click on the header.
           if (endedADrag()) return;
-          select(name);
+          // Standing for the general tab, the header enters it.
+          if (general) select(name, general.root.id);
+          else select(name);
           // Finder's slow click: the name of the workspace in front, clicked once, opens for typing.
           slowRename.disarm();
           const onName = (e.target as HTMLElement).closest(".workspace-name") !== null;
@@ -323,7 +328,7 @@ function WorkspaceGroup(props: { name: string }) {
         >
           <icon.Plus />
         </button>
-        {tabs.length > 0 ? (
+        {listed.length > 0 ? (
           <button
             class={`hdr-btn fold ${folded ? "" : "open"}`}
             title={folded ? "Mostrar as abas" : "Recolher as abas"}
@@ -341,12 +346,12 @@ function WorkspaceGroup(props: { name: string }) {
       </div>
       <div class={`tabs ${folded ? "folded" : ""}`} aria-hidden={folded}>
         <div class="tabs-inner">
-          {tabs.map((tab, i) => (
+          {listed.map((tab, i) => (
             <TabRow
               key={tabKey(name, tab.root.id)}
               workspace={name}
               tab={tab}
-              tabs={tabs}
+              tabs={listed}
               index={i}
               selected={current && tab === selectedTab}
             />

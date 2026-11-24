@@ -124,8 +124,9 @@ pub fn vista(texto: &str) -> Option<(String, u32)> {
 /// Quando a conversa falou por último: a última fala da pessoa ou do Claude no transcrito. Nem o tráfego da
 /// aba (o app a redesenha) nem o arquivo (o Remote Control grava nele sem conversa nenhuma) dizem isso; sem
 /// fala com hora, vale o arquivo.
-fn ultima_fala_ms(conversa: &str) -> u64 {
-    let Some(caminho) = keep_ia::sessoes::transcrito_claude(conversa) else { return 0 };
+/// `None` sem transcrito: a conversa nunca falou (o Claude só o grava na primeira mensagem), e não há o que retomar.
+fn ultima_fala_ms(conversa: &str) -> Option<u64> {
+    let caminho = keep_ia::sessoes::transcrito_claude(conversa)?;
     let mut quando = 0;
     keep_ia::sessoes::falas_de_tras(&caminho, |d| {
         quando = keep_ia::sessoes::carimbo_ms(d);
@@ -138,7 +139,7 @@ fn ultima_fala_ms(conversa: &str) -> u64 {
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or(0, |d| d.as_millis() as u64);
     }
-    quando
+    Some(quando)
 }
 
 /// Por que a aba não adormece agora, ou `None` se pode. Em palavras que a pessoa lê: o app as mostra quando o
@@ -223,7 +224,13 @@ fn rodada(vistas: &HashSet<(String, u32)>, seco: bool, so_do: Option<(&str, Opti
             diz("sem o id da conversa".into());
             continue;
         };
-        let parada_ha = agora.saturating_sub(ultima_fala_ms(&conversa));
+        // Sem fala nenhuma, o `--resume` ao acordar não acharia a conversa e a aba ficaria só com o shell (a aba geral
+        // aberta pelo Keep, 24/11/2026, adormeceu 5 min depois de nascer).
+        let Some(ultima) = ultima_fala_ms(&conversa) else {
+            diz("conversa sem nenhuma fala: não há o que retomar".into());
+            continue;
+        };
+        let parada_ha = agora.saturating_sub(ultima);
         if so_do.is_none() && parada_ha < parada {
             diz(format!("parada há {} min", parada_ha / 60_000));
             continue;

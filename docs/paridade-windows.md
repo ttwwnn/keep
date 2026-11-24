@@ -654,6 +654,7 @@ máquina não tem). Nada disto foi visto na WebView2 nem com um Claude Code de v
 ## Aba geral de cada workspace (0.3.71)
 
 - [x] A aba geral (`keep geral`, docs/restauro.md) vem do núcleo, que roda com o `keep continuar` que o app já pede.
-  O app pergunta qual é a cada 5 s (`readGeneral` em `iaChores.ts`), põe-na no topo da lista (`generalFirst` em
-  `tabOrder.ts`, testado) e a marca: uma casa na cor de destaque, título em negrito, um fio embaixo
-  (`Sidebar.tsx`, `styles.css`). Não visto no app do Windows.
+  O app pergunta qual é a cada 5 s (`readGeneral` em `iaChores.ts`) e a põe primeiro (`generalFirst` em
+  `tabOrder.ts`, testado). Desde a 0.3.73 o cabeçalho do workspace é a aba geral, na mesma linha, como no Mac: o
+  clique entra nela, a cápsula de escolhida (ou a cor de "espera você") vai ao cabeçalho, e ela não se repete
+  embaixo (`WorkspaceGroup` em `Sidebar.tsx`, `styles.css`). Sem símbolo. Não visto no app do Windows.
