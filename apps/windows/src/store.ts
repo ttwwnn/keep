@@ -47,7 +47,7 @@ import { defaultState, tabKey, type GuiState } from "./state";
 import { refile } from "./hibernation";
 import { keepShares, moveShares } from "./splits";
 import { listed, neighbour, stillRunning } from "./putAway";
-import { arrangeTabs, heirsOf, insertBefore, memberIds, pruneOrders, substitute } from "./tabOrder";
+import { arrangeTabs, generalFirst, heirsOf, insertBefore, memberIds, pruneOrders, substitute } from "./tabOrder";
 import { TerminalManager, viewKey, type TermView } from "./terminals";
 import { TrustWatch, type TrustPane } from "./trust";
 import { effectiveAlpha, glassTheme, holdsOpaque } from "./glass";
@@ -89,6 +89,8 @@ export const codexModels = signal<readonly CodexModel[]>([]);
 export const picking = signal<ReadonlySet<string>>(new Set());
 /** When each pane began waiting on you, in seconds: what its badge breathes from. */
 export const waitingSince = signal<ReadonlyMap<string, number>>(new Map());
+/** The general tab of each workspace (`keep geral`), by `tabKey`: first in its list, and drawn apart (iaChores.ts). */
+export const generalTabs = signal<ReadonlySet<string>>(new Set());
 
 /**
  * What floats over the terminal: Ir para, the command palette, the search of
@@ -260,7 +262,10 @@ function orderedTabs(tabs: WorkspaceInfo["tabs"], remembered: number[] | undefin
 export const tabsByWorkspace = computed(() => {
   const out = new Map<string, RootTab[]>();
   const orders = gui.value.tabOrder;
-  for (const w of workspaces.value) out.set(w.name, orderedTabs(w.tabs, orders[w.name]));
+  const general = generalTabs.value;
+  for (const w of workspaces.value) {
+    out.set(w.name, generalFirst(orderedTabs(w.tabs, orders[w.name]), (t) => general.has(tabKey(w.name, t.root.id))));
+  }
   return out;
 });
 

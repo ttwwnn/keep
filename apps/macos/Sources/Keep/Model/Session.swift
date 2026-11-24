@@ -99,6 +99,9 @@ final class Session {
     /// from one again.
     private var daemonStart: Date?
     private let sleepingTabs = SleepingTabs()
+    /// The general tab of each workspace (`keep geral`): first in its list, and drawn apart.
+    private let generalTabs = SleepingTabs(file: "geral.json")
+    private var general: Set<TabID> = []
     /// Tabs whose conversation left memory (their panes' numbers too).
     private var asleep: Set<TabID> = []
     /// Tabs whose zzz was pressed, until the core answers.
@@ -345,6 +348,10 @@ final class Session {
             asleep = now
             changed = true
         }
+        if let now = generalTabs.refresh() {
+            general = now
+            changed = true
+        }
         let helper = AIHelper.path != nil
         if helper != aiHelperPresent {
             aiHelperPresent = helper
@@ -373,7 +380,9 @@ final class Session {
             } else {
                 entity = WorkspaceEntity(name: daemon.name)
                 entity.arrangement = { [weak self] ids in
-                    self?.tabOrderStore.arrange(ids, in: daemon.name) ?? ids
+                    guard let self else { return ids }
+                    return Self.generalFirst(
+                        self.tabOrderStore.arrange(ids, in: daemon.name), in: daemon.name, general: self.general)
                 }
                 workspaces.append(entity)
                 changed = true
@@ -1897,6 +1906,13 @@ final class Session {
 
     /// `program(of:)` with what the core found in the tab to settle it.
     /// The conversation of this tab, or of a pane of it, is out of memory.
+    /// The workspace's general tab first, whatever order the rest is in: it
+    /// runs the others, and is where the person looks first.
+    static func generalFirst(_ ids: [UInt32], in workspace: String, general: Set<TabID>) -> [UInt32] {
+        let first = ids.filter { general.contains(TabID(workspace: workspace, root: $0)) }
+        return first + ids.filter { !first.contains($0) }
+    }
+
     private func isAsleep(_ tab: TabEntity) -> Bool {
         asleep.contains(tab.id) || tab.panes.contains { asleep.contains(TabID(workspace: tab.id.workspace, root: $0.tab)) }
     }
@@ -2101,6 +2117,7 @@ final class Session {
                         account: aiAccount(of: tab),
                         offersAccounts: aiHelperPresent,
                         asleep: isAsleep(tab),
+                        general: general.contains(tab.id),
                         canSleep: aiProgram(of: tab) == "claude",
                         sleeping: sleepingNow.contains(tab.id),
                         usageAccount: aiAccounts.confirmedAccount(

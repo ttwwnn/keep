@@ -583,6 +583,14 @@ struct WorkspaceSidebar: View {
                 // as Claude Code does, were showing it twice — so the row
                 // draws the one mark, and it is this one. Or the raised hand,
                 // when the tab is waiting on you: see `Attention`.
+                // The general tab (`keep geral`) wears its own mark first: it
+                // runs the others, and the eye should find it before them.
+                if tab.general {
+                    Image(systemName: "square.grid.2x2.fill")
+                        .font(.system(size: 10 * textZoom, weight: .semibold))
+                        .foregroundStyle(RestingInk(Color.accentColor, rest: Palette.Resting.blue))
+                        .accessibilityLabel("Aba geral")
+                }
                 if wantsYou {
                     Image(systemName: Attention.symbol)
                         .font(.system(size: 10 * textZoom, weight: .semibold))
@@ -591,7 +599,7 @@ struct WorkspaceSidebar: View {
                     BusyMark(program: tab.command, font: .system(size: 10 * textZoom))
                 }
                 Text(tab.title)
-                    .font(.system(size: 12 * textZoom, weight: wantsYou || chosen ? .semibold : .regular))
+                    .font(.system(size: 12 * textZoom, weight: wantsYou || chosen || tab.general ? .semibold : .regular))
                     // Struck through: its conversation is out of memory and
                     // comes back as the tab is shown.
                     .strikethrough(tab.asleep)
@@ -643,6 +651,12 @@ struct WorkspaceSidebar: View {
             .contentShape(Rectangle())
             .background(capsule(
                 chosen: chosen, hovered: hoveredHere, wantsYou: wantsYou, since: tab.wantsYouSince))
+            // A hairline under the general tab sets the tabs it runs apart from it.
+            .overlay(alignment: .bottom) {
+                if tab.general {
+                    Rectangle().fill(Palette.wash(0.12)).frame(height: 1).padding(.horizontal, 10).offset(y: 2)
+                }
+            }
         }
         .buttonStyle(.plain)
         // The chevron that opens the menu of the tab's AI and account, where

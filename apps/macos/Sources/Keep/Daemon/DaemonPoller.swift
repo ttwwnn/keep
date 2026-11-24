@@ -502,6 +502,9 @@ final class ClaudeModeWatcher {
 /// the core), read when the file changes. Tab numbers are one daemon's, so
 /// what the file says counts only for the daemon the app is using — by its
 /// start when it says (`startedMs`), else by the birth of its socket.
+///
+/// The general tab of each workspace (`geral.json`, the core's `keep geral`)
+/// is written in the same shape, and read by the same means.
 @MainActor
 final class SleepingTabs {
     private struct File: Decodable {
@@ -521,11 +524,16 @@ final class SleepingTabs {
     private var modified: Date?
     private var daemon: Daemon.Info?
     private var read: Set<TabID> = []
+    private let name: String
+
+    init(file name: String = "adormecidas.json") {
+        self.name = name
+    }
 
     /// The tabs asleep now, as numbers the daemon gave (a pane's too).
     /// Nil when nothing changed since the last look.
     func refresh() -> Set<TabID>? {
-        let url = URL(fileURLWithPath: TabRestore.folder).appendingPathComponent("adormecidas.json")
+        let url = URL(fileURLWithPath: TabRestore.folder).appendingPathComponent(name)
         let stamp = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
         let info = Daemon.lastInfo
         guard stamp != modified || info != daemon else { return nil }
@@ -534,7 +542,8 @@ final class SleepingTabs {
         var found: Set<TabID> = []
         if let data = try? Data(contentsOf: url), let file = try? JSONDecoder().decode(File.self, from: data),
            Self.same(file.keepd, info: info) {
-            found = Set(file.abas.map { TabID(workspace: $0.workspace, root: $0.aba) })
+            // Tab 0 is none: a general tab kept from another daemon, waiting for its conversation to come back.
+            found = Set(file.abas.filter { $0.aba != 0 }.map { TabID(workspace: $0.workspace, root: $0.aba) })
         }
         guard found != read else { return nil }
         read = found

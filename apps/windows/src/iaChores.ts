@@ -44,7 +44,7 @@ import {
   type Shown,
 } from "./restauro";
 import { tabKey } from "./state";
-import { activeTab, activeWorkspace, daemonError, gui, loaded, log, renameTab, say } from "./store";
+import { activeTab, activeWorkspace, daemonError, generalTabs, gui, loaded, log, renameTab, say } from "./store";
 import { isLeader, peers, windowLabel } from "./windowPeers";
 
 const daemonUp = () => loaded.value && daemonError.value === null;
@@ -268,6 +268,27 @@ export async function syncNames(): Promise<void> {
 
 // ------------------------------------------------------------------ start
 
+// ------------------------------------------------------------------ the general tab of each workspace
+
+let readingGeneral = false;
+
+/** Ask the core which tab is each workspace's general one (`keep geral`); an answer that cannot be read leaves what was known. */
+export async function readGeneral(): Promise<void> {
+  if (readingGeneral || !daemonUp()) return;
+  readingGeneral = true;
+  try {
+    const tabs = readSleepers(await api.iaAsk(["geral"]));
+    if (!tabs) return;
+    const next = new Set(tabs.filter((t) => t.tab !== 0).map((t) => tabKey(t.workspace, t.tab)));
+    const before = generalTabs.value;
+    if (next.size !== before.size || [...next].some((k) => !before.has(k))) generalTabs.value = next;
+  } catch {
+    /* asked again in five seconds */
+  } finally {
+    readingGeneral = false;
+  }
+}
+
 let started = false;
 
 /**
@@ -283,8 +304,12 @@ export function startChores(): void {
   setInterval(() => void sleepIdle(), 300_000);
   void readDormant();
   // Not while the window is hidden: the titles are looked at, and a look asks again within five seconds.
+  void readGeneral();
   setInterval(() => {
-    if (document.visibilityState === "visible") void readDormant();
+    if (document.visibilityState === "visible") {
+      void readDormant();
+      void readGeneral();
+    }
   }, 5_000);
   wakeShown();
   setInterval(() => void syncNames().catch(() => {}), 2_000);

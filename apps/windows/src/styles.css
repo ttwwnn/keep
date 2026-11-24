@@ -359,8 +359,32 @@ button {
 }
 
 .tab-row.selected .tab-title,
-.tab-row.wants .tab-title {
+.tab-row.wants .tab-title,
+.tab-row.general .tab-title {
   font-weight: 600;
+}
+
+/* The general tab of the workspace (`keep geral`): its mark in the accent, and a hairline setting the tabs it runs apart. */
+.tab-row .general-mark {
+  flex: none;
+  display: inline-flex;
+  color: var(--accent, #4a9eff);
+}
+
+.tab-row .general-mark svg {
+  width: calc(10px * var(--zoom));
+  height: calc(10px * var(--zoom));
+}
+
+.tab-row.general::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -2px;
+  height: 1px;
+  background: var(--tab-hover);
+  pointer-events: none;
 }
 
 .tab-row .busy-mark,

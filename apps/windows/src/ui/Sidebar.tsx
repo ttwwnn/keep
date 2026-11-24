@@ -98,7 +98,7 @@ function TabRow(props: { workspace: string; tab: RootTab; tabs: RootTab[]; index
   return (
     <div
       ref={badge as never}
-      class={`tab-row ${selected ? "selected" : ""} ${look.wantsYou ? "wants" : ""} ${carried ? "carried" : ""} ${offered ? "offered" : ""} ${offersSleep ? "has-zzz" : ""}`}
+      class={`tab-row ${selected ? "selected" : ""} ${look.wantsYou ? "wants" : ""} ${carried ? "carried" : ""} ${offered ? "offered" : ""} ${offersSleep ? "has-zzz" : ""} ${look.general ? "general" : ""}`}
       style={look.wantsYou || shown ? { background: look.wantsYou ? look.fill : undefined, transform: shown ? `translateY(${shown}px)` : undefined } : undefined}
       title={where || undefined}
       data-row={tabKey(workspace, tab.root.id)}
@@ -138,6 +138,11 @@ function TabRow(props: { workspace: string; tab: RootTab; tabs: RootTab[]; index
         />
       ) : (
         <span class="tab-label">
+          {look.general && (
+            <span class="general-mark" title="Aba geral: conduz as demais abas deste workspace">
+              <icon.Grid />
+            </span>
+          )}
           {look.wantsYou ? (
             <span class="hand">
               <icon.Hand />

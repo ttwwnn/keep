@@ -122,6 +122,17 @@ pub fn codex_contas() -> PathBuf {
     casa().join(".codex-contas")
 }
 
+/// Onde o Keep guarda os retratos das abas, as adormecidas e a aba geral de cada workspace:
+/// `KEEP_RESTAURO_ESTADO`, senão `restauro` ao lado do estado da IA (no macOS,
+/// `~/Library/Application Support/Keep/restauro`).
+pub fn restauro() -> PathBuf {
+    if let Some(d) = std::env::var_os("KEEP_RESTAURO_ESTADO").filter(|v| !v.is_empty()) {
+        return PathBuf::from(d);
+    }
+    let ia = estado();
+    ia.parent().map(|p| p.join("restauro")).unwrap_or_else(|| ia.join("restauro"))
+}
+
 /// Onde o Keep guarda o que é dele (leituras de consumo, donos dos tokens,
 /// escolhas): `KEEP_IA_ESTADO`, senão uma pasta do Keep no lugar de cada
 /// sistema.

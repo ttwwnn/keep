@@ -10,6 +10,10 @@
 //! na entrada e, quando a conta da aba não é a do login global — ou mudou
 //! desde o último aviso nesta conversa —, devolve o aviso como contexto
 //! adicional. Sem `--gancho`, imprime a linha (para quem perguntar à mão).
+//!
+//! O mesmo gancho leva à aba geral do workspace (`geral`) o papel dela e o que
+//! aconteceu nas outras abas desde a mensagem anterior: já instalado nos dois
+//! sistemas, não pede gancho novo no settings.json.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -94,36 +98,55 @@ fn arquivo_do_ultimo(sessao: &str) -> Option<PathBuf> {
 
 pub fn cli(args: &[String]) -> i32 {
     let gancho = args.iter().any(|a| a == "--gancho");
-    let mut entrada = Vec::new();
-    if gancho {
-        let _ = std::io::stdin().read_to_end(&mut entrada);
-    }
-    let Some(pasta) = std::env::var_os(VAR).filter(|v| !v.is_empty()).map(PathBuf::from) else {
-        if !gancho {
-            println!("Esta aba usa o login global da máquina (o do ~/.claude.json).");
-        }
-        return 0;
-    };
-    let Some(conta) = da_pasta(&pasta) else {
-        if !gancho {
-            println!("O armazém desta aba ({}) não é um que o Keep conheça.", pasta.display());
-        }
-        return 0;
-    };
-    let global = dono_global();
-    let eh_global = global.as_deref() == Some(conta.dono.as_str());
     if !gancho {
-        println!("{}", aviso(&conta, eh_global));
+        println!("{}", linha_da_aba());
         return 0;
     }
+    let mut entrada = Vec::new();
+    let _ = std::io::stdin().read_to_end(&mut entrada);
     let sessao = serde_json::from_slice::<Value>(&entrada)
         .ok()
         .and_then(|v| v.get("session_id").and_then(Value::as_str).map(String::from))
         .unwrap_or_default();
-    let guardado = arquivo_do_ultimo(&sessao);
+    // O mesmo gancho leva à aba geral do workspace (`geral`) o papel dela e as novidades das outras abas.
+    let ws = std::env::var("KEEP_WORKSPACE").unwrap_or_default();
+    let partes: Vec<String> = [aviso_do_gancho(&sessao), crate::geral::contexto(&ws, &sessao)].into_iter().flatten().collect();
+    if partes.is_empty() {
+        return 0;
+    }
+    println!(
+        "{}",
+        json!({
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": partes.join("\n\n"),
+            }
+        })
+    );
+    0
+}
+
+/// A conta da aba, para quem pergunta à mão.
+fn linha_da_aba() -> String {
+    let Some(pasta) = std::env::var_os(VAR).filter(|v| !v.is_empty()).map(PathBuf::from) else {
+        return "Esta aba usa o login global da máquina (o do ~/.claude.json).".into();
+    };
+    match da_pasta(&pasta) {
+        Some(conta) => aviso(&conta, dono_global().as_deref() == Some(conta.dono.as_str())),
+        None => format!("O armazém desta aba ({}) não é um que o Keep conheça.", pasta.display()),
+    }
+}
+
+/// O aviso da conta no gancho: quando a conta da aba não é a do login global, ou mudou desde o último aviso nesta
+/// conversa.
+fn aviso_do_gancho(sessao: &str) -> Option<String> {
+    let pasta = std::env::var_os(VAR).filter(|v| !v.is_empty()).map(PathBuf::from)?;
+    let conta = da_pasta(&pasta)?;
+    let global = dono_global();
+    let guardado = arquivo_do_ultimo(sessao);
     let ultimo = guardado.as_ref().and_then(|p| std::fs::read_to_string(p).ok());
     if !deve_avisar(&conta.dono, global.as_deref(), ultimo.as_deref().map(str::trim)) {
-        return 0;
+        return None;
     }
     if let Some(p) = &guardado {
         if let Some(dir) = p.parent() {
@@ -131,16 +154,7 @@ pub fn cli(args: &[String]) -> i32 {
         }
         let _ = std::fs::write(p, &conta.dono);
     }
-    println!(
-        "{}",
-        json!({
-            "hookSpecificOutput": {
-                "hookEventName": "UserPromptSubmit",
-                "additionalContext": aviso(&conta, eh_global),
-            }
-        })
-    );
-    0
+    Some(aviso(&conta, global.as_deref() == Some(conta.dono.as_str())))
 }
 
 #[cfg(test)]

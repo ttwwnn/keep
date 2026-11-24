@@ -3,7 +3,7 @@
 // to the pane that stood in for it.
 import { describe, expect, it } from "vitest";
 import type { TabInfo } from "./api";
-import { arrangeTabs, heirsOf, insertBefore, memberIds, moveId, pruneOrders, stripTabs, substitute } from "./tabOrder";
+import { arrangeTabs, generalFirst, heirsOf, insertBefore, memberIds, moveId, pruneOrders, stripTabs, substitute } from "./tabOrder";
 
 describe("the row at the top", () => {
   const tabs = ["a", "b", "c"];
@@ -57,6 +57,11 @@ describe("arranging tabs", () => {
     const before = [...items];
     arrangeTabs(items, [4, 3, 2, 1], (t) => t.id);
     expect(items).toEqual(before);
+  });
+  it("puts the workspace's general tab first, the rest as arranged", () => {
+    const arranged = arrangeTabs(items, [3, 1, 4, 2], (t) => t.id);
+    expect(ids(generalFirst(arranged, (t) => t.id === 4))).toEqual([4, 3, 1, 2]);
+    expect(ids(generalFirst(arranged, () => false))).toEqual([3, 1, 4, 2]);
   });
 });
 

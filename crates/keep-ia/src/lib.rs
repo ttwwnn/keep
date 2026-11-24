@@ -19,6 +19,7 @@ pub mod conta_da_aba;
 pub mod contas;
 pub mod contexto;
 pub mod daemon;
+pub mod geral;
 pub mod historico;
 pub mod jev;
 pub mod linha;

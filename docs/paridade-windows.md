@@ -650,3 +650,10 @@ máquina não tem). Nada disto foi visto na WebView2 nem com um Claude Code de v
   `tabOrder.ts`, testado). A aba sozinha ainda se arranca para outra janela; mudar a ordem fica na barra lateral. Os
   passos do roteiro que mexem nas outras abas da fileira (`e2eTabs.ts`, `e2eWindows.ts`) escondem a barra lateral
   enquanto rodam (`withFullRow`); não rodaram depois da mudança.
+
+## Aba geral de cada workspace (0.3.71)
+
+- [x] A aba geral (`keep geral`, docs/restauro.md) vem do núcleo, que roda com o `keep continuar` que o app já pede.
+  O app pergunta qual é a cada 5 s (`readGeneral` em `iaChores.ts`), põe-na no topo da lista (`generalFirst` em
+  `tabOrder.ts`, testado) e a marca: quatro quadrados na cor de destaque, título em negrito, um fio embaixo
+  (`Sidebar.tsx`, `styles.css`). Não visto no app do Windows.
