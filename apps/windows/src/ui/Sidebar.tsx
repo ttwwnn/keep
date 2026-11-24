@@ -37,6 +37,7 @@ import {
   tabActivity,
   tabBusy,
   tabLabel,
+  tabMode,
   tabsByWorkspace,
   toggleFolded,
   toggleSidebar,
@@ -209,15 +210,16 @@ function WorkspaceGroup(props: { name: string }) {
   const current = activeWorkspace.value === name;
   const workspaceSleeping = tabs.some((t) => isSleeping(name, t));
   const generalLook = general && tabLook(name, general, 0, current && general === activeTab.value, true);
-  // One mark for each program at work in the workspace, as the header says it.
-  const marks = [
-    ...new Map(
-      tabs
-        .filter((t) => tabBusy(name, t))
-        .map((t) => busyMark(programOf(t.root.command, t.root.title)))
-        .map((m) => [m.glyph + m.color, m] as const),
-    ).values(),
-  ];
+  // One dot for each tab under the header at work, in that tab's colour (its title's, or the mark's before it where
+  // the title has none of its own), folded or not: the header is never grey while something in here works.
+  const dots = listed
+    .filter((t) => tabBusy(name, t))
+    .map((t) => {
+      const activity = tabActivity(name, t);
+      const own = !!tabMode(name, t) || (activity !== undefined && activity !== "working");
+      const color = (own && tabLook(name, t, 0, false, true).color) || busyMark(programOf(t.root.command, t.root.title)).color;
+      return { id: t.root.id, color };
+    });
   const waiting = tabs.filter((t) => tabActivity(name, t) === "waitingForYou").length;
   const renaming = editing.value?.kind === "workspace" && editing.value.workspace === name;
   const rename = () => (editing.value = { kind: "workspace", workspace: name });
@@ -314,12 +316,10 @@ function WorkspaceGroup(props: { name: string }) {
             </span>
           </>
         )}
-        {marks.length > 0 && (
-          <span class="header-marks" aria-label="rodando">
-            {marks.map((m) => (
-              <span key={m.glyph + m.color} style={{ color: m.color }}>
-                {m.glyph}
-              </span>
+        {dots.length > 0 && (
+          <span class="header-dots" aria-label="trabalhando">
+            {dots.map((d) => (
+              <span key={d.id} class="header-dot" style={{ background: d.color }} />
             ))}
           </span>
         )}

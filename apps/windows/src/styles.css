@@ -221,13 +221,27 @@ button {
   min-width: 0;
 }
 
-/* What runs in the workspace, one mark per program. */
-.header-marks {
+/* One dot for each tab under the header at work, in that tab's colour; ringed in black, for a dot the capsule's
+   colour. */
+.header-dots {
   flex: none;
   display: inline-flex;
-  gap: 2px;
-  font-family: var(--mono);
-  font-size: calc(10.5px * var(--zoom));
+  gap: 3px;
+}
+
+.header-dot {
+  box-sizing: border-box;
+  width: calc(7px * var(--zoom));
+  height: calc(7px * var(--zoom));
+  border: 1px solid #000;
+  border-radius: 50%;
+}
+
+/* On the header's coloured capsule (its general tab waiting on you, or done out of sight), the buttons take the
+   capsule's dark ink, as a tab row's do. */
+.workspace-row:is(.wants, .unseen) button.hdr-btn,
+.workspace-row:is(.wants, .unseen) button.hdr-btn:hover {
+  color: inherit;
 }
 
 /* The + and the fold arrow: icons, so the zoom moves them and the boost does
@@ -407,7 +421,8 @@ button {
   white-space: nowrap;
 }
 
-.tab-row.wants .tab-program {
+.tab-row.wants .tab-program,
+.tab-row.unseen .tab-program {
   color: rgba(33, 22, 12, 0.62);
 }
 
@@ -549,11 +564,13 @@ button {
 }
 
 .tab-row.wants .ai-chevron,
+.tab-row.unseen .ai-chevron,
 .tab.attention .ai-chevron {
   color: rgba(33, 22, 12, 0.62);
 }
 
 .tab-row.wants .ai-chevron:hover,
+.tab-row.unseen .ai-chevron:hover,
 .tab.attention .ai-chevron:hover {
   color: rgb(33, 22, 12);
 }
