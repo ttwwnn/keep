@@ -44,7 +44,7 @@ import {
   type Shown,
 } from "./restauro";
 import { tabKey } from "./state";
-import { activeTab, activeWorkspace, daemonError, generalTabs, gui, loaded, log, renameTab, say } from "./store";
+import { activeTab, activeWorkspace, ask, daemonError, generalTabs, gui, loaded, log, renameTab, say, tabsByWorkspace } from "./store";
 import { isLeader, peers, windowLabel } from "./windowPeers";
 
 const daemonUp = () => loaded.value && daemonError.value === null;
@@ -206,6 +206,39 @@ export async function sleepTab(workspace: string, tab: number): Promise<void> {
   }
   await readDormant();
   sleepingNow.value = new Set([...sleepingNow.value].filter((k) => k !== key));
+}
+
+/**
+ * Every tab of a workspace leaves memory now — the general one and those under it — after a yes: the header's zzz
+ * (`keep restauro adormecer --agora W`, with no tab).
+ */
+export async function sleepWorkspace(workspace: string, label: string, count: number): Promise<void> {
+  const keys = (tabsByWorkspace.value.get(workspace) ?? []).map((t) => tabKey(workspace, t.root.id));
+  if (keys.some((k) => sleepingNow.value.has(k))) return;
+  const result = await ask({
+    title: `Hibernar o workspace “${label}”?`,
+    message:
+      count <= 1
+        ? "A conversa da aba geral sai da memória e para. Ela volta quando você abrir o workspace."
+        : `A aba geral e as outras ${count - 1} abas dele saem da memória: as conversas param e cada uma volta quando você abrir a aba. As que estiverem trabalhando ou esperando você ficam como estão.`,
+    buttons: [
+      { label: "Cancelar", value: "cancel" },
+      { label: "Hibernar o workspace", value: "sleep", primary: true },
+    ],
+  });
+  if (result?.button !== "sleep") return;
+  sleepingNow.value = new Set([...sleepingNow.value, ...keys]);
+  try {
+    const answer = await api.iaAsk(["restauro", "adormecer", "--agora", workspace]);
+    const why = refusalOfSleep(answer);
+    if (why) say(`Não deu para hibernar o workspace “${label}”: ${why}.`);
+    const line = dormancyLine(answer);
+    if (line) log(line);
+  } catch (error) {
+    say(`Não deu para hibernar o workspace “${label}”: ${String(error)}.`);
+  }
+  await readDormant();
+  sleepingNow.value = new Set([...sleepingNow.value].filter((k) => !keys.includes(k)));
 }
 
 /** The tab this window shows, as text: the same tab is the same string, and a poll that rebuilds the tabs wakes nothing. */
