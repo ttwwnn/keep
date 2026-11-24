@@ -47,6 +47,12 @@ cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage did not apply";
 build "$WORK/Sabotaged.swift" || exit 1
 if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
 
+echo "sabotage: plain blanks always end the path"
+sed 's/var found = spaced(chars, low, high)/var found: [String] = []/' "$SOURCE" > "$WORK/Sabotaged.swift"
+cmp -s "$SOURCE" "$WORK/Sabotaged.swift" && { echo "the sabotage did not apply"; exit 1; }
+build "$WORK/Sabotaged.swift" || exit 1
+if "$WORK/test" >/dev/null; then echo "NOT CAUGHT"; exit 1; else echo "caught"; fi
+
 echo "sabotage: an address broken across rows is never joined"
 sed 's/hit.line - index < 3 {/hit.line - index < 0 {/; s/index - hit.line < 3, isFull/index - hit.line < 0, isFull/' \
     "$SOURCE" > "$WORK/Sabotaged.swift"

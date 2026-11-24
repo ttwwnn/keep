@@ -194,7 +194,8 @@ caixa da linha, rolagem da lista, estado do movimento, fim do arrasto por `point
 
 - [x] Caminhos de arquivo clicáveis (`paths.ts`, `links.ts`, `links.rs`): `C:\x\y.txt`, UNC, `\\wsl$`, `.\rel`,
   `..\rel`, `/mnt/c/...`, `~/x`, relativos ao cwd do painel, `:linha` e `:linha:coluna` (e `(linha,coluna)`),
-  quebrados em linhas pelo ajuste, com espaço escapado ou entre aspas. Só vira link o que o sistema confirma
+  quebrados em linhas pelo ajuste, com espaço escapado ou entre aspas, e com espaço solto num caminho com raiz (o
+  `[file] ~/x/Nome com espaço.pptx` do Claude Code; no Mac desde a 0.3.70). Só vira link o que o sistema confirma
   (`find_paths`: 2 s no máximo, sem nomes de dispositivo). 26 testes; visto no app com eventos de mouse reais.
 - [x] Endereços web (`urls.ts`): https, http, ftp, mailto, `www.` e `file:` (que vira caminho), pontuação do fim
   da frase fora, link quebrado em até três linhas pela linha que vai até a borda, e o OSC 8 atrás do texto.

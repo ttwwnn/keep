@@ -175,7 +175,8 @@ enum LinkOpener {
                 guard below[h...].allSatisfy(\.isWhitespace) else { break }
             }
         }
-        var found: [String] = []
+        // A path with plain blanks in it, longer than any word, before the word alone.
+        var found = spaced(chars, low, high)
         for b in (0...before.count).reversed() {
             for a in (0...after.count).reversed() {
                 let joined = before.suffix(b).joined() + middle + after.prefix(a).joined()
@@ -188,6 +189,42 @@ enum LinkOpener {
             }
         }
         return found
+    }
+
+    /// How many words a path with plain blanks in it may span on each side of the hit.
+    private static let spacedReach = 8
+
+    /// The pieces of a path with plain blanks in it, as Claude Code prints a
+    /// file it sends (`[file] ~/Documents/MacLag em 5 minutos.pptx (1.5MB)`):
+    /// to the runtime and to `word` the blank ends the path, and the piece
+    /// left names nothing (24/11/2026). From a word on the row that starts a
+    /// path (`/`, `~/`) at or before the hit, through the hit, to a word
+    /// after it — always more than one word —, longest first. Only a piece
+    /// that names something on disk is opened, so prose around a path costs
+    /// a look, never a wrong file.
+    private static func spaced(_ chars: [Character], _ low: Int, _ high: Int) -> [String] {
+        var words: [(Int, Int)] = []
+        var index = 0
+        while index < chars.count {
+            if chars[index].isWhitespace { index += 1; continue }
+            let (l, h) = word(chars, index, index + 1)
+            words.append((l, h))
+            index = max(h, index + 1)
+        }
+        guard let at = words.firstIndex(where: { $0.0 <= low && high <= $0.1 }) else { return [] }
+        var found: [String] = []
+        for first in stride(from: at, through: max(0, at - spacedReach), by: -1) {
+            let opening = String(chars[words[first].0..<words[first].1]).drop { "`'\"(<[{".contains($0) }
+            guard opening.hasPrefix("/") || opening.hasPrefix("~/") else { continue }
+            let from = words[first].1 - opening.count
+            for last in stride(from: min(words.count - 1, at + spacedReach), through: at, by: -1) where last > first {
+                let piece = String(chars[from..<words[last].1])
+                for trimmed in [piece, piece.trimmingCharacters(in: wrapping)] where !found.contains(trimmed) {
+                    found.append(trimmed)
+                }
+            }
+        }
+        return found.sorted { $0.count > $1.count }
     }
 
     /// The run of text around `start..<end` that a shell would read as one
