@@ -230,6 +230,13 @@ enum AIHelper {
         case openrouter
     }
 
+    /// Where a tab's AI was chosen, for the core's record of who put a tab on an account (`--por`): the tab's own
+    /// chevron (on its row or in the strip), or the one on the workspace's header, which is the general tab's.
+    enum ChoiceOrigin: String {
+        case tabMenu = "menu"
+        case workspaceHeader = "cabecalho"
+    }
+
     /// Why the core did not do it: its `motivo` (`ocupada`,
     /// `outro-programa`, …) when it gave one, and what to tell the person.
     ///
@@ -287,10 +294,10 @@ enum AIHelper {
     /// stopping what the tab is doing, asked for after the core said it was
     /// busy.
     static func switchAccount(
-        workspace: String, tab: UInt32, to key: String, interrupt: Bool
+        workspace: String, tab: UInt32, to key: String, interrupt: Bool, origin: ChoiceOrigin
     ) -> Result<String, Problem> {
         guard isValidKey(key) else { return .failure(invalid(key)) }
-        var arguments = ["trocar", "--ws=\(workspace)", "--aba=\(tab)", "--para=\(key)"]
+        var arguments = ["trocar", "--ws=\(workspace)", "--aba=\(tab)", "--para=\(key)", "--por=\(origin.rawValue)"]
         if interrupt { arguments.append("--interromper") }
         arguments.append("--json")
         return ask(arguments, within: 40 * timeScale).map { ($0["feito"] as? String) ?? "" }

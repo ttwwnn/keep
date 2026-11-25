@@ -558,8 +558,9 @@ enum Intent {
     case togglePalette(PickerModel.Catalog)
     /// Put a tab's AI on another account — the chevron beside its title.
     /// `key` is what the kit is asked for (`claude:ordem`, `claude:<slot>`,
-    /// `gpt:<name>`); `label` is what the menu called it.
-    case chooseAccount(TabID, key: String, label: String)
+    /// `gpt:<name>`); `label` is what the menu called it; `from`, which
+    /// chevron it was.
+    case chooseAccount(TabID, key: String, label: String, from: AIHelper.ChoiceOrigin)
     /// Sign in to another account of a service, or connect the Jev to
     /// OpenRouter, in a new tab of this window's workspace — the usage
     /// footer's "+".

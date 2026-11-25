@@ -311,12 +311,12 @@ say "choosing"
 before=$(ncalls)
 choose "strip-ia-$WS/2" "Seguir a ordem de prioridade"
 check "following the order is asked as such; the core finds the account" \
-    "trocar --ws=$WS --aba=2 --para=claude:ordem --json" "$(next_call "$before")"
+    "trocar --ws=$WS --aba=2 --para=claude:ordem --por=menu --json" "$(next_call "$before")"
 before=$(ncalls)
 sidebar shown
 choose "sidebar-ia-$WS/2" "IA·3"
 check "an account asks for that account, from the sidebar too" \
-    "trocar --ws=$WS --aba=2 --para=claude:principal --json" "$(next_call "$before")"
+    "trocar --ws=$WS --aba=2 --para=claude:principal --por=menu --json" "$(next_call "$before")"
 check "and the sidebar says so" yes "$(until_text "(IA·3)")"
 sidebar shut
 before=$(ncalls)
@@ -334,7 +334,7 @@ check "the core says it is busy: a question goes up" yes "$(until_text "Interrom
 before=$(ncalls)
 "$AXPRESS" "$APP_NAME" button "Interromper e trocar agora"
 check "and a yes asks again, allowed to interrupt" \
-    "trocar --ws=$WS --aba=2 --para=claude:reserva --interromper --json" "$(next_call "$before")"
+    "trocar --ws=$WS --aba=2 --para=claude:reserva --por=menu --interromper --json" "$(next_call "$before")"
 check "the question has gone" no "$(until_text "Interromper e trocar agora" no)"
 before=$(ncalls)
 choose "strip-ia-$WS/2" "IA·1"
@@ -359,7 +359,7 @@ show_tab 4
 before=$(ncalls)
 choose "strip-ia-$WS/4" "IA·1"
 check "the last tab's menu acts on the last tab" \
-    "trocar --ws=$WS --aba=4 --para=claude:cheia --json" "$(next_call "$before")"
+    "trocar --ws=$WS --aba=4 --para=claude:cheia --por=menu --json" "$(next_call "$before")"
 # The first tab closes: every tab after it moves one cell left, and the cell
 # that was showing "dorminhoco" (sleep) now shows "concha-2" (a shell).
 python3 - "$SOCKET" "$WS" <<'PY'
@@ -378,7 +378,7 @@ check "its menu now is a shell's: everything can be chosen" 0 "$(printf '%s\n' "
 before=$(ncalls)
 choose "strip-ia-$WS/4" "IA·4"
 check "and choosing in it acts on the tab it shows now" \
-    "trocar --ws=$WS --aba=4 --para=claude:reserva --json" "$(next_call "$before")"
+    "trocar --ws=$WS --aba=4 --para=claude:reserva --por=menu --json" "$(next_call "$before")"
 
 say ""
 say "a real click on the chevron of the tab you are in"
@@ -412,7 +412,7 @@ touch "$WORK/ia/precisa-login"
 before=$(ncalls)
 choose "strip-ia-$WS/4" "IA·3"
 check "the core is asked for it all the same" \
-    "trocar --ws=$WS --aba=4 --para=claude:principal --json" "$(next_call "$before")"
+    "trocar --ws=$WS --aba=4 --para=claude:principal --por=menu --json" "$(next_call "$before")"
 check "a note says the login waits in the browser" yes "$(until_text "Falta aprovar IA·3 no navegador")"
 login_tab=$(trace "waits for a login to claude:principal in $WS/" | grep -aoE "in $WS/[0-9]+" | tail -1 | sed 's#.*/##')
 check "the tab the core opened the login in is the one shown" yes \

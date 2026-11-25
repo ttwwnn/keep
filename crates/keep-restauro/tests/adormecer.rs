@@ -164,6 +164,7 @@ fn so_a_aba_parada_e_livre_fora_de_vista_adormece_e_volta_ao_ser_mostrada() {
         conta: None,
         cancelar_limite: false,
         interromper: false,
+        por: "teste".into(),
     };
     let feito = keep_ia::trocar::trocar(&pedido).unwrap();
     assert!(feito.starts_with("a aba está hibernada"), "{feito}");

@@ -68,6 +68,13 @@ pub struct Registro {
     pub dono: String,
     /// A escolha da aba: `claude:ordem` ou a chave de uma conta.
     pub escolha: String,
+    /// De onde veio a escolha (o menu da aba, a seta do cabeçalho do workspace, `keep ia trocar` e a aba de quem o
+    /// chamou, uma rotina do Keep) e quando, na hora local: gravados a cada mudança dela, como o `ordem.log` faz com a
+    /// fila (pedido de 25/11/2026: abas presas numa conta sem que se soubesse quem as prendeu).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub escolha_por: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub escolha_quando: String,
     pub ws: String,
     pub aba: u32,
     /// O shell da aba, e quando ele nasceu (ms): os dois dizem se é o mesmo.
@@ -213,6 +220,18 @@ pub fn so_acesso(oauth: &Value) -> Value {
 
 pub(crate) fn agora() -> u64 {
     donos::agora_ms()
+}
+
+/// A origem de uma escolha que veio de um `/login` feito dentro da aba.
+const POR_LOGIN: &str = "login feito na aba";
+
+/// A origem e a hora da escolha `escolha` que um registro passa a ter: as de antes, se ela não mudou; senão, `por` e
+/// agora.
+fn origem_da_escolha(antes: Option<&Registro>, escolha: &str, por: &str) -> (String, String) {
+    match antes.filter(|a| a.escolha == escolha) {
+        Some(a) => (a.escolha_por.clone(), a.escolha_quando.clone()),
+        None => (por.to_string(), chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()),
+    }
 }
 
 /// Os armazéns que podem ser donos de uma conta, na ordem em que valem: sem
@@ -561,7 +580,7 @@ fn usos() -> HashMap<String, Vec<u32>> {
 
 /// O shell da aba de um processo: ele, ou o ancestral cujo pai é o keepd
 /// (o do daemon que responde: nunca outro).
-fn shell_da_aba(pid: u32, r: Option<&daemon::Retrato>) -> u32 {
+pub(crate) fn shell_da_aba(pid: u32, r: Option<&daemon::Retrato>) -> u32 {
     let Some(keepd) = r.map(|r| r.daemon.pid).filter(|p| *p != 0) else { return pid };
     let mut atual = pid;
     for _ in 0..32 {
@@ -593,8 +612,8 @@ pub struct Preparada {
 /// Cria (ou atualiza) o armazém da aba do shell `shell` e põe nele o acesso
 /// da conta da escolha. `conta` já decidida (a troca que sobe o Claude)
 /// vale mais que a escolha. Sem escolha: a que a aba já tinha, ou seguir a
-/// ordem.
-pub fn preparar(ws: &str, shell: u32, escolha: Option<&str>, conta: Option<&Conta>) -> Result<Preparada, Recusa> {
+/// ordem. `por`: de onde veio o pedido, para o registro da escolha.
+pub fn preparar(ws: &str, shell: u32, escolha: Option<&str>, conta: Option<&Conta>, por: &str) -> Result<Preparada, Recusa> {
     if let Some(e) = escolha {
         if e != SEGUIR_ORDEM && !(e.starts_with("claude:") && crate::abas::chave_valida(e)) {
             return Err(Recusa::nova("uso", format!("“{e}” não é uma conta do Claude.")));
@@ -635,6 +654,8 @@ pub fn preparar(ws: &str, shell: u32, escolha: Option<&str>, conta: Option<&Cont
     }
     let lista = if dono_antes.is_empty() || conta_por_dono(&lista, &dono_antes).is_some() { lista } else { contas::listar(false) };
     let ja = conta_por_dono(&lista, &dono_antes);
+    // A escolha que sai do dono de um /login feito na aba é desse login, não de quem sobe o Claude.
+    let do_login = escolha.is_none() && escolha_antes.as_deref().is_none_or(str::is_empty) && antes.is_some() && ja.is_some();
     let escolha = escolha
         .map(str::to_string)
         .or(escolha_antes.filter(|e| !e.is_empty()))
@@ -671,6 +692,7 @@ pub fn preparar(ws: &str, shell: u32, escolha: Option<&str>, conta: Option<&Cont
     }
     let mut estado = le_estado();
     let legada = antes.as_ref().is_some_and(|r| r.legada);
+    let (escolha_por, escolha_quando) = origem_da_escolha(antes.as_ref(), &escolha, if do_login { POR_LOGIN } else { por });
     estado.abas.insert(
         chave.clone(),
         Registro {
@@ -678,6 +700,8 @@ pub fn preparar(ws: &str, shell: u32, escolha: Option<&str>, conta: Option<&Cont
             conta: alvo.order_key.clone(),
             dono: alvo.key.clone(),
             escolha: escolha.clone(),
+            escolha_por,
+            escolha_quando,
             ws,
             aba,
             shell,
@@ -700,7 +724,7 @@ pub fn cli_preparar(a: &crate::cli::Args) -> i32 {
         return crate::cli::uso_errado("keep ia preparar --ws=<W> --shell=<pid> [--escolha=claude:ordem|claude:<apelido>]");
     };
     let escolha = a.opcao("escolha").filter(|e| !e.is_empty());
-    match preparar(ws, shell, escolha, None) {
+    match preparar(ws, shell, escolha, None, "subida do Claude na aba (keep ia preparar)") {
         Ok(p) => crate::cli::responde(json!({
             "ok": true,
             "chave": p.chave,
@@ -779,7 +803,9 @@ fn converte(pasta: &Path, pid: u32, lista: &[Conta]) -> Result<Option<donos::Don
 /// Troca a conta do Claude `pid` (o da aba `ws`#`aba`, de shell `shell`)
 /// para a escolha `para` (`claude:ordem` ou uma conta; com a ordem, `conta`
 /// é a conta já decidida pela sincronização), regravando o armazém dele.
-/// Nada é digitado na aba.
+/// Nada é digitado na aba. `por`: de onde veio o pedido, para o registro da
+/// escolha.
+#[allow(clippy::too_many_arguments)]
 pub fn trocar_processo(
     pid: u32,
     shell: u32,
@@ -788,6 +814,7 @@ pub fn trocar_processo(
     para: &str,
     conta: Option<&str>,
     lista: &[Conta],
+    por: &str,
 ) -> Result<Feito, Recusa> {
     let Some(pasta) = processos::variavel(pid, VAR).filter(|v| !v.is_empty()).map(PathBuf::from) else {
         // Sem o kit, ninguém troca a conta do login global pela ordem: ela só
@@ -837,11 +864,14 @@ pub fn trocar_processo(
     });
     let antes = estado.abas.get(&chave).cloned().unwrap_or_default();
     let shell_vivo = processos::inicio_ms(shell);
+    let (escolha_por, escolha_quando) = origem_da_escolha(Some(&antes), para, por);
     let registro_de = |conta: &str, dono: &str| Registro {
         pasta: pasta.clone(),
         conta: conta.to_string(),
         dono: dono.to_string(),
         escolha: para.to_string(),
+        escolha_por: escolha_por.clone(),
+        escolha_quando: escolha_quando.clone(),
         ws: ws.to_string(),
         aba,
         shell: if shell_vivo.is_some() { shell } else { antes.shell },
@@ -1060,6 +1090,7 @@ fn espalha_um(r: &mut Registro, lista: &[Conta]) -> Result<Passo, String> {
         if d.uuid != r.dono {
             // Login noutra conta, feito na aba: é a escolha dela.
             if let Some(c) = conta_por_dono(&contas::listar(false), &d.uuid) {
+                (r.escolha_por, r.escolha_quando) = origem_da_escolha(Some(&*r), &c.order_key, POR_LOGIN);
                 r.escolha = c.order_key.clone();
                 r.conta = c.order_key.clone();
             }

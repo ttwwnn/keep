@@ -310,7 +310,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         tabStrip.onCommands = { [weak self] in self?.send(.togglePalette(.root)) }
         tabStrip.onReorder = { [weak self] ids in self?.send(.reorderTabs(ids, in: nil)) }
         tabStrip.onChooseAccount = { [weak self] id, key, label in
-            self?.send(.chooseAccount(id, key: key, label: label))
+            self?.send(.chooseAccount(id, key: key, label: label, from: .tabMenu))
         }
         tabStrip.onTearOff = { [weak self] id, point, grab in
             self?.onTearOff?(id, point, grab)

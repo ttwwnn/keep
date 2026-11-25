@@ -63,6 +63,8 @@ pub struct Pedido {
     pub cancelar_limite: bool,
     /// Para `claude:ordem`: a conta em que rodar (a sincronização decide).
     pub conta: Option<String>,
+    /// De onde veio o pedido (o menu da aba, a sincronização da ordem...), para o registro da escolha da aba.
+    pub por: String,
 }
 
 /// O nome de uma conta para quem lê: `IA·n`, a posição dela na lista do
@@ -603,7 +605,7 @@ fn troca_a_quente(p: &Pedido, r: &Retrato, contas: &[Conta]) -> Result<String, R
     })?;
     // `claude attach <job>`: a conta é a do processo do job.
     let pid = job_anexado(v.frente).map(|j| j.pid).unwrap_or(v.frente);
-    match quente::trocar_processo(pid, v.shell, &p.ws, p.aba, &p.para, p.conta.as_deref(), contas) {
+    match quente::trocar_processo(pid, v.shell, &p.ws, p.aba, &p.para, p.conta.as_deref(), contas, &p.por) {
         Ok(quente::Feito::Ja(conta)) => Ok(format!("a aba já está na {}", rotulo_em(contas, &conta))),
         Ok(quente::Feito::Trocou(conta)) => {
             let mut feito = format!("passou para a {} sem sair do Claude", rotulo_em(contas, &conta));
@@ -1018,7 +1020,7 @@ pub fn trocar(p: &Pedido) -> Result<String, Recusa> {
     // de conta nele é a quente. Sem como prepará-lo, sobe como antes.
     if destino.motor() == Motor::Claude {
         if let Some(v) = vinc {
-            if let Ok(pr) = quente::preparar(&p.ws, v.shell, Some(&destino.escolha), Some(&destino.conta)) {
+            if let Ok(pr) = quente::preparar(&p.ws, v.shell, Some(&destino.escolha), Some(&destino.conta), &p.por) {
                 s.definir.retain(|(n, _)| n != quente::VAR);
                 s.definir.insert(0, (quente::VAR.into(), pr.pasta.to_string_lossy().into_owned()));
             }
@@ -1053,12 +1055,40 @@ pub fn trocar(p: &Pedido) -> Result<String, Recusa> {
     Ok(feito)
 }
 
-/// `keep ia trocar --ws=<W> --aba=<N> --para=<chave> [--interromper]`.
+/// De onde veio um `keep ia trocar`, para o registro da escolha da aba: o app diz `--por=menu` (o menu da aba) ou
+/// `--por=cabecalho` (a seta do cabeçalho do workspace). Sem isso, o comando e a aba de onde ele foi chamado (a IA de
+/// uma aba, uma aba geral), ou o programa que o chamou.
+fn origem_do_comando(por: Option<&str>) -> String {
+    match por {
+        Some("menu") => "menu da aba".into(),
+        Some("cabecalho") => "seta do cabeçalho do workspace".into(),
+        _ => {
+            let aba = daemon::listar().ok().and_then(|r| {
+                let shell = quente::shell_da_aba(std::process::id(), Some(&r));
+                crate::vinculo::vincular(&r).into_iter().find(|(_, v)| v.shell == shell).map(|((ws, aba), _)| format!("{ws}#{aba}"))
+            });
+            match (aba, contas::mudancas::pai()) {
+                (Some(aba), _) => format!("keep ia trocar, da aba {aba}"),
+                (None, Some(pai)) => format!("keep ia trocar, chamado por {pai}"),
+                (None, None) => "keep ia trocar".into(),
+            }
+        }
+    }
+}
+
+/// `keep ia trocar --ws=<W> --aba=<N> --para=<chave> [--interromper] [--por=menu|cabecalho]`.
 pub fn cli(a: &crate::cli::Args) -> i32 {
     let (Some(ws), Some(aba), Some(para)) = (a.opcao("ws"), a.opcao("aba").and_then(|n| n.parse().ok()), a.opcao("para")) else {
-        return crate::cli::uso_errado("keep ia trocar --ws=<W> --aba=<N> --para=<chave> [--interromper]");
+        return crate::cli::uso_errado("keep ia trocar --ws=<W> --aba=<N> --para=<chave> [--interromper] [--por=menu|cabecalho]");
     };
-    let p = Pedido { ws: ws.into(), aba, para: para.into(), interromper: a.tem("interromper"), ..Default::default() };
+    let p = Pedido {
+        ws: ws.into(),
+        aba,
+        para: para.into(),
+        interromper: a.tem("interromper"),
+        por: origem_do_comando(a.opcao("por")),
+        ..Default::default()
+    };
     match trocar(&p) {
         Ok(feito) => crate::cli::responde(json!({ "ok": true, "feito": feito })),
         Err(r) => crate::cli::responde(r.json()),
@@ -1712,6 +1742,23 @@ mod nomes {
         contas::mover("claude:ana", true, "keep ia ordem").unwrap();
         let l = contas::listar(false);
         assert_eq!((rotulo_em(&l, "claude:ana"), rotulo_em(&l, "gpt:principal")), ("IA·2".into(), "IA·3".into()));
+    }
+}
+
+#[cfg(test)]
+mod origem {
+    use super::*;
+
+    #[test]
+    fn o_app_diz_de_qual_seta_veio_e_o_resto_diz_quem_chamou() {
+        let _c = crate::contas::testes::casa("origem-do-comando");
+        assert_eq!(origem_do_comando(Some("menu")), "menu da aba");
+        assert_eq!(origem_do_comando(Some("cabecalho")), "seta do cabeçalho do workspace");
+        // Fora de uma aba do Keep (aqui, sem keepd): o programa que chamou.
+        for por in [None, Some("qualquer")] {
+            let o = origem_do_comando(por);
+            assert!(o.starts_with("keep ia trocar, chamado por ") && o.contains("(pid "), "{o}");
+        }
     }
 }
 

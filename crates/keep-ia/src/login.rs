@@ -248,7 +248,7 @@ fn depois_do_login(alvos: &[(String, u32, String)]) {
     for (ws, aba, para) in alvos {
         let destino = trocar::com_artigo(&lista, para);
         println!("\nPassando a aba {ws}#{aba} para {destino}…");
-        let p = Pedido { ws: ws.clone(), aba: *aba, para: para.clone(), ..Default::default() };
+        let p = Pedido { ws: ws.clone(), aba: *aba, para: para.clone(), por: "login da conta (a troca para ela esperava por ele)".into(), ..Default::default() };
         match trocar::trocar(&p) {
             Ok(feito) => println!("Pronto: {feito}."),
             Err(r) => println!(

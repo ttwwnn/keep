@@ -548,7 +548,7 @@ pub fn acordar(ws: &str, tab: u32) -> Result<Value, String> {
             falhas.push(format!("{rotulo}: a aba roda {}", viva.info.command));
             continue;
         }
-        match crate::restaurar::retoma(&a.workspace, a.aba, &a.ia, &contas) {
+        match crate::restaurar::retoma(&a.workspace, a.aba, &a.ia, &contas, "acordar da aba hibernada (keep restauro)") {
             Ok(()) => {
                 feitas += 1;
                 acordou.push((a.workspace.clone(), a.aba));

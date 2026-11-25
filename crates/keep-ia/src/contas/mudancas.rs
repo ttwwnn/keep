@@ -82,7 +82,7 @@ fn trava() -> Option<std::fs::File> {
 }
 
 /// Quem chamou o `keep` (o programa pai), para saber de onde veio um `keep ia ordem`.
-fn pai() -> Option<String> {
+pub(crate) fn pai() -> Option<String> {
     let eu = processos::um(std::process::id())?;
     let pai = processos::um(eu.ppid)?;
     Some(format!("{} (pid {})", pai.nome, pai.pid))

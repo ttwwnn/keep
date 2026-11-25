@@ -84,7 +84,7 @@ pub fn cli(args: &[String]) -> i32 {
         confiar_em_segundo_plano(shell);
         if std::env::var_os("CLAUDE_SECURESTORAGE_CONFIG_DIR").is_none_or(|v| v.is_empty()) {
             let escolha = std::env::var("KEEP_IA_ESCOLHA").ok().filter(|e| !e.is_empty());
-            match crate::quente::preparar(&ws, shell, escolha.as_deref(), None) {
+            match crate::quente::preparar(&ws, shell, escolha.as_deref(), None, "subida do Claude na aba (keep ia rodar)") {
                 // SAFETY: um só fio; o processo vira o programa logo adiante.
                 Ok(p) => unsafe { std::env::set_var("CLAUDE_SECURESTORAGE_CONFIG_DIR", &p.pasta) },
                 Err(r) => eprintln!("Keep: não deu para preparar o login desta aba ({}); o Claude sobe como antes.", r.motivo),

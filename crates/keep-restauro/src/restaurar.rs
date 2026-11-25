@@ -259,7 +259,7 @@ fn retoma_conversas(origem: &Retrato, reg: &mut Registro, falhas: &mut Vec<Strin
             crate::adormecer::registrar(&reg.keepd, &c.workspace, c.aba, ia.clone(), a.nome_posto.clone());
             continue;
         }
-        match retoma(&c.workspace, c.aba, ia, &contas) {
+        match retoma(&c.workspace, c.aba, ia, &contas, "restauração das abas (keep restauro)") {
             Ok(()) => feitas += 1,
             Err(e) => falhas.push(format!("{}#{} ({} {}): {e}", c.workspace, c.aba, ia.agente, ia.conversa)),
         }
@@ -303,7 +303,8 @@ pub fn subida(ws: &str, ia: &Ia, programa: String, conversa: &str, contas: &[kee
     }
 }
 
-pub(crate) fn retoma(ws: &str, tab: u32, ia: &Ia, contas: &[keep_ia::contas::Conta]) -> Result<(), String> {
+/// A conversa `ia` volta na aba `ws`#`tab`. `por`: a rotina que a traz, para o registro da escolha da aba.
+pub(crate) fn retoma(ws: &str, tab: u32, ia: &Ia, contas: &[keep_ia::contas::Conta], por: &str) -> Result<(), String> {
     let mut ia = ia.clone();
     if ia.agente != "codex" {
         ia.conta = escolha_ao_subir(&ia.conta, contas, &keep_ia::uso::disponiveis_de(contas));
@@ -326,7 +327,7 @@ pub(crate) fn retoma(ws: &str, tab: u32, ia: &Ia, contas: &[keep_ia::contas::Con
     // acesso da conta dela, e a conta troca depois sem sair do Claude. Sem
     // como prepará-lo, volta como antes.
     if ia.agente != "codex" {
-        if let Some(pasta) = armazem_da_aba(ws, tab, &ia.conta) {
+        if let Some(pasta) = armazem_da_aba(ws, tab, &ia.conta, por) {
             s.definir.retain(|(n, _)| n != keep_ia::quente::VAR);
             s.definir.insert(0, (keep_ia::quente::VAR.into(), pasta));
         }
@@ -358,11 +359,11 @@ fn escolha_ao_subir(escolha: &str, contas: &[keep_ia::contas::Conta], livres: &[
 
 /// O armazém de login da aba `ws`#`tab` para o Claude que volta nela, com a
 /// escolha que ela tinha (seguir a ordem, ou uma conta do Claude).
-fn armazem_da_aba(ws: &str, tab: u32, conta: &str) -> Option<String> {
+fn armazem_da_aba(ws: &str, tab: u32, conta: &str, por: &str) -> Option<String> {
     let r = daemon::listar().ok()?;
     let shell = keep_ia::vinculo::vincular(&r).get(&(ws.to_string(), tab))?.shell;
     let escolha = conta.starts_with("claude:").then_some(conta);
-    keep_ia::quente::preparar(ws, shell, escolha, None).ok().map(|p| p.pasta.to_string_lossy().into_owned())
+    keep_ia::quente::preparar(ws, shell, escolha, None, por).ok().map(|p| p.pasta.to_string_lossy().into_owned())
 }
 
 /// O shell da aba parou no prompt (algo na tela, nada rodando, duas leituras iguais). Devolve o nome dele.
