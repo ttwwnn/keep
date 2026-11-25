@@ -308,7 +308,8 @@ caixa da linha, rolagem da lista, estado do movimento, fim do arrasto por `point
   só do Windows (`LockFileEx`, subida das conversas no PowerShell) compila e não rodou (docs/restauro.md).
 - [~] `keep continuar` a cada 15 s, com o ocioso do sistema pelo `GetLastInputInfo`.
 - [~] A conversa parada há 12 h fora de vista sai da memória e volta ao mostrar a aba (`keep restauro adormecer`
-  a cada 5 min pela janela mais antiga, poupando a aba em frente de cada janela; `acordar` quando a aba em frente
+  a cada minuto pela janela mais antiga, poupando a aba em frente de cada janela (com a memória apertada, o núcleo
+  hiberna também as paradas há 10 min); `acordar` quando a aba em frente
   muda; `iaChores.ts`). O nome que o núcleo tira do `names.json` ao acordar sai também da janela
   (`droppedNames`), se ela o tem como estava. Testado no vitest e no núcleo; não visto no Windows de verdade.
 - [~] Responder "confiar nesta pasta?" sozinho: feito na fatia `terminal` (`trust.ts`; ver lá).
@@ -675,3 +676,11 @@ máquina não tem). Nada disto foi visto na WebView2 nem com um Claude Code de v
 - [x] 0.3.79: no cabeçalho do workspace, um ponto por aba de baixo em atividade, na cor do título dela (ou da marca ✳/◆),
   com borda preta fina; sobre a cápsula verde-limão e a laranja, botões e nome do programa em tinta escura
   (`Sidebar.tsx`, `styles.css`). Não visto no app do Windows.
+- [x] 0.3.82: o cabeçalho do workspace só fica verde-limão quando a aba geral terminou fora de vista e nenhuma aba de
+  baixo está em atividade (trabalhando, esperando workflow ou esperando a pessoa; hibernada ou encerrada conta como
+  terminada); até lá, fica como aba terminada comum, com os pontos das ativas. A regra é uma só nos dois lados
+  (`ClaudeActivity.holdsHeader` em `Snapshots.swift`, aplicada em `generalTab(of:)` do `WorkspaceSidebar.swift`;
+  `holdsHeader` em `claude.ts`, aplicada pelo `held` do `tabLook` em `Sidebar.tsx`), testada em
+  `tools/tab-colours-test.sh` (com duas sabotagens) e em `claude.test.ts`. A rodada do adormecer passa a cada
+  minuto nos dois apps, e o rodapé mostra o aviso de troca de conta sem pedido (`aviso` do `keep ia sincronizar`).
+  Não visto no app do Windows.

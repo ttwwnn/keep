@@ -46,9 +46,9 @@ import {
   zoom,
   zoomReset,
 } from "../store";
-import { busyMark, plainTitle, programOf } from "../claude";
+import { busyMark, holdsHeader, plainTitle, programOf } from "../claude";
 import { tabAccountLabel } from "../ia";
-import { isSleeping, sleepTab, sleepWorkspace } from "../iaChores";
+import { isDormant, isSleeping, sleepTab, sleepWorkspace } from "../iaChores";
 import { iaAvailable, tabAccount, usageLines } from "../iaStore";
 import { homeRelative } from "../text";
 import { info } from "../store";
@@ -209,7 +209,9 @@ function WorkspaceGroup(props: { name: string }) {
   const folded = gui.value.folded.includes(name);
   const current = activeWorkspace.value === name;
   const workspaceSleeping = tabs.some((t) => isSleeping(name, t));
-  const generalLook = general && tabLook(name, general, 0, current && general === activeTab.value, true);
+  // The header's lime waits for every tab under it (pedido de 25/11/2026): until then, a turn simply over.
+  const held = listed.some((t) => holdsHeader(tabActivity(name, t), tabBusy(name, t), isDormant(name, t)));
+  const generalLook = general && tabLook(name, general, 0, current && general === activeTab.value, true, held);
   // One dot for each tab under the header at work, in that tab's colour (its title's, or the mark's before it where
   // the title has none of its own), folded or not: the header is never grey while something in here works.
   const dots = listed

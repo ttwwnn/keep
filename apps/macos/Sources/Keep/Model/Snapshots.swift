@@ -242,6 +242,17 @@ enum ClaudeActivity: Hashable {
     /// until the tab is shown (pedido de 24/11/2026). Never read off the screen: the session sets it.
     case doneUnseen
 
+    /// A tab under a workspace's header still going, which keeps the header (its general tab) off the lime of a turn
+    /// over out of sight (pedido de 25/11/2026): a turn running, work behind a finished turn, or a question waiting on
+    /// the person. Asleep (or closed), it has finished.
+    static func holdsHeader(_ activity: ClaudeActivity?, busy: Bool, asleep: Bool) -> Bool {
+        guard !asleep else { return false }
+        switch activity {
+        case .working?, .waitingForWorkflow?, .waitingForYou?: return true
+        default: return busy
+        }
+    }
+
     /// Codex's final status above its prompt uses the same blue as a Claude
     /// workflow while it says Working. Older mentions in the transcript do
     /// not keep the colour after a later message has arrived.
@@ -864,7 +875,7 @@ struct SessionSnapshot: Hashable {
         /// and it is in one worth a colour.
         let claudeMode: ClaudeMode?
         /// Where Claude Code's turn stands there, when it can be told.
-        let claudeActivity: ClaudeActivity?
+        var claudeActivity: ClaudeActivity?
         /// When it started waiting on you, if it is: see `Attention`.
         let wantsYouSince: Date?
         /// The account its AI was put on, as the core said

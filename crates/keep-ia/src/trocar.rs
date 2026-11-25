@@ -1428,11 +1428,45 @@ mod ponta_a_ponta {
         // A Ana passa do teto com a Bia no limite: a aba aberta sai da Ana e espera na Bia.
         semanal_da_ana.store(85, Ordering::SeqCst);
         let _ = crate::uso::medir(false, Some("claude:ana"));
+        // Mas não com o Chaveiro trancado (um descartável de verdade, no lugar do da pessoa): o login que não se lê não
+        // é conta que acabou; a aba fica na conta dela e a rodada espera.
+        #[cfg(target_os = "macos")]
+        {
+            let kc = c.raiz.join("trancado.keychain-db");
+            let caminho = kc.to_str().unwrap();
+            let sec = |args: &[&str]| {
+                std::process::Command::new("/usr/bin/security")
+                    .env("HOME", &c.raiz)
+                    .args(args)
+                    .stdin(std::process::Stdio::null())
+                    .status()
+                    .is_ok_and(|s| s.success())
+            };
+            assert!(sec(&["create-keychain", "-p", "kit", caminho]) && sec(&["lock-keychain", caminho]), "o Chaveiro descartável");
+            // SAFETY: a casa (e a trava) está de pé.
+            unsafe { std::env::set_var("KEEP_IA_TESTE_CHAVEIRO_TRAVA", &kc) };
+            let r = crate::sincronizar::rodada();
+            assert_eq!(r["estado"], "chaveiro-trancado", "{r}");
+            assert_eq!(r["alteradas"].as_array().map(Vec::len), Some(0), "{r}");
+            assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:ana"), "a aba fica na conta dela: {r}");
+            // Destrancado, a rodada seguinte segue (abaixo).
+            assert!(sec(&["unlock-keychain", "-p", "kit", caminho]));
+            assert_eq!(crate::contas::credencial::chaveiro_indisponivel(), None);
+            sec(&["delete-keychain", caminho]);
+            unsafe { std::env::remove_var("KEEP_IA_TESTE_CHAVEIRO_TRAVA") };
+        }
         let r = crate::sincronizar::rodada();
         assert_eq!(r["alteradas"].as_array().map(Vec::len), Some(1), "{r}");
         assert_eq!(ia_da_aba(tab).atual.as_deref(), Some("claude:bia"), "{r}");
+        // Sem a pessoa pedir, de uma conta que ainda trabalha: o rodapé e a aba geral sabem, com o motivo e como desfazer.
+        let aviso = r["aviso"].as_str().unwrap_or_default().to_string();
+        assert!(aviso.starts_with("1 aba saiu da IA·1 para a IA·2 sem pedido seu: a IA·1 passou do teto de 80% da semana"), "{r}");
+        assert!(aviso.contains("Para desfazer: tire ou suba o teto7d da IA·1"), "{r}");
+        let eventos = std::fs::read_to_string(crate::caminhos::restauro().join(crate::geral::EVENTOS)).unwrap_or_default();
+        assert!(eventos.contains(r#""tipo":"conta""#) && eventos.contains("saiu da IA·1 para a IA·2 sem pedido seu"), "{eventos}");
         let r = crate::sincronizar::rodada();
         assert_eq!(r["alteradas"].as_array().map(Vec::len), Some(0), "e fica na Bia: {r}");
+        assert_eq!(r["aviso"].as_str(), Some(aviso.as_str()), "o aviso segue no rodapé por uma hora: {r}");
 
         // Quem passa a seguir a ordem agora também vai para a Bia.
         let outra = daemon::nova_aba("T", Some(&c.raiz.to_string_lossy()), 160, 40).unwrap();
@@ -1626,7 +1660,7 @@ mod nomes {
         assert_eq!(nome_em(&l, "claude:ninguem"), None);
         assert_eq!(rotulo_em(&l, "claude:ninguem"), "uma conta que o Keep não tem");
         // Subir uma conta na lista muda o nome dela, não a chave.
-        contas::mover("claude:ana", true).unwrap();
+        contas::mover("claude:ana", true, "keep ia ordem").unwrap();
         let l = contas::listar(false);
         assert_eq!((rotulo_em(&l, "claude:ana"), rotulo_em(&l, "gpt:principal")), ("IA·2".into(), "IA·3".into()));
     }

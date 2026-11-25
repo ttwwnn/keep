@@ -326,6 +326,15 @@ export function modeColor(mode: ClaudeMode, dark: boolean): Rgb {
 export const ATTENTION_INK: Rgb = [33, 22, 12];
 
 /**
+ * A tab under a workspace's header still going, which keeps the header (its general tab) off the lime of a turn over
+ * out of sight (pedido de 25/11/2026): a turn running, work behind a finished turn, or a question waiting on the
+ * person. Asleep (or closed), it has finished.
+ */
+export function holdsHeader(activity: ClaudeActivity | undefined, busy: boolean, asleep: boolean): boolean {
+  return !asleep && (busy || activity === "working" || activity === "waitingForWorkflow" || activity === "waitingForYou");
+}
+
+/**
  * A title's ink by where its turn stands: none while it runs (the mode's
  * colour), a calm blue while work it handed off runs, the badge's ink while
  * it waits on you, Claude Code's own grey once it is over.

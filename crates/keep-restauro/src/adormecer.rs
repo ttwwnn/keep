@@ -1,41 +1,63 @@
 //! A conversa parada há muito tempo sai da memória, e a aba fica.
 //!
-//! Cada Claude Code aberto pesa de 200 a 400 MB, e num Mac de 8 GB as abas
-//! esquecidas há um dia somam gigabytes. Pedido de 21/10/2026: a conversa
+//! Cada Claude Code aberto pesa de 200 a 600 MB, e num Mac de 8 GB as abas
+//! esquecidas somam gigabytes. Pedido de 21/10/2026: a conversa
 //! parada há mais de 12 h é fechada, a aba segue no Keep e a conversa volta
 //! quando a pessoa a chama.
 //!
-//! - **Adormecer** (`keep restauro adormecer`, o app a cada 5 min): a aba do
+//! - **Adormecer** (`keep restauro adormecer`, o app a cada minuto): a aba do
 //!   Claude fora de vista, livre (caixa vazia, nada rodando, nenhuma pergunta,
 //!   nada em segundo plano) e sem fala na conversa há `PARADA`, sai do Claude
 //!   pelo `/exit`. A conversa, a conta e as opções
 //!   ficam em `adormecidas.json` (por keepd) antes da saída.
+//! - **Memória** (pedido de 25/11/2026): com a memória apertada, ou mais
+//!   conversas vivas que o teto da RAM (`memoria`), a mesma rodada tira também
+//!   as paradas há 10 min, a parada há mais tempo primeiro (a aba geral por
+//!   último), uma por vez, medindo de novo entre elas, até aliviar.
+//!   `abrir_vaga` faz só isso, para uma aba nova (`keep nova`, a fila), poupando
+//!   as abas que o app mostrou há pouco (`vistas.json`).
 //! - **Agora** (`keep restauro adormecer --agora W [--aba N]`, o zzz da aba na
 //!   barra lateral): o mesmo, para a aba N (ou as livres do workspace W), sem
 //!   esperar as 12 h.
 //! - **Adormecidas** (`keep restauro adormecidas`, o app do Windows): quais abas
 //!   do keepd de agora estão adormecidas, para a barra lateral riscar o título.
 //! - **Acordar** (`keep restauro acordar`, o app ao mostrar a aba): a
-//!   conversa volta na mesma aba, como a restauração a retoma.
+//!   conversa volta na mesma aba, como a restauração a retoma. A acordada não
+//!   volta a dormir antes da mensagem que a acordou (até 30 min), e a parada
+//!   dela conta do acordar (`acordadas.json`).
 //! - O retrato leva a aba adormecida com a conversa dela: depois de um
 //!   reinício ela volta adormecida e acorda do mesmo jeito.
 
-use std::collections::HashSet;
+use std::cmp::Reverse;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use keep_ia::abas::IaAba;
 use keep_ia::daemon;
 use keep_ia::tela::{self, Programa};
 use keep_ia::worktrees::ambiente::Ambiente;
 
-use crate::{Ia, Keepd};
+use crate::{Ia, Keepd, memoria};
 
 pub const ARQUIVO: &str = "adormecidas.json";
+/// Quando cada aba foi acordada, por keepd.
+const ACORDADAS: &str = "acordadas.json";
+/// Quando o app mostrou cada aba por último (nas rodadas, e ao mostrá-la), por keepd.
+const VISTAS: &str = "vistas.json";
 
 /// Quanto tempo parada antes de sair da memória.
 const PARADA: Duration = Duration::from_secs(12 * 3600);
+/// O mesmo, com a memória apertada.
+const PARADA_APERTO: Duration = Duration::from_secs(10 * 60);
+/// A aba acordada sem fala nenhuma desde então espera a mensagem que a acordou este tanto antes de poder dormir.
+const ESPERA_MENSAGEM_MS: u64 = 30 * 60_000;
+/// Uma aba que o app mostrou conta como à vista este tanto, para quem abre lugar na memória sem as vistas da hora.
+const VISTA_MS: u64 = 5 * 60_000;
+/// As marcas de acordada e de vista somem depois disto.
+const LEMBRA_MS: u64 = 24 * 3600 * 1000;
 
 /// Uma aba cuja conversa saiu da memória.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +81,10 @@ pub struct Estado {
 
 fn parada() -> Duration {
     std::env::var("KEEP_ADORMECER_PARADA_S").ok().and_then(|s| s.parse().ok()).map(Duration::from_secs).unwrap_or(PARADA)
+}
+
+fn parada_aperto() -> Duration {
+    std::env::var("KEEP_ADORMECER_APERTO_S").ok().and_then(|s| s.parse().ok()).map(Duration::from_secs).unwrap_or(PARADA_APERTO)
 }
 
 /// As adormecidas do keepd `k` (de outro keepd, nenhuma).
@@ -95,6 +121,48 @@ pub fn registrar(k: &Keepd, ws: &str, aba: u32, ia: Ia, nome_posto: Option<Strin
         abas.retain(|a| !(a.workspace == ws && a.aba == aba));
         abas.push(Adormecida { workspace: ws.into(), aba, ia, desde_ms: crate::agora_ms(), nome_posto });
     });
+}
+
+/// Uma aba e a hora de alguma coisa que aconteceu com ela (acordou, foi mostrada).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+struct Marca {
+    workspace: String,
+    aba: u32,
+    em_ms: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+struct Marcas {
+    keepd: Keepd,
+    #[serde(default)]
+    abas: Vec<Marca>,
+}
+
+fn marcas(arquivo: &str, k: &Keepd) -> Vec<Marca> {
+    crate::ler::<Marcas>(&crate::pasta().join(arquivo)).filter(|m| m.keepd.mesmo(k)).map(|m| m.abas).unwrap_or_default()
+}
+
+/// Marca agora as `abas` (a marca nova troca a velha da mesma aba); as de mais de um dia saem.
+fn marcar(arquivo: &str, k: &Keepd, abas: &[(String, u32)]) {
+    if abas.is_empty() {
+        return;
+    }
+    let pasta = crate::pasta();
+    let _ = std::fs::create_dir_all(&pasta);
+    let trava = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(pasta.join(format!(".{arquivo}.lock")));
+    let _trava = trava.ok().filter(|f| f.lock().is_ok());
+    let agora = crate::agora_ms();
+    let mut lista = marcas(arquivo, k);
+    lista.retain(|m| agora.saturating_sub(m.em_ms) < LEMBRA_MS && !abas.iter().any(|(w, a)| *w == m.workspace && *a == m.aba));
+    lista.extend(abas.iter().map(|(w, a)| Marca { workspace: w.clone(), aba: *a, em_ms: agora }));
+    let _ = crate::gravar(&pasta.join(arquivo), &Marcas { keepd: k.clone(), abas: lista });
+}
+
+/// As abas que o app mostrou há pouco (nas rodadas e ao mostrar cada uma): o que se poupa ao abrir lugar na memória
+/// para uma aba nova, sem as vistas da hora, que só o app sabe.
+fn vistas_recentes(k: &Keepd) -> HashSet<(String, u32)> {
+    let agora = crate::agora_ms();
+    marcas(VISTAS, k).into_iter().filter(|m| agora.saturating_sub(m.em_ms) < VISTA_MS).map(|m| (m.workspace, m.aba)).collect()
 }
 
 /// O título que o Claude deu à aba, sem a marca de estado da frente (`✳`, o pião).
@@ -167,23 +235,135 @@ fn impedimento(aba: &daemon::Aba, pid: u32) -> Option<String> {
     None
 }
 
-/// Uma rodada: adormece as abas paradas há `PARADA` fora de `vistas` (as abas que o app mostra, pela raiz).
-/// `seco`: só diz o que faria.
+/// Uma rodada: adormece as abas paradas há `PARADA` fora de `vistas` (as abas que o app mostra, pela raiz) e, com a
+/// memória apertada, as paradas há pouco. `seco`: só diz o que faria.
 pub fn adormecer(vistas: &HashSet<(String, u32)>, seco: bool) -> Result<Value, String> {
-    rodada(vistas, seco, None)
+    rodada(vistas, seco, Modo::Rodada)
 }
 
 /// O mesmo para a aba `aba` do workspace `ws` (sem `aba`, as do workspace), parada há pouco ou há muito: o
 /// que impede (trabalho, pergunta, caixa digitada) e o que está em `vistas` continuam valendo.
 pub fn adormecer_agora(ws: &str, aba: Option<u32>, vistas: &HashSet<(String, u32)>) -> Result<Value, String> {
-    rodada(vistas, false, Some((ws, aba)))
+    rodada(vistas, false, Modo::Agora(ws, aba))
 }
 
-fn rodada(vistas: &HashSet<(String, u32)>, seco: bool, so_do: Option<(&str, Option<u32>)>) -> Result<Value, String> {
-    // O pedido da pessoa espera a rodada que estiver no meio; a rodada de 5 min desiste da outra.
-    let trava = match so_do {
-        Some(_) => crate::Trava::esperar(".adormecer.lock", Duration::from_secs(90)),
-        None => crate::Trava::pegar(".adormecer.lock"),
+/// Lugar na memória para `n` conversas novas (`keep nova`, a fila): com a memória apertada, ou no teto de conversas
+/// vivas, as paradas há 10 min saem, como na rodada, poupando as abas que o app mostrou há pouco.
+pub fn abrir_vaga(n: usize) -> Result<Value, String> {
+    rodada(&HashSet::new(), false, Modo::Vaga(n))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Modo<'a> {
+    /// A rodada do app.
+    Rodada,
+    /// O pedido da pessoa (o zzz): a aba N de W, ou as livres de W.
+    Agora(&'a str, Option<u32>),
+    /// Lugar para tantas conversas novas: só a parte da memória da rodada.
+    Vaga(usize),
+}
+
+/// O que a rodada olha uma vez e cada saída do Claude usa.
+struct Contexto<'a> {
+    lista: &'a daemon::Retrato,
+    amb: &'a Ambiente,
+    keepd: &'a Keepd,
+    nomes: &'a HashMap<(String, u32), String>,
+}
+
+enum Fim {
+    Saiu,
+    /// `seco`: sairia.
+    Seco,
+    /// Não pode agora: trabalho, pergunta, caixa digitada, rascunho de feedback, conversa anexada.
+    Impede(String),
+    Falhou(String),
+}
+
+/// Sai do Claude da aba `i`, guardando antes a conversa, a conta e as opções.
+fn hibernar(c: &Contexto, i: &IaAba, aba: &daemon::Aba, conversa: &str, seco: bool) -> Fim {
+    if keep_ia::processos::argv(i.pid).is_some_and(|a| a.iter().take(4).any(|x| x == "attach")) {
+        // O `/exit` só desanexa: a conversa segue no job, na memória.
+        return Fim::Impede("conversa em segundo plano anexada".into());
+    }
+    // Com rascunho de feedback na fila, o `/exit` para na pergunta dele (enviar ou descartar), e a conversa que
+    // saísse dali depois ficaria sem a entrada de adormecida: a aba volta só com o shell.
+    let com_rascunho = [Some(conversa), i.conversa.as_deref()]
+        .into_iter()
+        .flatten()
+        .any(|x| keep_ia::sessoes::rascunhos_de_feedback(x, Some(i.pid)) > 0);
+    let impede = impedimento(aba, i.pid)
+        .or_else(|| com_rascunho.then(|| "a conversa tem rascunho de feedback na fila (o /exit pararia na pergunta dele)".to_string()));
+    if let Some(motivo) = impede {
+        return Fim::Impede(motivo);
+    }
+    let Some(ia) = crate::retrato::ia_da_aba(i, c.amb).map(|ia| Ia { conversa: conversa.to_string(), ..ia }) else {
+        return Fim::Impede("sem a conversa".into());
+    };
+    if seco {
+        return Fim::Seco;
+    }
+    // Sem o Claude o título some da aba: a que não tem nome dado fica com o da conversa.
+    let nome = titulo(aba).filter(|_| !c.nomes.contains_key(&(i.workspace.clone(), i.aba)));
+    // Guardada antes de sair: o que cair no meio não perde a conversa da aba.
+    registrar(c.keepd, &i.workspace, i.aba, ia.clone(), nome.clone());
+    let vinculo = keep_ia::vinculo::vincular(c.lista).get(&(i.workspace.clone(), i.aba)).map(|v| v.shell);
+    let sintaxe = keep_ia::trocar::sintaxe_da_aba(aba, vinculo);
+    match keep_ia::trocar::sai_do_claude(&i.workspace, i.aba, false, sintaxe) {
+        Ok(()) => {
+            // Saiu de uma worktree (mantida pelo `sai_do_claude`): a conversa acorda dentro dela.
+            let tela = keep_ia::trocar::tela_de(&i.workspace, i.aba).0;
+            if let Some(w) = keep_ia::tela::worktree_ao_retomar(&tela).filter(|_| !ia.parametros.iter().any(|p| p == "--worktree")) {
+                let mut ia = ia;
+                ia.parametros.extend(["--worktree".to_string(), w]);
+                registrar(c.keepd, &i.workspace, i.aba, ia, nome.clone());
+            }
+            if let Some(n) = nome {
+                crate::nomear_no_app(c.amb, c.keepd.socket_nasceu, &[(i.workspace.clone(), i.aba, n)], false);
+            }
+            Fim::Saiu
+        }
+        Err(r) => {
+            mudar(c.keepd, |abas| abas.retain(|a| !(a.workspace == i.workspace && a.aba == i.aba)));
+            Fim::Falhou(format!("não saiu: {}", r.detalhe))
+        }
+    }
+}
+
+/// O que a rodada diz de cada aba (uma situação por aba: a última vale).
+#[derive(Default)]
+struct Relato(Vec<(String, String)>);
+
+impl Relato {
+    fn diz(&mut self, aba: &str, situacao: String) {
+        match self.0.iter_mut().find(|(a, _)| a == aba) {
+            Some(x) => x.1 = situacao,
+            None => self.0.push((aba.to_string(), situacao)),
+        }
+    }
+
+    fn json(&self) -> Vec<Value> {
+        self.0.iter().map(|(a, s)| json!({ "aba": a, "situacao": s })).collect()
+    }
+}
+
+/// A ordem de saída pela memória: a parada há mais tempo primeiro, e a aba geral do workspace por último (é ela que
+/// conduz as outras, e o que pede a ela a acorda de novo).
+fn ordem_da_memoria(candidatas: &mut [(u64, bool, &IaAba, String)]) {
+    candidatas.sort_by_key(|(parada_ha, geral, ..)| (*geral, Reverse(*parada_ha)));
+}
+
+fn rodada(vistas_do_app: &HashSet<(String, u32)>, seco: bool, modo: Modo) -> Result<Value, String> {
+    let so_do = match modo {
+        Modo::Agora(w, a) => Some((w, a)),
+        _ => None,
+    };
+    // O pedido da pessoa e o lugar para uma aba nova esperam a rodada que estiver no meio; a rodada do app desiste
+    // da outra.
+    let trava = match modo {
+        Modo::Rodada => crate::Trava::pegar(".adormecer.lock"),
+        Modo::Agora(..) => crate::Trava::esperar(".adormecer.lock", Duration::from_secs(90)),
+        Modo::Vaga(_) => crate::Trava::esperar(".adormecer.lock", Duration::from_secs(60)),
     };
     let Some(_trava) = trava else {
         return Ok(json!({ "versao": crate::VERSAO, "motivo": "outra rodada em andamento" }));
@@ -197,106 +377,131 @@ fn rodada(vistas: &HashSet<(String, u32)>, seco: bool, so_do: Option<(&str, Opti
     let contas = keep_ia::contas::listar(false);
     let ias = keep_ia::abas::das_abas(&lista, &contas);
     let nomes = keep_ia::worktrees::abas::nomes_do_app(&amb, keepd.socket_nasceu);
-    // A que fechou, ou em que a IA voltou por outro caminho, sai da lista.
+    let vistas = match modo {
+        Modo::Vaga(_) => vistas_recentes(&keepd),
+        _ => vistas_do_app.clone(),
+    };
     if !seco {
+        // A que fechou, ou em que a IA voltou por outro caminho, sai da lista.
         mudar(&keepd, |abas| {
             abas.retain(|a| {
                 lista.aba(&a.workspace, a.aba).is_some() && !ias.iter().any(|i| i.workspace == a.workspace && i.aba == a.aba)
             })
         });
+        // As abas que o app mostra: quem abre lugar para uma aba nova as poupa.
+        if modo == Modo::Rodada {
+            marcar(VISTAS, &keepd, &vistas.iter().cloned().collect::<Vec<_>>());
+        }
     }
+    let c = Contexto { lista: &lista, amb: &amb, keepd: &keepd, nomes: &nomes };
+    let acordadas = marcas(ACORDADAS, &keepd);
+    let gerais = crate::geral::do_keepd(&keepd);
     let parada = parada().as_millis() as u64;
+    let parada_aperto = parada_aperto().as_millis() as u64;
     let agora = crate::agora_ms();
-    let mut relato = Vec::new();
+    let mut relato = Relato::default();
     let mut feitas = 0;
+    // As que podem sair se a memória apertar: (parada há, é a aba geral, a IA, a conversa).
+    let mut pela_memoria: Vec<(u64, bool, &IaAba, String)> = Vec::new();
     for i in ias.iter().filter(|i| i.agente == "claude") {
         if so_do.is_some_and(|(w, a)| w != i.workspace || a.is_some_and(|a| a != raiz(&lista, w, i.aba))) {
             continue;
         }
         let Some(aba) = lista.aba(&i.workspace, i.aba) else { continue };
         let rotulo = format!("{}#{}", i.workspace, i.aba);
-        let mut diz = |s: String| relato.push(json!({ "aba": rotulo, "situacao": s }));
-        if vistas.contains(&(i.workspace.clone(), raiz(&lista, &i.workspace, i.aba))) {
-            diz("à vista".into());
+        let mae = raiz(&lista, &i.workspace, i.aba);
+        if vistas.contains(&(i.workspace.clone(), mae)) {
+            relato.diz(&rotulo, "à vista".into());
             continue;
         }
         let Some(conversa) = i.conversa.as_deref().map(keep_ia::sessoes::continuacao) else {
-            diz("sem o id da conversa".into());
+            relato.diz(&rotulo, "sem o id da conversa".into());
             continue;
         };
         // Sem fala nenhuma, o `--resume` ao acordar não acharia a conversa e a aba ficaria só com o shell (a aba geral
         // aberta pelo Keep, 24/11/2026, adormeceu 5 min depois de nascer).
         let Some(ultima) = ultima_fala_ms(&conversa) else {
-            diz("conversa sem nenhuma fala: não há o que retomar".into());
+            relato.diz(&rotulo, "conversa sem nenhuma fala: não há o que retomar".into());
             continue;
         };
-        let parada_ha = agora.saturating_sub(ultima);
-        if so_do.is_none() && parada_ha < parada {
-            diz(format!("parada há {} min", parada_ha / 60_000));
-            continue;
+        // Acordada há pouco, a parada conta do acordar: a conversa de ontem que a pessoa (ou a aba geral) acabou de
+        // chamar não volta a dormir por ser antiga.
+        let acordada = acordadas.iter().find(|m| m.workspace == i.workspace && m.aba == i.aba).map(|m| m.em_ms);
+        let parada_ha = agora.saturating_sub(ultima.max(acordada.unwrap_or(0)));
+        if so_do.is_none() {
+            // Acordada para uma mensagem que ainda não chegou (a aba geral acorda e manda em seguida; sem isto, a
+            // rodada das 12 h a fazia dormir de novo antes de o pedido entrar): fica no Claude até ela chegar.
+            if let Some(em) = acordada.filter(|em| ultima < *em && agora.saturating_sub(*em) < ESPERA_MENSAGEM_MS) {
+                relato.diz(&rotulo, format!("acordada há {} min, à espera da mensagem que a acordou", agora.saturating_sub(em) / 60_000));
+                continue;
+            }
+            if matches!(modo, Modo::Vaga(_)) || parada_ha < parada {
+                if parada_ha >= parada_aperto {
+                    let geral = gerais.iter().any(|(w, a)| *w == i.workspace && *a == mae);
+                    pela_memoria.push((parada_ha, geral, i, conversa));
+                }
+                relato.diz(&rotulo, format!("parada há {} min", parada_ha / 60_000));
+                continue;
+            }
         }
-        if keep_ia::processos::argv(i.pid).is_some_and(|a| a.iter().take(4).any(|x| x == "attach")) {
-            // O `/exit` só desanexa: a conversa segue no job, na memória.
-            diz("conversa em segundo plano anexada".into());
-            continue;
-        }
-        // Com rascunho de feedback na fila, o `/exit` para na pergunta dele (enviar ou descartar), e a conversa que
-        // saísse dali depois ficaria sem a entrada de adormecida: a aba volta só com o shell.
-        let com_rascunho = [Some(conversa.as_str()), i.conversa.as_deref()]
-            .into_iter()
-            .flatten()
-            .any(|c| keep_ia::sessoes::rascunhos_de_feedback(c, Some(i.pid)) > 0);
-        let impede = impedimento(aba, i.pid)
-            .or_else(|| com_rascunho.then(|| "a conversa tem rascunho de feedback na fila (o /exit pararia na pergunta dele)".to_string()));
-        if let Some(motivo) = impede {
-            // Pedida pela pessoa, o motivo vai sozinho: "parada há 0 h" não explica nada.
-            diz(if so_do.is_some() { motivo } else { format!("parada há {} h, mas {motivo}", parada_ha / 3_600_000) });
-            continue;
-        }
-        let Some(ia) = crate::retrato::ia_da_aba(i, &amb).map(|ia| Ia { conversa: conversa.clone(), ..ia }) else {
-            diz("sem a conversa".into());
-            continue;
-        };
-        if seco {
-            diz(format!("adormeceria (parada há {} h)", parada_ha / 3_600_000));
-            continue;
-        }
-        // Sem o Claude o título some da aba: a que não tem nome dado fica com o da conversa.
-        let nome = titulo(aba).filter(|_| !nomes.contains_key(&(i.workspace.clone(), i.aba)));
-        // Guardada antes de sair: o que cair no meio não perde a conversa da aba.
-        registrar(&keepd, &i.workspace, i.aba, ia.clone(), nome.clone());
-        let vinculo = keep_ia::vinculo::vincular(&lista).get(&(i.workspace.clone(), i.aba)).map(|v| v.shell);
-        let sintaxe = keep_ia::trocar::sintaxe_da_aba(aba, vinculo);
-        match keep_ia::trocar::sai_do_claude(&i.workspace, i.aba, false, sintaxe) {
-            Ok(()) => {
+        let horas = parada_ha / 3_600_000;
+        match hibernar(&c, i, aba, &conversa, seco) {
+            Fim::Saiu => {
                 feitas += 1;
-                // Saiu de uma worktree (mantida pelo `sai_do_claude`): a conversa acorda dentro dela.
-                let tela = keep_ia::trocar::tela_de(&i.workspace, i.aba).0;
-                if let Some(w) = keep_ia::tela::worktree_ao_retomar(&tela).filter(|_| !ia.parametros.iter().any(|p| p == "--worktree")) {
-                    let mut ia = ia;
-                    ia.parametros.extend(["--worktree".to_string(), w]);
-                    registrar(&keepd, &i.workspace, i.aba, ia, nome.clone());
-                }
-                if let Some(n) = nome {
-                    crate::nomear_no_app(&amb, keepd.socket_nasceu, &[(i.workspace.clone(), i.aba, n)], false);
-                }
-                diz(format!("adormecida (parada há {} h)", parada_ha / 3_600_000));
+                relato.diz(&rotulo, format!("adormecida (parada há {horas} h)"));
             }
-            Err(r) => {
-                mudar(&keepd, |abas| abas.retain(|a| !(a.workspace == i.workspace && a.aba == i.aba)));
-                diz(format!("não saiu: {}", r.detalhe));
+            Fim::Seco => relato.diz(&rotulo, format!("adormeceria (parada há {horas} h)")),
+            // Pedida pela pessoa, o motivo vai sozinho: "parada há 0 h" não explica nada.
+            Fim::Impede(motivo) if so_do.is_some() => relato.diz(&rotulo, motivo),
+            Fim::Impede(motivo) => relato.diz(&rotulo, format!("parada há {horas} h, mas {motivo}")),
+            Fim::Falhou(motivo) => relato.diz(&rotulo, motivo),
+        }
+    }
+    // A memória apertada, ou mais conversas vivas que o teto da RAM: as paradas há pouco saem, uma por vez, medindo de
+    // novo entre elas, até aliviar.
+    let mut memoria_json = Value::Null;
+    if so_do.is_none() {
+        let mais = match modo {
+            Modo::Vaga(n) => n,
+            _ => 0,
+        };
+        let mut s = memoria::Situacao { leitura: memoria::ler(), vivas: ias.len().saturating_sub(feitas) };
+        let antes = s.falta(mais);
+        if let Some(porque) = &antes {
+            ordem_da_memoria(&mut pela_memoria);
+            for (parada_ha, _, i, conversa) in &pela_memoria {
+                let Some(aba) = lista.aba(&i.workspace, i.aba) else { continue };
+                let rotulo = format!("{}#{}", i.workspace, i.aba);
+                let min = parada_ha / 60_000;
+                match hibernar(&c, i, aba, conversa, seco) {
+                    Fim::Saiu => {
+                        feitas += 1;
+                        s.vivas = s.vivas.saturating_sub(1);
+                        relato.diz(&rotulo, format!("adormecida pela memória ({porque}; parada há {min} min)"));
+                        // O que o Claude que saiu ocupava volta ao sistema em instantes.
+                        std::thread::sleep(Duration::from_secs(1));
+                        s.leitura = memoria::ler();
+                        if s.falta(mais).is_none() {
+                            break;
+                        }
+                    }
+                    Fim::Seco => relato.diz(&rotulo, format!("adormeceria pela memória ({porque}; parada há {min} min)")),
+                    Fim::Impede(motivo) => relato.diz(&rotulo, format!("parada há {min} min, mas {motivo}")),
+                    Fim::Falhou(motivo) => relato.diz(&rotulo, motivo),
+                }
             }
         }
+        memoria_json = json!({ "aperto": antes, "falta": s.falta(mais), "resumo": s.resumo() });
     }
     // Uma aba pedida que não roda o Claude: a pessoa apertou o botão e merece saber por que nada saiu.
     if let Some((w, Some(a))) = so_do {
-        if relato.is_empty() {
+        if relato.0.is_empty() {
             let ja = do_keepd(&keepd).iter().any(|d| d.workspace == w && raiz(&lista, w, d.aba) == a);
             let porque = if ja { "a conversa já está hibernada" } else { "o Keep não achou o Claude nesta aba" };
-            relato.push(json!({ "aba": format!("{w}#{a}"), "situacao": porque }));
+            relato.diz(&format!("{w}#{a}"), porque.into());
         }
     }
-    Ok(json!({ "versao": crate::VERSAO, "adormecidas": feitas, "abas": relato }))
+    Ok(json!({ "versao": crate::VERSAO, "adormecidas": feitas, "abas": relato.json(), "memoria": memoria_json }))
 }
 
 /// A conversa da aba `ws`#`tab` (e dos painéis dela) volta, se ela adormeceu.
@@ -305,6 +510,8 @@ pub fn acordar(ws: &str, tab: u32) -> Result<Value, String> {
     let amb = Ambiente::do_sistema();
     let keepd = crate::retrato::keepd_da_lista(&lista, &amb);
     let alvo = raiz(&lista, ws, tab);
+    // O app pergunta ao mostrar cada aba: ela conta como à vista para quem abre lugar na memória.
+    marcar(VISTAS, &keepd, &[(ws.to_string(), alvo)]);
     let e_alvo = |a: &Adormecida| a.workspace == ws && raiz(&lista, ws, a.aba) == alvo;
     if !do_keepd(&keepd).iter().any(|a| e_alvo(a)) {
         return Ok(json!({ "versao": crate::VERSAO, "acordadas": 0 }));
@@ -320,6 +527,7 @@ pub fn acordar(ws: &str, tab: u32) -> Result<Value, String> {
     });
     let contas = keep_ia::contas::listar(false);
     let mut feitas = 0;
+    let mut acordou = Vec::new();
     let mut falhas = Vec::new();
     for a in &alvos {
         let rotulo = format!("{}#{}", a.workspace, a.aba);
@@ -343,6 +551,7 @@ pub fn acordar(ws: &str, tab: u32) -> Result<Value, String> {
         match crate::restaurar::retoma(&a.workspace, a.aba, &a.ia, &contas) {
             Ok(()) => {
                 feitas += 1;
+                acordou.push((a.workspace.clone(), a.aba));
                 // O Claude de volta diz o título de novo.
                 if let Some(n) = &a.nome_posto {
                     crate::tirar_nome_no_app(&amb, keepd.socket_nasceu, &a.workspace, a.aba, n);
@@ -355,6 +564,8 @@ pub fn acordar(ws: &str, tab: u32) -> Result<Value, String> {
             }
         }
     }
+    // A que acordou não volta a dormir antes da mensagem que a acordou, e a parada dela conta daqui.
+    marcar(ACORDADAS, &keepd, &acordou);
     Ok(json!({ "versao": crate::VERSAO, "acordadas": feitas, "falhas": falhas }))
 }
 
@@ -368,5 +579,24 @@ mod testes {
         assert_eq!(vista("a/b/12"), Some(("a/b".into(), 12)));
         assert_eq!(vista("sem-numero"), None);
         assert_eq!(vista("W/x"), None);
+    }
+
+    #[test]
+    fn pela_memoria_sai_primeiro_a_parada_ha_mais_tempo_e_a_geral_por_ultimo() {
+        let ia = |aba: u32| IaAba {
+            workspace: "W".into(),
+            aba,
+            agente: "claude".into(),
+            conta: String::new(),
+            atual: None,
+            vinculo: "exato".into(),
+            pid: aba,
+            conversa: None,
+            provada: None,
+        };
+        let (a, b, g, d) = (ia(1), ia(2), ia(3), ia(4));
+        let mut c = vec![(20, false, &a, String::new()), (90, true, &g, String::new()), (50, false, &b, String::new()), (70, false, &d, String::new())];
+        ordem_da_memoria(&mut c);
+        assert_eq!(c.iter().map(|x| x.2.aba).collect::<Vec<_>>(), vec![4, 2, 1, 3]);
     }
 }

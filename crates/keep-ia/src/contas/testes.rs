@@ -35,6 +35,7 @@ impl Drop for Casa {
             "OPENROUTER_API_KEY",
             "KEEP_IA_TOKEN_URL",
             "KEEP_IA_TESTE_CHAVEIRO_FALHA",
+            "KEEP_IA_TESTE_CHAVEIRO_TRAVA",
             "KEEP_IA_GERENTE_EXTERNO",
             "KEEP_IA_CLAUDE_BIN",
             "KEEP_IA_CODEX_BIN",
@@ -365,11 +366,11 @@ fn mover_troca_com_a_vizinha_e_grava_tudo() {
     c.fixa("k-2", Some(("F", "r")), Some(("bia", "bia@y.com", "u-2")));
     c.codex(&c.raiz.join(".codex"), "ana@x.com", "acct-1");
     let _ = listar(true); // os donos ficam em cache
-    assert_eq!(mover("gpt:principal", true).unwrap(), ["claude:ana", "gpt:principal", "claude:bia"]);
+    assert_eq!(mover("gpt:principal", true, "keep ia ordem").unwrap(), ["claude:ana", "gpt:principal", "claude:bia"]);
     assert_eq!(ler_ordem(), ["claude:ana", "gpt:principal", "claude:bia"]);
-    assert_eq!(mover("claude:ana", true).unwrap(), ["claude:ana", "gpt:principal", "claude:bia"], "a 1ª não sobe");
-    assert_eq!(mover("claude:bia", false).unwrap(), ["claude:ana", "gpt:principal", "claude:bia"], "a última não desce");
-    assert!(mover("claude:ninguem", true).is_err());
+    assert_eq!(mover("claude:ana", true, "keep ia ordem").unwrap(), ["claude:ana", "gpt:principal", "claude:bia"], "a 1ª não sobe");
+    assert_eq!(mover("claude:bia", false, "keep ia ordem").unwrap(), ["claude:ana", "gpt:principal", "claude:bia"], "a última não desce");
+    assert!(mover("claude:ninguem", true, "keep ia ordem").is_err());
     let contas = listar(false);
     assert!(contas[0].is_preferred);
 }
@@ -387,7 +388,7 @@ fn o_teto_da_semanal_vem_da_ordem_e_fica_quando_ela_e_regravada() {
     assert_eq!(contas[1].weekly_cap, None, "a linha sem teto vale como antes");
     assert!(serde_json::to_string(&contas[0]).unwrap().contains(r#""weeklyCap":80.0"#), "o rodapé lê o teto");
     // Reordenar pela barra não perde o teto.
-    assert_eq!(mover("claude:ana", true).unwrap(), ["claude:ana", "claude:bia"]);
+    assert_eq!(mover("claude:ana", true, "keep ia ordem").unwrap(), ["claude:ana", "claude:bia"]);
     assert_eq!(ler_fila(), [("claude:ana".to_string(), None), ("claude:bia".to_string(), Some(80.0))]);
     assert_eq!(ler_ordem(), ["claude:ana", "claude:bia"]);
     // Nem um login novo que entra no fim da fila.
@@ -444,4 +445,52 @@ fn uma_casa_de_teste_sem_o_chaveiro_de_teste_nunca_chega_ao_de_verdade() {
     // (Só o apagar prova a recusa: sem ela, ele não acharia o item de uma
     // conta "teste" e nada mudaria; um gravar sem ela gravaria de verdade.)
     assert!(credencial::apagar(&item).unwrap_err().contains("casa de teste"));
+}
+
+#[test]
+fn toda_mudanca_da_ordem_fica_registrada_com_o_caminho() {
+    let c = casa("registro-da-ordem");
+    perfis(&[("G", "u-1", "ana@x.com"), ("F", "u-2", "bia@y.com")]);
+    c.global("G", "r");
+    c.fixa("k-2", Some(("F", "r")), Some(("bia", "bia@y.com", "u-2")));
+    c.ordem(&["# fila", "claude:ana", "claude:bia"]);
+    let registro = || -> Vec<Value> {
+        std::fs::read_to_string(crate::caminhos::estado().join("ordem.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect()
+    };
+    let _ = listar(true);
+    assert!(registro().is_empty(), "a primeira leitura só conhece a fila");
+    // As setas do rodapé.
+    mover("claude:bia", true, "setas do rodapé").unwrap();
+    // Por fora: a segunda conta ganha um teto que não tinha.
+    c.ordem(&["# fila", "claude:bia", "claude:ana teto7d=75"]);
+    let _ = ler_fila();
+    let _ = ler_fila();
+    // Vista já na leitura (o Keep pode nem voltar a gravar a fila), e uma vez só.
+    let lido = registro();
+    assert_eq!(lido.len(), 2, "{lido:#?}");
+    assert_eq!(lido[1]["por"], mudancas::POR_FORA);
+    // Só um comentário a mais por fora não é mudança da fila.
+    c.ordem(&["# fila", "# comentário novo", "claude:bia", "claude:ana teto7d=75"]);
+    let _ = listar(false);
+    // O login de uma conta nova entra no fim.
+    c.codex(&c.raiz.join(".codex"), "ana@x.com", "acct-1");
+    acrescentar_na_ordem("gpt:principal").unwrap();
+    let r = registro();
+    assert_eq!(r.len(), 3, "{r:#?}");
+    assert_eq!(r[0]["por"], "setas do rodapé");
+    assert_eq!((&r[0]["antes"], &r[0]["depois"]), (&serde_json::json!(["claude:ana", "claude:bia"]), &serde_json::json!(["claude:bia", "claude:ana"])));
+    assert_eq!(r[1]["por"], mudancas::POR_FORA);
+    assert_eq!(r[1]["antes"], serde_json::json!(["claude:bia", "claude:ana"]), "o antes é o que o Keep tinha gravado");
+    assert_eq!(r[1]["depois"], serde_json::json!(["claude:bia", "claude:ana teto7d=75"]));
+    assert_eq!(r[2]["por"], "login de conta nova");
+    assert_eq!(r[2]["depois"], serde_json::json!(["claude:bia", "claude:ana teto7d=75", "gpt:principal"]));
+    assert!(r.iter().all(|l| l["quando"].as_str().is_some_and(|q| q.len() == 19)), "{r:#?}");
+    // A última mudança e de onde veio, para quem avisa de uma troca de conta.
+    let v = mudancas::vista().unwrap();
+    assert_eq!(v.por, "login de conta nova");
+    assert!(v.mudou_ms > 0);
 }

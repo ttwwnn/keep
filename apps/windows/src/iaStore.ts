@@ -82,6 +82,11 @@ export const automation = signal<Automation | null>(null);
 export const measuring = signal(false);
 /** What the footer has to say for a moment: a change the core refused. */
 export const usageNotice = signal<string | null>(null);
+/**
+ * Tabs the core took off their account without being asked — a weekly cap, the order changed — with why and how to
+ * undo it; said for as long as the core says it (`keep ia sincronizar`, an hour).
+ */
+export const accountWarning = signal<string | null>(null);
 /** Another tool switches the global login (the author's kit): the core defers to it. */
 export const externalManager = signal(false);
 /** The footer folded to one line per account. A convenience of this machine's. */
@@ -332,7 +337,8 @@ export function moveOrder(line: UsageLine, step: number): void {
   usageNotice.value = null;
   moves = moves.then(async () => {
     try {
-      const answer = await api.iaAsk(["ia", "ordem", "mover", key, step < 0 ? "cima" : "baixo", "--json"]);
+      // `--por=setas`: the core writes down every change of the order and where it came from.
+      const answer = await api.iaAsk(["ia", "ordem", "mover", key, step < 0 ? "cima" : "baixo", "--por=setas", "--json"]);
       if (answer.ok !== true) throw new Error(refusal(answer, "mudar a ordem"));
     } catch (error) {
       // Taken back by reading the order as the core has it.
@@ -577,6 +583,10 @@ async function synchronize(): Promise<void> {
   syncing = true;
   try {
     const answer = await api.iaAsk(["ia", "sincronizar", "--json"]);
+    if (answer.ok === true) {
+      const warning = typeof answer.aviso === "string" && answer.aviso.trim() ? answer.aviso.trim() : null;
+      if (accountWarning.value !== warning) accountWarning.value = warning;
+    }
     if (answer.ok === true && Array.isArray(answer.alteradas) && answer.alteradas.length > 0) {
       void refresh();
       void readTabs();

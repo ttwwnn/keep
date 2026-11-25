@@ -250,11 +250,12 @@ enum AIHelper {
 
     // MARK: - asking
 
-    /// One place up or down the order. The answer is the order as the core
-    /// now has it.
+    /// One place up or down the order, from the footer's arrows (the core
+    /// writes down every change of the order and where it came from). The
+    /// answer is the order as the core now has it.
     static func moveOrder(_ key: String, up: Bool) -> Result<[String], Problem> {
         guard isValidKey(key), key != followOrder else { return .failure(invalid(key)) }
-        return ask(["ordem", "mover", key, up ? "cima" : "baixo", "--json"], within: 10 * timeScale)
+        return ask(["ordem", "mover", key, up ? "cima" : "baixo", "--por=setas", "--json"], within: 10 * timeScale)
             .map { ($0["ordem"] as? [String]) ?? [] }
     }
 

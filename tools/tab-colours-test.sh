@@ -7,15 +7,15 @@
 # Seconds.
 #
 #   tools/tab-colours-test.sh             the check
-#   tools/tab-colours-test.sh --sabotage  and then three broken palettes,
-#                                         each of which it must fail
+#   tools/tab-colours-test.sh --sabotage  and then broken palettes, and a header
+#                                         lit too soon, each of which it must fail
 set -uo pipefail
 cd "$(dirname "$0")/.."
 WORK=$(mktemp -d /tmp/keep-colours-XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
 
-build() {  # build <glass.swift>
-    python3 - apps/macos/Sources/Keep/Model/Snapshots.swift "$WORK/Enums.swift" <<'PY'
+build() {  # build <glass.swift> [<snapshots.swift>, where the enums come from]
+    python3 - "${2:-apps/macos/Sources/Keep/Model/Snapshots.swift}" "$WORK/Enums.swift" <<'PY'
 import sys
 s = open(sys.argv[1]).read()
 out = ["import Foundation\n"]
@@ -39,8 +39,9 @@ status=$?
 
 echo
 echo "sabotage: each of these must fail"
-sabotage() {  # sabotage <what> <python replacement: old|||new>
-    python3 - apps/macos/Sources/Keep/UI/Glass.swift "$WORK/Broken.swift" "$2" <<'PY'
+sabotage() {  # sabotage <what> <python replacement: old|||new> [<file>: Glass.swift, or Snapshots.swift]
+    local file=${3:-apps/macos/Sources/Keep/UI/Glass.swift}
+    python3 - "$file" "$WORK/Broken.swift" "$2" <<'PY'
 import sys
 s = open(sys.argv[1]).read()
 old, new = sys.argv[3].split("|||")
@@ -49,7 +50,10 @@ if s.count(old) != 1:
 open(sys.argv[2], "w").write(s.replace(old, new))
 PY
     [ $? -eq 0 ] || { echo "  could not sabotage: $1"; return 1; }
-    build "$WORK/Broken.swift" || { echo "  broken palette did not build: $1"; return 1; }
+    case "$file" in
+        *Snapshots.swift) build apps/macos/Sources/Keep/UI/Glass.swift "$WORK/Broken.swift" ;;
+        *) build "$WORK/Broken.swift" ;;
+    esac || { echo "  broken palette did not build: $1"; return 1; }
     if "$WORK/test" >"$WORK/out.txt"; then
         echo "  NOT CAUGHT  $1"; return 1
     fi
@@ -64,4 +68,10 @@ sabotage "a pale badge on the light ground" \
     'dark ? srgb(255, 120, 20) : srgb(255, 106, 0)|||dark ? srgb(255, 120, 20) : srgb(255, 236, 214)' || ok=1
 sabotage "a breath that stops halfway" \
     'return Date(timeIntervalSinceReferenceDate: (end / period).rounded(.up) * period)|||return Date(timeIntervalSinceReferenceDate: end)' || ok=1
+sabotage "the header lime with a tab still at work" \
+    'case .working?, .waitingForWorkflow?, .waitingForYou?: return true|||case .waitingForYou?: return true' \
+    apps/macos/Sources/Keep/Model/Snapshots.swift || ok=1
+sabotage "an asleep tab holding the header" \
+    'guard !asleep else { return false }|||guard asleep || !asleep else { return false }' \
+    apps/macos/Sources/Keep/Model/Snapshots.swift || ok=1
 exit $ok

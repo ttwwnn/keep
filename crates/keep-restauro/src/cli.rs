@@ -3,8 +3,11 @@
 //!   keep restauro retrato [--print]        grava o retrato das abas (--print: só mostra)
 //!   keep restauro restaurar [--fase=abas] [--seco]
 //!   keep restauro manter                   restaura o que faltar e grava o retrato (o app, a cada 30 s)
-//!   keep restauro adormecer [--seco] [--vista W/N]…   fecha a conversa parada há 12 h fora de vista (o app, a cada 5 min)
+//!   keep restauro adormecer [--seco] [--vista W/N]…   fecha a conversa parada há 12 h fora de vista, e as paradas há 10 min
+//!                                                     com a memória apertada (o app, a cada minuto)
 //!   keep restauro adormecer --agora W [--aba N] [--vista W/N]…  o mesmo para a aba N (ou as livres do workspace W), sem esperar as 12 h
+//!   keep restauro memoria                             a memória, as conversas vivas, o teto e se cabe mais uma
+//!   keep restauro fila                                os pedidos de aba nova que esperam memória
 //!   keep restauro adormecidas                         as abas adormecidas de agora (o app do Windows, para riscar o título)
 //!   keep restauro acordar --workspace W --aba N       a conversa adormecida da aba volta (o app, ao mostrá-la)
 //!   keep restauro importar --de PASTA [--disponivel ID]… [--seco]   as abas de outro computador (importar.rs)
@@ -41,6 +44,8 @@ pub fn main(args: &[String]) -> i32 {
             }
         }
         Some("adormecidas") => crate::adormecer::listar(),
+        Some("memoria") => crate::memoria::mostrar(),
+        Some("fila") => crate::fila::listar(),
         Some("importar") => {
             let valor = |o: &str| args.windows(2).find(|w| w[0] == o).map(|w| w[1].clone());
             match valor("--de") {
@@ -82,7 +87,7 @@ pub fn main(args: &[String]) -> i32 {
         }
         _ => {
             eprintln!(
-                "uso: keep restauro retrato [--print] | restaurar [--fase=abas] [--seco] | manter | adormecer [--seco] [--agora W [--aba N]] [--vista W/N]… | adormecidas | acordar --workspace W --aba N | importar --de PASTA [--disponivel ID]… [--seco] | importado --pid N --inicio MS [--keepd-atual PID:MS]"
+                "uso: keep restauro retrato [--print] | restaurar [--fase=abas] [--seco] | manter | adormecer [--seco] [--agora W [--aba N]] [--vista W/N]… | adormecidas | acordar --workspace W --aba N | memoria | fila | importar --de PASTA [--disponivel ID]… [--seco] | importado --pid N --inicio MS [--keepd-atual PID:MS]"
             );
             return 2;
         }

@@ -3,6 +3,7 @@
 
 pub mod credencial;
 pub mod donos;
+pub mod mudancas;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -597,7 +598,13 @@ fn teto_de(resto: &str) -> Option<f64> {
 /// A ordem como está no arquivo: uma chave por linha, e depois dela, se a
 /// conta tem, o teto da semanal (`claude:x teto7d=80`).
 pub fn ler_fila() -> Vec<LinhaDaOrdem> {
-    let Ok(texto) = caminhos::ler_texto_ate(&caminhos::ordem(), caminhos::LEITURA_MAXIMA) else { return Vec::new() };
+    // Sem o arquivo, a fila é a padrão; e apagá-lo por fora também é uma mudança a registrar.
+    let texto = match caminhos::ler_texto_ate(&caminhos::ordem(), caminhos::LEITURA_MAXIMA) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(_) => return Vec::new(),
+    };
+    mudancas::vigiar(&texto);
     let mut vistos = BTreeSet::new();
     texto
         .lines()
@@ -689,8 +696,9 @@ fn fila_efetiva(contas: &[Conta]) -> Vec<LinhaDaOrdem> {
     contas.iter().map(|c| (c.order_key.clone(), c.weekly_cap)).collect()
 }
 
-/// Grava a fila inteira; o teto de cada conta vai junto, na linha dela.
-fn gravar_ordem(fila: &[LinhaDaOrdem]) -> std::io::Result<()> {
+/// Grava a fila inteira; o teto de cada conta vai junto, na linha dela. `por`: de onde veio o pedido, para o
+/// registro das mudanças (`mudancas`).
+fn gravar_ordem(fila: &[LinhaDaOrdem], por: &str) -> std::io::Result<()> {
     let caminho = caminhos::ordem();
     if let Some(dir) = caminho.parent() {
         std::fs::create_dir_all(dir)?;
@@ -703,14 +711,17 @@ fn gravar_ordem(fila: &[LinhaDaOrdem]) -> std::io::Result<()> {
         }
         texto.push('\n');
     }
-    let tmp = caminho.with_extension("tmp");
-    std::fs::write(&tmp, texto)?;
-    std::fs::rename(&tmp, &caminho)
+    mudancas::gravar(por, &texto, || {
+        let tmp = caminho.with_extension("tmp");
+        std::fs::write(&tmp, &texto)?;
+        std::fs::rename(&tmp, &caminho)
+    })
 }
 
 /// Troca uma conta de lugar com a vizinha e grava a ordem inteira. Subir a
-/// primeira (ou descer a última) não muda nada e não é erro.
-pub fn mover(chave: &str, para_cima: bool) -> Result<Vec<String>, String> {
+/// primeira (ou descer a última) não muda nada e não é erro. `por`: de onde
+/// veio o pedido (as setas do rodapé, `keep ia ordem`), para o registro.
+pub fn mover(chave: &str, para_cima: bool, por: &str) -> Result<Vec<String>, String> {
     let contas = listar(false);
     let Some(i) = contas.iter().position(|c| c.e(chave)) else {
         return Err(format!("“{chave}” não é uma conta que o Keep conheça."));
@@ -720,7 +731,7 @@ pub fn mover(chave: &str, para_cima: bool) -> Result<Vec<String>, String> {
     if let Some(j) = j {
         fila.swap(i, j);
     }
-    gravar_ordem(&fila).map_err(|e| e.to_string())?;
+    gravar_ordem(&fila, por).map_err(|e| e.to_string())?;
     Ok(fila.into_iter().map(|(k, _)| k).collect())
 }
 
@@ -731,7 +742,7 @@ pub fn acrescentar_na_ordem(chave: &str) -> std::io::Result<()> {
     if !fila.iter().any(|(k, _)| k == chave) {
         fila.push((chave.to_string(), None));
     }
-    gravar_ordem(&fila)
+    gravar_ordem(&fila, "login de conta nova")
 }
 
 // ----------------------------------------------------------------- rodar

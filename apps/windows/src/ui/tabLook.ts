@@ -40,8 +40,11 @@ export interface TabLook {
 // The sidebar's resting hue for each mode, the macOS app's mapping: its teal is green, its violet blue.
 const RESTING_MODE = { plan: RESTING.green, acceptEdits: RESTING.blue, bypass: RESTING.red, auto: RESTING.yellow };
 
-/** `resting`: the sidebar's rows, which wear the five resting hues while the window is out of use. */
-export function tabLook(workspace: string, tab: RootTab, index: number, selected: boolean, resting = false): TabLook {
+/**
+ * `resting`: the sidebar's rows, which wear the five resting hues while the window is out of use. `held`: a workspace's
+ * header whose tabs below are still going (`holdsHeader`): its turn over out of sight is not the lime yet.
+ */
+export function tabLook(workspace: string, tab: RootTab, index: number, selected: boolean, resting = false, held = false): TabLook {
   const dark = palette.value.dark;
   const idle = resting && dark && windowIdle.value;
   const activity = tabActivity(workspace, tab);
@@ -51,7 +54,8 @@ export function tabLook(workspace: string, tab: RootTab, index: number, selected
   const label = tabLabel(workspace, tab, index);
   const mark = !wantsYou && atWork ? busyMark(programOf(tab.root.command, tab.root.title)) : undefined;
   const asleep = isDormant(workspace, tab);
-  const unseen = !wantsYou && !selected && activity === "done" && tab.panes.some((p) => unseenDone.value.has(viewKey(workspace, p.id)));
+  const unseen =
+    !held && !wantsYou && !selected && activity === "done" && tab.panes.some((p) => unseenDone.value.has(viewKey(workspace, p.id)));
   let color: string | undefined;
   if (wantsYou) color = css(attentionTitleInk(selected));
   else if (unseen) color = "rgb(20, 20, 20)";

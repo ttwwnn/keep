@@ -65,6 +65,12 @@ Uma conta do Claude é um **armazém de credenciais** do Claude Code:
 - Ordem de prioridade: `~/.claude/contas/.ordem`, uma chave por linha (`#` e linhas vazias
   ignoradas). Contas que não estão no arquivo entram no fim (Claude: a global primeiro, depois por
   apelido; GPT: principal, depois por apelido; Claude antes de GPT).
+- Cada mudança da ordem fica registrada (pedido de 25/11/2026: uma regravação da fila pode subir uma conta, ou dar a
+  ela um teto, e levar as abas para outra conta sem que se saiba quem mexeu): `<estado>/ordem.log`, uma linha
+  JSON por mudança, com `quando`, `por` (`setas do rodapé`, `keep ia ordem`, `login de conta nova`, `menu` ou
+  `arquivo editado por fora`), `antes` e `depois` (as linhas da fila) e, num `keep ia ordem` de fora do app, `pai` (o
+  programa que o chamou). O que muda por fora é visto na leitura seguinte da fila, contra a última versão conhecida
+  (`<estado>/ordem-vista.json`); só comentários mudando não é mudança.
 - Teto da semanal: depois da chave, na mesma linha, `teto7d=<0 a 100>` (ex.: `claude:x teto7d=80`).
   Com a janela 7d no teto ou acima (e antes do recomeço dela), a conta conta como cheia: aba nova,
   aba aberta que segue a ordem, troca no limite e restauração vão para a próxima da fila, e o
@@ -451,7 +457,9 @@ perguntas de decisão, no Claude Code e no Codex) gasta crédito do OpenRouter a
   que a skill usa); no Windows, a credencial genérica `openrouter-api-key` do Gerenciador de Credenciais;
   nos outros, `<estado>/openrouter.key` (só do dono). Fora do macOS, `OPENROUTER_API_KEY` vale antes.
   Sem chave, `jev: null` e o rodapé não mostra nada (a leitura guardada some junto). A chave nunca vai
-  para o cache.
+  para o cache. Com o Chaveiro trancado, o Keep não chama o `security` (abriria um pedido de senha): fica a
+  leitura guardada, com o `problem` "Chaveiro trancado: o saldo volta quando ele destrancar", e a leitura volta
+  sozinha quando ele destrancar.
 - Mede: `GET https://openrouter.ai/api/v1/credits` (o que a conta comprou e gastou) e `/api/v1/key` (teto e
   gasto da chave do Jev). O que o Jev ainda pode gastar é o menor dos dois saldos.
 - Dois contadores no rodapé: "conta" (o que resta do crédito; a barra é o gasto) e, para a chave, "chave"
@@ -559,6 +567,24 @@ com o Claude aberto no login global, nunca (`claude-global`) —; a que está nu
 para ela depois de 2 min sem uso. Com o kit, a sincronização não faz nada, e a renovação leva as abas
 de armazém próprio que seguem a ordem para a conta da `.ativa`. No máximo 3 abas por rodada; uma aba que recusou espera 30 s (5 min se for trabalho em
 segundo plano). Uma janela cheia cujo recomeço já passou não conta.
+
+Nunca sem consentimento (pedido de 25/11/2026):
+
+- **Chaveiro trancado**: com o Chaveiro trancado, ou o `securityd` fora do ar (ele reinicia sob falta de memória e
+  volta com o Chaveiro de login trancado), o login de cada conta não se lê e ela parece sem acesso. A sincronização
+  não move aba nenhuma (`"estado": "chaveiro-trancado"`, com o motivo em `detalhe`): a aba fica na conta dela, e a
+  rodada seguinte olha de novo. O estado vem do `SecKeychainGetStatus` (sem janela, como no #64), do Chaveiro padrão e
+  do `login.keychain-db`; o Keep nunca o destranca. E nenhum `security` do Keep roda com o Chaveiro trancado, esteja a
+  tela travada ou não (cada chamada abriria um pedido de senha, em série), nem com o `securityd` sem responder (a
+  consulta tem 3 s): o `security` esperaria até o prazo e morreria no meio do pedido (`credencial::chaveiro_trancado`).
+  `KEEP_IA_TESTE_CHAVEIRO_TRAVA` aponta um Chaveiro descartável de verdade no lugar do da pessoa (os testes).
+- **Aviso da troca sem pedido**: a aba que sai de uma conta que ainda trabalha, porque ela passou do teto da semanal
+  ou porque a fila foi reordenada nas últimas 24 h (a volta à primeira conta depois de um limite não conta), é
+  avisada à pessoa com o motivo e como desfazer: no rodapé dos dois apps, por uma hora (`aviso` na resposta de
+  `sincronizar`), e à aba geral do workspace, pelas novidades (`conta`): "1 aba saiu da IA·1 para a IA·3 sem pedido
+  seu: a IA·1 passou do teto de 80% da semana que a fila de prioridade dá a ela (a fila de prioridade mudou por
+  último: arquivo editado por fora, em 03/11 09:00). Para desfazer: tire ou suba o teto7d da IA·1 em
+  ~/.claude/contas/.ordem; as abas voltam sozinhas para ela em até 2 min."
 
 Quem parou no limite (o que bloqueia uma conta por 5 min, ou até a janela recusada recomeçar, ou até uma medição
 mais nova):
@@ -686,7 +712,7 @@ Nunca sobe daemon: sem o Keep no ar, `sem-keepd`. Aba que não existe ou acabou:
 ```
 keep ia contas --json
 keep ia uso [--agora] [--conta=<chave>] --json
-keep ia ordem [mover <chave> cima|baixo] --json
+keep ia ordem [mover <chave> cima|baixo [--por=setas|menu]] --json
 keep ia abas --json
 keep ia trocar --ws=<W> --aba=<N> --para=<chave> [--interromper] --json
 keep ia preparar --ws=<W> --shell=<pid> [--escolha=claude:ordem|claude:<apelido>] --json
@@ -750,8 +776,10 @@ Toda resposta é um objeto JSON numa linha, com `"versao": 1` e `"ok"`. Recusa: 
 - `preparar` → `{"chave", "pasta", "conta", "escolha"}`. Recusas: `uso`, `sem-conta`,
   `precisa-login`, `ocupada`, `erro` — quem chama sobe o Claude como antes, sem a variável.
 - `entrar` → `{"ws", "aba"}`: a aba nova, rodando `keep ia login …`.
-- `sincronizar` → `{"estado": "feito"|"gerente-externo"|"em-andamento"|"sem-keepd", "alvo": chave|null,
-  "alteradas": [{"ws", "aba", "feito"}], "pendentes": [{"ws", "aba", "motivo", "detalhe"?}]}`.
+- `sincronizar` → `{"estado": "feito"|"gerente-externo"|"em-andamento"|"sem-keepd"|"chaveiro-trancado", "alvo":
+  chave|null, "alteradas": [{"ws", "aba", "feito"}], "pendentes": [{"ws", "aba", "motivo", "detalhe"?}], "aviso":
+  texto|null}`. `aviso`: as abas que trocaram de conta sem pedido na última hora, com o motivo e como desfazer (o
+  rodapé o mostra enquanto vier).
 - `renovar` → `{"estado": "feito"|"em-andamento", "renovados": [{"conta", "armazem"}], "falhas":
   [{"conta", "armazem", "motivo"}], "abas": {…}}` (ver "Renovação").
 - `pode-confiar` → `{}` quando o Keep pode responder sozinho "sim" à pergunta de confiança do Claude Code

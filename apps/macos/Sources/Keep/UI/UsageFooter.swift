@@ -33,6 +33,10 @@ final class UsageMonitor: ObservableObject {
     @Published private(set) var helperAvailable = false
     /// What the footer has to say for a moment: a change the core refused.
     @Published private(set) var notice: String?
+    /// Tabs the core took off their account without being asked — a weekly
+    /// cap, the order changed — with why and how to undo it; said for as long
+    /// as the core says it (`keep ia sincronizar`, an hour).
+    @Published private(set) var accountWarning: String?
     /// What the Jev can still spend, when this Mac has a key of its own for
     /// OpenRouter; nil when it has none, and the footer says nothing of it.
     @Published private(set) var jev: JevLine?
@@ -296,6 +300,14 @@ final class UsageMonitor: ObservableObject {
         }
     }
 
+    /// What the last round of `keep ia sincronizar` said of tabs that changed
+    /// account without being asked; nil takes it away.
+    func warnOfAccounts(_ text: String?) {
+        let text = text?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let next = (text?.isEmpty ?? true) ? nil : text
+        if accountWarning != next { accountWarning = next }
+    }
+
     /// Something said in the footer for a few seconds.
     private func say(_ text: String) {
         noticeTicket += 1
@@ -542,6 +554,17 @@ struct UsageFooter: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 17)
                     .padding(.bottom, 6)
+            }
+            if let warning = monitor.accountWarning {
+                Text(warning)
+                    .font(numbers)
+                    .foregroundStyle(UsageInk.attention)
+                    .lineLimit(8)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 17)
+                    .padding(.bottom, 6)
+                    .accessibilityLabel("Troca de conta sem pedido: \(warning)")
             }
             VStack(alignment: .leading, spacing: folded ? 3 : 8) {
                 ForEach(Array(monitor.lines.enumerated()), id: \.element.id) { index, line in
