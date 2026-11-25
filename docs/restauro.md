@@ -366,7 +366,8 @@ memória e não a deixa estourar (`keep_restauro::memoria`):
   `vistas.json`: a rodada grava as que o app mostra, e o acordar, cada aba mostrada); se ainda faltar, o pedido vai
   para a fila (`fila.json`) e `keep nova` responde "na fila: memória cheia (X livres, N conversas vivas)", com o
   motivo e a posição. O texto do pedido vai já para o arquivo que a aba vai ler; a pasta é conferida na hora.
-- **A fila anda** a cada 15 s (`keep continuar`, que os dois apps rodam): pela ordem, enquanto couber mais uma
+- **A fila anda** a cada 15 s (`keep continuar`, que os dois apps rodam): pela ordem, um pedido por rodada, quando
+  couber mais uma (a conversa que acabou de subir ainda não aparece na medição: a seguinte espera a rodada seguinte)
   (hibernando paradas no máximo uma vez por minuto). A aba geral do workspace fica sabendo, pelas novidades, de cada
   pedido que abriu ("abriu da fila de memória o pedido das HH:MM («nome»)") e do que saiu sem abrir (o workspace
   fechou, a pasta sumiu). Sem prazo: o pedido barrado espera a memória o tempo que for e abre na primeira rodada em
