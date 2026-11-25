@@ -5,7 +5,8 @@
 //! (`adormecer::abrir_vaga`) e, se ainda faltar, o pedido entra aqui, e `keep nova` responde "na fila: memória cheia
 //! (X livres, N conversas vivas)". A fila anda pela ordem a cada 15 s (`keep continuar`, que os dois apps rodam),
 //! enquanto couber mais uma; a aba geral do workspace fica sabendo de cada pedido que abriu, ou que saiu sem abrir,
-//! pelas novidades. Um pedido que não abriu em 12 h sai, com aviso.
+//! pelas novidades. O pedido espera a memória o tempo que for (pedido de 25/11/2026: o que o Keep barrou abre assim
+//! que ela baixar); só sai sem abrir se não der para abrir (o workspace fechou, a pasta sumiu), com aviso.
 //!
 //! ```text
 //! keep restauro fila    → os pedidos que esperam
@@ -23,8 +24,6 @@ use crate::{Keepd, adormecer, memoria, nova};
 
 const ARQUIVO: &str = "fila.json";
 const REGISTRO: &str = "fila.log";
-/// Um pedido que não abriu neste tempo sai da fila.
-const VALIDADE_MS: u64 = 12 * 3600 * 1000;
 /// Entre duas rodadas que hibernam para a fila andar (medir é barato; hibernar lê a tela de cada aba).
 const ENTRE_ALIVIOS_MS: u64 = 60_000;
 
@@ -217,16 +216,6 @@ fn andar_com(a: &mut Arquivo) -> Value {
     let agora = crate::agora_ms();
     let mut abertas = Vec::new();
     let mut saiu = Vec::new();
-    a.itens.retain(|f| {
-        let vence = agora.saturating_sub(f.desde_ms) >= VALIDADE_MS;
-        if vence {
-            let (ws, nome) = de_quem(&f.item);
-            registrar(&format!("{ws}: «{nome}» saiu da fila: 12 h sem memória"));
-            conta_a_geral(&f.item, 0, format!("o pedido das {} («{nome}») saiu da fila de memória: 12 h sem memória para abrir", hora(f.desde_ms)));
-            saiu.push(nome);
-        }
-        !vence
-    });
     let mut espera = None;
     while let Some(primeiro) = a.itens.first().cloned() {
         // Medir, a cada vez; hibernar paradas para a fila andar, no máximo uma vez por minuto.

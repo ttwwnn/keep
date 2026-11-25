@@ -195,7 +195,11 @@ fn a_memoria_apertada_hiberna_as_paradas_segura_as_abas_novas_e_poupa_a_recem_ac
     assert_eq!(fila::listar().unwrap()["fila"].as_array().map(Vec::len), Some(1));
     assert!(tela_tem("A", v, "Pronto.", 1) && !dormindo(v), "a que está à vista fica");
 
-    // ---- a fila anda quando houver memória, e a aba geral fica sabendo
+    // ---- a fila anda quando houver memória, e a aba geral fica sabendo; o pedido parado há 13 h abre do mesmo jeito
+    let arq = restauro.join("fila.json");
+    let mut f: serde_json::Value = serde_json::from_slice(&std::fs::read(&arq).unwrap()).unwrap();
+    f["itens"][0]["desde_ms"] = (f["itens"][0]["desde_ms"].as_u64().unwrap() - 13 * 3600 * 1000).into();
+    std::fs::write(&arq, f.to_string()).unwrap();
     memoria(&leituras, &[FOLGADA]);
     let r = fila::andar();
     assert_eq!(r["abertas"].as_array().map(Vec::len), Some(1), "{r:#}");
