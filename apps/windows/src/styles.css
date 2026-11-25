@@ -554,7 +554,9 @@ button {
 .tab:hover .ai-chevron,
 .tab.selected .ai-chevron,
 .tab-row:hover .ai-chevron,
-.tab-row.selected .ai-chevron {
+.tab-row.selected .ai-chevron,
+.workspace-row:hover .ai-chevron,
+.workspace-row.general-chosen .ai-chevron {
   opacity: 1;
 }
 

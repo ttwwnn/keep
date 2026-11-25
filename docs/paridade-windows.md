@@ -684,3 +684,6 @@ máquina não tem). Nada disto foi visto na WebView2 nem com um Claude Code de v
   `tools/tab-colours-test.sh` (com duas sabotagens) e em `claude.test.ts`. A rodada do adormecer passa a cada
   minuto nos dois apps, e o rodapé mostra o aviso de troca de conta sem pedido (`aviso` do `keep ia sincronizar`).
   Não visto no app do Windows.
+- [x] 0.3.84: o cabeçalho do workspace, que é a aba geral, mostra a conta dela ("(IA·1)") e a seta do menu de IA e conta,
+  como a linha da aba: à mostra com a aba geral escolhida ou sob o ponteiro (`Sidebar.tsx`, `styles.css`). Não visto no
+  app do Windows.
