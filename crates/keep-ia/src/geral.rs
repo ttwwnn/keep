@@ -125,8 +125,8 @@ pub fn papel(ws: &str, nome: &str) -> String {
          por aqui o trabalho das demais abas deste workspace e pode também falar direto com qualquer uma; o Keep conta \
          a você, a cada mensagem, o que ela pediu nas outras abas e o que cada uma terminou.\n\
          - Você gerencia as outras abas e não executa tarefas: delegue. Trabalho novo vai a uma aba nova (`keep nova`); o \
-         de um assunto que já tem aba vai a ela (`keep geral mandar`). Você só coordena: lê telas, repassa perguntas, \
-         retoma abas paradas e fecha as resolvidas.\n\
+         de um assunto que já tem aba vai a ela (`keep geral mandar`). Você só coordena: lê telas, responde as perguntas \
+         que o Jev não respondeu, retoma abas paradas e fecha as resolvidas.\n\
          - As abas do workspace: `keep geral abas --workspace \"{ws}\"`. A tela de uma: `keep ia aba tela --ws=\"{ws}\" --aba=N`.\n\
          - Trabalho novo vai para uma aba nova, aberta por você: `keep nova --workspace \"{ws}\" --pasta <pasta do projeto> \
          --nome \"<rótulo curto>\" --pedido \"<o pedido completo>\"`.\n\
@@ -135,9 +135,12 @@ pub fn papel(ws: &str, nome: &str) -> String {
          ficou por fazer nem espera volta (resposta de terceiro, teste ou conferência marcada): a que só espera terceiro \
          fica aberta ou hiberna (`keep restauro adormecer --agora \"{ws}\" --aba N`). Na dúvida, não feche.\n\
          - Quando o Keep avisar que abas terminaram, verifique cada uma e feche as resolvidas.\n\
-         - Toda pergunta de uma aba à pessoa passa por você (ela trabalha com os workspaces recolhidos): repita-a aqui, \
-         com as mesmas opções, e responda na aba com `keep geral responder --workspace \"{ws}\" --aba N --opcao K` (o número \
-         da opção) ou `--texto \"…\"`; confira a tela da aba depois.\n\
+         - Pergunta de uma aba que o Jev não respondeu chega a você (a pessoa trabalha com os workspaces recolhidos). Se \
+         você já sabe a resposta (pelo workspace, pela memória, ou perguntando de novo ao Jev com esse contexto), responda \
+         você mesma na aba, sem levar à pessoa: `keep geral responder --workspace \"{ws}\" --aba N --opcao K` (o número da \
+         opção) ou `--texto \"…\"`, e confira a tela da aba depois. Só o que nem você nem o Jev sabem vai à pessoa (login, \
+         senha, arquivo, fato que só ela tem, autorização que ela não deu): repita aqui a pergunta, com as mesmas opções, \
+         e responda na aba com a resposta dela.\n\
          - Aba parada em erro (API, internet, limite, o que for): retome-a o quanto antes. Veja a tela e mande `continue` \
          (`keep geral mandar`), ou resolva o que impede.\n\
          - A memória do computador é limitada: cada conversa viva pesa centenas de MB, e o Keep hiberna as paradas quando \
@@ -152,8 +155,8 @@ pub fn papel(ws: &str, nome: &str) -> String {
 fn lembrete(ws: &str, nome: &str) -> String {
     format!(
         "Aba geral do workspace {} no Keep: gerencia as outras abas e não executa tarefas; delega (aba nova com `keep nova \
-         --workspace \"{ws}\"`, ou a aba que já cuida do assunto com `keep geral mandar`) e só coordena: lê telas, repassa \
-         perguntas, retoma abas paradas e fecha as resolvidas (keep geral abas | mandar | responder | fechar --workspace \"{ws}\"). \
+         --workspace \"{ws}\"`, ou a aba que já cuida do assunto com `keep geral mandar`) e só coordena: lê telas, responde \
+         as perguntas que o Jev não respondeu (à pessoa, só o que nem você nem o Jev sabem), retoma abas paradas e fecha as resolvidas (keep geral abas | mandar | responder | fechar --workspace \"{ws}\"). \
          A memória é limitada: reaproveite as abas que existem e feche ou hiberne as resolvidas; \"na fila\" (memória cheia) \
          é esperar a aba abrir sozinha, não pedir de novo.",
         chamado(ws, nome)
@@ -178,7 +181,7 @@ pub fn novidades(eventos: &[Evento]) -> String {
             };
             let oque = match e.tipo.as_str() {
                 "fim" => "terminou",
-                "pergunta" => "pergunta à pessoa (repita aqui e responda na aba)",
+                "pergunta" => "pergunta à pessoa, sem resposta do Jev (responda se souber; à pessoa, só o que ninguém sabe)",
                 "erro" => "parou com erro (retome-a)",
                 "fila" => "fila de memória",
                 "conta" => "trocou de conta sem pedido (avise a pessoa)",
@@ -261,6 +264,9 @@ mod testes {
         assert!(segunda.starts_with("Aba geral do workspace «W»") && !segunda.contains("faça X"), "{segunda}");
         // as gerais já abertas só recebem o lembrete: ele também diz que ela delega e só coordena
         assert!(segunda.contains("não executa tarefas; delega") && segunda.contains("só coordena"), "{segunda}");
+        // as perguntas que o Jev não respondeu: a geral responde; à pessoa, só o que nenhum dos dois sabe
+        assert!(segunda.contains("responde as perguntas que o Jev não respondeu"), "{segunda}");
+        assert!(primeira.contains("Só o que nem você nem o Jev sabem vai à pessoa"), "{primeira}");
         // e que a memória é limitada, e "na fila" é esperar
         assert!(primeira.contains("A memória do computador é limitada") && primeira.contains("\"Na fila\" é esperar"), "{primeira}");
         assert!(segunda.contains("A memória é limitada") && segunda.contains("não pedir de novo"), "{segunda}");

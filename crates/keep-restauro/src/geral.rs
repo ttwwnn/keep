@@ -548,7 +548,7 @@ pub fn rodada(seco: bool) -> Result<Value, String> {
                     n => format!("aba {t} «{n}»"),
                 };
                 match motivo.as_str() {
-                    "pergunta" => format!("{aba} pergunta (repita à pessoa e responda na aba)"),
+                    "pergunta" => format!("{aba} pergunta (responda se souber; à pessoa, só o que ninguém sabe)"),
                     "erro" => format!("{aba} parou com erro (retome-a)"),
                     _ => format!("{aba} terminou (confira e feche se resolvida)"),
                 }

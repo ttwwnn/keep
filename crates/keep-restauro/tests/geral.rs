@@ -209,7 +209,7 @@ fn a_aba_geral_abre_sabe_das_outras_confere_as_novas_e_fecha_as_resolvidas() {
     std::fs::write(&sessao, idle.replace("\"status\":\"idle\"", "\"status\":\"waiting\"")).unwrap();
     let r = geral::rodada(false).unwrap();
     assert_eq!(r["avisadas"], serde_json::json!([{ "workspace": "A", "abas": [antiga] }]), "{r:#}");
-    assert!(tela_tem("A", g, "pergunta (repita à pessoa e responda na aba)", 10));
+    assert!(tela_tem("A", g, "pergunta (responda se souber", 10));
     let ctx = keep_ia::geral::contexto("A", &conversa_g).unwrap();
     assert!(ctx.contains("pergunta à pessoa") && ctx.contains("You've hit your limit"), "a tela da aba vai junto: {ctx}");
     geral::responder("A", antiga, Some(1), None).unwrap();

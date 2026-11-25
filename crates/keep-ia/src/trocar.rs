@@ -648,6 +648,48 @@ impl Drop for TravaDaAba {
 }
 
 /// A troca inteira. `Ok` diz o que foi feito.
+/// A conversa hibernada da aba `ws`#`aba` (`<restauro>/adormecidas.json`, deste keepd) passa a voltar na conta
+/// `para`. `None` quando a aba não está hibernada; recusa a troca de motor, que só se faz com a conversa de pé.
+fn escolha_da_hibernada(
+    r: &daemon::Retrato, ws: &str, aba: u32, para: &str, contas: &[Conta],
+) -> Result<Option<String>, Recusa> {
+    let pasta = caminhos::restauro();
+    let arquivo = pasta.join("adormecidas.json");
+    let _trava = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(pasta.join(".adormecidas.lock"))
+        .ok()
+        .filter(|f| f.lock().is_ok());
+    let Some(mut v) = std::fs::read(&arquivo).ok().and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()) else {
+        return Ok(None);
+    };
+    let k = &v["keepd"];
+    let deste = k["pid"].as_u64() == Some(r.daemon.pid as u64)
+        && (r.daemon.started_ms == 0 || k["inicio_ms"].as_u64() == Some(r.daemon.started_ms));
+    if !deste {
+        return Ok(None);
+    }
+    let Some(entrada) = v["abas"].as_array_mut().and_then(|l| {
+        l.iter_mut().find(|e| e["workspace"].as_str() == Some(ws) && e["aba"].as_u64() == Some(aba as u64))
+    }) else {
+        return Ok(None);
+    };
+    let agente = entrada["ia"]["agente"].as_str().unwrap_or("claude").to_string();
+    if !para.starts_with(&format!("{agente}:")) && !(agente == "claude" && para == abas::SEGUIR_ORDEM) {
+        return Err(Recusa::nova(
+            "hibernada",
+            "A conversa desta aba está hibernada: abra a aba para ela voltar e troque a IA depois.",
+        ));
+    }
+    entrada["ia"]["conta"] = serde_json::Value::String(para.to_string());
+    caminhos::grava_privado(&arquivo, &serde_json::to_vec_pretty(&v).map_err(|e| Recusa::nova("erro", e.to_string()))?)
+        .map_err(|e| Recusa::nova("erro", format!("não gravei a escolha da aba hibernada: {e}")))?;
+    let onde = if para == abas::SEGUIR_ORDEM { "seguindo a ordem".to_string() } else { format!("na {}", rotulo_em(contas, para)) };
+    Ok(Some(format!("a aba está hibernada: a conversa volta {onde} quando a aba for aberta")))
+}
+
 pub fn trocar(p: &Pedido) -> Result<String, Recusa> {
     if !abas::chave_valida(&p.para) {
         return Err(Recusa::nova("uso", format!("“{}” não é uma conta.", p.para)));
@@ -670,6 +712,13 @@ pub fn trocar(p: &Pedido) -> Result<String, Recusa> {
     // entre contas do claude não é pra colocar exit, é só trocar").
     if prog == Programa::Claude && p.para.starts_with("claude:") {
         return troca_a_quente(p, &r, &contas);
+    }
+    // Aba hibernada: a conversa dela está guardada para voltar com `--resume`. Abrir o Claude aqui abriria uma
+    // conversa nova e a aba perderia a dela (25/11/2026): só a escolha muda, e vale quando a conversa voltar.
+    if matches!(prog, Programa::Shell(_)) {
+        if let Some(feito) = escolha_da_hibernada(&r, &p.ws, p.aba, &p.para, &contas)? {
+            return Ok(feito);
+        }
     }
     let destino = destino(p, &contas)?;
     let agente_alvo = destino.motor().programa();
