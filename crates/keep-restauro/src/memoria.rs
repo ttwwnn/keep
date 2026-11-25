@@ -25,6 +25,8 @@ const RESERVA: u64 = 3 << 30;
 const POR_CONVERSA: u64 = 450 << 20;
 /// Abaixo disto da RAM disponível, a memória está apertada.
 const DISPONIVEL_MINIMA_PCT: u64 = 15;
+/// E abaixo disto, qualquer que seja a RAM: sobra sempre 1,5 GB (pedido de 25/11/2026).
+const DISPONIVEL_MINIMA: u64 = 1536 << 20;
 
 /// Uma leitura da memória, em bytes.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -44,8 +46,8 @@ pub fn gb(bytes: u64) -> String {
 }
 
 impl Leitura {
-    /// Por que a memória está apertada, em palavras; `None` se não está. Pressão em alerta (ou crítica), menos de 15%
-    /// da RAM disponível, ou o swap passando da metade.
+    /// Por que a memória está apertada, em palavras; `None` se não está. Pressão em alerta (ou crítica), menos de 1,5 GB
+    /// disponíveis (ou de 15% da RAM, se for mais), ou o swap passando da metade.
     pub fn aperto(&self) -> Option<String> {
         if self.pressao >= 4 {
             return Some("pressão de memória crítica".into());
@@ -53,8 +55,9 @@ impl Leitura {
         if self.pressao >= 2 {
             return Some("pressão de memória em alerta".into());
         }
-        if self.total > 0 && self.disponivel * 100 < self.total * DISPONIVEL_MINIMA_PCT {
-            return Some(format!("só {} disponíveis de {}", gb(self.disponivel), gb(self.total)));
+        let minima = DISPONIVEL_MINIMA.max(self.total * DISPONIVEL_MINIMA_PCT / 100);
+        if self.total > 0 && self.disponivel < minima {
+            return Some(format!("só {} disponíveis de {} (o mínimo é {})", gb(self.disponivel), gb(self.total), gb(minima)));
         }
         if self.swap_total > 0 && self.swap_usado * 2 > self.swap_total {
             return Some(format!("swap em {} de {}", gb(self.swap_usado), gb(self.swap_total)));
@@ -241,9 +244,13 @@ mod testes {
         // o kernel em alerta ou crítico
         assert_eq!(leitura(8192, 3000, (0, 0), 2).aperto().as_deref(), Some("pressão de memória em alerta"));
         assert_eq!(leitura(8192, 3000, (0, 0), 4).aperto().as_deref(), Some("pressão de memória crítica"));
-        // menos de 15% disponível (1228 MB de 8 GB): 1200 aperta, 1300 não
-        assert_eq!(leitura(8192, 1200, (0, 0), 1).aperto().as_deref(), Some("só 1,2 GB disponíveis de 8,0 GB"));
-        assert_eq!(leitura(8192, 1300, (0, 0), 1).aperto(), None);
+        // menos de 1,5 GB disponíveis, qualquer que seja a RAM: num Mac de 8 GB (15% são 1,2 GB) 1500 aperta, 1600 não
+        assert_eq!(leitura(8192, 1200, (0, 0), 1).aperto().as_deref(), Some("só 1,2 GB disponíveis de 8,0 GB (o mínimo é 1,5 GB)"));
+        assert_eq!(leitura(8192, 1500, (0, 0), 1).aperto().as_deref(), Some("só 1,5 GB disponíveis de 8,0 GB (o mínimo é 1,5 GB)"));
+        assert_eq!(leitura(8192, 1600, (0, 0), 1).aperto(), None);
+        // e menos de 15% da RAM, quando isso dá mais: num de 16 GB, 2,4 GB
+        assert_eq!(leitura(16_384, 2400, (0, 0), 1).aperto().as_deref(), Some("só 2,3 GB disponíveis de 16,0 GB (o mínimo é 2,4 GB)"));
+        assert_eq!(leitura(16_384, 2500, (0, 0), 1).aperto(), None);
         // o swap passando da metade
         assert_eq!(leitura(8192, 3000, (4200, 5120), 1).aperto().as_deref(), Some("swap em 4,1 GB de 5,0 GB"));
         assert_eq!(leitura(8192, 3000, (2560, 5120), 1).aperto(), None, "a metade exata ainda não");
@@ -269,7 +276,7 @@ mod testes {
         assert_eq!(s(12, folgada).falta(0).as_deref(), Some("teto de 11 conversas vivas para 8,0 GB de RAM"));
         assert_eq!(s(1, Some(leitura(8192, 4000, (0, 0), 2))).falta(1).as_deref(), Some("pressão de memória em alerta"));
         assert_eq!(s(40, None).falta(1), None, "sem leitura, nada é segurado");
-        assert_eq!(s(1, Some(leitura(2048, 1500, (0, 0), 1))).falta(1).as_deref(), Some("teto de 1 conversa viva para 2,0 GB de RAM"));
+        assert_eq!(s(1, Some(leitura(2048, 1800, (0, 0), 1))).falta(1).as_deref(), Some("teto de 1 conversa viva para 2,0 GB de RAM"));
         assert_eq!(s(9, Some(leitura(8192, 60, (4200, 5120), 2))).resumo(), "0,1 GB livres, 9 conversas vivas");
     }
 

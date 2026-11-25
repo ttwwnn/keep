@@ -352,7 +352,8 @@ memória e não a deixa estourar (`keep_restauro::memoria`):
 - **A leitura**: no macOS, o nível de pressão do kernel (`kern.memorystatus_vm_pressure_level`: 1 normal, 2 alerta,
   4 crítica), a memória disponível (livre, inativa, purgeável e especulativa, de `host_statistics64`, a mesma fonte do
   medidor "Memória RAM" do app) e o swap (`vm.swapusage`); no Windows, `GlobalMemoryStatusEx` (a física disponível).
-- **Apertada**: pressão em alerta (ou crítica), menos de 15% da RAM disponível, ou o swap passando da metade.
+- **Apertada**: pressão em alerta (ou crítica), menos de 1,5 GB disponíveis (ou de 15% da RAM, se for mais: sobra
+  sempre 1,5 GB, pedido de 25/11/2026), ou o swap passando da metade.
 - **Teto de conversas vivas**: (RAM − 3 GB) / 450 MB, no mínimo uma (11 num Mac de 8 GB, 29 num de 16 GB). Conta o
   Claude e o Codex vivos nas abas.
 - **Hibernar pela memória**: apertada, ou com mais conversas vivas que o teto, a rodada do adormecer (o app, a cada
@@ -367,8 +368,10 @@ memória e não a deixa estourar (`keep_restauro::memoria`):
   motivo e a posição. O texto do pedido vai já para o arquivo que a aba vai ler; a pasta é conferida na hora.
 - **A fila anda** a cada 15 s (`keep continuar`, que os dois apps rodam): pela ordem, enquanto couber mais uma
   (hibernando paradas no máximo uma vez por minuto). A aba geral do workspace fica sabendo, pelas novidades, de cada
-  pedido que abriu ("abriu da fila de memória o pedido das HH:MM («nome»)") e do que saiu sem abrir (erro, ou 12 h na
-  fila). Pedir de novo só põe o pedido duas vezes na fila: o papel da aba geral diz que "na fila" é esperar.
+  pedido que abriu ("abriu da fila de memória o pedido das HH:MM («nome»)") e do que saiu sem abrir (o workspace
+  fechou, a pasta sumiu). Sem prazo: o pedido barrado espera a memória o tempo que for e abre na primeira rodada em
+  que ela baixa o bastante. Pedir de novo só põe o pedido duas vezes na fila: o papel da aba geral diz que "na fila" é
+  esperar.
 - **Acordar é sempre permitido**: a aba que a pessoa mostra acorda mesmo com a memória cheia; a rodada seguinte
   reequilibra hibernando outra parada.
 - **A aba geral automática** (a rodada que abre uma para o workspace) também espera, sem fila: a rodada seguinte tenta.
