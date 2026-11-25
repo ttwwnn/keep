@@ -209,6 +209,11 @@ function WorkspaceGroup(props: { name: string }) {
   const folded = gui.value.folded.includes(name);
   const current = activeWorkspace.value === name;
   const workspaceSleeping = tabs.some((t) => isSleeping(name, t));
+  const generalAccount = general && tabAccount(name, general.root);
+  const generalProgram =
+    general && generalAccount
+      ? tabAccountLabel(generalAccount.program, general.root.command, generalAccount.key, generalAccount.running, usageLines.value, generalAccount.proven)
+      : "";
   // The header's lime waits for every tab under it (pedido de 25/11/2026): until then, a turn simply over.
   const held = listed.some((t) => holdsHeader(tabActivity(name, t), tabBusy(name, t), isDormant(name, t)));
   const generalLook = general && tabLook(name, general, 0, current && general === activeTab.value, true, held);
@@ -316,6 +321,9 @@ function WorkspaceGroup(props: { name: string }) {
             >
               {workspaceLabel(name)}
             </span>
+            {/* The general tab's account, "(IA·1)", and its chevron, as on a tab row: its AI is chosen from here too. */}
+            {general && generalProgram && <span class="tab-program">{generalProgram}</span>}
+            {general && <AccountChevron workspace={name} tab={general} label={workspaceLabel(name)} />}
           </>
         )}
         {dots.length > 0 && (

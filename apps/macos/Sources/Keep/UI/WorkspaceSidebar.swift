@@ -364,6 +364,25 @@ struct WorkspaceSidebar: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .onHover { inside in notePointer(inside, onNameOf: .workspace(row.name)) }
+                // The general tab's account, "(IA·1)", and the room for its chevron, as on a tab row: the header is
+                // that tab, and its AI is chosen from here too.
+                if let general {
+                    let program = AIChoices.tabLabel(
+                        command: general.command, account: general.account, running: general.runningAccount,
+                        proven: general.provenAccount, lines: UsageMonitor.shared.lines)
+                    if !program.isEmpty {
+                        Text(program)
+                            .font(.system(size: 12 * textZoom))
+                            .foregroundStyle(generalWants ? RestingInk(Palette.attentionInk.opacity(0.62)) : Palette.inkFaint)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    if general.offersAccounts {
+                        Color.clear
+                            .frame(width: 12, height: 12)
+                            .anchorPreference(key: AccountGlyphPlace.self, value: .bounds) { $0 }
+                    }
+                }
                 let atWork = shownTabs(of: row).filter(\.busy)
                 if !atWork.isEmpty {
                     // One dot for each tab under the header at work, in that tab's colour, folded or not: the header
@@ -403,6 +422,22 @@ struct WorkspaceSidebar: View {
             }
         }
         .buttonStyle(.plain)
+        // The general tab's chevron, laid over the header where its place in the label is, as on a tab row: there
+        // while that tab is chosen or the pointer is on the header.
+        .overlayPreferenceValue(AccountGlyphPlace.self) { place in
+            GeometryReader { proxy in
+                if let place, let general = generalTab(of: row) {
+                    let rect = proxy[place]
+                    accountGlyph(
+                        general,
+                        visible: general.offersAccounts && dragged == nil
+                            && ((general.isActive && row.isActive) || hovered == row.name),
+                        onBadge: general.claudeActivity?.wantsYou == true)
+                        .frame(width: 14, height: 16)
+                        .position(x: rect.midX, y: rect.midY)
+                }
+            }
+        }
         // Over the header and not inside its label, for the reason the tab's
         // × is: a button inside a button hands its clicks to whichever of the
         // two SwiftUI prefers, and a + that also entered the workspace would
