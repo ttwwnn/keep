@@ -528,7 +528,8 @@ limpa()
 if case .success(let nova) = AIHelper.moveOrder("claude:assinaturas", up: false) {
     confere(nova.contains("claude:assinaturas"), "mover: devolve a ordem nova", "\(nova)")
 } else { confere(false, "mover: ok") }
-confere(chamadas().last == ["ordem", "mover", "claude:assinaturas", "baixo", "--json"], "mover: argumentos", "\(chamadas())")
+// `--por=setas`: o núcleo registra cada mudança da ordem e por onde ela veio.
+confere(chamadas().last == ["ordem", "mover", "claude:assinaturas", "baixo", "--por=setas", "--json"], "mover: argumentos", "\(chamadas())")
 let ultima = registro("calls.jsonl").last
 confere(ultima?["grupo"] as? String == "ia", "mover: chamado como o keep do app, com ia na frente")
 confere(ultima?["socket"] as? String == Daemon.socketPath, "mover: com o socket do app")
