@@ -207,7 +207,7 @@ fn a_memoria_apertada_hiberna_as_paradas_segura_as_abas_novas_e_poupa_a_recem_ac
     assert!(eventos.contains("abriu da fila de memória o pedido das") && eventos.contains("Tarefa Y"), "{eventos}");
 
     // ---- no teto de conversas vivas da RAM (2 GB: uma só), o mesmo, sem a memória apertada
-    memoria(&leituras, &[r#"{"totalMb":2048,"disponivelMb":1500}"#]);
+    memoria(&leituras, &[r#"{"totalMb":2048,"disponivelMb":1800}"#]);
     match fila::nova(&pedido("Tarefa Z")).unwrap() {
         fila::Desfecho::NaFila { porque, .. } => assert_eq!(porque, "teto de 1 conversa viva para 2,0 GB de RAM"),
         fila::Desfecho::Aberta(..) => panic!("abriu acima do teto"),

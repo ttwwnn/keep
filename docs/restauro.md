@@ -352,7 +352,8 @@ memória e não a deixa estourar (`keep_restauro::memoria`):
 - **A leitura**: no macOS, o nível de pressão do kernel (`kern.memorystatus_vm_pressure_level`: 1 normal, 2 alerta,
   4 crítica), a memória disponível (livre, inativa, purgeável e especulativa, de `host_statistics64`, a mesma fonte do
   medidor "Memória RAM" do app) e o swap (`vm.swapusage`); no Windows, `GlobalMemoryStatusEx` (a física disponível).
-- **Apertada**: pressão em alerta (ou crítica), menos de 15% da RAM disponível, ou o swap passando da metade.
+- **Apertada**: pressão em alerta (ou crítica), menos de 1,5 GB disponíveis (ou de 15% da RAM, se for mais: sobra
+  sempre 1,5 GB, pedido de 25/11/2026), ou o swap passando da metade.
 - **Teto de conversas vivas**: (RAM − 3 GB) / 450 MB, no mínimo uma (11 num Mac de 8 GB, 29 num de 16 GB). Conta o
   Claude e o Codex vivos nas abas.
 - **Hibernar pela memória**: apertada, ou com mais conversas vivas que o teto, a rodada do adormecer (o app, a cada
