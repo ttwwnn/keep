@@ -614,7 +614,11 @@ pub(crate) fn manda(ws: &str, tab: u32, dados: &[u8]) -> bool {
     let Ok(l) = daemon::listar() else { return false };
     let Some(a) = l.aba(ws, tab) else { return false };
     let Ok(mut t) = daemon::Teclado::liga(a) else { return false };
-    t.manda(dados).is_ok()
+    let ok = t.manda(dados).is_ok();
+    // O daemon lê o que veio antes de ver a conexão fechar (`aba::DEMORA_AO_SAIR`): fechada na hora, a tecla se
+    // perdia (a resposta do `keep geral responder` não chegava à aba).
+    std::thread::sleep(Duration::from_millis(150));
+    ok
 }
 
 /// Digita a mensagem e só aperta Enter se a caixa mostrar exatamente ela.

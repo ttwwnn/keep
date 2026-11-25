@@ -153,6 +153,26 @@ fn so_a_aba_parada_e_livre_fora_de_vista_adormece_e_volta_ao_ser_mostrada() {
     assert_eq!(guardadas[0].nome_posto.as_deref(), Some(format!("Conversa {parada}").as_str()));
     assert_eq!(nome_no_app(parada), Some(format!("Conversa {parada}")));
 
+    // ---- trocar a IA da aba hibernada só muda a escolha guardada: nada sobe na aba (abria uma conversa nova)
+    let conta_antes = guardadas[0].ia.conta.clone();
+    let para = if conta_antes.starts_with("claude:") { conta_antes.clone() } else { keep_ia::abas::SEGUIR_ORDEM.to_string() };
+    let tela_antes = daemon::tela("A", parada).unwrap_or_default();
+    let pedido = keep_ia::trocar::Pedido {
+        ws: "A".into(),
+        aba: parada,
+        para: para.clone(),
+        conta: None,
+        cancelar_limite: false,
+        interromper: false,
+    };
+    let feito = keep_ia::trocar::trocar(&pedido).unwrap();
+    assert!(feito.starts_with("a aba está hibernada"), "{feito}");
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(daemon::tela("A", parada).unwrap_or_default(), tela_antes, "nada digitado na aba hibernada");
+    assert_eq!(adormecer::do_keepd(&k1)[0].ia.conta, para, "a escolha nova fica para quando a conversa voltar");
+    let gpt = keep_ia::trocar::Pedido { para: "gpt:principal".into(), ..pedido };
+    assert_eq!(keep_ia::trocar::trocar(&gpt).unwrap_err().motivo, "hibernada", "trocar de motor espera a conversa voltar");
+
     // ---- o retrato leva a conversa da adormecida
     let foto = retrato::fotografar().unwrap();
     let a = foto.abas.iter().find(|a| a.aba == parada).unwrap();
