@@ -323,7 +323,7 @@ function WorkspaceGroup(props: { name: string }) {
             </span>
             {/* The general tab's account, "(IA·1)", and its chevron, as on a tab row: its AI is chosen from here too. */}
             {general && generalProgram && <span class="tab-program">{generalProgram}</span>}
-            {general && <AccountChevron workspace={name} tab={general} label={workspaceLabel(name)} />}
+            {general && <AccountChevron workspace={name} tab={general} label={workspaceLabel(name)} origin="cabecalho" />}
           </>
         )}
         {dots.length > 0 && (

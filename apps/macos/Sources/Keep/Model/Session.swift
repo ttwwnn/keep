@@ -1130,13 +1130,13 @@ final class Session {
                 break
             }
 
-        case .chooseAccount(let id, let key, let label):
+        case .chooseAccount(let id, let key, let label, let origin):
             guard let tab = workspaces.first(where: { $0.name == id.workspace })?
                 .tabs.first(where: { $0.id == id })
             else { return }
             // What it is on already is no change, whichever menu said it.
             guard key != aiAccount(of: tab) else { return }
-            switchAccount(id, to: key, label: label, interrupting: false, from: window)
+            switchAccount(id, to: key, label: label, interrupting: false, origin: origin, from: window)
 
         case .signIn(let service):
             signIn(service, from: window)
@@ -1195,7 +1195,8 @@ final class Session {
     /// A yes is remembered for the tab until the core describes the tab
     /// again, so the menu and the sidebar say it at once.
     private func switchAccount(
-        _ id: TabID, to key: String, label: String, interrupting: Bool, from window: WindowID
+        _ id: TabID, to key: String, label: String, interrupting: Bool, origin: AIHelper.ChoiceOrigin,
+        from window: WindowID
     ) {
         guard switching[id] == nil else {
             Trace.log("ia", "\(id) is being switched already; \(key) dropped")
@@ -1207,7 +1208,7 @@ final class Session {
         Trace.log("ia", "switching \(id) to \(key)\(interrupting ? ", interrupting it" : "")")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let answer = AIHelper.switchAccount(
-                workspace: id.workspace, tab: id.root, to: key, interrupt: interrupting)
+                workspace: id.workspace, tab: id.root, to: key, interrupt: interrupting, origin: origin)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.switching.removeValue(forKey: id)
@@ -1230,7 +1231,7 @@ final class Session {
                             + "\n\nPassar agora para \(label) interrompe o que ela está fazendo.",
                         action: "Interromper e trocar agora"
                     )) { [weak self] in
-                        self?.switchAccount(id, to: key, label: label, interrupting: true, from: window)
+                        self?.switchAccount(id, to: key, label: label, interrupting: true, origin: origin, from: window)
                     }
                 case .failure(let problem) where problem.reason == "precisa-login":
                     self.nameStore.preserveTab(id, title: title)

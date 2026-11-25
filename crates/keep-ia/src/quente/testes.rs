@@ -137,7 +137,7 @@ fn preparar_poe_so_o_acesso_da_conta_no_armazem_da_aba() {
     nos_dois("preparar", |c| {
         duas_contas(c);
         let shell = Filho::novo(&[]);
-        let p = preparar("T", shell.pid(), None, None).unwrap();
+        let p = preparar("T", shell.pid(), None, None, "teste").unwrap();
         assert_eq!((p.conta.as_str(), p.escolha.as_str()), ("claude:ana", SEGUIR_ORDEM), "a aba nova segue a ordem");
         assert!(p.pasta.starts_with(caminhos::abas()), "{}", p.pasta.display());
         assert_eq!(acesso(&p.pasta), "G");
@@ -145,20 +145,20 @@ fn preparar_poe_so_o_acesso_da_conta_no_armazem_da_aba() {
         assert!(v["claudeAiOauth"]["refreshToken"].is_null(), "{v}");
         assert_eq!(v["claudeAiOauth"]["rateLimitTier"], "default_claude_max_20x", "o resto do login vai junto");
         // A escolha muda a conta do armazém; sem escolha, fica a que a aba tem.
-        let bia = preparar("T", shell.pid(), Some("claude:bia"), None).unwrap();
+        let bia = preparar("T", shell.pid(), Some("claude:bia"), None, "teste").unwrap();
         assert_eq!(bia.pasta, p.pasta, "o mesmo shell, o mesmo armazém");
         assert_eq!(acesso(&p.pasta), "F");
-        assert_eq!(preparar("T", shell.pid(), None, None).unwrap().escolha, "claude:bia");
+        assert_eq!(preparar("T", shell.pid(), None, None, "teste").unwrap().escolha, "claude:bia");
         assert_eq!(acesso(&p.pasta), "F");
         // Os donos seguem com o refresh deles; as abas, sem nenhum.
         assert_eq!(refresh_global().as_deref(), Some("rG"));
         sem_refresh_nas_abas();
         // Outro shell, outro armazém.
         let outro = Filho::novo(&[]);
-        assert_ne!(preparar("T", outro.pid(), None, None).unwrap().pasta, p.pasta);
+        assert_ne!(preparar("T", outro.pid(), None, None, "teste").unwrap().pasta, p.pasta);
         // Escolha de GPT ou desconhecida: recusada, nada muda.
-        assert_eq!(preparar("T", shell.pid(), Some("gpt:principal"), None).unwrap_err().motivo, "uso");
-        assert_eq!(preparar("T", shell.pid(), Some("claude:ninguem"), None).unwrap_err().motivo, "sem-conta");
+        assert_eq!(preparar("T", shell.pid(), Some("gpt:principal"), None, "teste").unwrap_err().motivo, "uso");
+        assert_eq!(preparar("T", shell.pid(), Some("claude:ninguem"), None, "teste").unwrap_err().motivo, "sem-conta");
         assert_eq!(acesso(&p.pasta), "F");
     });
 }
@@ -168,11 +168,11 @@ fn trocar_regrava_o_armazem_do_claude_aberto_sem_tocar_nos_donos() {
     nos_dois("trocar", |c| {
         let bia = duas_contas(c);
         let shell = Filho::novo(&[]);
-        let p = preparar("T", shell.pid(), None, None).unwrap();
+        let p = preparar("T", shell.pid(), None, None, "teste").unwrap();
         let pasta = p.pasta.to_string_lossy().into_owned();
         let claude = Filho::novo(&[(VAR, &pasta)]);
         let lista = contas::listar(true);
-        let t = |para: &str| trocar_processo(claude.pid(), shell.pid(), "T", 1, para, None, &lista);
+        let t = |para: &str| trocar_processo(claude.pid(), shell.pid(), "T", 1, para, None, &lista, "teste");
         assert_eq!(t("claude:bia").unwrap(), Feito::Trocou("claude:bia".into()));
         let pendente = registro_da_pasta(&p.pasta).unwrap().1.chrome_pendente_desde;
         assert!(pendente.is_some(), "a ponte persistente precisa acompanhar a nova conta");
@@ -205,7 +205,7 @@ fn trocar_regrava_o_armazem_do_claude_aberto_sem_tocar_nos_donos() {
         // Com a ordem decidida pela sincronização.
         let lista2 = lista.clone();
         assert_eq!(
-            trocar_processo(claude.pid(), shell.pid(), "T", 1, SEGUIR_ORDEM, Some("claude:bia"), &lista2).unwrap(),
+            trocar_processo(claude.pid(), shell.pid(), "T", 1, SEGUIR_ORDEM, Some("claude:bia"), &lista2, "teste").unwrap(),
             Feito::Trocou("claude:bia".into())
         );
         assert_eq!(acesso(&p.pasta), "F");
@@ -218,18 +218,59 @@ fn trocar_regrava_o_armazem_do_claude_aberto_sem_tocar_nos_donos() {
 }
 
 #[test]
+fn a_escolha_guarda_de_onde_veio_e_quando_so_quando_muda() {
+    let _c = casa("origem-da-escolha");
+    duas_contas(&_c);
+    let shell = Filho::novo(&[]);
+    let origem = |p: &Path| {
+        let r = registro_da_pasta(p).unwrap().1;
+        (r.escolha, r.escolha_por, r.escolha_quando)
+    };
+    let p = preparar("T", shell.pid(), None, None, "subida").unwrap();
+    let (escolha, por, quando) = origem(&p.pasta);
+    assert_eq!((escolha.as_str(), por.as_str()), (SEGUIR_ORDEM, "subida"), "a aba nova: a escolha e quem a deu");
+    assert!(chrono::NaiveDateTime::parse_from_str(&quando, "%Y-%m-%d %H:%M:%S").is_ok(), "{quando}");
+    let pasta = p.pasta.to_string_lossy().into_owned();
+    let claude = Filho::novo(&[(VAR, &pasta)]);
+    let lista = contas::listar(true);
+    let t = |para: &str, conta: Option<&str>, por: &str| {
+        trocar_processo(claude.pid(), shell.pid(), "T", 1, para, conta, &lista, por).unwrap()
+    };
+    // A sincronização leva quem segue a ordem para outra conta sem mudar a escolha: a origem fica.
+    assert_eq!(t(SEGUIR_ORDEM, Some("claude:bia"), "sincronização"), Feito::Trocou("claude:bia".into()));
+    assert_eq!(origem(&p.pasta), (SEGUIR_ORDEM.into(), "subida".into(), quando.clone()));
+    // O menu prende a aba numa conta: a origem e a hora mudam.
+    std::thread::sleep(Duration::from_millis(1100));
+    t("claude:ana", None, "menu da aba");
+    let (escolha, por, quando_menu) = origem(&p.pasta);
+    assert_eq!((escolha.as_str(), por.as_str()), ("claude:ana", "menu da aba"));
+    assert_ne!(quando_menu, quando);
+    // A mesma conta pedida de novo, de outro lugar, não apaga quem prendeu a aba nela; nem o Claude que sobe de novo
+    // na aba com a escolha que ela já tem (a volta da hibernação).
+    assert_eq!(t("claude:ana", None, "keep ia trocar"), Feito::Ja("claude:ana".into()));
+    preparar("T", shell.pid(), Some("claude:ana"), None, "acordar").unwrap();
+    assert_eq!(origem(&p.pasta), ("claude:ana".into(), "menu da aba".into(), quando_menu));
+    // De volta à ordem: de novo a origem.
+    t(SEGUIR_ORDEM, None, "seta do cabeçalho do workspace");
+    assert_eq!(origem(&p.pasta).1, "seta do cabeçalho do workspace");
+    let texto = std::fs::read_to_string(caminhos::abas().join("estado.json")).unwrap();
+    assert!(texto.contains("\"escolhaPor\": \"seta do cabeçalho do workspace\""), "{texto}");
+    assert!(texto.contains("\"escolhaQuando\": "), "{texto}");
+}
+
+#[test]
 fn o_claude_no_login_global_ou_num_armazem_estranho_nao_troca() {
     let c = casa("global");
     duas_contas(&c);
     let shell = Filho::novo(&[]);
     let lista = contas::listar(true);
     let global = Filho::novo(&[]);
-    let e = trocar_processo(global.pid(), shell.pid(), "T", 1, "claude:bia", None, &lista).unwrap_err();
+    let e = trocar_processo(global.pid(), shell.pid(), "T", 1, "claude:bia", None, &lista, "teste").unwrap_err();
     assert_eq!(e.motivo, "claude-global", "{e:?}");
     let estranha = c.raiz.join("outra-pasta");
     std::fs::create_dir_all(&estranha).unwrap();
     let outro = Filho::novo(&[(VAR, &estranha.to_string_lossy())]);
-    let e = trocar_processo(outro.pid(), shell.pid(), "T", 1, "claude:bia", None, &lista).unwrap_err();
+    let e = trocar_processo(outro.pid(), shell.pid(), "T", 1, "claude:bia", None, &lista, "teste").unwrap_err();
     assert_eq!(e.motivo, "armazem-desconhecido", "{e:?}");
     assert!(le_estado().abas.is_empty(), "nada foi registrado");
     assert_eq!(refresh_global().as_deref(), Some("rG"));
@@ -247,7 +288,7 @@ fn a_pasta_fixa_de_antes_vira_armazem_da_aba_quando_a_conta_tem_outro_dono() {
         let lista = contas::listar(false);
         assert!(lista.iter().any(|c| c.alias == "bia" && c.fixa().is_some()));
         assert_eq!(
-            trocar_processo(claude.pid(), shell.pid(), "T", 3, "claude:ana", None, &lista).unwrap(),
+            trocar_processo(claude.pid(), shell.pid(), "T", 3, "claude:ana", None, &lista, "teste").unwrap(),
             Feito::Trocou("claude:ana".into())
         );
         assert!(contas::ler_metadados(&antiga).unwrap().aba, "marcada como armazém de aba");
@@ -263,7 +304,7 @@ fn a_pasta_fixa_de_antes_vira_armazem_da_aba_quando_a_conta_tem_outro_dono() {
         assert_eq!((chave.as_str(), r.legada, r.aba, r.escolha.as_str()), ("fixa-k-9", true, 3, "claude:ana"));
         // Depois disso, é uma troca a quente como as outras.
         assert_eq!(
-            trocar_processo(claude.pid(), shell.pid(), "T", 3, "claude:bia", None, &lista).unwrap(),
+            trocar_processo(claude.pid(), shell.pid(), "T", 3, "claude:bia", None, &lista, "teste").unwrap(),
             Feito::Trocou("claude:bia".into())
         );
         assert_eq!(acesso(&antiga), "F");
@@ -279,7 +320,7 @@ fn a_pasta_fixa_unica_dona_muda_o_login_para_uma_pasta_nova() {
         let claude = Filho::novo(&[(VAR, &bia.to_string_lossy())]);
         let lista = contas::listar(false);
         assert_eq!(
-            trocar_processo(claude.pid(), shell.pid(), "T", 1, "claude:ana", None, &lista).unwrap(),
+            trocar_processo(claude.pid(), shell.pid(), "T", 1, "claude:ana", None, &lista, "teste").unwrap(),
             Feito::Trocou("claude:ana".into())
         );
         // A k-2 virou o armazém da aba; o login inteiro da Bia mudou para uma
@@ -309,7 +350,7 @@ fn a_pasta_usada_por_outro_claude_nao_e_convertida() {
     let a = Filho::claude(&c, &[(VAR, &bia.to_string_lossy())]);
     let _b = Filho::claude(&c, &[(VAR, &bia.to_string_lossy())]);
     let lista = contas::listar(false);
-    let e = trocar_processo(a.pid(), shell.pid(), "T", 1, "claude:ana", None, &lista).unwrap_err();
+    let e = trocar_processo(a.pid(), shell.pid(), "T", 1, "claude:ana", None, &lista, "teste").unwrap_err();
     assert_eq!(e.motivo, "pasta-compartilhada", "{e:?}");
     let o = Oauth::de(&le(&bia)).unwrap();
     assert_eq!((o.acesso.as_deref(), o.refresh.as_deref()), (Some("F"), Some("rF")), "intacta");
@@ -323,8 +364,8 @@ fn espalhar_leva_o_acesso_renovado_e_apaga_o_armazem_da_aba_que_acabou() {
         duas_contas(c);
         let mut shell_a = Filho::novo(&[]);
         let shell_b = Filho::novo(&[]);
-        let a = preparar("T", shell_a.pid(), None, None).unwrap();
-        let b = preparar("T", shell_b.pid(), Some("claude:bia"), None).unwrap();
+        let a = preparar("T", shell_a.pid(), None, None, "teste").unwrap();
+        let b = preparar("T", shell_b.pid(), Some("claude:bia"), None, "teste").unwrap();
         assert_eq!(espalhar(&contas::listar(false)), Espalhado::default(), "nada a fazer");
         // A Ana renovada (o dono ganhou acesso e refresh novos).
         c.global("G2", "rG2");
@@ -352,7 +393,7 @@ fn o_armazem_de_um_claude_que_sobreviveu_a_aba_fica() {
     let c = casa("sobrevive");
     duas_contas(&c);
     let mut shell = Filho::novo(&[]);
-    let p = preparar("T", shell.pid(), None, None).unwrap();
+    let p = preparar("T", shell.pid(), None, None, "teste").unwrap();
     // Uma conversa em segundo plano, que nasceu na aba e segue rodando.
     let mut fundo = Filho::claude(&c, &[(VAR, &p.pasta.to_string_lossy())]);
     shell.mata();
@@ -377,8 +418,8 @@ fn com_o_kit_quem_segue_a_ordem_sai_da_conta_no_limite_e_a_presa_fica() {
     let _ = contas::listar(true);
     let ordem = Filho::novo(&[]);
     let presa = Filho::novo(&[]);
-    let o = preparar("T", ordem.pid(), None, None).unwrap();
-    let p = preparar("T", presa.pid(), Some("claude:ana"), None).unwrap();
+    let o = preparar("T", ordem.pid(), None, None, "teste").unwrap();
+    let p = preparar("T", presa.pid(), Some("claude:ana"), None, "teste").unwrap();
     // Com o kit, o dono é a pasta fixa (o global é dele, que o troca de dono).
     assert_eq!((acesso(&o.pasta), acesso(&p.pasta)), ("A1".into(), "A1".into()));
     // A Ana chega ao limite; o kit, que ainda não a mediu, fica nela.
@@ -409,12 +450,12 @@ fn com_o_kit_a_aba_nova_nasce_na_primeira_livre_da_fila() {
     let lista = contas::listar(true);
     crate::uso::testes::no_limite(contas::achar(&lista, "claude:ana").unwrap());
     let primeira = Filho::novo(&[]);
-    let p = preparar("T", primeira.pid(), None, None).unwrap();
+    let p = preparar("T", primeira.pid(), None, None, "teste").unwrap();
     assert_eq!((p.conta.as_str(), acesso(&p.pasta)), ("claude:bia", "F".into()));
     // Nenhuma livre: vale a do kit.
     crate::uso::testes::no_limite(contas::achar(&lista, "claude:bia").unwrap());
     let segunda = Filho::novo(&[]);
-    let q = preparar("T", segunda.pid(), None, None).unwrap();
+    let q = preparar("T", segunda.pid(), None, None, "teste").unwrap();
     assert_eq!((q.conta.as_str(), acesso(&q.pasta)), ("claude:ana", "A1".into()));
 }
 
@@ -428,16 +469,16 @@ fn a_conta_acima_do_teto_da_semanal_nao_recebe_aba_nova() {
     let ana = contas::achar(&lista, "claude:ana").unwrap();
     crate::uso::testes::semanal(ana, 79.0);
     let antes = Filho::novo(&[]);
-    assert_eq!(preparar("T", antes.pid(), None, None).unwrap().conta, "claude:ana", "abaixo do teto ela atende");
+    assert_eq!(preparar("T", antes.pid(), None, None, "teste").unwrap().conta, "claude:ana", "abaixo do teto ela atende");
     crate::uso::testes::semanal(ana, 81.0);
     let depois = Filho::novo(&[]);
-    let p = preparar("T", depois.pid(), None, None).unwrap();
+    let p = preparar("T", depois.pid(), None, None, "teste").unwrap();
     assert_eq!((p.conta.as_str(), acesso(&p.pasta)), ("claude:bia", "F".into()), "acima do teto, a próxima da fila");
     assert_eq!(conta_da_ordem(&contas::listar(false)).map(|c| c.order_key.as_str()), Some("claude:bia"));
     // Nem com a Bia no limite: a aba nova espera na Bia, e não gasta o fim da semana da Ana.
     crate::uso::testes::no_limite(contas::achar(&lista, "claude:bia").unwrap());
     let sem_outra = Filho::novo(&[]);
-    let q = preparar("T", sem_outra.pid(), None, None).unwrap();
+    let q = preparar("T", sem_outra.pid(), None, None, "teste").unwrap();
     assert_eq!((q.conta.as_str(), acesso(&q.pasta)), ("claude:bia", "F".into()), "todas no limite: a que não passou do teto");
 }
 
@@ -446,7 +487,7 @@ fn confirmar_uma_reconexao_nao_apaga_outra_troca() {
     let c = casa("reconectar-chrome");
     duas_contas(&c);
     let shell = Filho::novo(&[]);
-    let p = preparar("T", shell.pid(), None, None).unwrap();
+    let p = preparar("T", shell.pid(), None, None, "teste").unwrap();
     let mut estado = le_estado();
     estado.abas.get_mut(&p.chave).unwrap().chrome_pendente_desde = Some(50);
     grava_estado(&estado).unwrap();
@@ -487,7 +528,7 @@ fn um_login_feito_na_aba_vira_a_escolha_dela_e_o_dono_da_conta_nova() {
     nos_dois("login-na-aba", |c| {
         duas_contas(c);
         let shell = Filho::novo(&[]);
-        let p = preparar("T", shell.pid(), None, None).unwrap();
+        let p = preparar("T", shell.pid(), None, None, "teste").unwrap();
         // /login no Claude da aba, numa conta que o Keep não tinha.
         let local = credencial::local_fixa(&p.pasta);
         let login: Value = serde_json::from_str(
@@ -508,6 +549,7 @@ fn um_login_feito_na_aba_vira_a_escolha_dela_e_o_dono_da_conta_nova() {
         sem_refresh_nas_abas();
         let (_, r) = registro_da_pasta(&p.pasta).unwrap();
         assert_eq!((r.escolha.as_str(), r.conta.as_str(), r.dono.as_str()), ("claude:cara", "claude:cara", "u-3"));
+        assert_eq!(r.escolha_por, POR_LOGIN, "a escolha veio do login feito na aba");
         // Um /login de novo, na conta que já tem dono: o refresh a mais sai.
         let outro: Value = serde_json::from_str(
             r#"{"claudeAiOauth":{"accessToken":"F","refreshToken":"rF-outro","expiresAt":9999999999999,"subscriptionType":"max"}}"#,
@@ -541,7 +583,7 @@ fn a_renovacao_espalha_o_acesso_novo_nas_abas_da_conta() {
     let servidor = crate::renovar::testes::Servidor::sobe();
     servidor.gira("rF", "F-nova", "rF-nova");
     let shell = Filho::novo(&[]);
-    let p = preparar("T", shell.pid(), Some("claude:bia"), None).unwrap();
+    let p = preparar("T", shell.pid(), Some("claude:bia"), None, "teste").unwrap();
     assert_eq!(acesso(&p.pasta), "F");
     let r = crate::renovar::rodada(false);
     assert_eq!(r.renovados.len(), 1, "{r:?}");
@@ -575,7 +617,7 @@ fn sem_rede_o_armazem_da_aba_nasce_com_o_acesso_do_dono_e_a_renovacao_o_alimenta
         .unwrap();
         credencial::gravar(&credencial::local_fixa(&bia), &vencida).unwrap();
         let shell = Filho::novo(&[]);
-        let p = preparar("T", shell.pid(), Some("claude:bia"), None).unwrap();
+        let p = preparar("T", shell.pid(), Some("claude:bia"), None, "teste").unwrap();
         assert!(p.pasta.starts_with(caminhos::abas()), "{}", p.pasta.display());
         assert_eq!((p.conta.as_str(), p.escolha.as_str()), ("claude:bia", "claude:bia"));
         assert_eq!(acesso(&p.pasta), "F", "o acesso que o dono tem");
@@ -591,7 +633,7 @@ fn sem_rede_o_armazem_da_aba_nasce_com_o_acesso_do_dono_e_a_renovacao_o_alimenta
         // O Claude que subiu nesse armazém troca de conta sem sair.
         let claude = Filho::claude(c, &[(VAR, &p.pasta.to_string_lossy())]);
         let lista = contas::listar(false);
-        let feito = trocar_processo(claude.pid(), shell.pid(), "T", 1, "claude:ana", None, &lista).unwrap();
+        let feito = trocar_processo(claude.pid(), shell.pid(), "T", 1, "claude:ana", None, &lista, "teste").unwrap();
         assert_eq!(feito, Feito::Trocou("claude:ana".into()));
         assert_eq!(acesso(&p.pasta), "G");
         // Sem dono que rode (o refresh recusado), continua a recusa.
@@ -603,7 +645,7 @@ fn sem_rede_o_armazem_da_aba_nasce_com_o_acesso_do_dono_e_a_renovacao_o_alimenta
         .unwrap();
         credencial::gravar(&credencial::local_fixa(&bia), &recusado).unwrap();
         let outro = Filho::novo(&[]);
-        let e = preparar("T", outro.pid(), Some("claude:bia"), None).unwrap_err();
+        let e = preparar("T", outro.pid(), Some("claude:bia"), None, "teste").unwrap_err();
         assert_eq!(e.motivo, "precisa-login", "{e:?}");
     });
 }
@@ -621,7 +663,7 @@ fn com_o_kit_o_acesso_vencido_do_global_nao_vai_para_a_aba() {
     let _ = contas::listar(true); // o dono fica em cache
     c.global_ate("G", "rG", agora() - 60_000);
     let shell = Filho::novo(&[]);
-    let e = preparar("T", shell.pid(), Some("claude:ana"), None).unwrap_err();
+    let e = preparar("T", shell.pid(), Some("claude:ana"), None, "teste").unwrap_err();
     assert_eq!(e.motivo, "precisa-login", "{e:?}");
     assert!(le_estado().abas.is_empty(), "nenhum armazém de aba");
 }
@@ -631,7 +673,7 @@ fn o_problema_de_um_armazem_aparece_uma_vez_e_some_quando_passa() {
     let c = casa("falha-uma-vez");
     let bia = duas_contas(&c);
     let shell = Filho::novo(&[]);
-    let p = preparar("T", shell.pid(), Some("claude:bia"), None).unwrap();
+    let p = preparar("T", shell.pid(), Some("claude:bia"), None, "teste").unwrap();
     // O acesso da Bia venceu e não renovou (sem rede): a aba fica onde está.
     c.fixa("k-2", None, None);
     let vencida: Value = serde_json::from_str(&format!(
@@ -658,7 +700,7 @@ fn um_processo_que_nao_e_claude_nao_segura_o_armazem_nem_a_pasta() {
     let bia = duas_contas(&c);
     // Um servidor MCP que ficou órfão, com a variável da aba: não lê o login.
     let mut shell = Filho::novo(&[]);
-    let p = preparar("T", shell.pid(), None, None).unwrap();
+    let p = preparar("T", shell.pid(), None, None, "teste").unwrap();
     let _orfao = Filho::novo(&[(VAR, &p.pasta.to_string_lossy())]);
     shell.mata();
     assert_eq!(espalhar(&contas::listar(false)).apagadas, vec![p.chave.clone()]);
@@ -668,7 +710,7 @@ fn um_processo_que_nao_e_claude_nao_segura_o_armazem_nem_a_pasta() {
     let _outro = Filho::novo(&[(VAR, &bia.to_string_lossy())]);
     let lista = contas::listar(false);
     assert_eq!(
-        trocar_processo(claude.pid(), shell.pid(), "T", 1, "claude:ana", None, &lista).unwrap(),
+        trocar_processo(claude.pid(), shell.pid(), "T", 1, "claude:ana", None, &lista, "teste").unwrap(),
         Feito::Trocou("claude:ana".into())
     );
     assert!(contas::ler_metadados(&bia).unwrap().aba);
@@ -689,7 +731,7 @@ fn com_o_kit_o_login_global_nao_conta_como_outro_dono() {
     let claude = Filho::claude(&c, &[(VAR, &bia.to_string_lossy())]);
     let lista = contas::listar(false);
     assert_eq!(
-        trocar_processo(claude.pid(), shell.pid(), "T", 1, "claude:bia", None, &lista).unwrap(),
+        trocar_processo(claude.pid(), shell.pid(), "T", 1, "claude:bia", None, &lista, "teste").unwrap(),
         Feito::Trocou("claude:bia".into())
     );
     // O login da pasta mudou para uma pasta nova (a Bia continua com dono

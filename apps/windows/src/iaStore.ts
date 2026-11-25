@@ -509,6 +509,12 @@ export const selectedAccount = computed<{ key: string | null; running: string | 
 const switching = new Set<string>();
 
 /**
+ * Where a tab's AI was chosen, for the core's record of who put a tab on an account (`--por`): the tab's own chevron,
+ * or the one on the workspace's header, which is the general tab's.
+ */
+export type ChoiceOrigin = "menu" | "cabecalho";
+
+/**
  * Put a tab's AI on another account. A tab at work is not interrupted without
  * a yes: the core says it is busy, the question goes up, and a yes asks
  * again, allowed to interrupt. An account without a login of its own for
@@ -521,6 +527,7 @@ export async function chooseAccount(
   key: string,
   label: string,
   tabName: string,
+  origin: ChoiceOrigin = "menu",
   interrupting = false,
 ): Promise<void> {
   if (!isValidKey(key)) return;
@@ -535,7 +542,7 @@ export async function chooseAccount(
   let answer: CoreAnswer | null = null;
   let error = "";
   try {
-    const args = ["ia", "trocar", `--ws=${workspace}`, `--aba=${tab}`, `--para=${key}`];
+    const args = ["ia", "trocar", `--ws=${workspace}`, `--aba=${tab}`, `--para=${key}`, `--por=${origin}`];
     if (interrupting) args.push("--interromper");
     args.push("--json");
     answer = await api.iaAsk(args);
@@ -569,7 +576,7 @@ export async function chooseAccount(
           { label: "Interromper e trocar agora", value: "go", danger: true, primary: true },
         ],
       });
-      if (result?.button === "go") await chooseAccount(workspace, tab, key, label, tabName, true);
+      if (result?.button === "go") await chooseAccount(workspace, tab, key, label, tabName, origin, true);
       return;
     }
     case "login":
@@ -588,7 +595,12 @@ export async function chooseAccount(
 }
 
 /** The tab's menu as it stands now, and what choosing a row of it does. */
-export function accountMenu(workspace: string, tab: RootTab, tabName: string): { rows: MenuRow[]; choose: (row: MenuRow) => void } {
+export function accountMenu(
+  workspace: string,
+  tab: RootTab,
+  tabName: string,
+  origin: ChoiceOrigin = "menu",
+): { rows: MenuRow[]; choose: (row: MenuRow) => void } {
   // Fresh for the next time it opens; this one is built from what is known now.
   void readTabs();
   const account = tabAccount(workspace, tab.root);
@@ -596,7 +608,7 @@ export function accountMenu(workspace: string, tab: RootTab, tabName: string): {
   const choose = (row: MenuRow) => {
     // What the tab is on already is no change: nothing is asked.
     if (!row.key || row.key === account.key) return;
-    void chooseAccount(workspace, tab.root.id, row.key, row.label, tabName);
+    void chooseAccount(workspace, tab.root.id, row.key, row.label, tabName, origin);
   };
   return { rows, choose };
 }

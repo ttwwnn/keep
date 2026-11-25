@@ -432,7 +432,8 @@ struct WorkspaceSidebar: View {
                         general,
                         visible: general.offersAccounts && dragged == nil
                             && ((general.isActive && row.isActive) || hovered == row.name),
-                        onBadge: general.claudeActivity?.wantsYou == true)
+                        onBadge: general.claudeActivity?.wantsYou == true,
+                        from: .workspaceHeader)
                         .frame(width: 14, height: 16)
                         .position(x: rect.midX, y: rect.midY)
                 }
@@ -749,7 +750,8 @@ struct WorkspaceSidebar: View {
                     accountGlyph(
                         tab,
                         visible: tab.offersAccounts && dragged == nil && (chosen || hoveredHere),
-                        onBadge: onBadge)
+                        onBadge: onBadge,
+                        from: .tabMenu)
                         .frame(width: 14, height: 16)
                         .position(x: rect.midX, y: rect.midY)
                 }
@@ -985,7 +987,7 @@ struct WorkspaceSidebar: View {
     /// monitor, and not watched from here: a reading arriving must not
     /// rebuild this list, whose rebuilds take the keyboard.
     private func accountGlyph(
-        _ tab: SessionSnapshot.SidebarTab, visible: Bool, onBadge: Bool
+        _ tab: SessionSnapshot.SidebarTab, visible: Bool, onBadge: Bool, from origin: AIHelper.ChoiceOrigin
     ) -> some View {
         MenuGlyph(
             symbol: "chevron.down", pointSize: 10.5 * titleZoom, weight: .bold,
@@ -1001,7 +1003,7 @@ struct WorkspaceSidebar: View {
                 AccountMenu.make(
                     tab: tab.id, account: tab.account, running: tab.runningAccount, command: tab.command
                 ) { key, label in
-                    dispatch(.chooseAccount(tab.id, key: key, label: label))
+                    dispatch(.chooseAccount(tab.id, key: key, label: label, from: origin))
                 }
             },
             onWillOpen: {

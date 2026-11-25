@@ -4,7 +4,7 @@
 // done in iaStore.ts.
 
 import type { Engine } from "../ia";
-import { accountMenu, iaAvailable, jev, signIn } from "../iaStore";
+import { accountMenu, type ChoiceOrigin, iaAvailable, jev, signIn } from "../iaStore";
 import type { RootTab } from "../layout";
 import { openMenuAt } from "./common";
 import * as icon from "./icons";
@@ -16,8 +16,14 @@ function under(anchor: HTMLElement): { x: number; y: number } {
 }
 
 /** The menu of a tab's AI and account, built from what is known as it opens. */
-export function openAccountMenu(anchor: HTMLElement, workspace: string, tab: RootTab, tabName: string): void {
-  const { rows, choose } = accountMenu(workspace, tab, tabName);
+export function openAccountMenu(
+  anchor: HTMLElement,
+  workspace: string,
+  tab: RootTab,
+  tabName: string,
+  origin: ChoiceOrigin = "menu",
+): void {
+  const { rows, choose } = accountMenu(workspace, tab, tabName, origin);
   const at = under(anchor);
   openMenuAt(
     at.x,
@@ -58,7 +64,7 @@ export function openSignInMenu(anchor: HTMLElement): void {
  * pointer (styles.css). A press on it opens the menu and is nothing else —
  * not a click on the tab, not the start of a drag of the window.
  */
-export function AccountChevron(props: { workspace: string; tab: RootTab; label: string }) {
+export function AccountChevron(props: { workspace: string; tab: RootTab; label: string; origin?: ChoiceOrigin }) {
   if (!iaAvailable.value) return null;
   return (
     <button
@@ -72,7 +78,7 @@ export function AccountChevron(props: { workspace: string; tab: RootTab; label: 
       onDblClick={(e) => e.stopPropagation()}
       onClick={(e) => {
         e.stopPropagation();
-        openAccountMenu(e.currentTarget as HTMLElement, props.workspace, props.tab, props.label);
+        openAccountMenu(e.currentTarget as HTMLElement, props.workspace, props.tab, props.label, props.origin);
       }}
     >
       <icon.ChevronDown />

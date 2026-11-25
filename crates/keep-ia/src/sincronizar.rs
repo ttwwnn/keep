@@ -403,6 +403,7 @@ pub fn rodada() -> Value {
             conta: Some(alvo.order_key.clone()),
             cancelar_limite: s.limite && !s.armazem_proprio,
             interromper: false,
+            por: "sincronização da ordem de prioridade".into(),
         };
         match trocar::trocar(&p) {
             Ok(feito) => {

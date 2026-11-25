@@ -173,9 +173,18 @@ assim que o cache de login venceu e a aba ficou livre.
   troca que sobe o Claude numa aba (`trocar`, linha com `CLAUDE_SECURESTORAGE_CONFIG_DIR=<pasta>`) e a
   restauração depois de reiniciar (`keep restauro`).
 - Estado: `~/.claude/contas/abas/estado.json` (`{"versao":1,"abas":{<chave>:{"pasta","conta","dono",
-  "escolha","ws","aba","shell","nascimento","legada","em","falha"}}}`), sob a trava
+  "escolha","escolhaPor","escolhaQuando","ws","aba","shell","nascimento","legada","em","falha"}}}`), sob a trava
   `estado.trava`. A conta e a escolha de uma aba de armazém próprio vêm daqui (o ambiente do
   processo diz só as de quando ele subiu).
+- De onde veio a escolha (pedido de 25/11/2026: abas presas numa conta sem que se soubesse quem as prendeu): a cada
+  mudança dela, `escolhaPor` e `escolhaQuando` (hora local, `AAAA-MM-DD HH:MM:SS`); uma gravação com a mesma escolha
+  mantém os dois. `escolhaPor`: `menu da aba` e `seta do cabeçalho do workspace` (o app, por `--por=menu|cabecalho`
+  no `keep ia trocar`); `keep ia trocar, da aba <W>#<N>` (chamado de dentro de uma aba, pela IA dela) ou `keep ia
+  trocar, chamado por <programa> (pid <n>)`; `sincronização da ordem de prioridade`; `login da conta (a troca para
+  ela esperava por ele)`; `login feito na aba`; `acordar da aba hibernada (keep restauro)`; `restauração das abas
+  (keep restauro)`; `subida do Claude na aba (keep ia rodar)` ou `(keep ia preparar)`. Só o pedido de uma conta
+  (o menu, a seta, `keep ia trocar --para=claude:<apelido>`), o login feito na aba e a volta de uma aba que já
+  estava presa fixam uma conta: nenhuma rotina prende numa conta quem segue a ordem.
 - De onde vem o acesso: o dono da conta, com o acesso em dia (sem o kit, o global quando é dela; as
   pastas fixas dela; com o kit, o global por último). Dono com o acesso vencido: uma rodada da
   renovação antes; se ela não traz o acesso novo (sem rede, o servidor recusando agora, outra rodada
@@ -719,7 +728,7 @@ keep ia contas --json
 keep ia uso [--agora] [--conta=<chave>] --json
 keep ia ordem [mover <chave> cima|baixo [--por=setas|menu]] --json
 keep ia abas --json
-keep ia trocar --ws=<W> --aba=<N> --para=<chave> [--interromper] --json
+keep ia trocar --ws=<W> --aba=<N> --para=<chave> [--interromper] [--por=menu|cabecalho] --json
 keep ia preparar --ws=<W> --shell=<pid> [--escolha=claude:ordem|claude:<apelido>] --json
 keep ia rodar -- <programa> [argumentos…]      (não é JSON: vira o programa)
 keep ia aba lista | socket
