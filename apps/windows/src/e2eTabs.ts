@@ -26,6 +26,7 @@ import {
   dialog,
   editing,
   focusPane,
+  generalTabs,
   gui,
   log,
   moveWorkspace,
@@ -280,6 +281,11 @@ export async function tabsSteps(runStep: StepRunner, windows: boolean, home: str
     await newTab(A);
     tabs = await waitFor(() => (idsOf(A).length === 3 ? idsOf(A) : null), 20000, "o workspace com três abas");
     const [a, b, c] = tabs;
+    // A workspace made now has its first tab drawn as its general tab until the core answers (store.ts
+    // `createWorkspace`), and the general tab is held first (tabOrder.ts `generalFirst`): dragged before that answer, it
+    // stays first until the answer comes. With no Claude here the core declines it (`keep geral`, asked every five
+    // seconds).
+    await waitFor(() => !generalTabs.value.has(tabKey(A, a)), 15000, "a primeira aba deixar de ser a geral, na palavra do núcleo");
     select(A, a);
     // With the sidebar in sight the row holds only the tab in use.
     await waitFor(() => stripIds().join() === String(a), 5000, "só a aba em uso na fileira, com a barra lateral à vista");
