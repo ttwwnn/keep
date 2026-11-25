@@ -87,6 +87,13 @@ describe("which accounts can take work", () => {
     expect(isAvailable(fableFull)).toBe(true);
     expect(isAvailable(line({ warning: "login recusado: entre de novo com /login" }))).toBe(false);
   });
+  it("an account turned off by its switch is full for Keep and still measured", () => {
+    const off = line({ off: true }, { windows: [{ label: "7d", title: "7d", percent: 5, resetsAt: null }], limitReached: false });
+    expect(isAvailable(off)).toBe(false);
+    expect(isReserved(off)).toBe(true);
+    expect(reservedNote(off)).toBe("desligada: nenhuma conversa a usa; o consumo segue medido");
+    expect(isAvailable(line({ off: false }, { windows: [{ label: "7d", title: "7d", percent: 5, resetsAt: null }], limitReached: false }))).toBe(true);
+  });
   it("the weekly ceiling the order gives an account takes it out from there up, until the week starts over", () => {
     const now = 1_900_000_000_000;
     const capped = (cap: number | null, label: string, percent: number, resetsAt: number | null = null) =>

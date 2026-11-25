@@ -111,7 +111,16 @@ pub fn ia(args: &[String]) -> i32 {
                     Err(detalhe) => responde(recusa("sem-conta", &detalhe)),
                 }
             }
-            Some(_) => uso_errado("keep ia ordem [mover <chave> cima|baixo]"),
+            Some(acao @ ("ligar" | "desligar")) => {
+                let Some(chave) = a.posicoes.get(2) else {
+                    return uso_errado("keep ia ordem ligar|desligar <chave>");
+                };
+                match contas::desligar(chave, acao == "desligar") {
+                    Ok(d) => responde(json!({ "ok": true, "desligadas": d })),
+                    Err(detalhe) => responde(recusa("sem-conta", &detalhe)),
+                }
+            }
+            Some(_) => uso_errado("keep ia ordem [mover <chave> cima|baixo | ligar|desligar <chave>]"),
         },
         "uso" => crate::uso::cli(&a),
         "jev" => crate::jev::cli(&a),

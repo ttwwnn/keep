@@ -247,7 +247,9 @@ pub fn rodada() -> Value {
         armazem_proprio: bool,
     }
     let mut seguidoras = Vec::new();
-    for i in ia.into_iter().filter(|i| i.conta == SEGUIR_ORDEM) {
+    // E as presas numa conta desligada: desligar a conta vale para todas as conversas (elas passam a seguir a ordem).
+    let presa_desligada = |i: &abas::IaAba| contas::achar(&contas, &i.conta).is_some_and(|c| c.off);
+    for i in ia.into_iter().filter(|i| i.conta == SEGUIR_ORDEM || presa_desligada(i)) {
         let Some(a) = r.aba(&i.workspace, i.aba) else { continue };
         let prog = tela::programa(&a.info.command);
         let (linhas_tela, limpas) = trocar::tela_de(&i.workspace, i.aba);

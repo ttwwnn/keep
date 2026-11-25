@@ -94,6 +94,10 @@ impl Linha {
     /// resto da semana fica para quem divide a conta, e para o Keep ela
     /// está cheia. Como nos 100%, a medição de antes do recomeço não vale.
     pub fn reservada_em(&self, agora: f64) -> bool {
+        // Desligada pela chavinha: cheia para o Keep, medida como sempre.
+        if self.account.off {
+            return true;
+        }
         let (Some(teto), Some(l)) = (self.account.weekly_cap, &self.reading) else { return false };
         l.windows.iter().any(|j| j.label == "7d" && j.percent >= teto && j.resets_at.is_none_or(|r| r > agora))
     }
@@ -776,6 +780,19 @@ pub(crate) mod testes {
         let rotulos: Vec<&str> = l.windows.iter().map(|j| j.label.as_str()).collect();
         assert_eq!(rotulos, ["5h", "7d", "GPT-5 7d"]);
         assert!(l.limit_reached, "a semanal do plano a 100% fecha");
+    }
+
+    #[test]
+    fn a_conta_desligada_e_cheia_para_o_keep_e_segue_medida() {
+        let t = 1_900_000_000.0;
+        let mut l = crate::abas::testes::linha(Motor::Claude, "claude:x", &[("7d", t + 3600.0)]);
+        l.reading.as_mut().unwrap().windows[0].percent = 5.0;
+        assert!(l.disponivel_em(t) && !l.reservada_em(t), "ligada, com folga: livre");
+        l.account.off = true;
+        assert!(!l.disponivel_em(t) && l.reservada_em(t), "desligada: nenhuma conversa a usa");
+        assert!(l.reading.is_some(), "a medição continua");
+        l.reading = None;
+        assert!(!l.disponivel_em(t), "nem sem medição");
     }
 
     #[test]

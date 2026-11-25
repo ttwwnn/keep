@@ -43,6 +43,8 @@ final class UsageMonitor: ObservableObject {
     /// The Jev's, the Ponytail's and the PR-Agent's switches; nil until the
     /// core has said, and a member nil when that one is not installed here.
     @Published private(set) var automation: Automation?
+    /// The switches turned and not answered yet, by line: shown at once, the core's word after.
+    @Published private(set) var offPending: [String: Bool] = [:]
 
     private var timer: Timer?
     private var glance: Timer?
@@ -398,6 +400,29 @@ final class UsageMonitor: ObservableObject {
     /// put back what they show meanwhile.
     private var switching = 0
 
+    /// An account's switch: off keeps it and its measuring, and no conversation uses it (the core moves the tabs
+    /// off it). Shown at once; what the core refuses is taken back and said.
+    func setOff(_ line: AccountUsage, _ off: Bool) {
+        guard helperAvailable else { return }
+        let key = line.account.order
+        offPending[line.id] = off
+        Trace.log("ia", "conta: \(key) \(off ? "desligar" : "ligar")")
+        orderQueue.async { [weak self] in
+            let answer = AIHelper.setAccountOff(key, off)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if case .failure(let problem) = answer {
+                    self.say("Não deu para \(off ? "desligar" : "ligar") a conta: \(problem.detail)")
+                }
+                self.offPending[line.id] = nil
+                self.look(force: true)
+            }
+        }
+    }
+
+    /// Whether the account's switch shows on.
+    func isOn(_ line: AccountUsage) -> Bool { !(offPending[line.id] ?? (line.account.off == true)) }
+
     /// One switch of the footer, turned: shown at once, written by the core
     /// behind it. What the core refuses is taken back and said.
     func toggle(_ which: Automation.Switch) {
@@ -732,6 +757,18 @@ struct UsageFooter: View {
     @ViewBuilder
     private func arrows(_ line: AccountUsage, at index: Int) -> some View {
         if monitor.helperAvailable {
+            // The account's switch, as the Jev's: off, no conversation uses it, and its use is still measured.
+            Toggle("", isOn: Binding(get: { monitor.isOn(line) }, set: { monitor.setOff(line, !$0) }))
+                .labelsHidden()
+                .toggleStyle(BlueSwitch())
+                .scaleEffect(0.75)
+                .frame(width: 28, height: 13)
+                .help(monitor.isOn(line)
+                    ? "Ligada: as conversas a usam. Desligar mantém a conta e a medição, e nenhuma conversa a usa"
+                    : "Desligada: nenhuma conversa a usa; o consumo segue medido. Ligar a devolve à fila")
+                .accessibilityLabel("Conta \(title(line)) \(index + 1)")
+                .accessibilityValue(monitor.isOn(line) ? "ligada" : "desligada")
+                .accessibilityIdentifier("usage-switch-\(line.account.order)")
             HStack(spacing: 1) {
                 arrow(line, up: true, shown: index > 0)
                 arrow(line, up: false, shown: index < monitor.lines.count - 1)

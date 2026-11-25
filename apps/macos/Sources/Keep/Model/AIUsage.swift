@@ -69,6 +69,8 @@ struct AIAccountSummary: Equatable, Codable {
     /// there up Keep puts no tab on it, and the rest of the week is left to
     /// whoever else uses the account. Nil: only 100% takes it out.
     var weeklyCap: Double? = nil
+    /// Turned off by its switch in the footer (`keep ia ordem desligar`): kept, measured, used by no conversation.
+    var off: Bool? = nil
 
     /// The line's stable identity: the same account keeps its place and its
     /// fold across reads.
@@ -217,7 +219,7 @@ struct AccountUsage: Identifiable, Equatable, Codable {
     /// An account with a weekly ceiling in the order leaves it at the
     /// ceiling (`isReserved`), as the core's `Linha::reservada_em`.
     var isAvailable: Bool {
-        guard account.warning == nil else { return false }
+        guard account.warning == nil, account.off != true else { return false }
         guard let reading else { return true }
         if reading.limitReached || isReserved { return false }
         return !reading.windows.contains { ($0.label == "5h" || $0.label == "7d") && $0.percent >= 100 }
@@ -228,6 +230,7 @@ struct AccountUsage: Identifiable, Equatable, Codable {
     var isReserved: Bool { reserved(at: Date()) }
 
     func reserved(at now: Date) -> Bool {
+        if account.off == true { return true }
         guard let cap = account.weeklyCap, let reading else { return false }
         return reading.windows.contains {
             $0.label == "7d" && $0.percent >= cap && ($0.resetsAt.map { $0 > now } ?? true)
@@ -236,6 +239,7 @@ struct AccountUsage: Identifiable, Equatable, Codable {
 
     /// "reservada: passou do teto de 80% da semana".
     var reservedNote: String? {
+        if account.off == true { return "desligada: nenhuma conversa a usa; o consumo segue medido" }
         guard isReserved, let cap = account.weeklyCap else { return nil }
         return "reservada: passou do teto de \(UsageText.percent(cap)) da semana"
     }

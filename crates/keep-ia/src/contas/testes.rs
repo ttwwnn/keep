@@ -340,6 +340,7 @@ fn achar_prefere_a_conta_que_roda_entre_duas_com_a_mesma_chave() {
         token: None,
         roda,
         weekly_cap: None,
+        off: false,
     };
     let lista = [base("morta", false), base("viva", true)];
     assert_eq!(achar(&lista, "claude:principal").map(|c| c.key.as_str()), Some("viva"));

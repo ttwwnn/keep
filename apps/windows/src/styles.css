@@ -2299,3 +2299,10 @@ button.danger.primary {
   border-radius: 12px;
   background: #222222;
 }
+
+/* An account's switch, before its arrows: the Jev's switch, smaller and without a name. */
+.usage-account-switch {
+  transform: scale(0.75);
+  transform-origin: right center;
+  margin-right: -4px;
+}

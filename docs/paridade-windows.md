@@ -687,3 +687,5 @@ máquina não tem). Nada disto foi visto na WebView2 nem com um Claude Code de v
 - [x] 0.3.84: o cabeçalho do workspace, que é a aba geral, mostra a conta dela ("(IA·1)") e a seta do menu de IA e conta,
   como a linha da aba: à mostra com a aba geral escolhida ou sob o ponteiro (`Sidebar.tsx`, `styles.css`). Não visto no
   app do Windows.
+- [x] 0.3.85: chavinha por conta no rodapé (antes das setas): desligada, nenhuma conversa usa a conta e o consumo segue medido
+  (`setAccountOff` em `iaStore.ts`, `off` em `ia.ts`, testado). Não visto no app do Windows.
