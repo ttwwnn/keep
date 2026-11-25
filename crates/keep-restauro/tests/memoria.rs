@@ -191,8 +191,12 @@ fn a_memoria_apertada_hiberna_as_paradas_segura_as_abas_novas_e_poupa_a_recem_ac
         }
         fila::Desfecho::Aberta(..) => panic!("abriu sem memória"),
     }
+    match fila::nova(&pedido("Tarefa W")).unwrap() {
+        fila::Desfecho::NaFila { posicao, .. } => assert_eq!(posicao, 2, "atrás do que já espera"),
+        fila::Desfecho::Aberta(..) => panic!("abriu sem memória"),
+    }
     assert_eq!(daemon::listar().unwrap().abas.len(), antes, "nenhuma aba nova");
-    assert_eq!(fila::listar().unwrap()["fila"].as_array().map(Vec::len), Some(1));
+    assert_eq!(fila::listar().unwrap()["fila"].as_array().map(Vec::len), Some(2));
     assert!(tela_tem("A", v, "Pronto.", 1) && !dormindo(v), "a que está à vista fica");
 
     // ---- a fila anda quando houver memória, e a aba geral fica sabendo; o pedido parado há 13 h abre do mesmo jeito
@@ -206,9 +210,13 @@ fn a_memoria_apertada_hiberna_as_paradas_segura_as_abas_novas_e_poupa_a_recem_ac
     let nova_aba = r["abertas"][0]["aba"].as_u64().unwrap() as u32;
     assert!(tela_tem("A", nova_aba, "FALSO claude", 15), "a conversa subiu");
     assert!(tela_tem("A", nova_aba, "Leia o arquivo", 5), "com o pedido");
+    // Uma por rodada: a conversa que acabou de subir ainda não pesa na medição; a seguinte abre na próxima rodada.
+    assert_eq!(fila::listar().unwrap()["fila"].as_array().map(Vec::len), Some(1));
+    let r = fila::andar();
+    assert_eq!(r["abertas"].as_array().map(Vec::len), Some(1), "{r:#}");
     assert_eq!(fila::listar().unwrap()["fila"].as_array().map(Vec::len), Some(0));
     let eventos = std::fs::read_to_string(restauro.join(keep_ia::geral::EVENTOS)).unwrap_or_default();
-    assert!(eventos.contains("abriu da fila de memória o pedido das") && eventos.contains("Tarefa Y"), "{eventos}");
+    assert!(eventos.contains("abriu da fila de memória o pedido das") && eventos.contains("Tarefa Y") && eventos.contains("Tarefa W"), "{eventos}");
 
     // ---- no teto de conversas vivas da RAM (2 GB: uma só), o mesmo, sem a memória apertada
     memoria(&leituras, &[r#"{"totalMb":2048,"disponivelMb":1800}"#]);

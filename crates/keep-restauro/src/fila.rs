@@ -4,7 +4,7 @@
 //! com a memória apertada ou no teto de conversas vivas (`memoria`): primeiro hibernam as paradas
 //! (`adormecer::abrir_vaga`) e, se ainda faltar, o pedido entra aqui, e `keep nova` responde "na fila: memória cheia
 //! (X livres, N conversas vivas)". A fila anda pela ordem a cada 15 s (`keep continuar`, que os dois apps rodam),
-//! enquanto couber mais uma; a aba geral do workspace fica sabendo de cada pedido que abriu, ou que saiu sem abrir,
+//! um pedido por rodada, quando couber mais uma (a seguinte é medida já com a que abriu); a aba geral do workspace fica sabendo de cada pedido que abriu, ou que saiu sem abrir,
 //! pelas novidades. O pedido espera a memória o tempo que for (pedido de 25/11/2026: o que o Keep barrou abre assim
 //! que ela baixar); só sai sem abrir se não der para abrir (o workspace fechou, a pasta sumiu), com aviso.
 //!
@@ -142,14 +142,14 @@ pub enum Desfecho {
 pub fn nova(p: &nova::Pedido) -> Result<Desfecho, String> {
     let _trava = crate::Trava::esperar(".fila.lock", Duration::from_secs(60)).ok_or("a fila de memória está ocupada; tente de novo")?;
     let mut a = ler();
-    if !a.itens.is_empty() {
-        andar_com(&mut a);
-    }
-    let (porque, s) = if a.itens.is_empty() {
+    let abriu = !a.itens.is_empty() && andou(&mut a);
+    let (porque, s) = if a.itens.is_empty() && !abriu {
         match cabe(1, true) {
             Ok(()) => return nova::abrir(p).map(|(ws, aba, texto)| Desfecho::Aberta(ws, aba, texto)),
             Err(e) => e,
         }
+    } else if a.itens.is_empty() {
+        (ABRIU_AGORA.into(), situacao())
     } else {
         (format!("{} pedido(s) antes deste na fila", a.itens.len()), situacao())
     };
@@ -173,11 +173,11 @@ pub fn nova(p: &nova::Pedido) -> Result<Desfecho, String> {
 pub fn iniciar(ws: &str, aba: u32) -> Result<Value, String> {
     let trava = crate::Trava::esperar(".fila.lock", Duration::from_secs(60)).ok_or("a fila de memória está ocupada; tente de novo")?;
     let mut a = ler();
-    if !a.itens.is_empty() {
-        andar_com(&mut a);
-    }
-    let falta = if a.itens.is_empty() {
+    let abriu = !a.itens.is_empty() && andou(&mut a);
+    let falta = if a.itens.is_empty() && !abriu {
         cabe(1, true).err()
+    } else if a.itens.is_empty() {
+        Some((ABRIU_AGORA.into(), situacao()))
     } else {
         Some((format!("{} pedido(s) antes deste na fila", a.itens.len()), situacao()))
     };
@@ -198,7 +198,7 @@ pub fn iniciar(ws: &str, aba: u32) -> Result<Value, String> {
     }))
 }
 
-/// A fila anda (`keep continuar`, a cada 15 s): abre pela ordem enquanto couber mais uma conversa.
+/// A fila anda (`keep continuar`, a cada 15 s): abre o primeiro da fila, se couber mais uma conversa.
 pub fn andar() -> Value {
     let Some(_trava) = crate::Trava::pegar(".fila.lock") else {
         return json!({ "motivo": "outra rodada da fila em andamento" });
@@ -210,7 +210,15 @@ pub fn andar() -> Value {
     andar_com(&mut a)
 }
 
-/// A fila anda (com a trava na mão) e é gravada.
+/// Por que o pedido novo espera, quando a fila acabou de abrir outro nesta mesma chamada.
+const ABRIU_AGORA: &str = "um pedido da fila acabou de abrir; este abre na próxima rodada, medida já com ele";
+
+/// A fila anda e diz se abriu algum.
+fn andou(a: &mut Arquivo) -> bool {
+    andar_com(a)["abertas"].as_array().is_some_and(|x| !x.is_empty())
+}
+
+/// A fila anda (com a trava na mão) e é gravada: no máximo um pedido aberto por rodada.
 fn andar_com(a: &mut Arquivo) -> Value {
     let antes = a.clone();
     let agora = crate::agora_ms();
@@ -237,6 +245,9 @@ fn andar_com(a: &mut Arquivo) -> Value {
                 registrar(&format!("{ws}: «{nome}» abriu da fila (aba {aba})"));
                 conta_a_geral(&primeiro.item, aba, format!("abriu da fila de memória o pedido das {} («{nome}»)", hora(primeiro.desde_ms)));
                 abertas.push(json!({ "workspace": ws, "aba": aba, "nome": nome }));
+                // Uma por rodada: a conversa que acabou de subir ainda não aparece na medição; a próxima rodada a conta.
+                let _ = gravar(a);
+                break;
             }
             Err(e) => {
                 registrar(&format!("{ws}: «{nome}» saiu da fila sem abrir: {e}"));
