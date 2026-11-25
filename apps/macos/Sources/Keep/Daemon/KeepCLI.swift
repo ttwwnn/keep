@@ -259,6 +259,14 @@ enum AIHelper {
             .map { ($0["ordem"] as? [String]) ?? [] }
     }
 
+    /// An account turned off or on by its switch in the footer: kept and measured, but no conversation uses it
+    /// while off. The answer is the keys turned off.
+    static func setAccountOff(_ key: String, _ off: Bool) -> Result<[String], Problem> {
+        guard isValidKey(key), key != followOrder else { return .failure(invalid(key)) }
+        return ask(["ordem", off ? "desligar" : "ligar", key, "--json"], within: 10 * timeScale)
+            .map { ($0["desligadas"] as? [String]) ?? [] }
+    }
+
     /// A new tab in `workspace` where a login to another account is made;
     /// the answer is where the core opened it.
     static func signIn(

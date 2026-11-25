@@ -37,6 +37,8 @@ export interface Account {
    * else uses the account. Absent or null: only 100% takes it out.
    */
   weeklyCap?: number | null;
+  /** Turned off by its switch in the footer (`keep ia ordem desligar`): kept, measured, used by no conversation. */
+  off?: boolean;
 }
 
 /** One allowance window: a bar in the footer. */
@@ -142,7 +144,7 @@ export const isValidKey = (key: string) => /^(claude|gpt):[^\s/:]+$/.test(key);
  * Not measured yet: the benefit of the doubt.
  */
 export function isAvailable(line: UsageLine): boolean {
-  if (line.account.warning) return false;
+  if (line.account.warning || line.account.off) return false;
   const reading = line.reading;
   if (!reading) return true;
   if (reading.limitReached || isReserved(line)) return false;
@@ -155,6 +157,7 @@ export function isAvailable(line: UsageLine): boolean {
  * else uses it (the core's `Linha::reservada_em`).
  */
 export function isReserved(line: UsageLine, nowMs: number = Date.now()): boolean {
+  if (line.account.off) return true;
   const cap = line.account.weeklyCap;
   if (cap == null || !line.reading) return false;
   return line.reading.windows.some(
@@ -164,6 +167,7 @@ export function isReserved(line: UsageLine, nowMs: number = Date.now()): boolean
 
 /** "reservada: passou do teto de 80% da semana", or null when it is not. */
 export function reservedNote(line: UsageLine, nowMs: number = Date.now()): string | null {
+  if (line.account.off) return "desligada: nenhuma conversa a usa; o consumo segue medido";
   const cap = line.account.weeklyCap;
   return cap != null && isReserved(line, nowMs) ? `reservada: passou do teto de ${percentText(cap)} da semana` : null;
 }

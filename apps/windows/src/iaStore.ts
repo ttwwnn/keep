@@ -352,6 +352,34 @@ export function moveOrder(line: UsageLine, step: number): void {
   });
 }
 
+/** The account switches turned and not answered yet, by line: shown at once, the core's word after. */
+export const offPending = signal<ReadonlyMap<string, boolean>>(new Map());
+
+/** Whether the account's switch shows on. */
+export const accountOn = (line: UsageLine): boolean => !(offPending.value.get(lineId(line)) ?? line.account.off === true);
+
+/**
+ * An account's switch: off keeps it and its measuring, and no conversation uses it (the core moves the tabs off it).
+ * Shown at once; what the core refuses is said.
+ */
+export async function setAccountOff(line: UsageLine, off: boolean): Promise<void> {
+  const key = orderKeyOf(line.account);
+  if (!isValidKey(key)) return;
+  const id = lineId(line);
+  offPending.value = new Map([...offPending.value, [id, off]]);
+  try {
+    const answer = await api.iaAsk(["ia", "ordem", off ? "desligar" : "ligar", key, "--json"]);
+    if (answer.ok !== true) throw new Error(refusal(answer, off ? "desligar a conta" : "ligar a conta"));
+  } catch (error) {
+    sayInFooter(`Não deu para ${off ? "desligar" : "ligar"} a conta: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    const next = new Map(offPending.value);
+    next.delete(id);
+    offPending.value = next;
+    void look(true, false);
+  }
+}
+
 /** Stop holding the order once the last move is answered and the hold has run out: the core's word is the last. */
 function releaseLater(): void {
   const until = heldUntil;

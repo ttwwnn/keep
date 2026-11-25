@@ -102,6 +102,9 @@ pub struct Conta {
     /// para cima o Keep não põe aba nela, e o resto da semana fica para quem
     /// divide a conta. Sem teto, só os 100% a tiram da fila.
     pub weekly_cap: Option<f64>,
+    /// Desligada pela chavinha do rodapé (`keep ia ordem desligar`): fica com o login, a configuração e a
+    /// medição, mas nenhuma conversa a usa (para o Keep ela está cheia), até ser ligada de novo.
+    pub off: bool,
 }
 
 impl Conta {
@@ -577,6 +580,7 @@ fn juntar(achados: Vec<Achado>, ativa: Option<&str>) -> Vec<Conta> {
             token,
             roda,
             weekly_cap: None,
+            off: false,
         });
     }
     contas
@@ -672,7 +676,43 @@ pub fn listar(perguntar: bool) -> Vec<Conta> {
     let chaves: Vec<String> = fila.iter().map(|(k, _)| k.clone()).collect();
     let mut contas = ordenar(juntar(achados, ativa.as_deref()), &chaves);
     aplicar_tetos(&mut contas, &fila);
+    let desligadas = desligadas();
+    for c in &mut contas {
+        c.off = c.chaves().iter().any(|k| desligadas.contains(k));
+    }
     contas
+}
+
+fn arquivo_das_desligadas() -> std::path::PathBuf {
+    caminhos::estado().join("contas-desligadas.json")
+}
+
+/// As chaves das contas desligadas pela chavinha do rodapé.
+pub fn desligadas() -> BTreeSet<String> {
+    std::fs::read(arquivo_das_desligadas())
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Vec<String>>(&b).ok())
+        .map(|v| v.into_iter().collect())
+        .unwrap_or_default()
+}
+
+/// Liga ou desliga a conta `chave` (`claude:x`, `gpt:x`). Devolve as desligadas depois da mudança.
+pub fn desligar(chave: &str, off: bool) -> Result<BTreeSet<String>, String> {
+    let lista = listar(false);
+    let conta = achar(&lista, chave).ok_or_else(|| format!("não há conta {chave}"))?;
+    let mut d = desligadas();
+    for k in conta.chaves() {
+        d.remove(&k);
+    }
+    if off {
+        d.insert(conta.order_key.clone());
+    }
+    let caminho = arquivo_das_desligadas();
+    if let Some(dir) = caminho.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    caminhos::grava_privado(&caminho, &serde_json::to_vec(&d).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    Ok(d)
 }
 
 /// A conta que uma chave nomeia. Duas com a mesma chave (um login sem dono

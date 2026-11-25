@@ -347,6 +347,7 @@ pub(crate) mod testes {
                 token: None,
                 roda: true,
                 weekly_cap: None,
+                off: false,
             },
             reading: Some(crate::uso::Leitura {
                 windows: janelas

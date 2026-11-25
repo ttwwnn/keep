@@ -40,6 +40,8 @@ import {
   measureNow,
   measuring,
   moveOrder,
+  accountOn,
+  setAccountOff,
   selectedAccount,
   toggleAutomation,
   toggleFooter,
@@ -77,8 +79,26 @@ function Arrows(props: { line: UsageLine; index: number; count: number }) {
       {up ? <icon.Up /> : <icon.Down />}
     </button>
   );
+  const on = accountOn(line);
   return (
     <span class="usage-arrows">
+      {/* The account's switch, as the Jev's: off, no conversation uses it, and its use is still measured. */}
+      <button
+        class={`usage-switch usage-account-switch ${on ? "on" : ""}`}
+        role="switch"
+        aria-checked={on}
+        aria-label={`Conta ${name}`}
+        title={
+          on
+            ? "Ligada: as conversas a usam. Desligar mantém a conta e a medição, e nenhuma conversa a usa"
+            : "Desligada: nenhuma conversa a usa; o consumo segue medido. Ligar a devolve à fila"
+        }
+        onClick={() => void setAccountOff(line, on)}
+      >
+        <span class="usage-switch-track">
+          <span class="usage-switch-knob" />
+        </span>
+      </button>
       {arrow(true, index > 0)}
       {arrow(false, index < count - 1)}
     </span>

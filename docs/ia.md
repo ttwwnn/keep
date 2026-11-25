@@ -71,6 +71,11 @@ Uma conta do Claude é um **armazém de credenciais** do Claude Code:
   `arquivo editado por fora`), `antes` e `depois` (as linhas da fila) e, num `keep ia ordem` de fora do app, `pai` (o
   programa que o chamou). O que muda por fora é visto na leitura seguinte da fila, contra a última versão conhecida
   (`<estado>/ordem-vista.json`); só comentários mudando não é mudança.
+- Conta desligada: a chavinha de cada conta no rodapé (`keep ia ordem desligar|ligar <chave>`, guardada em
+  `<estado>/contas-desligadas.json`, fora da fila) desliga a conta só para as conversas: ela fica com o login, a
+  configuração e a medição em tempo real, mas conta como cheia e reservada para toda escolha de conta (aba nova, troca
+  no limite, restauração, fila). As abas nela saem para a primeira livre da fila, inclusive as presas nela, que passam
+  a seguir a ordem. O núcleo diz `off` na conta; o rodapé, "desligada: nenhuma conversa a usa".
 - Teto da semanal: depois da chave, na mesma linha, `teto7d=<0 a 100>` (ex.: `claude:x teto7d=80`).
   Com a janela 7d no teto ou acima (e antes do recomeço dela), a conta conta como cheia: aba nova,
   aba aberta que segue a ordem, troca no limite e restauração vão para a próxima da fila, e o
