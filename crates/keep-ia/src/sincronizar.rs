@@ -14,6 +14,15 @@
 //! recusou a troca espera um pouco antes de ser tentada de novo. Com um
 //! gerente externo (o kit), quem faz isso é ele, e aqui nada acontece (a
 //! renovação leva as abas de armazém próprio para a conta que ele escolhe).
+//!
+//! Nunca sem consentimento (pedido de 25/11/2026):
+//! - com o Chaveiro trancado, ou o `securityd` fora do ar, o login não se lê e
+//!   a conta parece sem acesso; nenhuma aba sai da conta em que está: a
+//!   rodada espera e olha de novo na seguinte;
+//! - a aba que sai de uma conta que ainda trabalha, porque ela passou do teto
+//!   da semanal ou porque a fila foi reordenada, é avisada à pessoa (no
+//!   rodapé, por `aviso`, por uma hora, e à aba geral do workspace), com o
+//!   motivo e como desfazer.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -31,6 +40,10 @@ const POR_RODADA: usize = 3;
 const OCIOSA_MS: u64 = 120_000;
 /// Quanto tempo uma parada que já culpou uma conta é lembrada (s).
 const CULPAS_POR: f64 = 12.0 * 3600.0;
+/// Quanto tempo o aviso de uma troca sem pedido fica no rodapé (s).
+const AVISO_POR: f64 = 3600.0;
+/// Uma fila reordenada há menos que isto explica uma aba que sobe para a primeira conta (ms).
+const REORDENADA_HA_MS: u64 = 24 * 3600 * 1000;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 struct Bloqueio {
@@ -48,12 +61,20 @@ struct Espera {
     detalhe: String,
 }
 
+/// O que a pessoa precisa saber de abas que trocaram de conta sem ela pedir, e até quando dizer.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct Aviso {
+    texto: String,
+    ate: f64,
+}
+
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default)]
 struct Registro {
     limites: BTreeMap<String, Bloqueio>,
     esperas: BTreeMap<String, Espera>,
     alvo: Option<String>,
+    aviso: Option<Aviso>,
     /// As paradas no limite (do transcrito ou da tela) que já culparam uma
     /// conta (a marca, e quando). Uma parada culpa uma vez: a mesma, ainda no
     /// fim do transcrito ou à vista, não culpa a conta nova depois de uma troca
@@ -130,6 +151,49 @@ fn conta_que_parou(
     atual.map(str::to_string)
 }
 
+/// Por que uma aba saiu, sem a pessoa pedir, de uma conta que ainda trabalha: (o motivo, como desfazer). A que passou
+/// do teto da semanal (`reservada`), ou a que sobe para a primeira conta (`subiu`) logo depois de a fila ser
+/// reordenada; `None` para a troca de sempre (a conta no limite, o login recusado) e para a volta à primeira conta
+/// depois de um limite.
+fn sem_pedido(de: &str, para: &str, teto: Option<f64>, subiu: bool, mudanca: Option<&contas::mudancas::Vista>) -> Option<(String, String)> {
+    let quando = |v: &contas::mudancas::Vista| {
+        use chrono::TimeZone;
+        let hora = chrono::Local.timestamp_millis_opt(v.mudou_ms as i64).single().map(|h| h.format("%d/%m %H:%M").to_string());
+        format!("{}, em {}", v.por, hora.unwrap_or_default())
+    };
+    if let Some(teto) = teto {
+        let origem = mudanca.map(|v| format!(" (a fila de prioridade mudou por último: {})", quando(v))).unwrap_or_default();
+        return Some((
+            format!("a {de} passou do teto de {teto}% da semana que a fila de prioridade dá a ela{origem}"),
+            format!("tire ou suba o teto7d da {de} em ~/.claude/contas/.ordem; as abas voltam sozinhas para ela em até 2 min"),
+        ));
+    }
+    let v = mudanca.filter(|_| subiu)?;
+    Some((
+        format!("a fila de prioridade foi reordenada ({}) e a {para} ficou à frente da {de}", quando(v)),
+        format!("suba a {de} de volta pelas setas do rodapé; as abas voltam sozinhas para ela em até 2 min"),
+    ))
+}
+
+/// O aviso de uma rodada: as abas que trocaram sem pedido, por conta de origem e destino.
+fn texto_do_aviso(trocas: &[(String, String, String, String)]) -> String {
+    let mut grupos: Vec<(&(String, String, String, String), usize)> = Vec::new();
+    for t in trocas {
+        match grupos.iter_mut().find(|(g, _)| *g == t) {
+            Some((_, n)) => *n += 1,
+            None => grupos.push((t, 1)),
+        }
+    }
+    grupos
+        .iter()
+        .map(|((de, para, motivo, desfazer), n)| {
+            let abas = if *n == 1 { "1 aba saiu".to_string() } else { format!("{n} abas saíram") };
+            format!("{abas} da {de} para a {para} sem pedido seu: {motivo}. Para desfazer: {desfazer}.")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Uma rodada. Devolve o objeto da resposta (sem `versao`).
 pub fn rodada() -> Value {
     if contas::gerente_externo() {
@@ -147,13 +211,21 @@ pub fn rodada() -> Value {
     if trava.try_lock().is_err() {
         return json!({ "ok": true, "estado": "em-andamento", "alteradas": [], "pendentes": [] });
     }
+    let anterior: Registro = std::fs::read_to_string(arquivo()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let aviso_vigente = anterior.aviso.as_ref().filter(|a| a.ate > agora()).map(|a| a.texto.clone());
+    // O login que não se lê com o Chaveiro trancado (ou o securityd fora do ar) não é conta que acabou: nenhuma aba sai
+    // da conta em que está; a próxima rodada olha de novo.
+    if let Some(por) = crate::contas::credencial::chaveiro_indisponivel() {
+        return json!({ "ok": true, "estado": "chaveiro-trancado", "detalhe": format!("{por}: nenhuma aba troca de conta até ele voltar"), "alteradas": [], "pendentes": [], "aviso": aviso_vigente });
+    }
     let Ok(r) = daemon::listar() else {
-        return json!({ "ok": true, "estado": "sem-keepd", "alteradas": [], "pendentes": [] });
+        return json!({ "ok": true, "estado": "sem-keepd", "alteradas": [], "pendentes": [], "aviso": aviso_vigente });
     };
     let contas = contas::listar(true);
     let linhas = uso::medir(false, None);
+    // Depois da medição: um bloqueio criado nesta rodada não pode ser mais velho que a medição que ela acabou de fazer
+    // (uma medição mais nova que o bloqueio o desfaz).
     let t = agora();
-    let anterior: Registro = std::fs::read_to_string(arquivo()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     let mut bloqueios = anterior.limites.clone();
     bloqueios.retain(|_, b| b.ate > t);
     let mut culpas = anterior.culpas.clone();
@@ -254,6 +326,11 @@ pub fn rodada() -> Value {
     let mut alteradas = Vec::new();
     let mut pendentes = Vec::new();
     let mut esperas = BTreeMap::new();
+    // As trocas sem pedido desta rodada: (de, para, motivo, como desfazer), e as novidades para as abas gerais.
+    let mut sem_pedir: Vec<(String, String, String, String)> = Vec::new();
+    let mut novidades = Vec::new();
+    let mudanca = contas::mudancas::vista()
+        .filter(|v| v.mudou_ms > 0 && crate::contas::donos::agora_ms().saturating_sub(v.mudou_ms) < REORDENADA_HA_MS);
     for s in &seguidoras {
         let i = &s.ia;
         let refe = |motivo: &str, detalhe: &str| json!({ "ws": i.workspace, "aba": i.aba, "motivo": motivo, "detalhe": detalhe });
@@ -326,7 +403,24 @@ pub fn rodada() -> Value {
             interromper: false,
         };
         match trocar::trocar(&p) {
-            Ok(feito) => alteradas.push(json!({ "ws": i.workspace, "aba": i.aba, "feito": feito })),
+            Ok(feito) => {
+                alteradas.push(json!({ "ws": i.workspace, "aba": i.aba, "feito": feito }));
+                if let Some(de) = atual {
+                    let teto = de.weekly_cap.filter(|_| reservada(de));
+                    let (rotulo_de, rotulo_para) = (trocar::rotulo_em(&contas, &de.order_key), trocar::rotulo_em(&contas, &alvo.order_key));
+                    if let Some((motivo, desfazer)) = sem_pedido(&rotulo_de, &rotulo_para, teto, atual_livre && abaixo, mudanca.as_ref()) {
+                        novidades.push(crate::geral::Evento {
+                            quando_ms: crate::contas::donos::agora_ms(),
+                            workspace: i.workspace.clone(),
+                            aba: i.aba,
+                            nome: String::new(),
+                            tipo: "conta".into(),
+                            texto: format!("saiu da {rotulo_de} para a {rotulo_para} sem pedido seu: {motivo}. Para desfazer: {desfazer}."),
+                        });
+                        sem_pedir.push((rotulo_de, rotulo_para, motivo, desfazer));
+                    }
+                }
+            }
             Err(e) => {
                 // Trabalho em segundo plano pode durar dias: não reabrir a mesma
                 // pergunta a cada rodada.
@@ -339,7 +433,13 @@ pub fn rodada() -> Value {
             }
         }
     }
-    let novo = Registro { limites: bloqueios, esperas, alvo: alvo.map(|c| c.order_key.clone()), culpas };
+    let aviso = if sem_pedir.is_empty() {
+        anterior.aviso.clone().filter(|a| a.ate > t)
+    } else {
+        crate::geral::anotar(&novidades);
+        Some(Aviso { texto: texto_do_aviso(&sem_pedir), ate: t + AVISO_POR })
+    };
+    let novo = Registro { limites: bloqueios, esperas, alvo: alvo.map(|c| c.order_key.clone()), aviso: aviso.clone(), culpas };
     if let Ok(texto) = serde_json::to_vec_pretty(&novo) {
         let tmp = arquivo().with_extension("json.tmp");
         if std::fs::write(&tmp, texto).is_ok() {
@@ -353,6 +453,7 @@ pub fn rodada() -> Value {
         "alvo": alvo.map(|c| c.order_key.clone()),
         "alteradas": alteradas,
         "pendentes": pendentes,
+        "aviso": aviso.map(|a| a.texto),
     })
 }
 
@@ -366,6 +467,29 @@ mod testes {
     use super::*;
     use crate::abas::testes::linha;
     use crate::contas::Motor;
+
+    #[test]
+    fn a_troca_sem_pedido_diz_o_motivo_e_como_desfazer() {
+        let mudou = contas::mudancas::Vista { texto: String::new(), mudou_ms: 1_795_000_000_000, por: "arquivo editado por fora".into() };
+        // O teto da semanal: com a mudança da fila, de onde ela veio.
+        let (motivo, desfazer) = sem_pedido("IA·1", "IA·3", Some(75.0), false, Some(&mudou)).unwrap();
+        assert!(motivo.starts_with("a IA·1 passou do teto de 75% da semana que a fila de prioridade dá a ela (a fila de prioridade mudou por último: arquivo editado por fora, em "), "{motivo}");
+        assert!(desfazer.starts_with("tire ou suba o teto7d da IA·1"), "{desfazer}");
+        assert!(sem_pedido("IA·1", "IA·3", Some(75.0), false, None).unwrap().0.ends_with("dá a ela"), "sem mudança recente, só o teto");
+        // A fila reordenada: a aba sobe para a nova primeira.
+        let (motivo, desfazer) = sem_pedido("IA·2", "IA·1", None, true, Some(&mudou)).unwrap();
+        assert!(motivo.starts_with("a fila de prioridade foi reordenada (arquivo editado por fora, em ") && motivo.ends_with("e a IA·1 ficou à frente da IA·2"), "{motivo}");
+        assert!(desfazer.starts_with("suba a IA·2 de volta pelas setas do rodapé"), "{desfazer}");
+        // A volta à primeira conta depois de um limite, sem a fila mudar, e a troca de quem está no limite: as de sempre.
+        assert_eq!(sem_pedido("IA·2", "IA·1", None, true, None), None);
+        assert_eq!(sem_pedido("IA·1", "IA·2", None, false, Some(&mudou)), None);
+        // Várias abas da mesma troca, numa frase só.
+        let t = |de: &str| (de.to_string(), "IA·3".to_string(), "m".to_string(), "d".to_string());
+        assert_eq!(
+            texto_do_aviso(&[t("IA·1"), t("IA·1"), t("IA·2")]),
+            "2 abas saíram da IA·1 para a IA·3 sem pedido seu: m. Para desfazer: d. 1 aba saiu da IA·2 para a IA·3 sem pedido seu: m. Para desfazer: d."
+        );
+    }
 
     #[test]
     fn o_transcrito_cala_a_tela_so_quando_a_conversa_nao_esta_parada() {

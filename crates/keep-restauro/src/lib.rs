@@ -15,18 +15,21 @@
 //! caminho para uma sessão abrir outra e o dos links `claude-cli://`) e `keep
 //! continuar` (a conversa que parou numa queda de login, de rede ou de limite
 //! recebe "continue" quando a causa passa), o adormecer (a conversa parada há
-//! 12 h sai da memória e volta quando a aba é mostrada) e a importação das abas
-//! de outro computador (`importar`).
+//! 12 h sai da memória e volta quando a aba é mostrada), o controle da memória
+//! (`memoria`: hibernar com ela apertada, segurar abas novas na `fila`) e a
+//! importação das abas de outro computador (`importar`).
 
 pub mod adormecer;
 pub mod cli;
 pub mod continuar;
 pub mod daemon;
 pub mod deeplink;
+pub mod fila;
 pub mod geral;
 pub mod importar;
 pub mod links;
 pub mod membro_json;
+pub mod memoria;
 pub mod nova;
 pub mod protocolo;
 pub mod restaurar;

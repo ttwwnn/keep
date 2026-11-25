@@ -22,6 +22,7 @@
 //! keep geral mandar --workspace W --aba N --texto T  → digita T na aba parada de caixa vazia, e Enter
 //! keep geral fechar --workspace W --aba N            → fecha a aba (nunca a geral, nem a que trabalha)
 //! keep geral iniciar --workspace W --aba N           → a única aba do workspace novo vira a geral, já no Claude
+//!                                                      (sem memória, quando houver: a fila de memória)
 //! keep geral responder --workspace W --aba N (--opcao K | --texto T)  → responde a pergunta em que a aba espera
 //! ```
 
@@ -387,6 +388,12 @@ pub fn rodada(seco: bool) -> Result<Value, String> {
             relato.push(json!({ "workspace": ws, "situacao": "aba geral aberta há pouco; espero" }));
             continue;
         }
+        // Uma conversa a mais com a memória apertada (ou no teto de conversas vivas) não: a próxima rodada tenta.
+        let memoria = crate::memoria::Situacao::de(&v.lista);
+        if let Some(porque) = memoria.falta(1) {
+            relato.push(json!({ "workspace": ws, "situacao": format!("memória cheia ({porque}; {}): a aba geral espera", memoria.resumo()) }));
+            continue;
+        }
         if seco {
             relato.push(json!({ "workspace": ws, "situacao": "abriria a aba geral" }));
             continue;
@@ -577,7 +584,14 @@ pub fn rodada(seco: bool) -> Result<Value, String> {
 /// A primeira aba de um workspace que a pessoa acabou de criar vira a aba geral dele (pedido de 24/11/2026: o
 /// workspace novo já entra no Claude, sem uma aba a mais): o Claude sobe no shell dela, ela leva o nome do workspace
 /// e fica guardada. Os apps chamam logo depois de criar o workspace; só a aba sozinha de um workspace sem aba geral.
+/// Com a memória apertada (ou no teto de conversas vivas), as paradas hibernam antes e, se ainda faltar, o Claude
+/// sobe quando houver memória (a fila de memória, `fila::iniciar`).
 pub fn iniciar(ws: &str, aba: u32) -> Result<Value, String> {
+    crate::fila::iniciar(ws, aba)
+}
+
+/// `iniciar`, já com lugar na memória.
+pub(crate) fn iniciar_ja(ws: &str, aba: u32) -> Result<Value, String> {
     let _trava = crate::Trava::esperar(".geral.lock", Duration::from_secs(60)).ok_or("outra rodada não terminou")?;
     let v = Visao::agora()?;
     let soltas: Vec<u32> = v.abas(ws).iter().map(|a| a.aba).collect();
@@ -603,6 +617,15 @@ pub fn iniciar(ws: &str, aba: u32) -> Result<Value, String> {
     crate::nomear_no_app(&v.amb, v.nasceu, &[(ws.to_string(), aba, chamado)], true);
     registrar(&format!("{ws}: a aba {aba}, a primeira do workspace novo, é a geral"));
     Ok(json!({ "versao": crate::VERSAO, "ok": true, "workspace": ws, "aba": aba }))
+}
+
+/// As abas gerais do keepd `k`: (workspace, aba).
+pub(crate) fn do_keepd(k: &Keepd) -> Vec<(String, u32)> {
+    let a: Arquivo = crate::ler(&arquivo()).unwrap_or_default();
+    if !a.keepd.mesmo(k) {
+        return Vec::new();
+    }
+    a.abas.iter().filter(|g| g.aba != 0).map(|g| (g.workspace.clone(), g.aba)).collect()
 }
 
 /// As abas gerais deste keepd, para o app desenhar (o do macOS lê o arquivo; o do Windows pergunta).

@@ -93,14 +93,20 @@ pub fn ia(args: &[String]) -> i32 {
             }
             Some("mover") => {
                 let (Some(chave), Some(sentido)) = (a.posicoes.get(2), a.posicoes.get(3)) else {
-                    return uso_errado("keep ia ordem mover <chave> cima|baixo");
+                    return uso_errado("keep ia ordem mover <chave> cima|baixo [--por=setas|menu]");
                 };
                 let cima = match sentido.as_str() {
                     "cima" => true,
                     "baixo" => false,
                     _ => return uso_errado("o sentido é cima ou baixo"),
                 };
-                match contas::mover(chave, cima) {
+                // De onde veio, para o registro das mudanças da ordem: as setas do rodapé dizem `--por=setas`.
+                let por = match a.opcao("por") {
+                    Some("setas") => "setas do rodapé",
+                    Some("menu") => "menu",
+                    _ => "keep ia ordem",
+                };
+                match contas::mover(chave, cima, por) {
                     Ok(ordem) => responde(json!({ "ok": true, "ordem": ordem })),
                     Err(detalhe) => responde(recusa("sem-conta", &detalhe)),
                 }

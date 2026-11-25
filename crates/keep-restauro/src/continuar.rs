@@ -824,6 +824,8 @@ pub fn cli(args: &[String]) -> i32 {
     // faz vai ao `geral.log`; um erro dela não muda a resposta desta.
     if !tem("--seco") && !tem("--status") {
         let _ = crate::geral::rodada(false);
+        // E a fila das abas novas que a memória segurou anda (`fila`), na mesma batida.
+        let _ = crate::fila::andar();
     }
     match resposta {
         Ok(v) => {

@@ -6,8 +6,9 @@
 //    time, and a new picture for the next restart;
 //  - the conversations a dropped login, network or usage limit stopped (`keep
 //    continuar`, every 15 s): they are told to continue when the cause is gone;
-//  - the conversations left alone for twelve hours out of sight (`keep restauro
-//    adormecer`, every 5 min): they leave memory, each tab kept with its shell,
+//  - the conversations left alone for twelve hours out of sight, and with memory
+//    tight the ones stopped ten minutes, longest first, until it eases (`keep
+//    restauro adormecer`, every minute): they leave memory, each tab kept with its shell,
 //    and come back as the tab is shown (`keep restauro acordar`); a tab can be put
 //    to sleep at once from its row (the zzz), and the tabs asleep are asked of the
 //    core (`keep restauro adormecidas`) for their titles to be struck through;
@@ -334,7 +335,7 @@ export function startChores(): void {
   void keepPicture(true);
   setInterval(() => void keepPicture(false), 30_000);
   setInterval(() => void resumeStopped(), 15_000);
-  setInterval(() => void sleepIdle(), 300_000);
+  setInterval(() => void sleepIdle(), 60_000);
   void readDormant();
   // Not while the window is hidden: the titles are looked at, and a look asks again within five seconds.
   void readGeneral();

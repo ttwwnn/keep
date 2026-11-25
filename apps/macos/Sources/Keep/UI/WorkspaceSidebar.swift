@@ -160,9 +160,14 @@ struct WorkspaceSidebar: View {
             || (general.claudeActivity == .doneUnseen && !(general.isActive && row.isActive))
     }
 
-    /// The workspace's general tab, which its header stands for.
+    /// The workspace's general tab, which its header stands for. Its turn over out of sight lights the header lime
+    /// only once every tab under it has finished (pedido de 25/11/2026); until then the header reads it as just over,
+    /// with the dots of the tabs still at work.
     private func generalTab(of row: SessionSnapshot.SidebarRow) -> SessionSnapshot.SidebarTab? {
-        row.tabRows.first(where: \.general)
+        guard var general = row.tabRows.first(where: \.general) else { return nil }
+        let held = row.tabRows.contains { !$0.general && ClaudeActivity.holdsHeader($0.claudeActivity, busy: $0.busy, asleep: $0.asleep) }
+        if held && general.claudeActivity == .doneUnseen { general.claudeActivity = .done }
+        return general
     }
 
     /// What the fold animation is keyed on: only the facts that change the

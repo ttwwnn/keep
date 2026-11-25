@@ -122,4 +122,15 @@ if let last = Attention.lastBreath(since: since) {
 check(Attention.lastBreath(since: nil) == nil, "a tab not waiting does not breathe")
 
 print("\(cases - failures)/\(cases) ok")
+// The workspace header's lime waits for every tab under it (pedido de 25/11/2026): a turn running, work behind a
+// finished turn or a question holds it; a finished, idle or asleep tab does not.
+check(ClaudeActivity.holdsHeader(.working, busy: true, asleep: false), "header held by a turn running")
+check(ClaudeActivity.holdsHeader(.waitingForWorkflow, busy: false, asleep: false), "header held by work behind a turn")
+check(ClaudeActivity.holdsHeader(.waitingForYou, busy: false, asleep: false), "header held by a question to the person")
+check(ClaudeActivity.holdsHeader(nil, busy: true, asleep: false), "header held by another program at work")
+check(!ClaudeActivity.holdsHeader(.done, busy: false, asleep: false), "a finished tab lets the header go lime")
+check(!ClaudeActivity.holdsHeader(.doneUnseen, busy: false, asleep: false), "a finished tab not yet seen too")
+check(!ClaudeActivity.holdsHeader(nil, busy: false, asleep: false), "an idle shell too")
+check(!ClaudeActivity.holdsHeader(.working, busy: true, asleep: true), "an asleep tab counts as finished")
+
 exit(failures == 0 ? 0 : 1)

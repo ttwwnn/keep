@@ -88,6 +88,10 @@ fn so_a_aba_parada_e_livre_fora_de_vista_adormece_e_volta_ao_ser_mostrada() {
         std::env::set_var("KEEP_STATE_DIR", &app);
         std::env::set_var("KEEP_IA_CLAUDE_BIN", bin.join("claude"));
         std::env::set_var("KEEP_ADORMECER_PARADA_S", "3600");
+        // A memória folgada: só a regra das 12 h (aqui, 1 h) decide (a apertada é o teste `memoria`).
+        let memoria = raiz.join("memoria.json");
+        std::fs::write(&memoria, r#"{"totalMb":16384,"disponivelMb":12000}"#).unwrap();
+        std::env::set_var("KEEP_MEMORIA_TESTE", &memoria);
         // A conversa retomada pergunta se confia na pasta, como o Claude 2.1.30x numa pasta nova.
         std::env::set_var("FALSA_CONFIANCA", "1");
         std::env::set_var("SHELL", "/bin/sh");
@@ -277,6 +281,18 @@ fn so_a_aba_parada_e_livre_fora_de_vista_adormece_e_volta_ao_ser_mostrada() {
         format!(r#"{{"daemonStart":{nasceu},"tabs":{{"A\u001f{parada}":"Meu nome"}},"workspaces":{{}}}}"#),
     )
     .unwrap();
+    // Acordada há pouco e sem mensagem desde então: a rodada não a faz dormir de novo antes da mensagem que a acordou
+    // (sem isto, a rodada das 12 h hibernava a aba acordada antes de o pedido entrar).
+    let r = adormecer::adormecer(&HashSet::new(), false).unwrap();
+    assert_eq!(r["adormecidas"], 0, "{r:#}");
+    assert!(situacao(&r, parada).starts_with("acordada há ") && situacao(&r, parada).ends_with("min, à espera da mensagem que a acordou"), "{r:#}");
+    // Acordada há 2 h (a marca do acordar, para trás), sem mensagem: a parada conta do acordar, e ela dorme.
+    let marcas = raiz.join("restauro/acordadas.json");
+    let mut m: serde_json::Value = serde_json::from_slice(&std::fs::read(&marcas).unwrap()).unwrap();
+    for x in m["abas"].as_array_mut().unwrap() {
+        x["em_ms"] = (x["em_ms"].as_u64().unwrap() - 2 * 3600 * 1000).into();
+    }
+    std::fs::write(&marcas, m.to_string()).unwrap();
     let r = adormecer::adormecer(&HashSet::new(), false).unwrap();
     assert_eq!(r["adormecidas"], 1, "{r:#}");
     assert!(tela_tem("A", parada, "Resume this session", 10));

@@ -12,6 +12,7 @@ import {
   breathColor,
   breathPhase,
   declaredMode,
+  holdsHeader,
   isAtWork,
   lastBreath,
   modeColor,
@@ -396,6 +397,20 @@ describe("the colours a tab is titled in", () => {
   });
   it("a tab not waiting does not breathe", () => {
     expect(lastBreath(undefined)).toBeUndefined();
+  });
+});
+
+describe("the workspace header's lime", () => {
+  it("waits for every tab under it: a turn running, work behind a turn or a question holds it", () => {
+    expect(holdsHeader("working", true, false)).toBe(true);
+    expect(holdsHeader("waitingForWorkflow", false, false)).toBe(true);
+    expect(holdsHeader("waitingForYou", false, false)).toBe(true);
+    expect(holdsHeader(undefined, true, false)).toBe(true);
+  });
+  it("a finished, idle or asleep tab lets it go lime", () => {
+    expect(holdsHeader("done", false, false)).toBe(false);
+    expect(holdsHeader(undefined, false, false)).toBe(false);
+    expect(holdsHeader("working", true, true)).toBe(false);
   });
 });
 

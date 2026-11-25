@@ -155,8 +155,10 @@ final class AIChores {
     /// A conversation stopped by a login, network or usage-limit drop gets
     /// its "continue" this soon after the cause clears.
     nonisolated static let resumeEvery: TimeInterval = 15
-    /// A conversation left alone for twelve hours leaves memory within this.
-    nonisolated static let sleepEvery: TimeInterval = 300
+    /// A conversation left alone for twelve hours leaves memory within this,
+    /// and so do the ones stopped ten minutes when memory runs tight (the
+    /// core measures it each round and does nothing more when it is not).
+    nonisolated static let sleepEvery: TimeInterval = 60
 
     func start() {
         let sync = Timer(timeInterval: Self.syncEvery, repeats: true) { [weak self] _ in
@@ -226,9 +228,10 @@ final class AIChores {
     }
 
     /// The conversations left alone for twelve hours out of sight leave
-    /// memory; their tabs stay, and each comes back as its tab is shown
-    /// (`keep restauro adormecer`). A tab put on screen while the round ran
-    /// is woken at its end, in case the round got to it first.
+    /// memory, and with memory tight the ones stopped ten minutes, longest
+    /// first, until it eases; their tabs stay, and each comes back as its tab
+    /// is shown (`keep restauro adormecer`). A tab put on screen while the
+    /// round ran is woken at its end, in case the round got to it first.
     private func sleep() {
         guard !sleeping, daemonUp else { return }
         sleeping = true
@@ -279,6 +282,10 @@ final class AIChores {
                 self?.syncing = false
                 switch answer {
                 case .success(let round):
+                    // A tab taken off its account without being asked — a
+                    // weekly cap, the order changed — is told in the footer
+                    // for as long as the core says it.
+                    UsageMonitor.shared.warnOfAccounts(round["aviso"] as? String)
                     let moved = (round["alteradas"] as? [Any])?.count ?? 0
                     if moved > 0 {
                         Trace.log("ia", "sincronizar: \(moved) aba(s) para \(round["alvo"] as? String ?? "?")")

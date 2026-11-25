@@ -46,6 +46,7 @@ import {
   usageClock,
   usageLines,
   usageNotice,
+  accountWarning,
 } from "../iaStore";
 import { openSignInMenu } from "./AccountMenu";
 import * as icon from "./icons";
@@ -378,6 +379,11 @@ export function UsageFooter() {
         </button>
       </div>
       {usageNotice.value && <div class="usage-notice">{usageNotice.value}</div>}
+      {accountWarning.value && (
+        <div class="usage-notice" role="status" aria-label={`Troca de conta sem pedido: ${accountWarning.value}`}>
+          {accountWarning.value}
+        </div>
+      )}
       <div class={`usage-lines ${folded ? "folded" : ""}`}>
         {lines.map((line, i) =>
           folded ? (

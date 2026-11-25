@@ -15,11 +15,17 @@
 //!       [--nome "rótulo"]  nome da aba no app      [--sem-enter]  digita e não aperta Enter
 //!   keep nova --listar                                       workspaces e abas
 //!
-//! Saída 0: aba aberta e comando enviado (imprime o workspace, a aba e o comando).
+//! Com a memória apertada ou no teto de conversas vivas (`memoria`), as paradas hibernam antes; se ainda faltar, o
+//! pedido vai para a fila (`fila`) e abre sozinho quando houver memória.
+//!
+//! Saída 0: aba aberta e comando enviado (imprime o workspace, a aba e o comando), ou o pedido na fila de memória
+//! (imprime "na fila: memória cheia (…)").
 //! 1: o Keep fechado, workspace ou pasta que não existe, prompt que não apareceu.
 //! 2: uso errado.
 
 use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
 
 use keep_ia::caminhos;
 use keep_ia::daemon;
@@ -28,7 +34,7 @@ use keep_ia::linha::{self, Subida};
 const TAMANHO_PADRAO: (u16, u16) = (144, 47);
 
 /// O que a conversa nova recebe.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Conteudo {
     /// Um arquivo que ela lê inteiro e segue.
     Passagem(PathBuf),
@@ -38,7 +44,7 @@ pub enum Conteudo {
     Argumentos(Vec<String>),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pedido {
     pub workspace: Option<String>,
     pub pasta: PathBuf,
@@ -183,6 +189,20 @@ pub fn abrir(p: &Pedido) -> Result<(String, u32, String), String> {
     Ok((ws, tab, texto))
 }
 
+/// O pedido como a fila de memória o guarda: o texto já no arquivo que a aba vai ler, e a pasta conferida agora (quem
+/// pediu fica sabendo já, e não 12 h depois).
+pub(crate) fn para_a_fila(p: &Pedido) -> Result<Pedido, String> {
+    if !p.pasta.is_dir() {
+        return Err(format!("pasta inexistente: {}", p.pasta.display()));
+    }
+    let conteudo = match &p.conteudo {
+        Conteudo::Pedido(t) => Conteudo::Passagem(grava_pedido(t)?),
+        Conteudo::Passagem(a) if !a.is_file() => return Err(format!("passagem inexistente: {}", a.display())),
+        outro => outro.clone(),
+    };
+    Ok(Pedido { conteudo, ..p.clone() })
+}
+
 fn grava_pedido(texto: &str) -> Result<PathBuf, String> {
     let pasta = keep_ia::caminhos::claude().join("handoffs").join("abas");
     std::fs::create_dir_all(&pasta).map_err(|e| e.to_string())?;
@@ -226,9 +246,17 @@ pub fn cli(args: &[String]) -> i32 {
             }
         };
     };
-    match abrir(&pedido) {
-        Ok((ws, tab, texto)) => {
+    match crate::fila::nova(&pedido) {
+        Ok(crate::fila::Desfecho::Aberta(ws, tab, texto)) => {
             println!("{ws} aba {tab}: {texto}");
+            0
+        }
+        // Para quem chamou (a aba geral): o pedido está guardado e vai abrir; repetir só o poria duas vezes na fila.
+        Ok(crate::fila::Desfecho::NaFila { porque, resumo, posicao }) => {
+            println!(
+                "na fila: memória cheia ({resumo}). Motivo: {porque}. Posição {posicao} da fila: a aba abre sozinha, pela \
+                 ordem, quando houver memória, e o Keep avisa a aba geral. Espere; não peça de novo."
+            );
             0
         }
         Err(e) => {

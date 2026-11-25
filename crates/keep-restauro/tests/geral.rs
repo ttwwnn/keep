@@ -70,6 +70,10 @@ fn a_aba_geral_abre_sabe_das_outras_confere_as_novas_e_fecha_as_resolvidas() {
         std::env::set_var("KEEP_RESTAURO_ESTADO", &restauro);
         std::env::set_var("KEEP_STATE_DIR", &app);
         std::env::set_var("KEEP_IA_CLAUDE_BIN", bin.join("claude"));
+        // A memória folgada (a da máquina que roda o teste não decide se a aba geral abre).
+        let memoria = raiz.join("memoria.json");
+        std::fs::write(&memoria, r#"{"totalMb":16384,"disponivelMb":12000}"#).unwrap();
+        std::env::set_var("KEEP_MEMORIA_TESTE", &memoria);
         // A resposta vai à aba geral sem os 10 min de espera.
         std::env::set_var("KEEP_GERAL_QUIETO_S", "0");
         // Conversa nova demais: ainda sem aba geral (o teste muda para 0 depois de ver).

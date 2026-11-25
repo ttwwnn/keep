@@ -278,13 +278,14 @@ sem "esc to interrupt" e sem a linha do spinner ("✶ Imagining… (36m 2s") log
 
 # A conversa parada há 12 h sai da memória, e a aba fica
 
-Cada Claude Code aberto pesa de 200 a 400 MB, e as abas esquecidas há um dia
+Cada Claude Code aberto pesa de 200 a 600 MB, e as abas esquecidas há um dia
 somam gigabytes num Mac de 8 GB. Desde 21/10/2026 é o padrão do Keep: a
 conversa parada há mais de 12 h é fechada, a aba segue no Keep com o shell, e
-a conversa volta quando a aba é mostrada.
+a conversa volta quando a aba é mostrada. Com a memória apertada, a parada há
+10 min também (abaixo, "A memória do computador").
 
 - **Adormecer** (`keep restauro adormecer`, o app 20 s depois de abrir e a cada
-  5 min): sai do Claude pelo `/exit` a aba que está fora de vista em todas as
+  minuto): sai do Claude pelo `/exit` a aba que está fora de vista em todas as
   janelas (o app passa as que mostra em `--vista W/N`), livre (caixa vazia,
   nada rodando, nenhuma pergunta, nada em segundo plano no rodapé) e cuja
   última fala (da pessoa ou do Claude) no transcrito tem mais de 12 h. O
@@ -308,6 +309,10 @@ a conversa volta quando a aba é mostrada.
   parâmetros, a conta, a pasta presa). Não volta se a conversa já roda em
   outro lugar ou se a aba roda outra coisa: a pessoa tomou a aba. Uma aba
   posta na tela durante a rodada é acordada no fim dela.
+  A acordada não volta a dormir antes da mensagem que a acordou (a aba geral acorda uma aba para mandar um pedido;
+  sem isto, a rodada das 12 h a hibernava de novo antes de o pedido entrar): sem fala nenhuma depois do
+  acordar, a rodada a deixa (`acordada há N min, à espera da mensagem que a acordou`) por até 30 min; e a parada dela
+  conta do acordar, não da última fala de dias atrás (`acordadas.json`, por keepd). O zzz da pessoa vale sempre.
   Uma aba presa a uma conta do Claude que está no limite pela última medição
   volta seguindo a ordem, na primeira conta livre da fila, quando há outra
   livre (pedido de 12/11/2026); vale também para a restauração depois de um
@@ -336,7 +341,51 @@ keep restauro adormecidas
 keep restauro acordar --workspace W --aba N
 ```
 
-`KEEP_ADORMECER_PARADA_S` troca as 12 h (os testes).
+`KEEP_ADORMECER_PARADA_S` troca as 12 h, e `KEEP_ADORMECER_APERTO_S` os 10 min da memória apertada (os testes).
+
+# A memória do computador
+
+Pedido de 25/11/2026: cada conversa do Claude viva pesa centenas de MB, e as abas que a aba geral abre, somadas às
+da pessoa, podem levar o swap ao limite, os comandos a levar segundos e o sistema a derrubar serviços. O Keep mede a
+memória e não a deixa estourar (`keep_restauro::memoria`):
+
+- **A leitura**: no macOS, o nível de pressão do kernel (`kern.memorystatus_vm_pressure_level`: 1 normal, 2 alerta,
+  4 crítica), a memória disponível (livre, inativa, purgeável e especulativa, de `host_statistics64`, a mesma fonte do
+  medidor "Memória RAM" do app) e o swap (`vm.swapusage`); no Windows, `GlobalMemoryStatusEx` (a física disponível).
+- **Apertada**: pressão em alerta (ou crítica), menos de 15% da RAM disponível, ou o swap passando da metade.
+- **Teto de conversas vivas**: (RAM − 3 GB) / 450 MB, no mínimo uma (11 num Mac de 8 GB, 29 num de 16 GB). Conta o
+  Claude e o Codex vivos nas abas.
+- **Hibernar pela memória**: apertada, ou com mais conversas vivas que o teto, a rodada do adormecer (o app, a cada
+  minuto) tira do Claude as paradas há 10 min (turno encerrado, sem esperar a pessoa, sem trabalho em segundo plano,
+  fora de vista), a parada há mais tempo primeiro e a aba geral por último, uma por vez, medindo de novo entre elas,
+  até aliviar. As guardas de sempre valem (rascunho de feedback, worktree, conversa sem fala, a recém-acordada). A
+  resposta traz `memoria` (`aperto`, o que ainda `falta` e o `resumo`), e cada aba diz `adormecida pela memória (…)`.
+- **Segurar abas novas** (`keep nova` e `keep geral iniciar`): sem lugar para mais uma (memória apertada, ou no teto),
+  as paradas hibernam primeiro (`abrir_vaga`, poupando as abas que o app mostrou nos últimos 5 min, de
+  `vistas.json`: a rodada grava as que o app mostra, e o acordar, cada aba mostrada); se ainda faltar, o pedido vai
+  para a fila (`fila.json`) e `keep nova` responde "na fila: memória cheia (X livres, N conversas vivas)", com o
+  motivo e a posição. O texto do pedido vai já para o arquivo que a aba vai ler; a pasta é conferida na hora.
+- **A fila anda** a cada 15 s (`keep continuar`, que os dois apps rodam): pela ordem, enquanto couber mais uma
+  (hibernando paradas no máximo uma vez por minuto). A aba geral do workspace fica sabendo, pelas novidades, de cada
+  pedido que abriu ("abriu da fila de memória o pedido das HH:MM («nome»)") e do que saiu sem abrir (erro, ou 12 h na
+  fila). Pedir de novo só põe o pedido duas vezes na fila: o papel da aba geral diz que "na fila" é esperar.
+- **Acordar é sempre permitido**: a aba que a pessoa mostra acorda mesmo com a memória cheia; a rodada seguinte
+  reequilibra hibernando outra parada.
+- **A aba geral automática** (a rodada que abre uma para o workspace) também espera, sem fila: a rodada seguinte tenta.
+
+```
+keep restauro memoria    a leitura, as conversas vivas, o teto, o aperto e se cabe mais uma
+keep restauro fila       os pedidos de aba nova que esperam memória
+```
+
+`KEEP_MEMORIA_TESTE` (só nos testes) é um arquivo com a leitura (`{"totalMb", "disponivelMb", "swapUsadoMb",
+"swapTotalMb", "pressao"}`), ou uma lista delas, lidas uma por vez (a última fica).
+
+Testes: `cargo test -p keep-restauro --lib memoria` (os gatilhos, o teto, a leitura do sistema e a de teste) e
+`cargo build -p keep-ia --examples && cargo test -p keep-restauro --test memoria` (daemon do teste, IA falsa em quatro
+abas: folgada, nada; apertada, a parada há mais tempo primeiro e a geral por último, até aliviar; a recém-acordada fica
+até a mensagem e dorme depois dela; `keep nova` sem memória vai para a fila, que abre quando há memória e avisa a aba
+geral; no teto de conversas, o mesmo).
 
 Testes: `cargo build -p keep-ia --examples && cargo test -p keep-restauro
 --test adormecer` (daemon do teste, IA falsa em quatro abas: só a parada,
@@ -394,6 +443,7 @@ keep geral abas --workspace W                      número, nome, programa e sit
 keep geral mandar --workspace W --aba N --texto T  digita T na aba parada de caixa vazia, e Enter
 keep geral fechar --workspace W --aba N            /exit e fecha a aba (nunca a geral, nem a ocupada)
 keep geral iniciar --workspace W --aba N           a única aba do workspace novo vira a geral, já no Claude
+                                                   (sem memória, quando houver: a fila de memória)
 keep geral responder --workspace W --aba N (--opcao K | --texto T)   responde a pergunta em que a aba espera
 ```
 

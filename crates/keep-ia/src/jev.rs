@@ -54,6 +54,8 @@ const LIVRO_MAXIMO: u64 = 1 << 20;
 const SERVICO: &str = "openrouter-api-key";
 /// O nome da chave que o login cria no OpenRouter.
 const ROTULO: &str = "Jev (Keep)";
+/// O problema dito no rodapé com o Chaveiro trancado.
+const CHAVEIRO_TRANCADO: &str = "Chaveiro trancado: o saldo volta quando ele destrancar";
 
 /// O que o OpenRouter diz do crédito, em dólares.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -524,10 +526,11 @@ pub fn em_cache() -> Option<Saldo> {
 /// Uma rodada: mede se é devida (ou `forcar`). `None` quando não há chave,
 /// e o que sobrou de uma chave que foi embora some junto.
 pub fn medir(forcar: bool) -> Option<Saldo> {
-    // Chaveiro trancado (tela travada) não é chave que foi embora: apagar o
-    // arquivo aqui zeraria o livro de gastos. Fica o que já se sabia.
+    // Chaveiro trancado não é chave que foi embora: apagar o arquivo aqui
+    // zeraria o livro de gastos. Fica o que já se sabia, com o porquê, sem
+    // abrir pedido de senha; a leitura volta sozinha quando ele destrancar.
     if crate::contas::credencial::chaveiro_trancado().is_some() {
-        return em_cache();
+        return em_cache().map(|s| Saldo { problem: Some(CHAVEIRO_TRANCADO.into()), ..s });
     }
     let Some(chave) = chave() else {
         let _ = std::fs::remove_file(arquivo());
@@ -922,6 +925,61 @@ mod testes {
         let guardado = std::fs::read_to_string(arquivo()).unwrap();
         assert!(!guardado.contains("segredo"), "o cache não guarda a chave");
         assert!(em_cache().unwrap().credit.is_some());
+    }
+
+    /// Com o Chaveiro trancado (um descartável de verdade, no lugar do da pessoa), o saldo responde na hora com o que
+    /// já se sabia e "Chaveiro trancado", sem chamar o `security` (que abriria um pedido de senha) nem ir à rede; e
+    /// volta sozinho quando ele destranca.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn com_o_chaveiro_trancado_fica_a_leitura_guardada_e_o_aviso() {
+        let c = casa("jev-trancado");
+        com_chave(&c);
+        let pedidos = servidor(|p| match p.caminho.as_str() {
+            "/credits" => (200, vec![], CREDITOS.into()),
+            "/key" => (200, vec![], CHAVE.into()),
+            _ => (404, vec![], String::new()),
+        });
+        let porta = std::env::var("KEEP_IA_CLAUDE_URL").unwrap().trim_end_matches("/claude").to_string();
+        aponta(&porta);
+        assert!(medir(true).unwrap().problem.is_none());
+        let kc = c.raiz.join("trancado.keychain-db");
+        let caminho = kc.to_str().unwrap();
+        let sec = |args: &[&str]| {
+            std::process::Command::new("/usr/bin/security")
+                .env("HOME", &c.raiz)
+                .args(args)
+                .stdin(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        };
+        assert!(sec(&["create-keychain", "-p", "kit", caminho]) && sec(&["lock-keychain", caminho]));
+        // O `security` de mentira passa a falhar alto se for chamado.
+        let security = std::env::var("KEEP_IA_SECURITY").unwrap();
+        let chamado = c.raiz.join("security-chamado");
+        let original = std::fs::read(&security).unwrap();
+        std::fs::write(&security, format!("#!/bin/sh\ntouch '{}'\nexit 1\n", chamado.display())).unwrap();
+        // SAFETY: a casa (e a trava) de pé: um teste por vez mexe no ambiente.
+        unsafe { std::env::set_var("KEEP_IA_TESTE_CHAVEIRO_TRAVA", &kc) };
+        let antes = pedidos.lock().unwrap().len();
+        let inicio = std::time::Instant::now();
+        let s = medir(true).unwrap();
+        assert!(inicio.elapsed() < Duration::from_secs(2), "{:?}", inicio.elapsed());
+        assert_eq!(s.problem.as_deref(), Some(CHAVEIRO_TRANCADO));
+        assert!(s.credit.is_some(), "fica o que já se sabia");
+        assert!(!chamado.exists(), "nenhum security: abriria um pedido de senha");
+        assert_eq!(pedidos.lock().unwrap().len(), antes, "nem rede");
+        // Destrancado, volta sozinho.
+        std::fs::write(&security, original).unwrap();
+        assert!(sec(&["unlock-keychain", "-p", "kit", caminho]));
+        let mut r = le_cache();
+        r.ultimo_clique = 0.0;
+        grava_cache(&r);
+        let s = medir(true).unwrap();
+        sec(&["delete-keychain", caminho]);
+        unsafe { std::env::remove_var("KEEP_IA_TESTE_CHAVEIRO_TRAVA") };
+        assert_eq!(s.problem, None, "{s:?}");
+        assert!(pedidos.lock().unwrap().len() > antes, "mediu de novo");
     }
 
     #[test]

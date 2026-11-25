@@ -139,7 +139,13 @@ pub fn papel(ws: &str, nome: &str) -> String {
          com as mesmas opções, e responda na aba com `keep geral responder --workspace \"{ws}\" --aba N --opcao K` (o número \
          da opção) ou `--texto \"…\"`; confira a tela da aba depois.\n\
          - Aba parada em erro (API, internet, limite, o que for): retome-a o quanto antes. Veja a tela e mande `continue` \
-         (`keep geral mandar`), ou resolva o que impede."
+         (`keep geral mandar`), ou resolva o que impede.\n\
+         - A memória do computador é limitada: cada conversa viva pesa centenas de MB, e o Keep hiberna as paradas quando \
+         ela aperta. Reaproveite as abas que já existem (`keep geral mandar` à que cuida do assunto) em vez de abrir outra, \
+         e feche (`keep geral fechar`) ou hiberne (`keep restauro adormecer --agora`) as resolvidas assim que terminarem.\n\
+         - Com a memória cheia, `keep nova` responde \"na fila: memória cheia (…)\": o pedido já está guardado e a aba \
+         abre sozinha, pela ordem, quando houver memória (o Keep conta aqui). \"Na fila\" é esperar: não peça de novo nem \
+         abra por outro caminho. A memória e as conversas vivas: `keep restauro memoria`; o que espera: `keep restauro fila`."
     )
 }
 
@@ -147,7 +153,9 @@ fn lembrete(ws: &str, nome: &str) -> String {
     format!(
         "Aba geral do workspace {} no Keep: gerencia as outras abas e não executa tarefas; delega (aba nova com `keep nova \
          --workspace \"{ws}\"`, ou a aba que já cuida do assunto com `keep geral mandar`) e só coordena: lê telas, repassa \
-         perguntas, retoma abas paradas e fecha as resolvidas (keep geral abas | mandar | responder | fechar --workspace \"{ws}\").",
+         perguntas, retoma abas paradas e fecha as resolvidas (keep geral abas | mandar | responder | fechar --workspace \"{ws}\"). \
+         A memória é limitada: reaproveite as abas que existem e feche ou hiberne as resolvidas; \"na fila\" (memória cheia) \
+         é esperar a aba abrir sozinha, não pedir de novo.",
         chamado(ws, nome)
     )
 }
@@ -162,14 +170,22 @@ pub fn novidades(eventos: &[Evento]) -> String {
     eventos
         .iter()
         .map(|e| {
-            let aba = if e.nome.is_empty() { format!("aba {}", e.aba) } else { format!("aba {} «{}»", e.aba, e.nome) };
+            let aba = match (e.aba, e.nome.is_empty()) {
+                (0, true) => String::new(),
+                (0, false) => format!(" «{}»", e.nome),
+                (n, true) => format!(" aba {n}"),
+                (n, false) => format!(" aba {n} «{}»", e.nome),
+            };
             let oque = match e.tipo.as_str() {
                 "fim" => "terminou",
                 "pergunta" => "pergunta à pessoa (repita aqui e responda na aba)",
                 "erro" => "parou com erro (retome-a)",
+                "fila" => "fila de memória",
+                "conta" => "trocou de conta sem pedido (avise a pessoa)",
                 _ => "a pessoa pediu",
             };
-            format!("- {} {aba}, {oque}: {}", hora(e.quando_ms), e.texto)
+            let sep = if aba.is_empty() { "" } else { "," };
+            format!("- {}{aba}{sep} {oque}: {}", hora(e.quando_ms), e.texto)
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -245,8 +261,17 @@ mod testes {
         assert!(segunda.starts_with("Aba geral do workspace «W»") && !segunda.contains("faça X"), "{segunda}");
         // as gerais já abertas só recebem o lembrete: ele também diz que ela delega e só coordena
         assert!(segunda.contains("não executa tarefas; delega") && segunda.contains("só coordena"), "{segunda}");
+        // e que a memória é limitada, e "na fila" é esperar
+        assert!(primeira.contains("A memória do computador é limitada") && primeira.contains("\"Na fila\" é esperar"), "{primeira}");
+        assert!(segunda.contains("A memória é limitada") && segunda.contains("não pedir de novo"), "{segunda}");
         anotar(&[ev(agora_ms() + 10, "W", "pedido", "agora Y")]);
         let terceira = contexto("W", "c-1").unwrap();
         assert!(terceira.contains("agora Y") && !terceira.contains("faça X"), "{terceira}");
+        // a fila de memória e a troca de conta sem pedido também chegam; o que não é de uma aba, sem número
+        let fila = Evento { aba: 0, nome: "Relatório".into(), ..ev(agora_ms() + 20, "W", "fila", "saiu da fila") };
+        anotar(&[fila, ev(agora_ms() + 30, "W", "conta", "saiu da IA·1 para a IA·3")]);
+        let quarta = contexto("W", "c-1").unwrap();
+        assert!(quarta.contains(" «Relatório», fila de memória: saiu da fila"), "{quarta}");
+        assert!(quarta.contains("aba 7 «Compras», trocou de conta sem pedido (avise a pessoa): saiu da IA·1 para a IA·3"), "{quarta}");
     }
 }

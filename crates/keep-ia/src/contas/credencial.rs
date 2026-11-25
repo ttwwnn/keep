@@ -129,29 +129,68 @@ fn security() -> Result<String, String> {
     }
 }
 
+/// Como está o Chaveiro, pelo Security.framework, que responde sem abrir janela.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Chaveiro {
+    Aberto,
+    Trancado,
+    /// O `securityd` não respondeu (fora do ar, reiniciando).
+    SemResposta,
+}
+
+/// O Chaveiro da pessoa: o padrão (onde o `add-generic-password` grava) e o de login (onde moram os itens que o `find`
+/// acha), que costumam ser o mesmo. Com `KEEP_IA_TESTE_CHAVEIRO_TRAVA`, o descartável de um teste no lugar deles. Fora
+/// do macOS, e com o `security` de mentira dos testes (`KEEP_IA_SECURITY`), aberto. O `securityd` que não responde em
+/// 3 s (preso, reiniciando) é `SemResposta`: a pergunta fica para trás, e quem perguntou segue.
+#[cfg(target_os = "macos")]
+pub fn estado_do_chaveiro() -> Chaveiro {
+    let teste = std::env::var_os("KEEP_IA_TESTE_CHAVEIRO_TRAVA").filter(|s| !s.is_empty()).map(std::path::PathBuf::from);
+    if teste.is_none() && std::env::var("KEEP_IA_SECURITY").is_ok_and(|s| !s.is_empty()) {
+        return Chaveiro::Aberto;
+    }
+    let login = crate::caminhos::casa().join("Library/Keychains/login.keychain-db");
+    let (manda, recebe) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let estados = match &teste {
+            Some(kc) => vec![trava::estado(Some(kc))],
+            None if login.is_file() => vec![trava::estado(None), trava::estado(Some(&login))],
+            None => vec![trava::estado(None)],
+        };
+        let pior = [Chaveiro::Trancado, Chaveiro::SemResposta].into_iter().find(|e| estados.contains(e));
+        let _ = manda.send(pior.unwrap_or(Chaveiro::Aberto));
+    });
+    recebe.recv_timeout(std::time::Duration::from_secs(3)).unwrap_or(Chaveiro::SemResposta)
+}
+
+/// Fora do macOS não há Chaveiro a trancar.
+#[cfg(not(target_os = "macos"))]
+pub fn estado_do_chaveiro() -> Chaveiro {
+    Chaveiro::Aberto
+}
+
 /// Por que não chamar o `security` agora, ou `None` para seguir.
 ///
-/// Com o Chaveiro trancado e a tela travada, cada chamada do `security` abre
-/// um pedido de senha que fica órfão na tela; o Keep passa a esperar a tela
-/// destravar. O Keep só olha o estado do Chaveiro, nunca o destranca.
-/// Com o `security` de mentira dos testes (`KEEP_IA_SECURITY`), sempre segue.
-pub(crate) fn chaveiro_trancado() -> Option<String> {
-    if std::env::var("KEEP_IA_SECURITY").is_ok_and(|s| !s.is_empty()) {
-        return None;
+/// Com o Chaveiro trancado, cada chamada do `security` abre um pedido de senha: com a tela travada eles ficam órfãos
+/// na tela, e com a pessoa ali chegam em série, um a cada chamada (o `securityd` que reinicia sob falta de memória
+/// volta com o Chaveiro de login trancado). Sem resposta do `securityd`, o `security` esperaria até o prazo e
+/// morreria no meio do pedido, o que deixa o `securityd` com o pedido de um cliente que já não existe. O Keep só olha
+/// o estado do Chaveiro, nunca o destranca, e espera: a próxima rodada olha de novo.
+pub fn chaveiro_trancado() -> Option<String> {
+    match estado_do_chaveiro() {
+        Chaveiro::Aberto => None,
+        Chaveiro::Trancado => Some("o Chaveiro está trancado: espero destravar, sem abrir pedido de senha".into()),
+        Chaveiro::SemResposta => Some("o Chaveiro não responde (o securityd fora do ar): espero, sem chamar o security".into()),
     }
-    // O padrão (onde o `add-generic-password` grava) e o de login (onde moram
-    // os itens que o `find` acha), que costumam ser o mesmo. Com a tela
-    // destravada, segue como antes: a pessoa está ali para responder. Só com
-    // a tela travada, ou sem sessão gráfica, não chama.
-    #[cfg(target_os = "macos")]
-    {
-        let login = crate::caminhos::casa().join("Library/Keychains/login.keychain-db");
-        let trancado = !trava::aberto(None) || (login.is_file() && !trava::aberto(Some(&login)));
-        if trancado && trava::tela_travada() != Some(false) {
-            return Some("o Chaveiro está trancado com a tela travada: espero destravar, sem abrir pedido de senha".into());
-        }
+}
+
+/// Por que não trocar agora a conta de uma aba por causa do Chaveiro: trancado, ou sem resposta (o `securityd` fora do
+/// ar). O login que não se lê não é conta que acabou: a aba fica na conta dela e a rodada seguinte olha de novo.
+pub fn chaveiro_indisponivel() -> Option<String> {
+    match estado_do_chaveiro() {
+        Chaveiro::Aberto => None,
+        Chaveiro::Trancado => Some("o Chaveiro está trancado".into()),
+        Chaveiro::SemResposta => Some("o Chaveiro não responde (o securityd fora do ar)".into()),
     }
-    None
 }
 
 /// O Chaveiro pelo Security.framework, que responde sem abrir janela.
@@ -159,6 +198,8 @@ pub(crate) fn chaveiro_trancado() -> Option<String> {
 pub(crate) mod trava {
     use std::ffi::{c_char, c_void, CString};
     use std::path::Path;
+
+    use super::Chaveiro;
 
     #[link(name = "Security", kind = "framework")]
     unsafe extern "C" {
@@ -169,61 +210,38 @@ pub(crate) mod trava {
     #[link(name = "CoreFoundation", kind = "framework")]
     unsafe extern "C" {
         fn CFRelease(cf: *const c_void);
-        fn CFDictionaryGetValue(dicionario: *const c_void, chave: *const c_void) -> *const c_void;
-        fn CFStringCreateWithCString(alocador: *const c_void, texto: *const c_char, codificacao: u32) -> *const c_void;
-        fn CFGetTypeID(cf: *const c_void) -> usize;
-        fn CFBooleanGetTypeID() -> usize;
-        fn CFBooleanGetValue(booleano: *const c_void) -> u8;
-    }
-    #[link(name = "CoreGraphics", kind = "framework")]
-    unsafe extern "C" {
-        fn CGSessionCopyCurrentDictionary() -> *const c_void;
     }
 
     /// `kSecUnlockStateStatus`.
     const DESTRANCADO: u32 = 1;
+    /// `errSecNoDefaultKeychain`: ninguém configurou um padrão; não há o que esperar.
+    const SEM_PADRAO: i32 = -25307;
 
-    /// Se a tela da sessão está travada: `Some(true)` travada, `Some(false)`
-    /// destravada, `None` sem sessão gráfica (ssh, launchd fora da sessão).
-    pub fn tela_travada() -> Option<bool> {
-        let sessao = unsafe { CGSessionCopyCurrentDictionary() };
-        if sessao.is_null() {
-            return None;
-        }
-        // kCFStringEncodingUTF8.
-        let chave = unsafe { CFStringCreateWithCString(std::ptr::null(), c"CGSSessionScreenIsLocked".as_ptr(), 0x0800_0100) };
-        let valor = if chave.is_null() { std::ptr::null() } else { unsafe { CFDictionaryGetValue(sessao, chave) } };
-        // A chave só existe com a tela travada.
-        let travada = !valor.is_null()
-            && unsafe { CFGetTypeID(valor) == CFBooleanGetTypeID() && CFBooleanGetValue(valor) != 0 };
-        unsafe {
-            if !chave.is_null() {
-                CFRelease(chave);
-            }
-            CFRelease(sessao);
-        }
-        Some(travada)
-    }
-
-    /// Se o Chaveiro (o padrão, ou o do caminho) está destrancado, só pelo
-    /// estado (`SecKeychainGetStatus`). Na dúvida (sem Chaveiro padrão, erro
-    /// do framework), segue: o prazo do `security` continua valendo, como antes.
-    pub fn aberto(caminho: Option<&Path>) -> bool {
+    /// O estado do Chaveiro padrão, ou o do caminho, só pelo `SecKeychainGetStatus`. Um erro do framework (o
+    /// `securityd` fora do ar) é `SemResposta`.
+    pub fn estado(caminho: Option<&Path>) -> Chaveiro {
         let mut kc: *mut c_void = std::ptr::null_mut();
         let aberto_ok = match caminho {
             None => unsafe { SecKeychainCopyDefault(&mut kc) },
             Some(p) => match CString::new(p.to_string_lossy().as_bytes()) {
                 Ok(c) => unsafe { SecKeychainOpen(c.as_ptr(), &mut kc) },
-                Err(_) => return true,
+                Err(_) => return Chaveiro::Aberto,
             },
         };
+        if aberto_ok == SEM_PADRAO {
+            return Chaveiro::Aberto;
+        }
         if aberto_ok != 0 || kc.is_null() {
-            return true;
+            return Chaveiro::SemResposta;
         }
         let mut st: u32 = 0;
         let lido = unsafe { SecKeychainGetStatus(kc, &mut st) } == 0;
         unsafe { CFRelease(kc) };
-        !lido || st & DESTRANCADO != 0
+        match (lido, st & DESTRANCADO != 0) {
+            (false, _) => Chaveiro::SemResposta,
+            (true, true) => Chaveiro::Aberto,
+            (true, false) => Chaveiro::Trancado,
+        }
     }
 }
 
@@ -482,9 +500,12 @@ mod testes {
     }
 
     /// Num Chaveiro descartável (criado com HOME de mentira, que não mexe na
-    /// lista de busca da pessoa): trancado, a trava diz que não; destrancado
-    /// com a senha, diz que sim. Nada abre janela, e a trava não tenta
-    /// destrancar. Fica de fora do CI (`--ignored` para rodar à mão).
+    /// lista de busca da pessoa): trancado, a trava diz que não, e a guarda
+    /// que o Keep consulta antes do `security` e antes de trocar a conta de uma
+    /// aba também (com a tela destravada ou não); destrancado com
+    /// a senha, diz que sim. Nada abre janela, e a trava não tenta destrancar.
+    /// Um caminho que o framework não abre é `SemResposta`, nunca aberto.
+    /// Fica de fora do CI (`--ignored` para rodar à mão).
     #[cfg(target_os = "macos")]
     #[test]
     #[ignore]
@@ -504,15 +525,29 @@ mod testes {
         let caminho = kc.to_str().unwrap();
         assert!(sec(&["create-keychain", "-p", "kit", caminho]));
         assert!(sec(&["lock-keychain", caminho]));
-        let trancado = trava::aberto(Some(&kc));
+        let trancado = trava::estado(Some(&kc));
+        // A guarda de verdade, apontada para o descartável (sem o `security` de mentira, que a desligaria).
+        // SAFETY: rodado à mão e sozinho (`--ignored --exact`).
+        unsafe { std::env::set_var("KEEP_IA_TESTE_CHAVEIRO_TRAVA", &kc) };
+        let guarda_trancado = (chaveiro_trancado(), chaveiro_indisponivel());
         assert!(sec(&["unlock-keychain", "-p", "kit", caminho]));
-        let destrancado = trava::aberto(Some(&kc));
+        let destrancado = trava::estado(Some(&kc));
+        let guarda_destrancado = (chaveiro_trancado(), chaveiro_indisponivel());
         sec(&["delete-keychain", caminho]);
         let _ = std::fs::remove_dir_all(&casa);
-        assert!(!trancado, "trancado, a trava tem de dizer que não");
-        assert!(destrancado, "destrancado, a trava tem de deixar seguir");
-        // Rodado à mão, com a pessoa na frente da tela.
-        assert_eq!(trava::tela_travada(), Some(false), "a tela está destravada enquanto o teste roda");
+        let sumido = trava::estado(Some(&casa.join("nao-existe.keychain-db")));
+        // Sem resposta (aqui, um Chaveiro que o framework não lê): nem o `security` roda, nem a aba troca de conta.
+        unsafe { std::env::set_var("KEEP_IA_TESTE_CHAVEIRO_TRAVA", casa.join("nao-existe.keychain-db")) };
+        let guarda_sem_resposta = (chaveiro_trancado(), chaveiro_indisponivel());
+        assert!(guarda_sem_resposta.0.as_ref().is_some_and(|p| p.contains("não responde")), "{guarda_sem_resposta:?}");
+        assert!(guarda_sem_resposta.1.as_ref().is_some_and(|p| p.contains("não responde")), "{guarda_sem_resposta:?}");
+        unsafe { std::env::remove_var("KEEP_IA_TESTE_CHAVEIRO_TRAVA") };
+        assert_eq!(trancado, Chaveiro::Trancado, "trancado, a trava tem de dizer que não");
+        assert!(guarda_trancado.0.as_ref().is_some_and(|p| p.contains("trancado")), "{guarda_trancado:?}");
+        assert!(guarda_trancado.1.as_ref().is_some_and(|p| p.contains("trancado")), "{guarda_trancado:?}");
+        assert_eq!(destrancado, Chaveiro::Aberto, "destrancado, a trava tem de deixar seguir");
+        assert_eq!(guarda_destrancado, (None, None));
+        assert_ne!(sumido, Chaveiro::Aberto, "o que o framework não lê não é Chaveiro aberto");
     }
 
     #[test]
