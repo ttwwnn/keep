@@ -5,7 +5,7 @@
 // shape carries the state as well as the hue (DESIGN.md). Folded, a workspace
 // still says how many of its tabs wait on you.
 
-import { signal } from "@preact/signals";
+import { effect, signal } from "@preact/signals";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { SPLIT_DOWN, SPLIT_RIGHT } from "../api";
 import { endedADrag } from "../drag";
@@ -463,6 +463,37 @@ function NewWorkspaceField() {
  */
 const floor = signal(SIDEBAR_MIN);
 
+/**
+ * Nor narrower than its rows that must stay whole need (pedido de 27/11/2026): a workspace's header and an AI
+ * account's line in the footer — the macOS sidebar's `SidebarWidths`. A tab's name may still be cut.
+ */
+const rowsFloor = signal(0);
+const WHOLE_ROWS = ".workspace-row, .usage-compact, .usage-title-row, .usage-bar";
+
+/** The narrowest the sidebar may be now: the top row's, and the rows', up to the widest it may be. */
+const least = () => Math.max(floor.value, Math.min(rowsFloor.value, sidebarMax()));
+
+/**
+ * The sidebar's width with every row of `WHOLE_ROWS` in `card` whole: its width now plus the most any row is short,
+ * measured on a copy of the row with each part at its whole width (`.measure-whole`), in the font and zoom of the
+ * moment. 0 with no row to measure.
+ */
+function wholeRowsWidth(card: HTMLElement): number {
+  const sidebar = card.closest<HTMLElement>(".sidebar");
+  let short = -Infinity;
+  for (const row of card.querySelectorAll<HTMLElement>(WHOLE_ROWS)) {
+    const had = row.getBoundingClientRect().width;
+    if (had === 0 || !row.parentElement) continue;
+    const copy = row.cloneNode(true) as HTMLElement;
+    copy.classList.add("measure-whole");
+    copy.setAttribute("aria-hidden", "true");
+    row.parentElement.appendChild(copy);
+    short = Math.max(short, copy.getBoundingClientRect().width - had);
+    copy.remove();
+  }
+  return sidebar && short > -Infinity ? Math.ceil(sidebar.getBoundingClientRect().width + short) : 0;
+}
+
 /** The sidebar's right edge, dragged to make it wider or narrower: the margin between its card and the terminal. */
 function Resizer() {
   const start = useRef<{ x: number; width: number } | null>(null);
@@ -471,12 +502,12 @@ function Resizer() {
       class="sidebar-resizer"
       onPointerDown={(e) => {
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-        start.current = { x: e.clientX, width: Math.max(gui.value.sidebar.width, floor.value) };
+        start.current = { x: e.clientX, width: Math.max(gui.value.sidebar.width, least()) };
       }}
       onPointerMove={(e) => {
         if (!start.current) return;
         const width = start.current.width + e.clientX - start.current.x;
-        setSidebarWidth(Math.round(Math.min(Math.max(sidebarMax(), floor.value), Math.max(floor.value, width))));
+        setSidebarWidth(Math.round(Math.min(Math.max(sidebarMax(), least()), Math.max(least(), width))));
       }}
       onPointerUp={() => (start.current = null)}
       onDblClick={() => setSidebarWidth(250)}
@@ -485,8 +516,41 @@ function Resizer() {
 }
 
 export function Sidebar() {
-  const width = Math.max(gui.value.sidebar.width, floor.value);
+  const width = Math.max(gui.value.sidebar.width, least());
   const items = useRef<HTMLDivElement>(null);
+  const card = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = card.current;
+    if (!el) return;
+    // Measured a moment after what changes the rows (names, accounts, the zoom, the width), at most four times a second.
+    let timer = 0;
+    const measure = () => {
+      timer = 0;
+      const next = wholeRowsWidth(el);
+      // The copies measured are not a change of the rows.
+      changes.takeRecords();
+      if (next !== rowsFloor.value) rowsFloor.value = next;
+    };
+    const later = () => {
+      if (!timer) timer = window.setTimeout(measure, 250);
+    };
+    const changes = new MutationObserver(later);
+    changes.observe(el, { subtree: true, childList: true, characterData: true });
+    const sizes = new ResizeObserver(later);
+    sizes.observe(el);
+    // The zoom grows every text without changing the card or its rows' nodes.
+    const zoomed = effect(() => {
+      void gui.value.zoom;
+      later();
+    });
+    measure();
+    return () => {
+      zoomed();
+      changes.disconnect();
+      sizes.disconnect();
+      if (timer) window.clearTimeout(timer);
+    };
+  }, []);
   useLayoutEffect(() => {
     const row = items.current;
     const head = row?.parentElement;
@@ -504,7 +568,7 @@ export function Sidebar() {
   return (
     // The margin around the card drags the window, as the row at the top does.
     <aside class="sidebar" style={{ width: `${width}px` }} data-tauri-drag-region>
-      <div class="sidebar-card">
+      <div class="sidebar-card" ref={card}>
         <div class={`sidebar-head ${isMac.value ? "inset" : ""}`} data-tauri-drag-region>
           <div class="sidebar-head-items" ref={items}>
             <Battery />

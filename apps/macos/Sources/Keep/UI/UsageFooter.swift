@@ -732,6 +732,7 @@ struct UsageFooter: View {
                 .help(accountHelp(line, now: now))
                 arrows(line, at: index)
             }
+            .keptWhole("account \(line.account.order)")
 
             // Which login this is, written out: the slot's name says which
             // one the order means, the address says which one the service does.
@@ -745,8 +746,9 @@ struct UsageFooter: View {
             }
 
             if let reading = line.reading {
-                ForEach(Array(UsageText.barOrder(reading.windows).enumerated()), id: \.offset) { _, window in
+                ForEach(Array(UsageText.barOrder(reading.windows).enumerated()), id: \.offset) { index, window in
                     bar(window, of: line, now: now)
+                        .keptWhole("account \(line.account.order) bar \(index)")
                 }
                 .opacity(stale ? 0.55 : 1)
             }
@@ -884,6 +886,8 @@ struct UsageFooter: View {
             .accessibilityLabel("\(line.account.engine.title) \(name) \(figures)")
             arrows(line, at: index)
         }
+        // The account's line is never cut: name, figures, switch and arrows, whole.
+        .keptWhole("account \(line.account.order) folded")
     }
 
     private func compactFigures(_ windows: [UsageWindow]) -> Text {
@@ -1011,11 +1015,13 @@ struct UsageFooter: View {
                 Spacer(minLength: 0)
                 jevSwitch()
             }
+            .keptWhole("jev")
             if let credit = jev.credit {
                 Group {
                     ForEach(credit.counters, id: \.label) { counter in
                         creditBar(counter.label, spent: counter.spent, figure: counter.figure, says: counter.says,
                                   help: counter.help)
+                            .keptWhole("jev \(counter.label)")
                     }
                 }
                 .opacity(stale ? 0.55 : 1)
@@ -1089,6 +1095,7 @@ struct UsageFooter: View {
             .accessibilityLabel("Jev OpenRouter restam \(figure)")
             jevSwitch()
         }
+        .keptWhole("jev folded")
     }
 
     private func jevNote(_ jev: JevLine, now: Date) -> String? {

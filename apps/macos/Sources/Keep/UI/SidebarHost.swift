@@ -130,6 +130,100 @@ final class SidebarRows: ObservableObject {
     /// Whether the window is the one in use (key). Out of use, the states are
     /// drawn in the resting tones (see `Palette.Resting`).
     @Published var inUse = true
+    /// What the rows that must stay whole need: not published, the host reads it.
+    let widths = SidebarWidths()
+}
+
+/// The sidebar's width each row that must never be cut needs (pedido de 27/11/2026): a workspace's name and an AI
+/// account's line in the footer, measured as SwiftUI lays them out, in the font and zoom of the moment. The sidebar
+/// never gets narrower than the widest of them (`SidebarHost.holdMinimum`). A tab's name may still be cut.
+final class SidebarWidths {
+    /// Per row: its whole width, and what lies between it and the sidebar's edges.
+    private var rows: [String: (whole: CGFloat, around: CGFloat)] = [:]
+    private var pending = false
+    var changed: (() -> Void)?
+    /// The sidebar's width now: a row is measured against the width it is laid out in.
+    var sidebarWidth: () -> CGFloat = { 0 }
+
+    /// The widest the sidebar must be for every row to be whole; nil before any row is measured.
+    var widest: CGFloat? { rows.values.map { $0.whole + $0.around }.max() }
+
+    /// The row `key` is `ideal` wide whole and was given `given` in the sidebar as it is now. SwiftUI also sizes the
+    /// stack it is in by offering it less than the sidebar gives, so what lies around the row is the least seen: it
+    /// does not change, and the row's real place is the widest it is offered.
+    func note(_ key: String, ideal: CGFloat, given: CGFloat) {
+        let around = sidebarWidth() - given
+        guard around >= 0 else { return }
+        let old = rows[key]
+        let row = (whole: ideal, around: min(old?.around ?? around, around))
+        rows[key] = row
+        guard old.map({ abs(($0.whole + $0.around) - (row.whole + row.around)) > 0.5 }) ?? true else { return }
+        Trace.log("sidebar", "linha \(key): precisa \(Int((row.whole + row.around).rounded())) (inteira \(Int(ideal)), em volta \(Int(row.around)))")
+        announce()
+    }
+
+    func forget(_ key: String) {
+        guard rows.removeValue(forKey: key) != nil else { return }
+        announce()
+    }
+
+    /// Once a turn, after the layout that measured: the host sets its minimum outside SwiftUI's layout.
+    private func announce() {
+        guard !pending else { return }
+        pending = true
+        DispatchQueue.main.async { [weak self] in
+            self?.pending = false
+            self?.changed?()
+        }
+    }
+}
+
+private struct SidebarWidthsKey: EnvironmentKey {
+    static let defaultValue: SidebarWidths? = nil
+}
+
+extension EnvironmentValues {
+    var sidebarWidths: SidebarWidths? {
+        get { self[SidebarWidthsKey.self] }
+        set { self[SidebarWidthsKey.self] = newValue }
+    }
+}
+
+/// Lays its one row out as it would anyway, and tells the sidebar how much wider the row would be with every text in
+/// it whole: its ideal width, less the width it got.
+private struct WholeRow: Layout {
+    let key: String
+    let widths: SidebarWidths?
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        subviews.first?.sizeThatFits(proposal) ?? .zero
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let row = subviews.first else { return }
+        row.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
+        let ideal = row.sizeThatFits(.unspecified).width
+        // SwiftUI also places the row to size it: with no width, with none at all and at its ideal one. The width the
+        // sidebar gives is the only other.
+        guard let given = proposal.width, given > 0, abs(given - ideal) > 0.5 else { return }
+        widths?.note(key, ideal: ideal, given: given)
+    }
+}
+
+private struct KeptWhole: ViewModifier {
+    let key: String
+    @Environment(\.sidebarWidths) private var widths
+
+    func body(content: Content) -> some View {
+        WholeRow(key: key, widths: widths) { content }
+            .onDisappear { widths?.forget(key) }
+    }
+}
+
+extension View {
+    /// A row the sidebar never gets too narrow for: every text in it whole (`SidebarWidths`). `key` names the row
+    /// among the others.
+    func keptWhole(_ key: String) -> some View { modifier(KeptWhole(key: key)) }
 }
 
 /// The full-height sidebar host.
@@ -148,10 +242,14 @@ final class SidebarHost: NSViewController {
     private var observers: [NSObjectProtocol] = []
     private let hosting: NSHostingController<WorkspaceSidebar>
     private let model = SidebarRows()
+    private var lastMinimumSaid = ""
 
     init(dispatch: @escaping (Intent) -> Void) {
         hosting = NSHostingController(rootView: WorkspaceSidebar(model: model, dispatch: dispatch))
         super.init(nibName: nil, bundle: nil)
+        // A row measured short, or with room again: the minimum is set again, in the next layout.
+        model.widths.changed = { [weak self] in self?.view.needsLayout = true }
+        model.widths.sidebarWidth = { [weak self] in self?.view.bounds.width ?? 0 }
     }
 
     @available(*, unavailable)
@@ -295,12 +393,24 @@ final class SidebarHost: NSViewController {
     }
 
     /// The sidebar never gets narrower than its top row needs (pedido de 17/11/2026): the traffic lights, the whole
-    /// zoom, the battery and the time where they show, and the toggle, by the room rules of `batteryFrame`.
+    /// zoom, the battery and the time where they show, and the toggle, by the room rules of `batteryFrame`. Nor than
+    /// its workspaces' names and the footer's account lines need, whole (pedido de 27/11/2026, `SidebarWidths`), up
+    /// to the widest the sidebar may be.
     private func holdMinimum(showsBattery: Bool) {
         guard let item = (parent as? NSSplitViewController)?.splitViewItem(for: self) else { return }
         let zoomEnd = Self.trafficLightsEnd + ZoomControl.width(compact: false)
         let batteryRoom = showsBattery ? 10 + battery.fittingWidth : 0
-        let minimum = max(200, ceil(zoomEnd + batteryRoom + 10 + 26 + 12))
+        let topRow = max(200, ceil(zoomEnd + batteryRoom + 10 + 26 + 12))
+        let rows = model.widths.widest.map { ceil($0) } ?? 0
+        let widest = MainWindowController.sidebarMaximum(on: view.window?.screen)
+        let minimum = max(topRow, min(rows, widest))
+        // What the sidebar tests read: the minimum, and how short the shortest row still is (0 or less: all whole).
+        let said = "mínimo \(Int(minimum)) (topo \(Int(topRow)), linhas \(Int(rows))), largura \(Int(view.bounds.width)), "
+            + "falta \(Int(rows - view.bounds.width))"
+        if said != lastMinimumSaid {
+            lastMinimumSaid = said
+            Trace.log("sidebar", said)
+        }
         guard item.minimumThickness != minimum else { return }
         item.minimumThickness = minimum
         if item.maximumThickness != NSSplitViewItem.unspecifiedDimension, item.maximumThickness < minimum {

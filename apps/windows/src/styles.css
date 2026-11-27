@@ -1041,6 +1041,21 @@ button {
   gap: 5px;
 }
 
+/* A row copied to measure it whole (Sidebar's `wholeRowsWidth`): out of sight, each part at its whole width. */
+.measure-whole {
+  position: absolute !important;
+  visibility: hidden !important;
+  width: max-content !important;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+.measure-whole,
+.measure-whole * {
+  flex: none !important;
+}
+
 /* Claude's ✳ or Codex's ◆ before each account, open and folded (pedido de 27/11/2026). */
 .usage-engine {
   flex: none;
