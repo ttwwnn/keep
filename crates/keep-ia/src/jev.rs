@@ -492,6 +492,9 @@ pub struct Saldo {
     /// O que a conta do OpenRouter gastou nos últimos 30 dias (`gasto_30_dias`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spent_30d: Option<f64>,
+    /// O câmbio para mostrar em reais os valores acima, que são em dólares (`ptax`); sem ele, ficam em dólares.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cambio: Option<crate::ptax::Cambio>,
 }
 
 const TRINTA_DIAS: f64 = 30.0 * 86_400.0;
@@ -514,6 +517,7 @@ fn saldo(r: Registro) -> Saldo {
         problem: r.problem,
         pending: (p > 0.0).then_some(p),
         spent_30d: gasto,
+        cambio: crate::ptax::guardado(),
     }
 }
 
@@ -536,6 +540,8 @@ pub fn medir(forcar: bool) -> Option<Saldo> {
         let _ = std::fs::remove_file(arquivo());
         return None;
     };
+    // A PTAX do dia, uma vez por dia (e ao abrir o Keep): os valores vão em reais.
+    let _ = crate::ptax::atualizar();
     let mut r = le_cache();
     let agora_s = agora();
     // Chave nova (ou a primeira): o livro conta a partir de agora, só as

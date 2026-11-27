@@ -500,13 +500,27 @@ perguntas de decisão, no Claude Code e no Codex) gasta crédito do OpenRouter a
 - Gasto de 30 dias (`spent30d`): o que o Jev gasta no OpenRouter pelo Keep DESTA máquina em 30 dias, sem os
   outros programas da mesma conta (pedido de 23/11/2026): a soma do `custo_usd` das decisões do livro
   (`chamadas.jsonl`, todas as chaves desta máquina) nos últimos 30 dias. Com o livro mais curto que 30 dias, na
-  proporção; com menos de um dia, nada. O rodapé mostra "Gasto em 30 dias: US$ xx,xx" e o botão "Pôr crédito",
+  proporção; com menos de um dia, nada. O rodapé mostra "Gasto em 30 dias: R$ xx,xx" (em reais; abaixo) e "Pôr crédito",
   que abre `https://openrouter.ai/settings/credits` (pedido de 12/11/2026).
 - Os valores do Jev têm duas casas decimais: o número na tela muda quando o gasto acumulado das decisões
   completa um centavo (uma decisão custa de US$ 0,00002 a US$ 0,0002).
 - Resposta: `{"jev": {"credit": {"total", "used", "keyLimit", "keyUsed", "usedToday", "usedThisMonth"},
-  "measuredAt", "problem", "pending"}}`, em dólares; `credit` já inclui `pending`, que só aparece quando há
-  chamada à espera do OpenRouter.
+  "measuredAt", "problem", "pending", "spent30d", "cambio"}}`, em dólares; `credit` já inclui `pending`, que só
+  aparece quando há chamada à espera do OpenRouter.
+- **Em reais** (pedido de 27/11/2026): o rodapé, as dicas e a barra do Claude mostram os valores do OpenRouter em
+  reais, "R$ 1.234,56", sempre com duas casas.
+  - A conta é R$ = US$ × PTAX × 1,02 (spread) × 1,035 (IOF). O `cambio` traz `data`, `ptax`, `spread`, `iof` e
+    `fator` (reais por dólar), e os apps multiplicam por ele (`UsageText.money` no Mac, `money` no Windows).
+  - A PTAX é a de venda do boletim de fechamento do Banco Central (API Olinda, `CotacaoDolarPeriodo` dos últimos 10
+    dias, o fechamento mais recente). Fica em `ptax.json`, no estado do Keep (`keep_ia::ptax`).
+  - A busca é uma vez por dia. Ela acontece quando o guardado é mais velho que o fechamento que já deve estar
+    publicado: o do dia útil a partir das 13h de Brasília, ou o do dia útil anterior.
+  - Enquanto o boletim não vem (sem rede, feriado, Banco Central atrasado), há no máximo uma tentativa por hora, e
+    a cotação velha segue valendo, com a data dela na dica.
+  - Com o Keep fechado, a busca acontece na primeira leitura do Jev depois de abrir.
+  - Sem cotação nenhuma, os valores ficam em US$, e a dica diz que falta a PTAX. Com a PTAX, a dica mostra também o
+    valor em US$.
+  - `KEEP_IA_PTAX_URL` (só `http://127.0.0.1`) troca o endereço do Banco Central nos testes.
 - Teste: `KEEP_IA_OPENROUTER_URL` e `KEEP_IA_OPENROUTER_AUTH_URL` (só `http://127.0.0.1`),
   `KEEP_IA_SECURITY` e `KEEP_IA_TESTE_CHAVEIRO` (uma pasta no lugar do cofre, em todo sistema),
   `KEEP_IA_NAVEGADOR` (o programa que recebe o endereço do login) e `KEEP_IA_LOGIN_PRAZO` (segundos). O
