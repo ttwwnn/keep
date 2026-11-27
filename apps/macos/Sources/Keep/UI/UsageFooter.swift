@@ -606,7 +606,7 @@ struct UsageFooter: View {
                         jevBlock(jev, now: now)
                     }
                 }
-                if monitor.helperAvailable, let automation = monitor.automation, !automation.isEmpty {
+                if monitor.helperAvailable, let automation = monitor.automation, !inRow(automation).isEmpty {
                     switches(automation)
                 }
             }
@@ -696,12 +696,25 @@ struct UsageFooter: View {
         return Text("\(index + 1) · ").foregroundStyle(UsageInk.inkFaint) + name
     }
 
+    /// Claude's `✳` or Codex's `◆`, in the colours the sidebar marks their tabs with: which service the row is,
+    /// folded too, where the row says only the login's name (pedido de 27/11/2026).
+    private func engineMark(_ line: AccountUsage) -> some View {
+        let program = line.account.engine.rawValue
+        return Text(BusyMark.glyph(of: program))
+            .font(numbers)
+            .foregroundStyle(BusyMark.ink(of: program))
+            .help(title(line))
+            .accessibilityLabel(title(line))
+            .accessibilityIdentifier("usage-engine-\(line.account.order)")
+    }
+
     private func block(_ line: AccountUsage, at index: Int, now: Date) -> some View {
         let stale = line.problem != nil
             || line.measuredAt.map { now.timeIntervalSince($0) > 15 * 60 } ?? true
         return VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 5) {
                 HStack(spacing: 5) {
+                    engineMark(line)
                     heading(title(line), line, at: index)
                         .font(numbers)
                         .lineLimit(1)
@@ -851,6 +864,7 @@ struct UsageFooter: View {
             ?? title(line)
         return HStack(spacing: 5) {
             HStack(spacing: 5) {
+                engineMark(line)
                 heading(name, line, at: index)
                     .font(numbers)
                     .lineLimit(1)
@@ -886,7 +900,8 @@ struct UsageFooter: View {
 
     // MARK: - the switches
 
-    /// "Jev ⏻  Ponytail ⏻  PR Agent ⏻": who works for the AIs, each on or
+    /// "Ponytail ⏻  PR Agent ⏻" (and "Jev ⏻" first, when the Jev has no block
+    /// of its own to hold its switch): who works for the AIs, each on or
     /// off. The Jev chooses each message's model, effort and whether it takes
     /// the Ponytail's rules, and answers the AIs' questions; the Ponytail is the
     /// plugin in Claude and Codex, there for the Jev and the AIs to call on;
@@ -896,7 +911,7 @@ struct UsageFooter: View {
     /// points, the font growing with the zoom) the three names shrink
     /// together, to the first size at which the row fits.
     private func switches(_ automation: Automation) -> some View {
-        let shown = Automation.Switch.allCases.compactMap { which in automation[which].map { (which, $0) } }
+        let shown = inRow(automation)
         return ViewThatFits(in: .horizontal) {
             ForEach([1.0, 0.9, 0.8, 0.7, 0.6], id: \.self) { escala in
                 HStack(spacing: 8) {
@@ -911,6 +926,14 @@ struct UsageFooter: View {
             }
         }
         .padding(.top, folded ? 2 : 0)
+    }
+
+    /// The switches of the row, each with whether it is on. The Jev's is beside its figure (`jevSwitch`) when it has
+    /// one: without its key there is no Jev block, and the switch stays here.
+    private func inRow(_ automation: Automation) -> [(Automation.Switch, Bool)] {
+        Automation.Switch.allCases
+            .filter { $0 != .jev || monitor.jev == nil }
+            .compactMap { which in automation[which].map { (which, $0) } }
     }
 
     private func switchHelp(_ which: Automation.Switch, on: Bool) -> String {
@@ -949,6 +972,26 @@ struct UsageFooter: View {
 
     // MARK: - the Jev's credit
 
+    /// The Jev's switch (pedido de 27/11/2026): right of its figure, where an account's switch is — the same size
+    /// and style, and its arrows' place left empty, so the switch stands in their column, folded or not.
+    @ViewBuilder
+    private func jevSwitch() -> some View {
+        if monitor.helperAvailable, let on = monitor.automation?[.jev] {
+            Toggle("", isOn: Binding(get: { on }, set: { _ in monitor.toggle(.jev) }))
+                .labelsHidden()
+                .toggleStyle(BlueSwitch())
+                .scaleEffect(0.75)
+                .frame(width: 28, height: 13)
+                .help(switchHelp(.jev, on: on))
+                .accessibilityLabel(Automation.Switch.jev.title)
+                .accessibilityValue(on ? "ligado" : "desligado")
+                .accessibilityIdentifier("automation-\(Automation.Switch.jev.rawValue)")
+            Color.clear
+                .frame(width: 24 * scale + 1, height: 1)
+                .accessibilityHidden(true)
+        }
+    }
+
     /// "Jev · OpenRouter": the credit the Jev spends, in two counters
     /// (`JevCredit.counters`). The account: its bar is what is spent of what
     /// was bought, and the figure what is left. The second: with a ceiling on
@@ -959,11 +1002,15 @@ struct UsageFooter: View {
         let stale = jev.problem != nil
             || jev.measuredAt.map { now.timeIntervalSince($0) > 15 * 60 } ?? true
         return VStack(alignment: .leading, spacing: 3) {
-            Text("Jev · OpenRouter")
-                .font(numbers)
-                .foregroundStyle(UsageInk.inkResting)
-                .lineLimit(1)
-                .help(jevHelp(jev, now: now))
+            HStack(spacing: 5) {
+                Text("Jev · OpenRouter")
+                    .font(numbers)
+                    .foregroundStyle(UsageInk.inkResting)
+                    .lineLimit(1)
+                    .help(jevHelp(jev, now: now))
+                Spacer(minLength: 0)
+                jevSwitch()
+            }
             if let credit = jev.credit {
                 Group {
                     ForEach(credit.counters, id: \.label) { counter in
@@ -1022,23 +1069,26 @@ struct UsageFooter: View {
         let spent = jev.credit.map { max($0.accountPercent, $0.keyPercent ?? 0) } ?? 0
         let level = UsageText.level(spent)
         return HStack(spacing: 5) {
-            Text("Jev · OpenRouter")
-                .font(numbers)
-                .foregroundStyle(UsageInk.inkResting)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Spacer(minLength: 4)
-            Text(figure)
-                .font(numbers)
-                .monospacedDigit()
-                .foregroundStyle(level == .normal ? UsageInk.inkResting : UsageInk.fill(level))
-                .lineLimit(1)
-                .layoutPriority(1)
+            HStack(spacing: 5) {
+                Text("Jev · OpenRouter")
+                    .font(numbers)
+                    .foregroundStyle(UsageInk.inkResting)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 4)
+                Text(figure)
+                    .font(numbers)
+                    .monospacedDigit()
+                    .foregroundStyle(level == .normal ? UsageInk.inkResting : UsageInk.fill(level))
+                    .lineLimit(1)
+                    .layoutPriority(1)
+            }
+            .frame(height: 16 * scale)
+            .help(jevHelp(jev, now: now))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Jev OpenRouter restam \(figure)")
+            jevSwitch()
         }
-        .frame(height: 16 * scale)
-        .help(jevHelp(jev, now: now))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Jev OpenRouter restam \(figure)")
     }
 
     private func jevNote(_ jev: JevLine, now: Date) -> String? {

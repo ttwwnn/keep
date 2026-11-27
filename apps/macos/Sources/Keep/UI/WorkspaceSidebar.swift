@@ -1646,8 +1646,9 @@ private struct CleanupDropDelegate: DropDelegate {
 }
 
 /// The mark of a tab at work, by what works in it: Claude Code's orange `✳`,
-/// Codex's own `◆`, and the amber `✳` of any other command.
-private struct BusyMark: View {
+/// Codex's own `◆`, and the amber `✳` of any other command. The usage footer
+/// marks each account with the same (`UsageFooter.engineMark`).
+struct BusyMark: View {
     let program: String
     let font: Font
 
@@ -1658,8 +1659,10 @@ private struct BusyMark: View {
             : RestingInk(Palette.busy, rest: Palette.Resting.yellow)
     }
 
+    static func glyph(of program: String) -> String { program == "codex" ? "◆" : "✳" }
+
     var body: some View {
-        Text(program == "codex" ? "◆" : "✳").font(font).foregroundStyle(Self.ink(of: program))
+        Text(Self.glyph(of: program)).font(font).foregroundStyle(Self.ink(of: program))
     }
 }
 

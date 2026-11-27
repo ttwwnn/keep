@@ -689,3 +689,6 @@ máquina não tem). Nada disto foi visto na WebView2 nem com um Claude Code de v
   app do Windows.
 - [x] 0.3.85: chavinha por conta no rodapé (antes das setas): desligada, nenhuma conversa usa a conta e o consumo segue medido
   (`setAccountOff` em `iaStore.ts`, `off` em `ia.ts`, testado). Não visto no app do Windows.
+- [x] 0.3.91: o botão do Jev no bloco "Jev · OpenRouter", na coluna das chavinhas das contas (`JevSwitch`), e o símbolo
+  do serviço (`✳` Claude, `◆` Codex) em cada conta (`EngineMark`), em `UsageFooter.tsx`. Compilado e no vitest; não
+  visto no app do Windows.
