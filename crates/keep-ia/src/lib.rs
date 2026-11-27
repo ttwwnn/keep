@@ -25,6 +25,7 @@ pub mod jev;
 pub mod linha;
 pub mod login;
 pub mod processos;
+pub mod ptax;
 pub mod programas;
 pub mod quente;
 pub mod rede;
