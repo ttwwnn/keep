@@ -664,7 +664,11 @@ refaz as chaves das decisões pelo caminho canônico, e nenhuma decisão se perd
 Embaixo do "Consumo de IA", um botão de liga e desliga para cada um (14/10/2026, pedido: "Deve ter um botão de
 liga e desliga do Jev e um botão de liga desliga do ponytail no keep"; 06/11/2026, o do PR-Agent: "coloque essa
 skill dentro do keep com uma chave como o jev e o ponytail"): `keep ia automacao [jev|ponytail|pr-agent
-ligar|desligar]`. Os botões ficam numa linha quando cabem na lateral; senão, quebram.
+ligar|desligar]`. Os botões ficam numa linha quando cabem na lateral; senão, quebram. O do Jev fica no bloco
+"Jev · OpenRouter", à direita do valor, na coluna das chavinhas das contas, com o mesmo tamanho, aberto e dobrado
+(27/11/2026); sem a chave do OpenRouter não há bloco do Jev, e o botão dele volta para a linha dos outros. Cada conta
+do rodapé tem o símbolo do serviço antes do nome: o `✳` do Claude e o `◆` do Codex, nas cores das abas, que a
+acessibilidade lê como "Claude" ou "GPT".
 
 - Jev: os ganchos da skill `jev` nada fazem enquanto existir `~/.claude/jev/desligado` (o mesmo arquivo de
   `jev auto desligar`). Desligar grava o arquivo; ligar o apaga. Instalado = existe `~/.claude/jev` ou
