@@ -25,6 +25,9 @@
 #     login in this window's workspace, whose account shows up within
 #     seconds — and stays, though a round of readings that set out before it
 #     lands after;
+#   - each account wears its service's mark (Claude's ✳, Codex's ◆), said
+#     aloud as "Claude" or "GPT"; and the Jev's switch is beside its figure, in
+#     the accounts' switches' column, the same size, open and folded;
 #   - without a `keep` to ask, there is no footer.
 #
 #   tools/usage-footer-test.sh
@@ -134,7 +137,8 @@ swiftc -O "$WORK/axpos.swift" -o "$AXPOS" 2>/dev/null || { say "could not build 
 # ------------------------------------------------------------ made-up logins
 FAKE=$WORK/home
 VAULT=$FAKE/.claude/contas
-mkdir -p "$VAULT" "$FAKE/.codex"
+# The Jev's folder: the Jev is installed, and its switch shows.
+mkdir -p "$VAULT" "$FAKE/.codex" "$FAKE/.claude/jev"
 python3 - "$FAKE" <<'PY'
 import base64, json, os, sys, time
 home = sys.argv[1]
@@ -334,6 +338,27 @@ check "and the key went to no other service" no \
     "$(python3 -c 'import json,sys; print("yes" if any(r["token"] == "sk-or-do-teste" and not r["path"].startswith("/or/") for r in map(json.loads, open(sys.argv[1]))) else "no")' "$WORK/requests.jsonl")"
 
 say ""
+say "the service of each account, and the Jev's switch in the accounts' column"
+frame() { "$AXPRESS" "$APP_NAME" frame "$1" 2>/dev/null; }
+mid_x() { frame "$1" | awk '{ print int($1 + $3 / 2 + 0.5) }'; }
+mid_y() { frame "$1" | awk '{ print int($2 + $4 / 2 + 0.5) }'; }
+width() { frame "$1" | awk '{ print int($3 + 0.5) }'; }
+near() {  # near <a> <b>: yes if both are numbers at most 1 point apart
+    [ -n "$1" ] && [ -n "$2" ] && [ $(( $1 > $2 ? $1 - $2 : $2 - $1 )) -le 1 ] && echo yes || echo no
+}
+"$AXTEXT" "$APP_NAME" >"$WORK/ax.txt" 2>/dev/null
+check "Claude's accounts wear Claude's mark" yes "$([ -n "$(frame usage-engine-claude:principal)" ] && echo yes || echo no)"
+check "and the Codex one Codex's" yes "$([ -n "$(frame usage-engine-gpt:principal)" ] && echo yes || echo no)"
+check "said aloud as the service" "yes yes" \
+    "$(grep -qx "Claude" "$WORK/ax.txt" && echo yes || echo no) $(grep -qx "GPT" "$WORK/ax.txt" && echo yes || echo no)"
+check "the Jev's switch, on" yes "$(case "$("$AXPRESS" "$APP_NAME" value automation-jev 2>/dev/null)" in 1|ligado) echo yes ;; *) echo no ;; esac)"
+check "in the accounts' switches' column" yes "$(near "$(mid_x automation-jev)" "$(mid_x usage-switch-claude:principal)")"
+check "the same size as theirs" yes "$(near "$(width automation-jev)" "$(width usage-switch-claude:principal)")"
+check "on the Jev's line, above its counters" yes \
+    "$(j=$(mid_y automation-jev); c=$(mid_y "Jev conta: restam US\$ 9,98"); [ -n "$j" ] && [ -n "$c" ] && [ "$j" -lt "$c" ] && echo yes || echo no)"
+check "and not in a row of its own under the Jev" no "$(has "Ponytail")"
+
+say ""
 say "the order of priority, with the kit's helper"
 line_of() { grep -nF -- "$1" "$WORK/ax.txt" | head -1 | cut -d: -f1; }
 first_of() {  # first_of <a> <b>: whichever of the two lines comes first
@@ -470,6 +495,8 @@ check "one line an account, and the arrows still beside each" "yes yes yes" \
 check "folded for real: no bars" "no no" "$(has "Claude · reserva 5h") $(has "Claude · principal 5h")"
 check "the Jev on one line, with what it can still spend: the key's, the smaller" yes "$(has "Jev OpenRouter restam US\$ 4,48")"
 check "folded for real: no bar of the Jev's" no "$(has "Jev conta: restam")"
+check "folded, the Jev's switch still in the accounts' column" yes "$(near "$(mid_x automation-jev)" "$(mid_x usage-switch-claude:principal)")"
+check "on the Jev's line, beside its figure" yes "$(near "$(mid_y automation-jev)" "$(mid_y "Jev OpenRouter restam US\$ 4,48")")"
 "$AXPRESS" "$APP_NAME" press "Consumo de IA"
 sleep 1
 # The refusal's word is said for a few seconds and then goes, and the footer

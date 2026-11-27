@@ -28,6 +28,7 @@ import {
   untilText,
   type AutomationSwitch,
   type CreditRow,
+  type Engine,
   type JevLine,
   type UsageLine,
   type UsageWindow,
@@ -50,6 +51,7 @@ import {
   usageNotice,
   accountWarning,
 } from "../iaStore";
+import { busyMark } from "../claude";
 import { openSignInMenu } from "./AccountMenu";
 import * as icon from "./icons";
 
@@ -136,6 +138,20 @@ function Bar(props: { window: UsageWindow; name: string; nowMs: number }) {
  * names for the accounts ("principal", "reserva"): an account is its place
  * in this list (13/10/2026).
  */
+/**
+ * Claude's `✳` or Codex's `◆`, in the colours the sidebar marks their tabs with: which service the row is, folded
+ * too, where the row says only the login's name (pedido de 27/11/2026) — the macOS footer's `engineMark`.
+ */
+function EngineMark(props: { engine: Engine }) {
+  const mark = busyMark(props.engine);
+  const name = engineTitle(props.engine);
+  return (
+    <span class="usage-engine" style={{ color: mark.color }} title={name} role="img" aria-label={name}>
+      {mark.glyph}
+    </span>
+  );
+}
+
 function Heading(props: { text: string; index: number; used: boolean }) {
   return (
     <span class={`usage-name ${props.used ? "used" : ""}`}>
@@ -158,6 +174,7 @@ function Block(props: { line: UsageLine; index: number; count: number; nowMs: nu
     <div class="usage-block" data-account={orderKeyOf(line.account)}>
       <div class="usage-title-row">
         <span class="usage-title" title={help}>
+          <EngineMark engine={line.account.engine} />
           <Heading text={name} index={index} used={used} />
           {used && <span class="usage-live" title="Conta usada nesta aba" aria-label="Conta usada nesta aba" />}
         </span>
@@ -197,6 +214,7 @@ function Compact(props: { line: UsageLine; index: number; count: number }) {
   return (
     <div class="usage-compact" data-account={orderKeyOf(line.account)}>
       <span class="usage-compact-name" title={help}>
+        <EngineMark engine={line.account.engine} />
         <Heading text={line.account.email?.split("@")[0] ?? name} index={index} used={used} />
       </span>
       <span class="usage-compact-figures" aria-label={`${numbered} ${windows.map((w) => percentText(w.percent)).join(" · ")}`}>
@@ -254,6 +272,7 @@ function JevBlock(props: { line: JevLine; nowMs: number }) {
         <span class="usage-title" title={jevHelp(line, nowMs)}>
           <span class="usage-name">Jev · OpenRouter</span>
         </span>
+        <JevSwitch />
       </div>
       {line.credit && (
         <div class={`usage-bars ${stale ? "stale" : ""}`}>
@@ -282,8 +301,42 @@ function JevCompact(props: { line: JevLine; nowMs: number }) {
         <span class="usage-compact-figures" aria-label={`Jev OpenRouter restam ${figure}`}>
           <span class={`usage-percent-inline ${level(spent)}`}>{figure}</span>
         </span>
+        <JevSwitch />
       </div>
     </>
+  );
+}
+
+const JEV_HELP = (on: boolean) =>
+  on
+    ? "Jev ligado: escolhe modelo, esforço e Ponytail a cada mensagem do Claude e do Codex, e responde as perguntas de decisão"
+    : "Jev desligado: as mensagens e as perguntas seguem sem ele";
+
+/**
+ * The Jev's switch (pedido de 27/11/2026): right of its figure, where an account's switch is — the same size and
+ * style, and its arrows' place left empty, so it stands in their column, folded or not.
+ */
+function JevSwitch() {
+  const on = automation.value?.jev;
+  if (on === null || on === undefined) return null;
+  return (
+    <span class="usage-arrows">
+      <button
+        class={`usage-switch usage-account-switch ${on ? "on" : ""}`}
+        role="switch"
+        aria-checked={on}
+        aria-label="Jev"
+        title={JEV_HELP(on)}
+        data-switch="jev"
+        onClick={() => toggleAutomation("jev")}
+      >
+        <span class="usage-switch-track">
+          <span class="usage-switch-knob" />
+        </span>
+      </button>
+      <span class="usage-arrow hidden" aria-hidden="true" />
+      <span class="usage-arrow hidden" aria-hidden="true" />
+    </span>
   );
 }
 
@@ -318,21 +371,12 @@ function Switch(props: { which: AutomationSwitch; title: string; on: boolean; he
  */
 function Switches() {
   const state = automation.value;
-  if (!state || (state.jev === null && state.ponytail === null && state["pr-agent"] === null)) return null;
+  // The Jev's switch is beside its figure (`JevSwitch`) when it has one: without its key there is no Jev block.
+  const jevHere = state !== null && state.jev !== null && jev.value === null;
+  if (!state || (!jevHere && state.ponytail === null && state["pr-agent"] === null)) return null;
   return (
     <div class="usage-switches">
-      {state.jev !== null && (
-        <Switch
-          which="jev"
-          title="Jev"
-          on={state.jev}
-          help={
-            state.jev
-              ? "Jev ligado: escolhe modelo, esforço e Ponytail a cada mensagem do Claude e do Codex, e responde as perguntas de decisão"
-              : "Jev desligado: as mensagens e as perguntas seguem sem ele"
-          }
-        />
-      )}
+      {jevHere && <Switch which="jev" title="Jev" on={state.jev!} help={JEV_HELP(state.jev!)} />}
       {state.ponytail !== null && (
         <Switch
           which="ponytail"

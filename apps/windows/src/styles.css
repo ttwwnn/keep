@@ -1038,6 +1038,12 @@ button {
   flex: 1;
   min-width: 0;
   display: flex;
+  gap: 5px;
+}
+
+/* Claude's ✳ or Codex's ◆ before each account, open and folded (pedido de 27/11/2026). */
+.usage-engine {
+  flex: none;
 }
 
 .usage-switches {
