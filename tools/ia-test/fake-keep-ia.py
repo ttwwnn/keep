@@ -30,6 +30,9 @@ for not. Out of a home and a directory of the test's own, never the real ones:
   jev [--agora|--cache] --json
       the real core's answer when FAKE_IA_CORE names a `keep`; else
       $FAKE_IA_DIR/jev.json, or `"jev": null` (no key of the Jev's here)
+  automacao --json
+      the real core's answer when FAKE_IA_CORE names a `keep` (the switches of
+      the made-up home); else no switch at all
   sincronizar --json
       a round that moved nothing
   renovar --json
@@ -389,6 +392,14 @@ def renovar(argv):
     answer({"estado": "feito", "renovados": [], "falhas": []})
 
 
+def automacao(argv):
+    if argv != ["automacao"]:
+        sys.exit(2)
+    to_core(argv)
+    answer({"jev": {"instalado": False, "ligado": False}, "ponytail": {"instalado": False, "ligado": False},
+            "pr-agent": {"instalado": False, "ligado": False}})
+
+
 def main():
     argv = sys.argv[1:]
     group = argv[0] if argv[:1] == ["ia"] else None
@@ -406,7 +417,7 @@ def main():
             pass
     commands = {"ordem": ordem, "entrar": entrar, "trocar": trocar,
                 "abas": abas, "uso": uso, "jev": jev, "sincronizar": sincronizar,
-                "renovar": renovar}
+                "renovar": renovar, "automacao": automacao}
     if argv[0] not in commands:
         sys.exit(2)
     commands[argv[0]](argv)
