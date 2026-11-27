@@ -91,6 +91,30 @@ check() {  # check <what> <wanted> <got>
 has() {  # has <fixed text>: yes if some line of the window's text contains it
     grep -qF -- "$1" "$WORK/ax.txt" && echo yes || echo no
 }
+# An account is found by its key, as the footer names its parts (usage-heading-claude:principal, usage-up-…,
+# usage-switch-…): on screen every Claude account is "N · Claude", its place in the order.
+frame() { "$AXPRESS" "$APP_NAME" frame "$1" 2>/dev/null; }
+shown() { [ -n "$(frame "$1")" ] && echo yes || echo no; }
+heading() { "$AXPRESS" "$APP_NAME" value "usage-heading-$1" 2>/dev/null; }
+mid_x() { frame "$1" | awk '{ print int($1 + $3 / 2 + 0.5) }'; }
+mid_y() { frame "$1" | awk '{ print int($2 + $4 / 2 + 0.5) }'; }
+width() { frame "$1" | awk '{ print int($3 + 0.5) }'; }
+near() {  # near <a> <b>: yes if both are numbers at most 1 point apart
+    [ -n "$1" ] && [ -n "$2" ] && [ $(( $1 > $2 ? $1 - $2 : $2 - $1 )) -le 1 ] && echo yes || echo no
+}
+until_heading() {  # until_heading <key> <wanted> <deadline, in $SECONDS>: the account's place, once it says it
+    local got
+    while :; do
+        got=$(heading "$1")
+        [ "$got" = "$2" ] || [ "$SECONDS" -ge "$3" ] && break
+        sleep 0.1
+    done
+    printf '%s' "$got"
+}
+until_shown() {  # until_shown <identifier> <deadline, in $SECONDS>
+    while [ "$(shown "$1")" = no ] && [ "$SECONDS" -lt "$2" ]; do sleep 0.1; done
+    shown "$1"
+}
 
 if [ -z "${SKIP_BUILD:-}" ]; then
     say "building $APP_NAME, the client, the daemon and the tools (yours is left alone)"
@@ -307,24 +331,25 @@ sleep 2
 say ""
 say "every account, one line per login"
 check "the footer is there" yes "$(has "Consumo de IA")"
-check "the active account, by the name the tabs know it by" yes "$(has "Claude · principal")"
-check "its duplicate slot and its global login are not more accounts" no "$(has "Claude · assinaturas")"
-check "the account whose access lapsed" yes "$(has "Claude · reserva")"
-check "the account the service is holding back" yes "$(has "Claude · limitada")"
-check "the Codex login, its only one: principal" yes "$(has "GPT · principal")"
+check "the active account, by its place in the order" "1 · Claude" "$(heading claude:principal)"
+check "its duplicate slot and its global login are not more accounts" no "$(shown usage-heading-claude:assinaturas)"
+check "the account whose access lapsed" yes "$(shown usage-heading-claude:reserva)"
+check "the account the service is holding back" yes "$(shown usage-heading-claude:limitada)"
+check "the Codex login, its only one: principal" yes "$(shown usage-heading-gpt:principal)"
 check "each account's address is written out" yes "$(has "um@exemplo.com")"
 check "the lapsed account's address too" yes "$(has "dois@exemplo.com")"
 check "and the Codex one" yes "$(has "jose@exemplo.com")"
 
 say ""
 say "the bars carry what the services answered"
-check "Claude's five-hour window" yes "$(has "Claude · principal 5h 17% reinicia em 4h10")"
-check "Claude's weekly window" yes "$(has "Claude · principal 7d 88% reinicia em 1d13h")"
-check "Claude's weekly window for one model" yes "$(has "Claude · principal Fable 32%")"
-check "Codex's weekly window" yes "$(has "GPT · principal 7d 2% reinicia em 6d")"
+# Each bar says the account by the name the tabs know it by: IA·1 is the principal, IA·4 the Codex login.
+check "Claude's five-hour window" yes "$(has "IA·1 · Claude 5h 17% reinicia em 4h10")"
+check "Claude's weekly window" yes "$(has "IA·1 · Claude 7d 88% reinicia em 1d13h")"
+check "Claude's weekly window for one model" yes "$(has "IA·1 · Claude Fable 32%")"
+check "Codex's weekly window" yes "$(has "IA·4 · GPT 7d 2% reinicia em 6d")"
 check "a lapsed access says so instead of a figure" yes "$(has "acesso vencido")"
 check "a 'too many requests' says so" yes "$(has "consultas demais (HTTP 429)")"
-check "and neither shows a made-up bar" no "$(has "Claude · reserva 5h")"
+check "and neither shows a made-up bar" "no no" "$(has "IA·2 · Claude 5h") $(has "IA·3 · Claude 5h")"
 
 say ""
 say "what was asked, and how"
@@ -337,6 +362,12 @@ check "no token in the trace" no "$(grep -qE 'tok-|Bearer|sk-or' "$WORK/app.log"
 
 say ""
 say "the Jev's credit"
+# The Jev's reading can land a moment after the accounts': its block is waited for.
+for _ in $(seq 1 50); do
+    grep -qF "Jev · OpenRouter" "$WORK/ax.txt" && break
+    sleep 0.2
+    "$AXTEXT" "$APP_NAME" >"$WORK/ax.txt" 2>/dev/null
+done
 check "the Jev has a block of its own" yes "$(has "Jev · OpenRouter")"
 # In reais (pedido de 27/11/2026): the dollars × the PTAX of 5 × 1,02 (spread) × 1,035 (IOF) = × 5,2785.
 check "the account's credit left: ten bought, a little spent, in reais" yes "$(has "Jev conta: restam R\$ 52,66")"
@@ -350,13 +381,6 @@ check "and the key went to no other service" no \
 
 say ""
 say "the service of each account, and the Jev's switch in the accounts' column"
-frame() { "$AXPRESS" "$APP_NAME" frame "$1" 2>/dev/null; }
-mid_x() { frame "$1" | awk '{ print int($1 + $3 / 2 + 0.5) }'; }
-mid_y() { frame "$1" | awk '{ print int($2 + $4 / 2 + 0.5) }'; }
-width() { frame "$1" | awk '{ print int($3 + 0.5) }'; }
-near() {  # near <a> <b>: yes if both are numbers at most 1 point apart
-    [ -n "$1" ] && [ -n "$2" ] && [ $(( $1 > $2 ? $1 - $2 : $2 - $1 )) -le 1 ] && echo yes || echo no
-}
 "$AXTEXT" "$APP_NAME" >"$WORK/ax.txt" 2>/dev/null
 check "Claude's accounts wear Claude's mark" yes "$([ -n "$(frame usage-engine-claude:principal)" ] && echo yes || echo no)"
 check "and the Codex one Codex's" yes "$([ -n "$(frame usage-engine-gpt:principal)" ] && echo yes || echo no)"
@@ -406,24 +430,23 @@ try:
 except FileNotFoundError: pass' "$WORK/ia/calls.jsonl"; }
 ordem() { tr '\n' ' ' <"$FAKE/.claude/contas/.ordem" 2>/dev/null | sed 's/ $//'; }
 ax
-check "each account carries its place in the order" yes "$(has "1 · Claude · principal")"
-check "the rest where they always were: the one the tabs run on, then by name, Claude before GPT" "yes yes yes" \
-    "$(has "2 · Claude · limitada") $(has "3 · Claude · reserva") $(has "4 · GPT · principal")"
-check "the first can go down" yes "$(has "Descer Claude · principal")"
-check "but not up" no "$(has "Subir Claude · principal")"
-check "the last can go up" yes "$(has "Subir GPT · principal")"
-check "but not down" no "$(has "Descer GPT · principal")"
+check "each account carries its place in the order" "1 · Claude" "$(heading claude:principal)"
+check "the rest where they always were: the one the tabs run on, then by name, Claude before GPT" \
+    "2 · Claude|3 · Claude|4 · GPT" "$(heading claude:limitada)|$(heading claude:reserva)|$(heading gpt:principal)"
+check "the first can go down" yes "$(shown usage-down-claude:principal)"
+check "but not up" no "$(shown usage-up-claude:principal)"
+check "the last can go up" yes "$(shown usage-up-gpt:principal)"
+check "but not down" no "$(shown usage-down-gpt:principal)"
+check "the arrows say the account the tabs' way" yes "$(has "Descer IA·1 · Claude")"
 check "and there is a way to sign in to another account" yes "$(has "Entrar em outra conta")"
 
 # The kit takes five seconds to answer: the screen does not wait for it.
 echo 5 >"$WORK/ia/lento"
-"$AXPRESS" "$APP_NAME" press "Descer Claude · principal"
+"$AXPRESS" "$APP_NAME" press usage-down-claude:principal
 sleep 0.5
-ax
-check "down: the order changes on screen at once, the kit still at it" \
-    "1 · Claude · limitada" "$(first_of "1 · Claude · limitada" "1 · Claude · principal")"
-check "and the one moved says its new place" yes "$(has "2 · Claude · principal")"
-check "the core is asked to move it, by its key" "ordem mover claude:principal baixo --json" "$(calls | tail -1)"
+check "down: the order changes on screen at once, the kit still at it" "1 · Claude" "$(heading claude:limitada)"
+check "and the one moved says its new place" "2 · Claude" "$(heading claude:principal)"
+check "the core is asked to move it, by its key" "ordem mover claude:principal baixo --por=setas --json" "$(calls | tail -1)"
 check "as the app's keep: ia first" yes \
     "$(grep -qF '"grupo": "ia"' "$WORK/ia/calls.jsonl" && echo yes || echo no)"
 check "and told which daemon the app is on" yes \
@@ -434,31 +457,25 @@ check "and which home it reads" yes \
 # again — and the accounts are read afresh, the old order with them.
 echo principal >"$VAULT/.ativa"
 sleep 3
-ax
-check "a read of the files before the kit wrote does not put the old order back" \
-    "1 · Claude · limitada" "$(first_of "1 · Claude · limitada" "1 · Claude · principal")"
+check "a read of the files before the kit wrote does not put the old order back" "1 · Claude" "$(heading claude:limitada)"
 sleep 2.5
 check "the kit wrote the order the screen showed" \
     "claude:limitada claude:principal claude:reserva gpt:principal" "$(ordem)"
 # Past the ten seconds the order is held against the files: what is shown then
 # is what the files say.
 sleep 5
-ax
-check "and after the hold the screen reads it from the file the same" \
-    "1 · Claude · limitada" "$(first_of "1 · Claude · limitada" "1 · Claude · principal")"
+check "and after the hold the screen reads it from the file the same" "1 · Claude" "$(heading claude:limitada)"
 
 # Now the kit says no, two seconds later.
 echo 2 >"$WORK/ia/lento"
 touch "$WORK/ia/falha"
-"$AXPRESS" "$APP_NAME" press "Subir Claude · principal"
+"$AXPRESS" "$APP_NAME" press usage-up-claude:principal
 pressed=$SECONDS
 sleep 0.5
-ax
-check "up, and the kit will refuse: shown at once all the same" \
-    "1 · Claude · principal" "$(first_of "1 · Claude · limitada" "1 · Claude · principal")"
+check "up, and the kit will refuse: shown at once all the same" "1 · Claude" "$(heading claude:principal)"
 # Taken back when the refusal lands, two seconds after the press — not when
 # the hold on the order shown runs out, ten seconds after it.
-check "refused: taken back" yes "$(until_text_by "1 · Claude · limitada" $((pressed + 7)))"
+check "refused: taken back" "1 · Claude" "$(until_heading claude:limitada "1 · Claude" $((pressed + 7)))"
 check "and said, in the core's words" yes \
     "$(until_text "Não deu para mudar a ordem: falha simulada do keep ia" 20)"
 check "the order the kit has is untouched" \
@@ -480,8 +497,8 @@ check "+ offers a login to either service, and the Jev's connection apart" \
 sleep 1
 check "the core is asked for a GPT login in this window's workspace" \
     "entrar gpt --ws=$HOME_WS --json" "$(calls | tail -1)"
-check "the login's account shows up within five seconds" yes "$(until_text "GPT · nova" 50)"
-check "at the end of the order" yes "$(has "5 · GPT · nova")"
+check "the login's account shows up within five seconds" yes "$(until_shown usage-heading-gpt:nova $((SECONDS + 5)))"
+check "at the end of the order" "5 · GPT" "$(heading gpt:nova)"
 # The round lands when its slowest answer does: six seconds on (the limited
 # account is not asked again before its Retry-After).
 waited=0
@@ -491,7 +508,7 @@ done
 rm -f "$WORK/slow"
 sleep 1
 ax
-check "a round of readings that set out before it landed without taking it away" yes "$(has "GPT · nova")"
+check "a round of readings that set out before it landed without taking it away" yes "$(shown usage-heading-gpt:nova)"
 login_tab=$(grep -aoE "login in $HOME_WS/[0-9]+" "$WORK/app.log" | tail -1 | sed 's#.*/##')
 check "and the tab the login is in is the one shown" yes \
     "$([ -n "$login_tab" ] && grep -aqE "switch +→ $HOME_WS/$login_tab " "$WORK/app.log" && echo yes || echo no)"
@@ -502,8 +519,8 @@ say "folded"
 sleep 1
 ax
 check "one line an account, and the arrows still beside each" "yes yes yes" \
-    "$(has "Subir GPT · nova") $(has "Descer Claude · limitada") $(has "Subir Claude · reserva")"
-check "folded for real: no bars" "no no" "$(has "Claude · reserva 5h") $(has "Claude · principal 5h")"
+    "$(shown usage-up-gpt:nova) $(shown usage-down-claude:limitada) $(shown usage-up-claude:reserva)"
+check "folded for real: no bars" "no no" "$(has "· Claude 5h") $(has "· Claude 7d")"
 check "the Jev on one line, with what it can still spend: the key's, the smaller" yes "$(has "Jev OpenRouter restam R\$ 23,65")"
 check "folded for real: no bar of the Jev's" no "$(has "Jev conta: restam")"
 check "folded, the Jev's switch still in the accounts' column" yes "$(near "$(mid_x automation-jev)" "$(mid_x usage-switch-claude:principal)")"
@@ -638,7 +655,7 @@ for _ in $(seq 1 150); do
     sleep 0.1
 done
 check "without a key there is no Jev, and the line goes" yes "$gone"
-check "the accounts stay" yes "$(has "Claude · principal")"
+check "the accounts stay" yes "$(shown usage-switch-claude:principal)"
 
 say ""
 say "without a keep to ask, no footer"
@@ -653,7 +670,7 @@ done
 place_on_screen
 sleep 4
 ax
-check "no accounts: the app reads no login itself" no "$(has "Claude · principal")"
+check "no accounts: the app reads no login itself" no "$(shown usage-switch-claude:principal)"
 check "no arrows" no "$(has "Subir Claude")"
 check "no way to sign in" no "$(has "Entrar em outra conta")"
 check "and no footer at all" no "$(has "Consumo de IA")"
