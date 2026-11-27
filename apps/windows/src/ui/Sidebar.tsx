@@ -216,7 +216,9 @@ function WorkspaceGroup(props: { name: string }) {
       : "";
   // The header's lime waits for every tab under it (pedido de 25/11/2026): until then, a turn simply over.
   const held = listed.some((t) => holdsHeader(tabActivity(name, t), tabBusy(name, t), isDormant(name, t)));
-  const generalLook = general && tabLook(name, general, 0, current && general === activeTab.value, true, held);
+  // Folded, the header is marked as the tab on screen would be while one of its tabs is it (pedido de 27/11/2026).
+  const shownHere = current && folded;
+  const generalLook = general && tabLook(name, general, 0, current && (general === activeTab.value || folded), true, held);
   // One dot for each tab under the header at work, in that tab's colour (its title's, or the mark's before it where
   // the title has none of its own), folded or not: the header is never grey while something in here works.
   const dots = listed
@@ -259,7 +261,7 @@ function WorkspaceGroup(props: { name: string }) {
     >
       <div
         class={`workspace-row ${carried ? "carried" : ""} ${offered ? "offered" : ""} ${general ? "is-general" : ""} ${
-          general && current && general === selectedTab ? "general-chosen" : ""
+          general && current && general === selectedTab ? "general-chosen" : shownHere ? "shown-here" : ""
         } ${generalLook?.wantsYou ? "wants" : ""} ${generalLook?.unseen ? "unseen" : ""}`}
         style={generalLook?.wantsYou ? { background: generalLook.fill } : generalLook?.unseen ? { background: LIME_GREEN } : undefined}
         title={tooltip}

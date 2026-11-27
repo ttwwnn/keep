@@ -338,6 +338,12 @@ struct WorkspaceSidebar: View {
         .padding(.horizontal, 5)
     }
 
+    /// Whether the header wears the chosen tab's capsule: its general tab is the one on screen, or (pedido de
+    /// 27/11/2026) the workspace is folded and one of its tabs, hidden under it, is the one on screen.
+    private func headerMarked(_ row: SessionSnapshot.SidebarRow) -> Bool {
+        row.isActive && (!row.expanded || generalTab(of: row)?.isActive == true)
+    }
+
     /// The workspace, as a plain header: the name, and a + and the fold at the
     /// far end. Everything the old card said — the dot, what is running, the
     /// count, the path — now belongs to the rows beneath it or to the
@@ -350,6 +356,7 @@ struct WorkspaceSidebar: View {
             HStack(spacing: 8) {
                 // Standing for the general tab, the name wears that tab's marks and inks, as a tab row does.
                 let general = generalTab(of: row)
+                let marked = headerMarked(row)
                 let generalWants = general?.claudeActivity?.wantsYou == true
                 if generalWants {
                     Image(systemName: Attention.symbol)
@@ -360,7 +367,7 @@ struct WorkspaceSidebar: View {
                     .font(identifier)
                     .foregroundStyle(
                         generalWants ? RestingInk(Palette.attentionInk)
-                            : general.map { titleInk(for: $0, chosen: $0.isActive && row.isActive, hovered: hovered == row.name) }
+                            : general.map { titleInk(for: $0, chosen: marked, hovered: hovered == row.name) }
                             ?? (row.isActive ? Palette.ink : hovered == row.name ? Palette.inkResting : Palette.inkFaint))
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -413,14 +420,17 @@ struct WorkspaceSidebar: View {
             .padding(.top, 10)
             .padding(.bottom, 4)
             .contentShape(Rectangle())
-            // Standing for the general tab, the header wears that tab's capsule: chosen, or waiting on you.
+            // Standing for the general tab, the header wears that tab's capsule: chosen, or waiting on you. Folded, it
+            // is chosen too while a tab of it is on screen.
             .background {
                 if let general = generalTab(of: row) {
                     capsule(
-                        chosen: general.isActive && row.isActive, hovered: false,
+                        chosen: headerMarked(row), hovered: false,
                         wantsYou: general.claudeActivity?.wantsYou == true, since: general.wantsYouSince,
                         unseen: general.claudeActivity == .doneUnseen)
                         .padding(.top, 6)
+                } else if headerMarked(row) {
+                    capsule(chosen: true, hovered: false).padding(.top, 6)
                 }
             }
         }
