@@ -1,6 +1,6 @@
 [package]
 name = "keep-app"
-version = "0.3.89"
+version = "0.3.90"
 description = "Keep para Windows: workspaces de terminal que sobrevivem à janela"
 authors = ["ttwwnn"]
 edition = "2021"

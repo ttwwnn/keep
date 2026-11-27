@@ -11,7 +11,8 @@
 //!
 //! A leitura: no macOS, o nível de pressão do kernel (`kern.memorystatus_vm_pressure_level`: 1 normal, 2 alerta,
 //! 4 crítica), a memória disponível (livre, inativa, purgeável e especulativa, de `host_statistics64`, a fonte do medidor
-//! "Memória RAM" do app) e o swap (`vm.swapusage`); no Windows, `GlobalMemoryStatusEx` (a física disponível).
+//! "Memória RAM" do app) e o swap (`vm.swapusage`, só mostrado: no macOS o usado não volta a baixar sozinho, e a
+//! pressão do kernel já o leva em conta); no Windows, `GlobalMemoryStatusEx` (a física disponível).
 //! `KEEP_MEMORIA_TESTE` (só nos testes) troca a leitura por um arquivo.
 
 use serde::Serialize;
@@ -46,8 +47,9 @@ pub fn gb(bytes: u64) -> String {
 }
 
 impl Leitura {
-    /// Por que a memória está apertada, em palavras; `None` se não está. Pressão em alerta (ou crítica), menos de 1,5 GB
-    /// disponíveis (ou de 15% da RAM, se for mais), ou o swap passando da metade.
+    /// Por que a memória está apertada, em palavras; `None` se não está. Pressão em alerta (ou crítica), ou menos de
+    /// 1,5 GB disponíveis (ou de 15% da RAM, se for mais). O swap usado não conta (27/11/2026): no macOS ele não volta
+    /// a baixar sozinho, e a fila esperava por ele para sempre.
     pub fn aperto(&self) -> Option<String> {
         if self.pressao >= 4 {
             return Some("pressão de memória crítica".into());
@@ -55,14 +57,21 @@ impl Leitura {
         if self.pressao >= 2 {
             return Some("pressão de memória em alerta".into());
         }
-        let minima = DISPONIVEL_MINIMA.max(self.total * DISPONIVEL_MINIMA_PCT / 100);
-        if self.total > 0 && self.disponivel < minima {
+        if self.disponivel_curta() {
+            let minima = self.minima();
             return Some(format!("só {} disponíveis de {} (o mínimo é {})", gb(self.disponivel), gb(self.total), gb(minima)));
         }
-        if self.swap_total > 0 && self.swap_usado * 2 > self.swap_total {
-            return Some(format!("swap em {} de {}", gb(self.swap_usado), gb(self.swap_total)));
-        }
         None
+    }
+
+    /// O mínimo de memória disponível: 1,5 GB, ou 15% da RAM, se for mais.
+    fn minima(&self) -> u64 {
+        DISPONIVEL_MINIMA.max(self.total * DISPONIVEL_MINIMA_PCT / 100)
+    }
+
+    /// Menos disponível que o mínimo.
+    fn disponivel_curta(&self) -> bool {
+        self.total > 0 && self.disponivel < self.minima()
     }
 
     /// Quantas conversas vivas cabem nesta RAM: (RAM − 3 GB) / 450 MB, no mínimo uma.
@@ -201,6 +210,13 @@ impl Situacao {
         (self.vivas + mais > teto).then(|| format!("teto de {} para {} de RAM", conversas(teto), gb(l.total)))
     }
 
+    /// Se hibernar conversas abre o lugar que falta para mais `mais`: o teto de conversas vivas e a memória disponível
+    /// abaixo do mínimo baixam com elas; a pressão do kernel sozinha, não na hora (27/11/2026: a fila hibernava uma
+    /// conversa por minuto sem abrir nada). Quem abre lugar para uma aba nova só hiberna com isto.
+    pub fn hibernar_resolve(&self, mais: usize) -> bool {
+        self.leitura.as_ref().is_some_and(|l| l.disponivel_curta() || self.vivas + mais > l.teto())
+    }
+
     /// "0,3 GB livres, 9 conversas vivas".
     pub fn resumo(&self) -> String {
         let livres = self.leitura.as_ref().map_or("memória sem leitura".into(), |l| format!("{} livres", gb(l.disponivel)));
@@ -238,7 +254,7 @@ mod testes {
     }
 
     #[test]
-    fn apertada_pela_pressao_pela_disponivel_ou_pelo_swap() {
+    fn apertada_pela_pressao_ou_pela_disponivel_e_nao_pelo_swap() {
         // folgada
         assert_eq!(leitura(8192, 3000, (1000, 5120), 1).aperto(), None);
         // o kernel em alerta ou crítico
@@ -251,10 +267,9 @@ mod testes {
         // e menos de 15% da RAM, quando isso dá mais: num de 16 GB, 2,4 GB
         assert_eq!(leitura(16_384, 2400, (0, 0), 1).aperto().as_deref(), Some("só 2,3 GB disponíveis de 16,0 GB (o mínimo é 2,4 GB)"));
         assert_eq!(leitura(16_384, 2500, (0, 0), 1).aperto(), None);
-        // o swap passando da metade
-        assert_eq!(leitura(8192, 3000, (4200, 5120), 1).aperto().as_deref(), Some("swap em 4,1 GB de 5,0 GB"));
-        assert_eq!(leitura(8192, 3000, (2560, 5120), 1).aperto(), None, "a metade exata ainda não");
-        // sem swap (Windows, ou o Mac sem arquivo de swap) não conta
+        // o swap, nem passando da metade: no macOS ele não volta a baixar sozinho
+        assert_eq!(leitura(8192, 3000, (4200, 5120), 1).aperto(), None);
+        assert_eq!(leitura(8192, 1434, (2000, 3072), 1).aperto().as_deref(), Some("só 1,4 GB disponíveis de 8,0 GB (o mínimo é 1,5 GB)"));
         assert_eq!(leitura(8192, 3000, (0, 0), 0).aperto(), None);
     }
 
@@ -278,6 +293,19 @@ mod testes {
         assert_eq!(s(40, None).falta(1), None, "sem leitura, nada é segurado");
         assert_eq!(s(1, Some(leitura(2048, 1800, (0, 0), 1))).falta(1).as_deref(), Some("teto de 1 conversa viva para 2,0 GB de RAM"));
         assert_eq!(s(9, Some(leitura(8192, 60, (4200, 5120), 2))).resumo(), "0,1 GB livres, 9 conversas vivas");
+    }
+
+    #[test]
+    fn hibernar_abre_lugar_pelo_teto_e_pela_disponivel_mas_nao_pela_pressao() {
+        let s = |vivas: usize, l: Leitura| Situacao { leitura: Some(l), vivas };
+        // só a pressão em alerta (1,4 GB era o caso medido, abaixo do mínimo: esse resolve)
+        assert!(!s(9, leitura(8192, 3000, (0, 0), 2)).hibernar_resolve(1));
+        assert!(s(9, leitura(8192, 1434, (2000, 3072), 2)).hibernar_resolve(1));
+        // o teto de conversas vivas, com ou sem pressão
+        assert!(s(11, leitura(8192, 4000, (0, 0), 1)).hibernar_resolve(1));
+        assert!(s(11, leitura(8192, 4000, (0, 0), 2)).hibernar_resolve(1));
+        assert!(!s(10, leitura(8192, 4000, (0, 0), 1)).hibernar_resolve(1), "cabe: nada a resolver");
+        assert!(!Situacao { leitura: None, vivas: 40 }.hibernar_resolve(1), "sem leitura, nada");
     }
 
     #[test]
