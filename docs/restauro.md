@@ -334,6 +334,10 @@ a conversa volta quando a aba é mostrada. Com a memória apertada, a parada há
   aba, na barra lateral e na faixa de abas. Vale só para o keepd em uso.
 - **Só o Claude**: o Codex fica de pé. A conversa que nunca falou (sem transcrito, como a aba geral recém-aberta)
   também fica: não haveria o que retomar.
+- **A aba geral por último** (pedido de 27/11/2026): nem as 12 h nem a memória a hibernam enquanto outra aba do
+  workspace tiver conversa viva, do Claude ou do Codex (a aba só com terminal, que nunca hiberna, não conta). A
+  rodada a deixa (`geral: a aba N ainda tem conversa viva (parada há …)`) e a hiberna na mesma rodada em que a última
+  outra sair. O zzz da pessoa (`--agora`) vale para ela como para as outras.
 
 ```
 keep restauro adormecer [--seco] [--agora W [--aba N]] [--vista W/N]…
