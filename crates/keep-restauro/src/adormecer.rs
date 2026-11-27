@@ -15,7 +15,12 @@
 //!   as paradas há 10 min, a parada há mais tempo primeiro (a aba geral por
 //!   último), uma por vez, medindo de novo entre elas, até aliviar.
 //!   `abrir_vaga` faz só isso, para uma aba nova (`keep nova`, a fila), poupando
-//!   as abas que o app mostrou há pouco (`vistas.json`).
+//!   as abas que o app mostrou há pouco (`vistas.json`), e só quando hibernar
+//!   abre o lugar (o teto de conversas, a memória disponível; a pressão sozinha não).
+//! - **De volta pela fila** (pedido de 27/11/2026): a conversa que saiu pela
+//!   memória não tinha terminado, até onde o Keep sabe; ela entra na fila de
+//!   memória (`fila`) e acorda quando chegar a vez dela. Uma volta só: a que a
+//!   fila acordou e ninguém falou com ela desde então não volta de novo.
 //! - **A aba geral** (pedido de 27/11/2026) não hiberna sozinha, nem pelas
 //!   12 h nem pela memória, enquanto outra aba do workspace tiver conversa viva
 //!   (do Claude ou do Codex; a aba só com terminal não conta): sai depois que
@@ -51,6 +56,8 @@ pub const ARQUIVO: &str = "adormecidas.json";
 const ACORDADAS: &str = "acordadas.json";
 /// Quando o app mostrou cada aba por último (nas rodadas, e ao mostrá-la), por keepd.
 const VISTAS: &str = "vistas.json";
+/// Quando a fila de memória acordou cada aba, por keepd.
+const DA_FILA: &str = "acordadas-pela-fila.json";
 
 /// Quanto tempo parada antes de sair da memória.
 const PARADA: Duration = Duration::from_secs(12 * 3600);
@@ -240,20 +247,23 @@ fn impedimento(aba: &daemon::Aba, pid: u32) -> Option<String> {
 }
 
 /// Uma rodada: adormece as abas paradas há `PARADA` fora de `vistas` (as abas que o app mostra, pela raiz) e, com a
-/// memória apertada, as paradas há pouco. `seco`: só diz o que faria.
+/// memória apertada, as paradas há pouco, que entram na fila de memória para voltar. `seco`: só diz o que faria.
 pub fn adormecer(vistas: &HashSet<(String, u32)>, seco: bool) -> Result<Value, String> {
-    rodada(vistas, seco, Modo::Rodada)
+    let (r, voltam) = rodada(vistas, seco, Modo::Rodada)?;
+    crate::fila::voltar(&voltam);
+    Ok(r)
 }
 
 /// O mesmo para a aba `aba` do workspace `ws` (sem `aba`, as do workspace), parada há pouco ou há muito: o
 /// que impede (trabalho, pergunta, caixa digitada) e o que está em `vistas` continuam valendo.
 pub fn adormecer_agora(ws: &str, aba: Option<u32>, vistas: &HashSet<(String, u32)>) -> Result<Value, String> {
-    rodada(vistas, false, Modo::Agora(ws, aba))
+    rodada(vistas, false, Modo::Agora(ws, aba)).map(|(r, _)| r)
 }
 
-/// Lugar na memória para `n` conversas novas (`keep nova`, a fila): com a memória apertada, ou no teto de conversas
-/// vivas, as paradas há 10 min saem, como na rodada, poupando as abas que o app mostrou há pouco.
-pub fn abrir_vaga(n: usize) -> Result<Value, String> {
+/// Lugar na memória para `n` conversas novas (`keep nova`, a fila): no teto de conversas vivas, ou com a memória
+/// disponível abaixo do mínimo, as paradas há 10 min saem, como na rodada, poupando as abas que o app mostrou há pouco.
+/// Com o resto, as abas que saíram, para a fila acordá-las quando chegar a vez delas.
+pub fn abrir_vaga(n: usize) -> Result<(Value, Vec<(String, u32)>), String> {
     rodada(&HashSet::new(), false, Modo::Vaga(n))
 }
 
@@ -371,11 +381,12 @@ fn geral_segura(lista: &daemon::Retrato, ias: &[IaAba], ws: &str, mae: u32, saiu
 
 /// A ordem de saída pela memória: a parada há mais tempo primeiro, e a aba geral do workspace por último (é ela que
 /// conduz as outras, e o que pede a ela a acorda de novo).
-fn ordem_da_memoria(candidatas: &mut [(u64, bool, &IaAba, String)]) {
+fn ordem_da_memoria(candidatas: &mut [(u64, bool, &IaAba, String, bool)]) {
     candidatas.sort_by_key(|(parada_ha, geral, ..)| (*geral, Reverse(*parada_ha)));
 }
 
-fn rodada(vistas_do_app: &HashSet<(String, u32)>, seco: bool, modo: Modo) -> Result<Value, String> {
+/// A rodada, e as abas que saíram pela memória e voltam pela fila.
+fn rodada(vistas_do_app: &HashSet<(String, u32)>, seco: bool, modo: Modo) -> Result<(Value, Vec<(String, u32)>), String> {
     let so_do = match modo {
         Modo::Agora(w, a) => Some((w, a)),
         _ => None,
@@ -388,11 +399,11 @@ fn rodada(vistas_do_app: &HashSet<(String, u32)>, seco: bool, modo: Modo) -> Res
         Modo::Vaga(_) => crate::Trava::esperar(".adormecer.lock", Duration::from_secs(60)),
     };
     let Some(_trava) = trava else {
-        return Ok(json!({ "versao": crate::VERSAO, "motivo": "outra rodada em andamento" }));
+        return Ok((json!({ "versao": crate::VERSAO, "motivo": "outra rodada em andamento" }), Vec::new()));
     };
     let lista = daemon::listar()?;
     if !lista.exato {
-        return Ok(json!({ "versao": crate::VERSAO, "motivo": "o keepd não diz os processos das abas" }));
+        return Ok((json!({ "versao": crate::VERSAO, "motivo": "o keepd não diz os processos das abas" }), Vec::new()));
     }
     let amb = Ambiente::do_sistema();
     let keepd = crate::retrato::keepd_da_lista(&lista, &amb);
@@ -417,6 +428,7 @@ fn rodada(vistas_do_app: &HashSet<(String, u32)>, seco: bool, modo: Modo) -> Res
     }
     let c = Contexto { lista: &lista, amb: &amb, keepd: &keepd, nomes: &nomes };
     let acordadas = marcas(ACORDADAS, &keepd);
+    let da_fila = marcas(DA_FILA, &keepd);
     let gerais = crate::geral::do_keepd(&keepd);
     let parada = parada().as_millis() as u64;
     let parada_aperto = parada_aperto().as_millis() as u64;
@@ -425,8 +437,9 @@ fn rodada(vistas_do_app: &HashSet<(String, u32)>, seco: bool, modo: Modo) -> Res
     let mut feitas = 0;
     // As abas que saíram (ou, no seco, sairiam) nesta rodada: já não seguram a aba geral.
     let mut saiu: HashSet<(String, u32)> = HashSet::new();
-    // As que podem sair se a memória apertar: (parada há, é a aba geral, a IA, a conversa).
-    let mut pela_memoria: Vec<(u64, bool, &IaAba, String)> = Vec::new();
+    // As que podem sair se a memória apertar: (parada há, é a aba geral, a IA, a conversa, volta pela fila).
+    let mut pela_memoria: Vec<(u64, bool, &IaAba, String, bool)> = Vec::new();
+    let mut voltam: Vec<(String, u32)> = Vec::new();
     let e_geral = |i: &IaAba| gerais.iter().any(|(w, a)| *w == i.workspace && *a == raiz(&lista, &i.workspace, i.aba));
     let mut claudes: Vec<&IaAba> = ias.iter().filter(|i| i.agente == "claude").collect();
     // A aba geral por último: as outras do workspace que saem nesta rodada já não a seguram.
@@ -465,7 +478,9 @@ fn rodada(vistas_do_app: &HashSet<(String, u32)>, seco: bool, modo: Modo) -> Res
             }
             if matches!(modo, Modo::Vaga(_)) || parada_ha < parada {
                 if parada_ha >= parada_aperto {
-                    pela_memoria.push((parada_ha, e_geral(i), i, conversa));
+                    // Uma volta só: a que a fila já acordou e ninguém falou com ela desde então terminou.
+                    let volta = !da_fila.iter().any(|m| m.workspace == i.workspace && m.aba == i.aba && ultima < m.em_ms);
+                    pela_memoria.push((parada_ha, e_geral(i), i, conversa, volta));
                 }
                 relato.diz(&rotulo, format!("parada há {} min", parada_ha / 60_000));
                 continue;
@@ -506,7 +521,11 @@ fn rodada(vistas_do_app: &HashSet<(String, u32)>, seco: bool, modo: Modo) -> Res
         let antes = s.falta(mais);
         if let Some(porque) = &antes {
             ordem_da_memoria(&mut pela_memoria);
-            for (parada_ha, geral, i, conversa) in &pela_memoria {
+            for (parada_ha, geral, i, conversa, volta) in &pela_memoria {
+                // Para uma aba nova, só enquanto hibernar abre o lugar: a pressão sozinha não baixa na hora.
+                if matches!(modo, Modo::Vaga(_)) && !s.hibernar_resolve(mais) {
+                    break;
+                }
                 let Some(aba) = lista.aba(&i.workspace, i.aba) else { continue };
                 let rotulo = format!("{}#{}", i.workspace, i.aba);
                 let min = parada_ha / 60_000;
@@ -521,7 +540,13 @@ fn rodada(vistas_do_app: &HashSet<(String, u32)>, seco: bool, modo: Modo) -> Res
                         feitas += 1;
                         saiu.insert((i.workspace.clone(), i.aba));
                         s.vivas = s.vivas.saturating_sub(1);
-                        relato.diz(&rotulo, format!("adormecida pela memória ({porque}; parada há {min} min)"));
+                        let fila = if *volta {
+                            voltam.push((i.workspace.clone(), i.aba));
+                            "; volta pela fila de memória"
+                        } else {
+                            ""
+                        };
+                        relato.diz(&rotulo, format!("adormecida pela memória ({porque}; parada há {min} min{fila})"));
                         // O que o Claude que saiu ocupava volta ao sistema em instantes.
                         std::thread::sleep(Duration::from_secs(1));
                         s.leitura = memoria::ler();
@@ -548,17 +573,28 @@ fn rodada(vistas_do_app: &HashSet<(String, u32)>, seco: bool, modo: Modo) -> Res
             relato.diz(&format!("{w}#{a}"), porque.into());
         }
     }
-    Ok(json!({ "versao": crate::VERSAO, "adormecidas": feitas, "abas": relato.json(), "memoria": memoria_json }))
+    Ok((json!({ "versao": crate::VERSAO, "adormecidas": feitas, "abas": relato.json(), "memoria": memoria_json }), voltam))
 }
 
 /// A conversa da aba `ws`#`tab` (e dos painéis dela) volta, se ela adormeceu.
 pub fn acordar(ws: &str, tab: u32) -> Result<Value, String> {
+    acordar_de(ws, tab, false)
+}
+
+/// O mesmo, pela fila de memória: a aba não conta como mostrada, e fica marcada como acordada pela fila.
+pub(crate) fn acordar_pela_fila(ws: &str, tab: u32) -> Result<Value, String> {
+    acordar_de(ws, tab, true)
+}
+
+fn acordar_de(ws: &str, tab: u32, pela_fila: bool) -> Result<Value, String> {
     let lista = daemon::listar()?;
     let amb = Ambiente::do_sistema();
     let keepd = crate::retrato::keepd_da_lista(&lista, &amb);
     let alvo = raiz(&lista, ws, tab);
     // O app pergunta ao mostrar cada aba: ela conta como à vista para quem abre lugar na memória.
-    marcar(VISTAS, &keepd, &[(ws.to_string(), alvo)]);
+    if !pela_fila {
+        marcar(VISTAS, &keepd, &[(ws.to_string(), alvo)]);
+    }
     let e_alvo = |a: &Adormecida| a.workspace == ws && raiz(&lista, ws, a.aba) == alvo;
     if !do_keepd(&keepd).iter().any(|a| e_alvo(a)) {
         return Ok(json!({ "versao": crate::VERSAO, "acordadas": 0 }));
@@ -613,6 +649,9 @@ pub fn acordar(ws: &str, tab: u32) -> Result<Value, String> {
     }
     // A que acordou não volta a dormir antes da mensagem que a acordou, e a parada dela conta daqui.
     marcar(ACORDADAS, &keepd, &acordou);
+    if pela_fila {
+        marcar(DA_FILA, &keepd, &acordou);
+    }
     Ok(json!({ "versao": crate::VERSAO, "acordadas": feitas, "falhas": falhas }))
 }
 
@@ -642,7 +681,12 @@ mod testes {
             provada: None,
         };
         let (a, b, g, d) = (ia(1), ia(2), ia(3), ia(4));
-        let mut c = vec![(20, false, &a, String::new()), (90, true, &g, String::new()), (50, false, &b, String::new()), (70, false, &d, String::new())];
+        let mut c = vec![
+            (20, false, &a, String::new(), true),
+            (90, true, &g, String::new(), true),
+            (50, false, &b, String::new(), true),
+            (70, false, &d, String::new(), true),
+        ];
         ordem_da_memoria(&mut c);
         assert_eq!(c.iter().map(|x| x.2.aba).collect::<Vec<_>>(), vec![4, 2, 1, 3]);
     }

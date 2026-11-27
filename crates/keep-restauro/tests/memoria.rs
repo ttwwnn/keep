@@ -150,8 +150,9 @@ fn a_memoria_apertada_hiberna_as_paradas_segura_as_abas_novas_e_poupa_a_recem_ac
     memoria(&leituras, &[APERTADA, APERTADA, FOLGADA]);
     let r = adormecer::adormecer(&vistas, false).unwrap();
     assert_eq!(r["adormecidas"], 2, "{r:#}");
-    assert_eq!(situacao(&r, a), "adormecida pela memória (pressão de memória em alerta; parada há 50 min)", "{r:#}");
-    assert_eq!(situacao(&r, b), "adormecida pela memória (pressão de memória em alerta; parada há 30 min)", "{r:#}");
+    // Saem pela memória sem ter terminado, até onde o Keep sabe: voltam pela fila (tests/fila_acorda.rs).
+    assert_eq!(situacao(&r, a), "adormecida pela memória (pressão de memória em alerta; parada há 50 min; volta pela fila de memória)", "{r:#}");
+    assert_eq!(situacao(&r, b), "adormecida pela memória (pressão de memória em alerta; parada há 30 min; volta pela fila de memória)", "{r:#}");
     assert_eq!(situacao(&r, g), "parada há 55 min", "a geral fica: aliviou antes dela: {r:#}");
     assert_eq!(situacao(&r, v), "à vista", "{r:#}");
     assert!(tela_tem("A", a, &format!("claude --resume {id_a}"), 10), "saiu pelo /exit");
@@ -174,7 +175,7 @@ fn a_memoria_apertada_hiberna_as_paradas_segura_as_abas_novas_e_poupa_a_recem_ac
     assert!(tela_tem("A", a, "Feito: oi de novo", 10));
     std::thread::sleep(Duration::from_secs(3));
     let r = adormecer::adormecer(&vistas, false).unwrap();
-    assert!(situacao(&r, a).starts_with("adormecida pela memória (pressão de memória em alerta; parada há 0 min)"), "{r:#}");
+    assert!(situacao(&r, a).starts_with("adormecida pela memória (pressão de memória em alerta; parada há 0 min"), "{r:#}");
     assert!(dormindo(a));
 
     // ---- `keep nova` sem memória, e sem parada a hibernar (só a que está à vista): o pedido vai para a fila
@@ -185,6 +186,8 @@ fn a_memoria_apertada_hiberna_as_paradas_segura_as_abas_novas_e_poupa_a_recem_ac
         nome: Some(nome.into()),
         sem_enter: false,
     };
+    // Aqui, só os pedidos novos: as abas hibernadas pela memória acima, que esperam na fila para voltar, saem dela.
+    std::fs::remove_file(restauro.join("fila.json")).unwrap();
     let antes = daemon::listar().unwrap().abas.len();
     match fila::nova(&pedido("Tarefa Y")).unwrap() {
         fila::Desfecho::NaFila { porque, resumo, posicao } => {

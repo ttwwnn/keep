@@ -7,7 +7,7 @@
 //!                                                     com a memória apertada (o app, a cada minuto)
 //!   keep restauro adormecer --agora W [--aba N] [--vista W/N]…  o mesmo para a aba N (ou as livres do workspace W), sem esperar as 12 h
 //!   keep restauro memoria                             a memória, as conversas vivas, o teto e se cabe mais uma
-//!   keep restauro fila                                os pedidos de aba nova que esperam memória
+//!   keep restauro fila                                os pedidos de aba nova e as abas hibernadas pela memória que esperam
 //!   keep restauro adormecidas                         as abas adormecidas de agora (o app do Windows, para riscar o título)
 //!   keep restauro acordar --workspace W --aba N       a conversa adormecida da aba volta (o app, ao mostrá-la)
 //!   keep restauro importar --de PASTA [--disponivel ID]… [--seco]   as abas de outro computador (importar.rs)

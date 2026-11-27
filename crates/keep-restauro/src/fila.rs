@@ -8,6 +8,10 @@
 //! pelas novidades. O pedido espera a memória o tempo que for (pedido de 25/11/2026: o que o Keep barrou abre assim
 //! que ela baixar); só sai sem abrir se não der para abrir (o workspace fechou, a pasta sumiu), com aviso.
 //!
+//! A aba que o Keep hibernou pela memória (a rodada ou o lugar para uma aba nova) entra aqui também (pedido de
+//! 27/11/2026): quando chegar a vez dela, com a mesma medida dos pedidos novos, a conversa acorda (`adormecer`). Sai
+//! calada se acordou antes por outro caminho (a pessoa a mostrou) ou se o Keep reiniciou.
+//!
 //! ```text
 //! keep restauro fila    → os pedidos que esperam
 //! ```
@@ -36,6 +40,8 @@ pub enum Item {
     /// O Claude na primeira aba de um workspace novo, que vira a aba geral dele (`keep geral iniciar`); vale só no
     /// keepd em que a aba existe.
     Iniciar { workspace: String, aba: u32, keepd: Keepd },
+    /// A conversa que o Keep hibernou pela memória, de volta na mesma aba; vale só no keepd em que a aba existe.
+    Acordar { workspace: String, aba: u32, keepd: Keepd },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -81,7 +87,45 @@ fn de_quem(item: &Item) -> (String, String) {
             (pedido.workspace.clone().unwrap_or_default(), pedido.nome.clone().unwrap_or_else(|| "aba nova".into()))
         }
         Item::Iniciar { workspace, aba, .. } => (workspace.clone(), format!("o Claude da aba {aba}, a geral do workspace novo")),
+        Item::Acordar { workspace, aba, .. } => (workspace.clone(), format!("a aba {aba}, hibernada pela memória")),
     }
+}
+
+/// O keepd de agora (sem ele, nenhum).
+fn keepd_de_agora() -> Option<Keepd> {
+    let lista = daemon::listar().ok()?;
+    Some(crate::retrato::keepd_da_lista(&lista, &keep_ia::worktrees::ambiente::Ambiente::do_sistema()))
+}
+
+/// As abas hibernadas pela memória, para voltar pela fila: no fim dela, na ordem em que saíram.
+fn com_as_que_voltam(a: &mut Arquivo, abas: &[(String, u32)]) {
+    let Some(keepd) = keepd_de_agora().filter(|_| !abas.is_empty()) else { return };
+    for (workspace, aba) in abas {
+        registrar(&format!("{workspace}: a aba {aba}, hibernada pela memória, na fila para voltar"));
+        let item = Item::Acordar { workspace: workspace.clone(), aba: *aba, keepd: keepd.clone() };
+        a.itens.push(NaFila { desde_ms: crate::agora_ms(), item });
+    }
+}
+
+/// A rodada do adormecer hibernou estas abas pela memória: elas entram na fila para voltar.
+pub(crate) fn voltar(abas: &[(String, u32)]) {
+    if abas.is_empty() {
+        return;
+    }
+    let Some(_trava) = crate::Trava::esperar(".fila.lock", Duration::from_secs(60)) else {
+        registrar(&format!("{} aba(s) hibernada(s) pela memória ficaram fora da fila: ela estava ocupada", abas.len()));
+        return;
+    };
+    let mut a = ler();
+    com_as_que_voltam(&mut a, abas);
+    let _ = gravar(&a);
+}
+
+/// A aba de um `Acordar` ainda dorme da hibernação que a pôs na fila (não acordou por outro caminho, nem dorme de
+/// novo pelo zzz, nem o Keep reiniciou).
+fn ainda_dorme(workspace: &str, aba: u32, keepd: &Keepd, desde_ms: u64, agora: Option<&Keepd>) -> bool {
+    agora.is_some_and(|k| k.mesmo(keepd))
+        && adormecer::do_keepd(keepd).iter().any(|d| d.workspace == workspace && d.aba == aba && d.desde_ms <= desde_ms)
 }
 
 /// Uma novidade para a aba geral do workspace do pedido.
@@ -98,15 +142,17 @@ fn situacao() -> memoria::Situacao {
     daemon::listar().map(|l| memoria::Situacao::de(&l)).unwrap_or(memoria::Situacao { leitura: memoria::ler(), vivas: 0 })
 }
 
-/// Cabem mais `mais` conversas vivas? Sem caber e com `aliviar`, as paradas hibernam antes de dizer que não.
-/// `Err`: por que não, com a memória e as conversas vivas.
-fn cabe(mais: usize, aliviar: bool) -> Result<(), (String, memoria::Situacao)> {
+/// Cabem mais `mais` conversas vivas? Sem caber e com `aliviar`, as paradas hibernam antes de dizer que não, e entram
+/// no fim da fila `a` para voltar. `Err`: por que não, com a memória e as conversas vivas.
+fn cabe(a: &mut Arquivo, mais: usize, aliviar: bool) -> Result<(), (String, memoria::Situacao)> {
     let s = situacao();
     let Some(porque) = s.falta(mais) else { return Ok(()) };
     if !aliviar {
         return Err((porque, s));
     }
-    let _ = adormecer::abrir_vaga(mais);
+    if let Ok((_, voltam)) = adormecer::abrir_vaga(mais) {
+        com_as_que_voltam(a, &voltam);
+    }
     let s = situacao();
     match s.falta(mais) {
         None => Ok(()),
@@ -126,6 +172,14 @@ fn abrir(item: &Item) -> Result<(String, u32), String> {
             }
             crate::geral::iniciar_ja(workspace, *aba).map(|_| (workspace.clone(), *aba))
         }
+        Item::Acordar { workspace, aba, .. } => {
+            let r = adormecer::acordar_pela_fila(workspace, *aba)?;
+            if r["acordadas"].as_u64().unwrap_or(0) > 0 {
+                return Ok((workspace.clone(), *aba));
+            }
+            let falhas: Vec<&str> = r["falhas"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+            Err(if falhas.is_empty() { "a conversa não voltou".into() } else { falhas.join("; ") })
+        }
     }
 }
 
@@ -143,9 +197,14 @@ pub fn nova(p: &nova::Pedido) -> Result<Desfecho, String> {
     let _trava = crate::Trava::esperar(".fila.lock", Duration::from_secs(60)).ok_or("a fila de memória está ocupada; tente de novo")?;
     let mut a = ler();
     let abriu = !a.itens.is_empty() && andou(&mut a);
+    // O pedido vai antes das abas que hibernarem para ele.
+    let lugar = a.itens.len();
     let (porque, s) = if a.itens.is_empty() && !abriu {
-        match cabe(1, true) {
-            Ok(()) => return nova::abrir(p).map(|(ws, aba, texto)| Desfecho::Aberta(ws, aba, texto)),
+        match cabe(&mut a, 1, true) {
+            Ok(()) => {
+                gravar(&a)?;
+                return nova::abrir(p).map(|(ws, aba, texto)| Desfecho::Aberta(ws, aba, texto));
+            }
             Err(e) => e,
         }
     } else if a.itens.is_empty() {
@@ -162,11 +221,11 @@ pub fn nova(p: &nova::Pedido) -> Result<Desfecho, String> {
     }
     // O texto do pedido vai já para o arquivo que a aba vai ler: a fila guarda só o caminho.
     let pedido = nova::para_a_fila(p)?;
-    a.itens.push(NaFila { desde_ms: crate::agora_ms(), item: Item::Nova { pedido } });
+    a.itens.insert(lugar, NaFila { desde_ms: crate::agora_ms(), item: Item::Nova { pedido } });
     gravar(&a)?;
-    let (ws, nome) = de_quem(&a.itens[a.itens.len() - 1].item);
+    let (ws, nome) = de_quem(&a.itens[lugar].item);
     registrar(&format!("{ws}: «{nome}» na fila ({porque}; {})", s.resumo()));
-    Ok(Desfecho::NaFila { porque, resumo: s.resumo(), posicao: a.itens.len() })
+    Ok(Desfecho::NaFila { porque, resumo: s.resumo(), posicao: lugar + 1 })
 }
 
 /// `keep geral iniciar` com a memória medida: o Claude sobe na aba já, ou quando houver memória.
@@ -174,20 +233,22 @@ pub fn iniciar(ws: &str, aba: u32) -> Result<Value, String> {
     let trava = crate::Trava::esperar(".fila.lock", Duration::from_secs(60)).ok_or("a fila de memória está ocupada; tente de novo")?;
     let mut a = ler();
     let abriu = !a.itens.is_empty() && andou(&mut a);
+    let lugar = a.itens.len();
     let falta = if a.itens.is_empty() && !abriu {
-        cabe(1, true).err()
+        cabe(&mut a, 1, true).err()
     } else if a.itens.is_empty() {
         Some((ABRIU_AGORA.into(), situacao()))
     } else {
         Some((format!("{} pedido(s) antes deste na fila", a.itens.len()), situacao()))
     };
     let Some((porque, s)) = falta else {
+        gravar(&a)?;
         drop(trava);
         return crate::geral::iniciar_ja(ws, aba);
     };
     let lista = daemon::listar()?;
     let keepd = crate::retrato::keepd_da_lista(&lista, &keep_ia::worktrees::ambiente::Ambiente::do_sistema());
-    a.itens.push(NaFila { desde_ms: crate::agora_ms(), item: Item::Iniciar { workspace: ws.into(), aba, keepd } });
+    a.itens.insert(lugar, NaFila { desde_ms: crate::agora_ms(), item: Item::Iniciar { workspace: ws.into(), aba, keepd } });
     gravar(&a)?;
     registrar(&format!("{ws}: o Claude da aba {aba} (workspace novo) na fila ({porque}; {})", s.resumo()));
     Ok(json!({
@@ -225,12 +286,21 @@ fn andar_com(a: &mut Arquivo) -> Value {
     let mut abertas = Vec::new();
     let mut saiu = Vec::new();
     let mut espera = None;
+    let keepd = keepd_de_agora();
     while let Some(primeiro) = a.itens.first().cloned() {
+        // A aba que já acordou por outro caminho (ou de um keepd que se foi) sai sem pedir memória.
+        if let Item::Acordar { workspace, aba, keepd: dela } = &primeiro.item {
+            if !ainda_dorme(workspace, *aba, dela, primeiro.desde_ms, keepd.as_ref()) {
+                a.itens.remove(0);
+                registrar(&format!("{workspace}: a aba {aba} saiu da fila sem precisar dela (já acordou, ou o Keep reiniciou)"));
+                continue;
+            }
+        }
         // Medir, a cada vez; hibernar paradas para a fila andar, no máximo uma vez por minuto.
-        let falta = match cabe(1, false) {
+        let falta = match cabe(a, 1, false) {
             Err(_) if agora.saturating_sub(a.aliviou_ms) >= ENTRE_ALIVIOS_MS => {
                 a.aliviou_ms = agora;
-                cabe(1, true).err()
+                cabe(a, 1, true).err()
             }
             outro => outro.err(),
         };
@@ -243,7 +313,11 @@ fn andar_com(a: &mut Arquivo) -> Value {
         match abrir(&primeiro.item) {
             Ok((ws, aba)) => {
                 registrar(&format!("{ws}: «{nome}» abriu da fila (aba {aba})"));
-                conta_a_geral(&primeiro.item, aba, format!("abriu da fila de memória o pedido das {} («{nome}»)", hora(primeiro.desde_ms)));
+                let texto = match &primeiro.item {
+                    Item::Acordar { .. } => format!("a conversa hibernada pela memória às {} voltou da fila de memória", hora(primeiro.desde_ms)),
+                    _ => format!("abriu da fila de memória o pedido das {} («{nome}»)", hora(primeiro.desde_ms)),
+                };
+                conta_a_geral(&primeiro.item, aba, texto);
                 abertas.push(json!({ "workspace": ws, "aba": aba, "nome": nome }));
                 // Uma por rodada: a conversa que acabou de subir ainda não aparece na medição; a próxima rodada a conta.
                 let _ = gravar(a);
@@ -295,6 +369,7 @@ mod testes {
             itens: vec![
                 NaFila { desde_ms: 5, item: Item::Nova { pedido: p.clone() } },
                 NaFila { desde_ms: 6, item: Item::Iniciar { workspace: "N".into(), aba: 1, keepd: Keepd { pid: 9, inicio_ms: 3, socket_nasceu: None } } },
+                NaFila { desde_ms: 7, item: Item::Acordar { workspace: "W".into(), aba: 4, keepd: Keepd { pid: 9, inicio_ms: 3, socket_nasceu: None } } },
             ],
             aliviou_ms: 0,
         };
@@ -302,5 +377,6 @@ mod testes {
         assert_eq!(serde_json::from_str::<Arquivo>(&texto).unwrap(), a);
         assert_eq!(de_quem(&a.itens[0].item), ("W".into(), "Compras".into()));
         assert_eq!(de_quem(&a.itens[1].item).0, "N");
+        assert_eq!(de_quem(&a.itens[2].item), ("W".into(), "a aba 4, hibernada pela memória".into()));
     }
 }

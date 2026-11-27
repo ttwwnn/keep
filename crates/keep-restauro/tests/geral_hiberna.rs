@@ -200,7 +200,7 @@ fn a_geral_fica_enquanto_outra_aba_tem_conversa_viva_e_sai_depois_delas() {
     assert_eq!(situacao(&r, g), format!("geral: a aba {o} ainda tem conversa viva (parada há 0 min)"), "{r:#}");
     // O lugar para uma aba nova poupa as abas que o app mostrou há pouco (o acordar as marca): aqui, nenhuma.
     let _ = std::fs::remove_file(restauro.join("vistas.json"));
-    let r = adormecer::abrir_vaga(1).unwrap();
+    let (r, _) = adormecer::abrir_vaga(1).unwrap();
     assert_eq!(r["adormecidas"], 0, "{r:#}");
     assert_eq!(situacao(&r, g), format!("geral: a aba {o} ainda tem conversa viva (parada há 0 min)"), "{r:#}");
     assert!(!dormindo(g));

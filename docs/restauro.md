@@ -355,9 +355,11 @@ memória e não a deixa estourar (`keep_restauro::memoria`):
 
 - **A leitura**: no macOS, o nível de pressão do kernel (`kern.memorystatus_vm_pressure_level`: 1 normal, 2 alerta,
   4 crítica), a memória disponível (livre, inativa, purgeável e especulativa, de `host_statistics64`, a mesma fonte do
-  medidor "Memória RAM" do app) e o swap (`vm.swapusage`); no Windows, `GlobalMemoryStatusEx` (a física disponível).
-- **Apertada**: pressão em alerta (ou crítica), menos de 1,5 GB disponíveis (ou de 15% da RAM, se for mais: sobra
-  sempre 1,5 GB, pedido de 25/11/2026), ou o swap passando da metade.
+  medidor "Memória RAM" do app) e o swap (`vm.swapusage`, só mostrado); no Windows, `GlobalMemoryStatusEx` (a física
+  disponível).
+- **Apertada**: pressão em alerta (ou crítica), ou menos de 1,5 GB disponíveis (ou de 15% da RAM, se for mais: sobra
+  sempre 1,5 GB, pedido de 25/11/2026). O swap usado não conta desde 27/11/2026: no macOS ele não volta a baixar
+  sozinho, e a fila esperava por ele para sempre; a pressão do kernel já o leva em conta.
 - **Teto de conversas vivas**: (RAM − 3 GB) / 450 MB, no mínimo uma (11 num Mac de 8 GB, 29 num de 16 GB). Conta o
   Claude e o Codex vivos nas abas.
 - **Hibernar pela memória**: apertada, ou com mais conversas vivas que o teto, a rodada do adormecer (o app, a cada
@@ -365,11 +367,20 @@ memória e não a deixa estourar (`keep_restauro::memoria`):
   fora de vista), a parada há mais tempo primeiro e a aba geral por último, uma por vez, medindo de novo entre elas,
   até aliviar. As guardas de sempre valem (rascunho de feedback, worktree, conversa sem fala, a recém-acordada). A
   resposta traz `memoria` (`aperto`, o que ainda `falta` e o `resumo`), e cada aba diz `adormecida pela memória (…)`.
+- **De volta pela fila** (pedido de 27/11/2026): a conversa que saiu pela memória (a rodada ou o `abrir_vaga`) não
+  tinha terminado, até onde o Keep sabe. Ela entra no fim da fila (`… ; volta pela fila de memória)`) e, quando chega
+  a vez dela, com a mesma medida dos pedidos novos, acorda na mesma aba (`acordadas-pela-fila.json`), e a aba geral
+  fica sabendo. Uma volta só: a que a fila acordou e ninguém falou com ela desde então terminou, e não volta de
+  novo. Sai da fila calada a que acordou antes por outro caminho (a pessoa a mostrou, ou dorme de novo pelo zzz) e a
+  de um keepd que se foi. As 12 h e o zzz não põem ninguém na fila.
 - **Segurar abas novas** (`keep nova` e `keep geral iniciar`): sem lugar para mais uma (memória apertada, ou no teto),
   as paradas hibernam primeiro (`abrir_vaga`, poupando as abas que o app mostrou nos últimos 5 min, de
-  `vistas.json`: a rodada grava as que o app mostra, e o acordar, cada aba mostrada); se ainda faltar, o pedido vai
-  para a fila (`fila.json`) e `keep nova` responde "na fila: memória cheia (X livres, N conversas vivas)", com o
-  motivo e a posição. O texto do pedido vai já para o arquivo que a aba vai ler; a pasta é conferida na hora.
+  `vistas.json`: a rodada grava as que o app mostra, e o acordar, cada aba mostrada), mas só quando hibernar abre o
+  lugar: no teto de conversas vivas, ou com a disponível abaixo do mínimo. A pressão sozinha não baixa na hora, e a
+  fila hibernava uma conversa por minuto sem abrir nada (27/11/2026). Se ainda faltar, o pedido vai
+  para a fila (`fila.json`), antes das abas que hibernaram para ele, e `keep nova` responde "na fila: memória cheia
+  (X livres, N conversas vivas)", com o motivo e a posição. O texto do pedido vai já para o arquivo que a aba vai
+  ler; a pasta é conferida na hora.
 - **A fila anda** a cada 15 s (`keep continuar`, que os dois apps rodam): pela ordem, um pedido por rodada, quando
   couber mais uma (a conversa que acabou de subir ainda não aparece na medição: a seguinte espera a rodada seguinte)
   (hibernando paradas no máximo uma vez por minuto). A aba geral do workspace fica sabendo, pelas novidades, de cada
@@ -383,7 +394,7 @@ memória e não a deixa estourar (`keep_restauro::memoria`):
 
 ```
 keep restauro memoria    a leitura, as conversas vivas, o teto, o aperto e se cabe mais uma
-keep restauro fila       os pedidos de aba nova que esperam memória
+keep restauro fila       os pedidos de aba nova e as abas hibernadas pela memória que esperam memória
 ```
 
 `KEEP_MEMORIA_TESTE` (só nos testes) é um arquivo com a leitura (`{"totalMb", "disponivelMb", "swapUsadoMb",
@@ -393,7 +404,9 @@ Testes: `cargo test -p keep-restauro --lib memoria` (os gatilhos, o teto, a leit
 `cargo build -p keep-ia --examples && cargo test -p keep-restauro --test memoria` (daemon do teste, IA falsa em quatro
 abas: folgada, nada; apertada, a parada há mais tempo primeiro e a geral por último, até aliviar; a recém-acordada fica
 até a mensagem e dorme depois dela; `keep nova` sem memória vai para a fila, que abre quando há memória e avisa a aba
-geral; no teto de conversas, o mesmo).
+geral; no teto de conversas, o mesmo) e `--test fila_acorda` (a hibernada pela memória entra na fila, não acorda
+antes de caber, acorda pela ordem, volta uma vez só; as 12 h e o zzz ficam de fora; a pressão sozinha não hiberna
+para abrir lugar; o swap não segura a fila).
 
 Testes: `cargo build -p keep-ia --examples && cargo test -p keep-restauro
 --test adormecer` (daemon do teste, IA falsa em quatro abas: só a parada,
