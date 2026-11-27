@@ -719,6 +719,7 @@ struct UsageFooter: View {
                         .font(numbers)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .accessibilityIdentifier("usage-heading-\(line.account.order)")
                     if line.account.isUsed(by: usedAccount) {
                         Circle()
                             .fill(UsageInk.live)
@@ -807,7 +808,9 @@ struct UsageFooter: View {
             hoverArrow = inside ? key : (hoverArrow == key ? nil : hoverArrow)
         }
         .help(up ? "Subir na ordem de prioridade" : "Descer na ordem de prioridade")
-        .accessibilityLabel("\(up ? "Subir" : "Descer") \(title(line))")
+        // By the name the tabs know the account by ("IA·2 · Claude"): every Claude account is not "Claude".
+        .accessibilityLabel("\(up ? "Subir" : "Descer") \(numbered(line))")
+        .accessibilityIdentifier("usage-\(up ? "up" : "down")-\(line.account.order)")
         .opacity(shown ? 1 : 0)
         .allowsHitTesting(shown)
         .accessibilityHidden(!shown)
@@ -849,7 +852,7 @@ struct UsageFooter: View {
         .help(barHelp(window, now: now))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-            "\(title(line)) \(window.label) \(UsageText.percent(window.percent))"
+            "\(numbered(line)) \(window.label) \(UsageText.percent(window.percent))"
                 + (until.map { " reinicia em \($0)" } ?? ""))
     }
 
