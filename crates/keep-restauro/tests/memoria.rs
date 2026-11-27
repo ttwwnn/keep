@@ -1,7 +1,8 @@
 //! O controle da memória de verdade, num daemon do próprio teste, com a IA falsa do keep-ia (`cargo build -p keep-ia
 //! --examples`) como `claude` e a leitura da memória num arquivo (`KEEP_MEMORIA_TESTE`):
 //! - com a memória folgada, as paradas há pouco ficam; apertada, a rodada as hiberna, a parada há mais tempo primeiro
-//!   e a aba geral por último, uma por vez, medindo de novo entre elas, até aliviar;
+//!   e a aba geral por último (só depois das outras: `geral_hiberna`), uma por vez, medindo de novo entre elas, até
+//!   aliviar;
 //! - a aba acordada não volta a dormir antes da mensagem que a acordou; depois dela, sim;
 //! - `keep nova` sem memória, e sem parada a hibernar, põe o pedido na fila e diz por quê; a fila abre a aba quando
 //!   houver memória, e a aba geral fica sabendo; no teto de conversas vivas da RAM, o mesmo.
@@ -165,7 +166,9 @@ fn a_memoria_apertada_hiberna_as_paradas_segura_as_abas_novas_e_poupa_a_recem_ac
     let r = adormecer::adormecer(&vistas, false).unwrap();
     assert!(situacao(&r, a).starts_with("acordada há 0 min, à espera da mensagem que a acordou"), "{r:#}");
     assert!(!dormindo(a), "{r:#}");
-    assert!(situacao(&r, g).starts_with("adormecida pela memória"), "a geral, a única parada que sobrou: {r:#}");
+    // A geral, a única parada que sobrou, fica: a acordada e a que está à vista têm conversa viva.
+    assert!(situacao(&r, g).starts_with(&format!("geral: as abas {a}, {v} ainda têm conversa viva")), "{r:#}");
+    assert!(!dormindo(g));
     // A mensagem chega: a parada conta dela, e passada a parada a aba volta a poder dormir.
     assert!(keep_ia::trocar::digita("A", a, "oi de novo", true).unwrap());
     assert!(tela_tem("A", a, "Feito: oi de novo", 10));
@@ -186,7 +189,7 @@ fn a_memoria_apertada_hiberna_as_paradas_segura_as_abas_novas_e_poupa_a_recem_ac
     match fila::nova(&pedido("Tarefa Y")).unwrap() {
         fila::Desfecho::NaFila { porque, resumo, posicao } => {
             assert_eq!(porque, "pressão de memória em alerta");
-            assert_eq!(resumo, "0,3 GB livres, 1 conversa viva");
+            assert_eq!(resumo, "0,3 GB livres, 2 conversas vivas", "a que está à vista e a geral, que ela segura");
             assert_eq!(posicao, 1);
         }
         fila::Desfecho::Aberta(..) => panic!("abriu sem memória"),

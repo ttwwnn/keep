@@ -16,6 +16,10 @@
 //!   último), uma por vez, medindo de novo entre elas, até aliviar.
 //!   `abrir_vaga` faz só isso, para uma aba nova (`keep nova`, a fila), poupando
 //!   as abas que o app mostrou há pouco (`vistas.json`).
+//! - **A aba geral** (pedido de 27/11/2026) não hiberna sozinha, nem pelas
+//!   12 h nem pela memória, enquanto outra aba do workspace tiver conversa viva
+//!   (do Claude ou do Codex; a aba só com terminal não conta): sai depois que
+//!   todas as outras hibernaram. O zzz da pessoa vale para ela como para as outras.
 //! - **Agora** (`keep restauro adormecer --agora W [--aba N]`, o zzz da aba na
 //!   barra lateral): o mesmo, para a aba N (ou as livres do workspace W), sem
 //!   esperar as 12 h.
@@ -347,6 +351,24 @@ impl Relato {
     }
 }
 
+/// Por que a aba geral `mae` de `ws` não hiberna sozinha: as outras abas do workspace com conversa viva (do Claude ou
+/// do Codex; a aba só com terminal não conta), fora as que saíram nesta rodada (`saiu`). `None` se todas já hibernam.
+fn geral_segura(lista: &daemon::Retrato, ias: &[IaAba], ws: &str, mae: u32, saiu: &HashSet<(String, u32)>) -> Option<String> {
+    let mut vivas: Vec<u32> = ias
+        .iter()
+        .filter(|o| o.workspace == ws && !saiu.contains(&(o.workspace.clone(), o.aba)))
+        .map(|o| raiz(lista, ws, o.aba))
+        .filter(|r| *r != mae)
+        .collect();
+    vivas.sort_unstable();
+    vivas.dedup();
+    match vivas.as_slice() {
+        [] => None,
+        [n] => Some(format!("geral: a aba {n} ainda tem conversa viva")),
+        v => Some(format!("geral: as abas {} ainda têm conversa viva", v.iter().map(u32::to_string).collect::<Vec<_>>().join(", "))),
+    }
+}
+
 /// A ordem de saída pela memória: a parada há mais tempo primeiro, e a aba geral do workspace por último (é ela que
 /// conduz as outras, e o que pede a ela a acorda de novo).
 fn ordem_da_memoria(candidatas: &mut [(u64, bool, &IaAba, String)]) {
@@ -401,9 +423,15 @@ fn rodada(vistas_do_app: &HashSet<(String, u32)>, seco: bool, modo: Modo) -> Res
     let agora = crate::agora_ms();
     let mut relato = Relato::default();
     let mut feitas = 0;
+    // As abas que saíram (ou, no seco, sairiam) nesta rodada: já não seguram a aba geral.
+    let mut saiu: HashSet<(String, u32)> = HashSet::new();
     // As que podem sair se a memória apertar: (parada há, é a aba geral, a IA, a conversa).
     let mut pela_memoria: Vec<(u64, bool, &IaAba, String)> = Vec::new();
-    for i in ias.iter().filter(|i| i.agente == "claude") {
+    let e_geral = |i: &IaAba| gerais.iter().any(|(w, a)| *w == i.workspace && *a == raiz(&lista, &i.workspace, i.aba));
+    let mut claudes: Vec<&IaAba> = ias.iter().filter(|i| i.agente == "claude").collect();
+    // A aba geral por último: as outras do workspace que saem nesta rodada já não a seguram.
+    claudes.sort_by_key(|i| e_geral(i));
+    for i in claudes {
         if so_do.is_some_and(|(w, a)| w != i.workspace || a.is_some_and(|a| a != raiz(&lista, w, i.aba))) {
             continue;
         }
@@ -437,20 +465,29 @@ fn rodada(vistas_do_app: &HashSet<(String, u32)>, seco: bool, modo: Modo) -> Res
             }
             if matches!(modo, Modo::Vaga(_)) || parada_ha < parada {
                 if parada_ha >= parada_aperto {
-                    let geral = gerais.iter().any(|(w, a)| *w == i.workspace && *a == mae);
-                    pela_memoria.push((parada_ha, geral, i, conversa));
+                    pela_memoria.push((parada_ha, e_geral(i), i, conversa));
                 }
                 relato.diz(&rotulo, format!("parada há {} min", parada_ha / 60_000));
                 continue;
             }
         }
         let horas = parada_ha / 3_600_000;
+        if so_do.is_none() && e_geral(i) {
+            if let Some(porque) = geral_segura(&lista, &ias, &i.workspace, mae, &saiu) {
+                relato.diz(&rotulo, format!("{porque} (parada há {horas} h)"));
+                continue;
+            }
+        }
         match hibernar(&c, i, aba, &conversa, seco) {
             Fim::Saiu => {
                 feitas += 1;
+                saiu.insert((i.workspace.clone(), i.aba));
                 relato.diz(&rotulo, format!("adormecida (parada há {horas} h)"));
             }
-            Fim::Seco => relato.diz(&rotulo, format!("adormeceria (parada há {horas} h)")),
+            Fim::Seco => {
+                saiu.insert((i.workspace.clone(), i.aba));
+                relato.diz(&rotulo, format!("adormeceria (parada há {horas} h)"));
+            }
             // Pedida pela pessoa, o motivo vai sozinho: "parada há 0 h" não explica nada.
             Fim::Impede(motivo) if so_do.is_some() => relato.diz(&rotulo, motivo),
             Fim::Impede(motivo) => relato.diz(&rotulo, format!("parada há {horas} h, mas {motivo}")),
@@ -469,13 +506,20 @@ fn rodada(vistas_do_app: &HashSet<(String, u32)>, seco: bool, modo: Modo) -> Res
         let antes = s.falta(mais);
         if let Some(porque) = &antes {
             ordem_da_memoria(&mut pela_memoria);
-            for (parada_ha, _, i, conversa) in &pela_memoria {
+            for (parada_ha, geral, i, conversa) in &pela_memoria {
                 let Some(aba) = lista.aba(&i.workspace, i.aba) else { continue };
                 let rotulo = format!("{}#{}", i.workspace, i.aba);
                 let min = parada_ha / 60_000;
+                if *geral {
+                    if let Some(porque) = geral_segura(&lista, &ias, &i.workspace, raiz(&lista, &i.workspace, i.aba), &saiu) {
+                        relato.diz(&rotulo, format!("{porque} (parada há {min} min)"));
+                        continue;
+                    }
+                }
                 match hibernar(&c, i, aba, conversa, seco) {
                     Fim::Saiu => {
                         feitas += 1;
+                        saiu.insert((i.workspace.clone(), i.aba));
                         s.vivas = s.vivas.saturating_sub(1);
                         relato.diz(&rotulo, format!("adormecida pela memória ({porque}; parada há {min} min)"));
                         // O que o Claude que saiu ocupava volta ao sistema em instantes.
@@ -485,7 +529,10 @@ fn rodada(vistas_do_app: &HashSet<(String, u32)>, seco: bool, modo: Modo) -> Res
                             break;
                         }
                     }
-                    Fim::Seco => relato.diz(&rotulo, format!("adormeceria pela memória ({porque}; parada há {min} min)")),
+                    Fim::Seco => {
+                        saiu.insert((i.workspace.clone(), i.aba));
+                        relato.diz(&rotulo, format!("adormeceria pela memória ({porque}; parada há {min} min)"));
+                    }
                     Fim::Impede(motivo) => relato.diz(&rotulo, format!("parada há {min} min, mas {motivo}")),
                     Fim::Falhou(motivo) => relato.diz(&rotulo, motivo),
                 }
