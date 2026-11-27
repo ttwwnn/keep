@@ -28,6 +28,10 @@
 #   - each account wears its service's mark (Claude's ✳, Codex's ◆), said
 #     aloud as "Claude" or "GPT"; and the Jev's switch is beside its figure, in
 #     the accounts' switches' column, the same size, open and folded;
+#   - asked to be 200 points wide, the sidebar keeps the width its rows need
+#     whole — a long workspace name, every account's line — open, folded and
+#     zoomed in (pedido de 27/11/2026); CAPTURA=<file.png> saves the window
+#     at its narrowest;
 #   - without a `keep` to ask, there is no footer.
 #
 #   tools/usage-footer-test.sh
@@ -545,6 +549,75 @@ say "connecting the Jev from the +"
 sleep 1
 check "the core is asked for the OpenRouter login in this window's workspace" \
     "entrar openrouter --ws=$HOME_WS --json" "$(calls | tail -1)"
+
+say ""
+say "the sidebar at its narrowest: no workspace name and no account line cut"
+LONG="Workspace de nome comprido"
+"$KEEP" new "$LONG" >/dev/null 2>&1
+stop_app
+python3 - "$KEEP_STATE_DIR/sidebar-state.json" <<'PY'
+import json, os, sys
+state = (json.load(open(sys.argv[1])) if os.path.exists(sys.argv[1])
+         else {"0": {"folded": [], "isCollapsed": False, "verticalTabs": False}})
+for window in state.values():
+    window["width"] = 200
+    window["isCollapsed"] = False
+json.dump(state, open(sys.argv[1], "w"))
+PY
+NARROW_LOG=$WORK/app-narrow.log
+: >"$NARROW_LOG"
+KEEP_TRACE=1 "$BIN" >"$NARROW_LOG" 2>&1 &
+APP_PID=$!
+waited=0
+while ! grep -aqE "usage +uso devidas: " "$NARROW_LOG" && [ "$waited" -lt 120 ]; do
+    sleep 0.25; waited=$((waited + 1))
+done
+place_on_screen
+sleep 3
+# The app's word on its sidebar: "mínimo N (topo T, linhas L), largura W, falta F" — F the most any row is
+# still short of being whole.
+said() { grep -a "sidebar  *mínimo" "$NARROW_LOG" | tail -1; }
+field() { said | sed -E "s/.*$1 (-?[0-9]+).*/\1/"; }
+settled() {  # settled: the last word, once it has stopped changing for a second
+    local last now
+    for _ in $(seq 1 20); do
+        last=$(said); sleep 1; now=$(said)
+        [ "$now" = "$last" ] && [ -n "$now" ] && return
+    done
+}
+settled
+ax
+check "the long workspace is there" yes "$(has "$LONG")"
+check "asked for 200, the sidebar takes what its rows need, more than its top row" yes \
+    "$([ -n "$(field mínimo)" ] && [ "$(field mínimo)" -gt "$(field topo)" ] && echo yes || echo no)"
+check "and stands at that minimum" yes "$(near "$(field largura)" "$(field mínimo)")"
+check "every name and account line whole (short by $(field falta))" yes "$([ "$(field falta)" -le 0 ] && echo yes || echo no)"
+narrow=$(field mínimo)
+"$AXPRESS" "$APP_NAME" press "Consumo de IA"
+settled
+check "folded, still every line whole (short by $(field falta))" yes "$([ "$(field falta)" -le 0 ] && echo yes || echo no)"
+if [ -n "${CAPTURA:-}" ]; then
+    cat >"$WORK/janela.swift" <<'SWIFT'
+import CoreGraphics
+let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+for w in list where (w[kCGWindowOwnerName as String] as? String) == CommandLine.arguments[1]
+    && (w[kCGWindowLayer as String] as? Int) == 0 {
+    print(w[kCGWindowNumber as String] as? Int ?? 0)
+    break
+}
+SWIFT
+    swiftc -O "$WORK/janela.swift" -o "$WORK/janela" 2>/dev/null \
+        && screencapture -x -o -l "$("$WORK/janela" "$APP_NAME")" "$CAPTURA" && say "  captured: $CAPTURA"
+fi
+# One step: at 120% the long name would need more than the widest the sidebar may be on a small screen.
+"$AXPRESS" "$APP_NAME" press keep.zoom.in >/dev/null 2>&1
+settled
+check "zoomed in, the minimum grows with the text ($narrow → $(field mínimo))" yes \
+    "$([ "$(field mínimo)" -gt "$narrow" ] && echo yes || echo no)"
+check "and every line is still whole (short by $(field falta))" yes "$([ "$(field falta)" -le 0 ] && echo yes || echo no)"
+"$AXPRESS" "$APP_NAME" press keep.zoom.reset >/dev/null 2>&1
+"$AXPRESS" "$APP_NAME" press "Consumo de IA"
+sleep 1
 
 say ""
 say "the Jev's key taken away"

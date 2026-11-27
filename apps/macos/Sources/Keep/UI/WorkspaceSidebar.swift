@@ -230,6 +230,7 @@ struct WorkspaceSidebar: View {
             titleZoom = GhosttyApp.shared.zoomLevel
         }
         .environment(\.sidebarInUse, model.inUse)
+        .environment(\.sidebarWidths, model.widths)
     }
 
     private var list: some View {
@@ -406,6 +407,8 @@ struct WorkspaceSidebar: View {
                 Color.clear.frame(width: 14 + 8 + 14 + 8 + 14 + 8 + 14, height: 1)
                 disclosure(row)
             }
+            // The workspace's name is never cut: the sidebar keeps the room for the whole header.
+            .keptWhole("workspace \(row.name)")
             .padding(.horizontal, 12)
             .padding(.top, 10)
             .padding(.bottom, 4)
