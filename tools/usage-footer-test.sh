@@ -328,7 +328,7 @@ check "and neither shows a made-up bar" no "$(has "Claude · reserva 5h")"
 
 say ""
 say "what was asked, and how"
-asked() { python3 -c 'import json,sys; print(" ".join(sorted({r["token"] for r in map(json.loads, open(sys.argv[1])) if not r["path"].startswith("/or/")})))' "$WORK/requests.jsonl"; }
+asked() { python3 -c 'import json,sys; print(" ".join(sorted({r["token"] for r in map(json.loads, open(sys.argv[1])) if not r["path"].startswith(("/or/", "/ptax/"))})))' "$WORK/requests.jsonl"; }
 check "each live login was asked once per round, the lapsed one never" "codex tok-429 tok-principal" "$(asked)"
 check "with the fresher token of the duplicate pair" no "$(grep -qF tok-principal-velho "$WORK/requests.jsonl" && echo yes || echo no)"
 check "Claude asked with a CLI's user agent" yes "$(grep -F '"token": "tok-principal"' "$WORK/requests.jsonl" | grep -qE '"ua": "claude-cli/[0-9.]+ \(external, cli\)"' && echo yes || echo no)"
