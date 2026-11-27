@@ -222,6 +222,9 @@ class H(BaseHTTPRequestHandler):
             status, body = 429, {"error": "rate_limited"}
         elif self.path == "/codex" and token == codex_token:
             status, body = 200, CODEX
+        elif self.path.startswith("/ptax/CotacaoDolarPeriodo("):
+            # The Banco Central's closings: a PTAX of 5 makes a dollar R$ 5,2785 with the spread and the IOF.
+            status, body = 200, {"value": [{"cotacaoCompra": 4.9994, "cotacaoVenda": 5.0, "dataHoraCotacao": "2026-11-26 13:04:31.123"}]}
         elif self.path == "/or/credits" and token == "sk-or-do-teste":
             status, body = 200, {"data": {"total_credits": 10, "total_usage": 0.0246}}
         elif self.path == "/or/key" and token == "sk-or-do-teste":
@@ -254,6 +257,7 @@ export KEEP_AI_USAGE_CLAUDE_URL=http://127.0.0.1:$PORT/claude
 export KEEP_AI_USAGE_CODEX_URL=http://127.0.0.1:$PORT/codex
 export KEEP_IA_PERFIL_URL=http://127.0.0.1:$PORT/profile
 export KEEP_IA_OPENROUTER_URL=http://127.0.0.1:$PORT/or
+export KEEP_IA_PTAX_URL=http://127.0.0.1:$PORT/ptax
 # The Keychain the core reads Claude Code's own login from: `security` as the
 # core calls it, answering out of the made-up home.
 cat >"$WORK/security" <<'SH'
@@ -334,8 +338,11 @@ check "no token in the trace" no "$(grep -qE 'tok-|Bearer|sk-or' "$WORK/app.log"
 say ""
 say "the Jev's credit"
 check "the Jev has a block of its own" yes "$(has "Jev · OpenRouter")"
-check "the account's credit left: ten bought, a little spent" yes "$(has "Jev conta: restam US\$ 9,98")"
-check "the key's ceiling left: five, half a dollar spent" yes "$(has "Jev chave: restam US\$ 4,48")"
+# In reais (pedido de 27/11/2026): the dollars × the PTAX of 5 × 1,02 (spread) × 1,035 (IOF) = × 5,2785.
+check "the account's credit left: ten bought, a little spent, in reais" yes "$(has "Jev conta: restam R\$ 52,66")"
+check "the key's ceiling left: five, half a dollar spent, in reais" yes "$(has "Jev chave: restam R\$ 23,65")"
+check "the PTAX asked of the stand-in, not of the Banco Central" yes \
+    "$(grep -qF '"path": "/ptax/CotacaoDolarPeriodo(' "$WORK/requests.jsonl" && echo yes || echo no)"
 check "the credit was asked with the key from the Keychain, on both routes" "/or/credits /or/key" \
     "$(python3 -c 'import json,sys; print(" ".join(sorted({r["path"] for r in map(json.loads, open(sys.argv[1])) if r["token"] == "sk-or-do-teste"})))' "$WORK/requests.jsonl")"
 check "and the key went to no other service" no \
@@ -359,7 +366,7 @@ check "the Jev's switch, on" yes "$(case "$("$AXPRESS" "$APP_NAME" value automat
 check "in the accounts' switches' column" yes "$(near "$(mid_x automation-jev)" "$(mid_x usage-switch-claude:principal)")"
 check "the same size as theirs" yes "$(near "$(width automation-jev)" "$(width usage-switch-claude:principal)")"
 check "on the Jev's line, above its counters" yes \
-    "$(j=$(mid_y automation-jev); c=$(mid_y "Jev conta: restam US\$ 9,98"); [ -n "$j" ] && [ -n "$c" ] && [ "$j" -lt "$c" ] && echo yes || echo no)"
+    "$(j=$(mid_y automation-jev); c=$(mid_y "Jev conta: restam R\$ 52,66"); [ -n "$j" ] && [ -n "$c" ] && [ "$j" -lt "$c" ] && echo yes || echo no)"
 check "and not in a row of its own under the Jev" no "$(has "Ponytail")"
 
 say ""
@@ -497,10 +504,10 @@ ax
 check "one line an account, and the arrows still beside each" "yes yes yes" \
     "$(has "Subir GPT · nova") $(has "Descer Claude · limitada") $(has "Subir Claude · reserva")"
 check "folded for real: no bars" "no no" "$(has "Claude · reserva 5h") $(has "Claude · principal 5h")"
-check "the Jev on one line, with what it can still spend: the key's, the smaller" yes "$(has "Jev OpenRouter restam US\$ 4,48")"
+check "the Jev on one line, with what it can still spend: the key's, the smaller" yes "$(has "Jev OpenRouter restam R\$ 23,65")"
 check "folded for real: no bar of the Jev's" no "$(has "Jev conta: restam")"
 check "folded, the Jev's switch still in the accounts' column" yes "$(near "$(mid_x automation-jev)" "$(mid_x usage-switch-claude:principal)")"
-check "on the Jev's line, beside its figure" yes "$(near "$(mid_y automation-jev)" "$(mid_y "Jev OpenRouter restam US\$ 4,48")")"
+check "on the Jev's line, beside its figure" yes "$(near "$(mid_y automation-jev)" "$(mid_y "Jev OpenRouter restam R\$ 23,65")")"
 "$AXPRESS" "$APP_NAME" press "Consumo de IA"
 sleep 1
 # The refusal's word is said for a few seconds and then goes, and the footer
@@ -536,9 +543,9 @@ say "the Jev's key without a ceiling"
 touch "$WORK/jev-sem-teto"
 sleep 15
 "$AXPRESS" "$APP_NAME" press "Medir agora"
-until_text "Jev gasto: gastou US\$ 0,02" 150 >/dev/null
-check "the second counter is what the whole account spent, not the key's 0,52" yes "$(has "Jev gasto: gastou US\$ 0,02")"
-check "and the account's credit is still the first" yes "$(has "Jev conta: restam US\$ 9,98")"
+until_text "Jev gasto: gastou R\$ 0,13" 150 >/dev/null
+check "the second counter is what the whole account spent, not the key's 0,52" yes "$(has "Jev gasto: gastou R\$ 0,13")"
+check "and the account's credit is still the first" yes "$(has "Jev conta: restam R\$ 52,66")"
 check "no ceiling counter any more" no "$(has "Jev chave:")"
 rm -f "$WORK/jev-sem-teto"
 

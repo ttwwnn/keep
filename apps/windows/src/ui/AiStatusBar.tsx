@@ -19,7 +19,7 @@ import {
   type Choice,
 } from "../aiStatus";
 import { filesOpen, toggleFiles } from "../chatFiles";
-import { OPENROUTER_CREDITS_URL, dollars } from "../ia";
+import { OPENROUTER_CREDITS_URL, money } from "../ia";
 import { jev } from "../iaStore";
 import { openUrl } from "../api";
 import { viewKey } from "../terminals";
@@ -118,7 +118,7 @@ export function AiStatusBar(props: { workspace: string; root: number; pane: numb
               data-chip="jev-average"
               title="O que o Jev gasta no OpenRouter pelo Keep desta máquina em 30 dias; com menos histórico, na proporção"
             >
-              Gasto em 30 dias: {dollars(jev.value.spent30d)}
+              Gasto em 30 dias: {money(jev.value.spent30d, jev.value.cambio)}
             </span>
           )}
           <button

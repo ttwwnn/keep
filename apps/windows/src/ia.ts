@@ -571,6 +571,46 @@ export interface JevLine {
   pending: number | null;
   /** What the Jev spends on OpenRouter through Keep on this machine in 30 days, as the core measures it. */
   spent30d: number | null;
+  /** The exchange to show the dollars above in reais; null before the first PTAX (they stay in dollars). */
+  cambio: Cambio | null;
+}
+
+/**
+ * The exchange the core sends with the Jev's credit (`keep ia jev`, pedido de 27/11/2026): the PTAX of `data` (the
+ * Banco Central's selling rate at the close), the bank's spread and the IOF, and what a dollar costs in reais with
+ * them, `fator` — the macOS app's `JevCambio`.
+ */
+export interface Cambio {
+  data: string;
+  ptax: number;
+  spread: number;
+  iof: number;
+  fator: number;
+}
+
+/** `value` written the Brazilian way, with `places` decimals: "1.234,56". */
+export function decimal(value: number, places: number): string {
+  const [whole, fraction] = Math.max(0, value).toFixed(places).split(".");
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return fraction ? `${grouped},${fraction}` : grouped;
+}
+
+/**
+ * "R$ 1.234,56": an OpenRouter figure, which comes in dollars, in reais by the day's `cambio` — always two places, a
+ * dot between thousands; in dollars while there is no PTAX yet. The macOS app's `UsageText.money`.
+ */
+export function money(usd: number, cambio: Cambio | null): string {
+  if (!cambio) return dollars(usd);
+  const v = Math.max(0, usd) * cambio.fator;
+  if (v > 0 && v < 0.01) return "< R$ 0,01";
+  return `R$ ${decimal(v, 2)}`;
+}
+
+/** "PTAX de venda de 26/11/2026: R$ 5,2351 · spread 2% · IOF 3,5% · R$ 5,5266 por dólar". */
+export function cambioHelp(c: Cambio): string {
+  const pct = (v: number) => `${decimal(v * 100, Math.abs(v * 100 - Math.round(v * 100)) < 1e-9 ? 0 : 1)}%`;
+  const dia = c.data.split("-").reverse().join("/");
+  return `PTAX de venda de ${dia}: R$ ${decimal(c.ptax, 4)} · spread ${pct(c.spread)} · IOF ${pct(c.iof)} · R$ ${decimal(c.fator, 4)} por dólar`;
 }
 
 /** Where the OpenRouter account buys credit. */
@@ -591,6 +631,7 @@ export function dollars(value: number): string {
   if (v > 0 && v < 0.01) return "< US$ 0,01";
   return `US$ ${v.toFixed(2).replace(".", ",")}`;
 }
+const usdText = dollars;
 
 /** One of the Jev's two counters: the bar is what is spent, the figure the dollars beside it. */
 export interface CreditRow {
@@ -609,7 +650,8 @@ export interface CreditRow {
  * Jev's, which is what one reads against the credit one bought. The macOS
  * app's `JevCredit.counters`.
  */
-export function creditRows(c: JevCredit): CreditRow[] {
+export function creditRows(c: JevCredit, cambio: Cambio | null = null): CreditRow[] {
+  const dollars = (usd: number) => money(usd, cambio);
   const rows: CreditRow[] = [
     {
       label: "conta",
@@ -657,6 +699,9 @@ export function jevNote(line: JevLine, nowMs: number): string | null {
 export function jevHelp(line: JevLine, nowMs: number): string {
   const lines = ["Crédito que o Jev gasta no OpenRouter"];
   const c = line.credit;
+  // In reais, the dollars beside (the OpenRouter's own figure); in dollars only, without a PTAX yet.
+  const cambio = line.cambio;
+  const dollars = (usd: number) => (cambio ? `${money(usd, cambio)} (${usdText(usd)})` : usdText(usd));
   if (c) {
     lines.push(`Pode gastar ainda: ${dollars(available(c))}`);
     lines.push(`Conta: ${dollars(accountLeft(c))} de ${dollars(c.total)}`);
@@ -670,6 +715,7 @@ export function jevHelp(line: JevLine, nowMs: number): string {
   if (line.pending !== null && line.pending > 0) {
     lines.push(`Inclui ${dollars(line.pending)} de decisões desta máquina que o OpenRouter ainda não contou`);
   }
+  lines.push(cambio ? cambioHelp(cambio) : "Sem a PTAX ainda: valores em dólares até a primeira cotação");
   if (line.measuredAt !== null) lines.push(`Medido ${agoText(line.measuredAt * 1000, nowMs)}`);
   return lines.join("\n");
 }
@@ -693,7 +739,12 @@ export function readJev(value: unknown): JevLine | null {
       : null;
   const problem = typeof v.problem === "string" ? v.problem : null;
   if (!credit && !problem) return null;
-  return { credit, measuredAt: num(v.measuredAt), problem, pending: num(v.pending), spent30d: num(v.spent30d) };
+  const k = v.cambio as Record<string, unknown> | null | undefined;
+  const cambio =
+    k && typeof k === "object" && typeof k.data === "string" && num(k.ptax) !== null && num(k.fator) !== null
+      ? { data: k.data, ptax: num(k.ptax) as number, spread: num(k.spread) ?? 0, iof: num(k.iof) ?? 0, fator: num(k.fator) as number }
+      : null;
+  return { credit, measuredAt: num(v.measuredAt), problem, pending: num(v.pending), spent30d: num(v.spent30d), cambio };
 }
 
 // ------------------------------------------------------------------ the switches

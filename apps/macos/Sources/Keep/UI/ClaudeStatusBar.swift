@@ -107,7 +107,7 @@ final class ClaudeStatusBar: NSView {
         creditButton.attributedTitle = NSAttributedString(
             string: "Pôr crédito", attributes: [.font: Self.font, .foregroundColor: NSColor.linkColor])
         if let spent = jev?.spent30d {
-            jevLabel.stringValue = "Gasto em 30 dias: \(UsageText.dollars(spent))"
+            jevLabel.stringValue = "Gasto em 30 dias: \(UsageText.money(spent, jev?.cambio))"
         }
         jevLabel.isHidden = jev?.spent30d == nil
         creditButton.isHidden = jev == nil

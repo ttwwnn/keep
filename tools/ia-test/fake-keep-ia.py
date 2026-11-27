@@ -350,7 +350,7 @@ def isolamento_furado():
         return "KEEP_IA_SECURITY=%s (o Chaveiro de verdade)" % (security or "nada")
     for names in (("KEEP_IA_PERFIL_URL", "CLAUDE_KIT_PERFIL_URL"), ("KEEP_IA_CLAUDE_URL", "KEEP_AI_USAGE_CLAUDE_URL"),
                   ("KEEP_IA_CODEX_URL", "KEEP_AI_USAGE_CODEX_URL"), ("KEEP_IA_OPENROUTER_URL",),
-                  ("KEEP_IA_OPENROUTER_AUTH_URL",), ("KEEP_IA_TOKEN_URL",)):
+                  ("KEEP_IA_OPENROUTER_AUTH_URL",), ("KEEP_IA_TOKEN_URL",), ("KEEP_IA_PTAX_URL",)):
         values = [os.environ[n] for n in names if os.environ.get(n)]
         if not values or not all(v.startswith("http://127.0.0.1") for v in values):
             return "%s=%s (um serviço de verdade)" % (names[0], ",".join(values))

@@ -108,6 +108,8 @@ enum KeepCLI {
             ("KEEP_IA_CLAUDE_URL", ["KEEP_IA_CLAUDE_URL", "KEEP_AI_USAGE_CLAUDE_URL"]),
             ("KEEP_IA_CODEX_URL", ["KEEP_IA_CODEX_URL", "KEEP_AI_USAGE_CODEX_URL"]),
             ("KEEP_IA_OPENROUTER_URL", ["KEEP_IA_OPENROUTER_URL"]),
+            // The Banco Central's PTAX, for the Jev's figures in reais.
+            ("KEEP_IA_PTAX_URL", ["KEEP_IA_PTAX_URL"]),
             // The page a connection to OpenRouter opens in the browser.
             ("KEEP_IA_OPENROUTER_AUTH_URL", ["KEEP_IA_OPENROUTER_AUTH_URL"]),
             // The renewal of the logins (`keep ia renovar`): a refresh token

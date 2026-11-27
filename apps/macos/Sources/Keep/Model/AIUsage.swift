@@ -310,21 +310,42 @@ struct JevCredit: Equatable, Codable {
     /// the ceiling ("chave"); without one, what the whole account has spent
     /// ("gasto"), every key's decisions and not only the Jev's, which is what
     /// one reads against the credit one bought.
-    var counters: [Counter] {
+    var counters: [Counter] { counters(in: nil) }
+
+    /// The same, the figures in the help in reais by `cambio` (in dollars without it). `figure` stays in dollars:
+    /// the footer writes it with `UsageText.money`.
+    func counters(in cambio: JevCambio?) -> [Counter] {
+        let money = { (usd: Double) in UsageText.money(usd, cambio) }
         var counters = [Counter(label: "conta", spent: accountPercent, figure: accountLeft, says: "restam",
-                                help: "Crédito da conta no OpenRouter: \(UsageText.dollars(used)) "
-                                    + "gastos de \(UsageText.dollars(total))")]
+                                help: "Crédito da conta no OpenRouter: \(money(used)) gastos de \(money(total))")]
         if let keyPercent, let keyLeft, let keyLimit {
             counters.append(Counter(label: "chave", spent: keyPercent, figure: keyLeft, says: "restam",
-                                    help: "Teto da chave do Jev: \(UsageText.dollars(keyUsed ?? 0)) "
-                                        + "gastos de \(UsageText.dollars(keyLimit))"))
+                                    help: "Teto da chave do Jev: \(money(keyUsed ?? 0)) gastos de \(money(keyLimit))"))
         } else {
             counters.append(Counter(label: "gasto", spent: accountPercent, figure: max(0, used), says: "gastou",
-                                    help: "Gasto da conta no OpenRouter, de todas as chaves: "
-                                        + "\(UsageText.dollars(used)) de \(UsageText.dollars(total))"
-                                        + (keyUsed.map { "; a chave do Jev gastou \(UsageText.dollars($0))" } ?? "")))
+                                    help: "Gasto da conta no OpenRouter, de todas as chaves: \(money(used)) de \(money(total))"
+                                        + (keyUsed.map { "; a chave do Jev gastou \(money($0))" } ?? "")))
         }
         return counters
+    }
+}
+
+/// The exchange the core sends with the Jev's credit (`keep ia jev`, pedido de 27/11/2026): the PTAX of `data`
+/// (the Banco Central's selling rate at the close), the bank's spread and the IOF, and what a dollar costs in reais
+/// with them, `fator`. The footer shows OpenRouter's figures in reais by it.
+struct JevCambio: Equatable, Codable {
+    let data: String
+    let ptax: Double
+    let spread: Double
+    let iof: Double
+    let fator: Double
+
+    /// "PTAX de 27/11/2026: R$ 5,1987 · spread 2% · IOF 3,5% · R$ 5,4882 por dólar".
+    var help: String {
+        let dia = data.split(separator: "-").reversed().joined(separator: "/")
+        let pct = { (v: Double) in UsageText.decimal(v * 100, places: abs(v * 100 - (v * 100).rounded()) < 1e-9 ? 0 : 1) + "%" }
+        return "PTAX de venda de \(dia): R$ \(UsageText.decimal(ptax, places: 4)) · spread \(pct(spread)) · "
+            + "IOF \(pct(iof)) · R$ \(UsageText.decimal(fator, places: 4)) por dólar"
     }
 }
 
@@ -340,6 +361,8 @@ struct JevLine: Equatable, Codable {
     var pending: Double?
     /// What the Jev spends on OpenRouter through Keep on this machine in 30 days, as the core measures it.
     var spent30d: Double?
+    /// The exchange to show the dollars above in reais; nil before the first PTAX (they stay in dollars).
+    var cambio: JevCambio?
 }
 
 /// Where the OpenRouter account buys credit.
@@ -436,6 +459,32 @@ enum UsageText {
         let value = max(0, value)
         if value > 0, value < 0.01 { return "< US$ 0,01" }
         return "US$ " + String(format: "%.2f", value).replacingOccurrences(of: ".", with: ",")
+    }
+
+    /// "R$ 1.234,56": an OpenRouter figure, which comes in dollars, in reais by the day's `cambio` (pedido de
+    /// 27/11/2026) — always two places, a dot between thousands; in dollars while there is no PTAX yet.
+    static func money(_ usd: Double, _ cambio: JevCambio?) -> String {
+        guard let cambio else { return dollars(usd) }
+        let value = max(0, usd) * cambio.fator
+        if value > 0, value < 0.01 { return "< R$ 0,01" }
+        return "R$ " + decimal(value, places: 2)
+    }
+
+    /// `value` written the Brazilian way, with `places` decimals: "1.234,56".
+    static func decimal(_ value: Double, places: Int) -> String {
+        let scale = pow(10, Double(places))
+        let units = Int((max(0, value) * scale).rounded())
+        var whole = String(units / Int(scale))
+        var groups: [String] = []
+        while whole.count > 3 {
+            groups.insert(String(whole.suffix(3)), at: 0)
+            whole.removeLast(3)
+        }
+        groups.insert(whole, at: 0)
+        let integer = groups.joined(separator: ".")
+        guard places > 0 else { return integer }
+        let fraction = String(units % Int(scale))
+        return integer + "," + String(repeating: "0", count: places - fraction.count) + fraction
     }
 
     /// How long until a window starts over, in the fewest characters that

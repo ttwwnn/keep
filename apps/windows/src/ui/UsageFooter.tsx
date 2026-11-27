@@ -14,7 +14,7 @@ import {
   available,
   barHelp,
   creditRows,
-  dollars,
+  money,
   engineTitle,
   isUsedBy,
   jevHelp,
@@ -27,6 +27,7 @@ import {
   percentText,
   untilText,
   type AutomationSwitch,
+  type Cambio,
   type CreditRow,
   type Engine,
   type JevLine,
@@ -235,8 +236,8 @@ function Compact(props: { line: UsageLine; index: number; count: number }) {
 }
 
 /** One of the Jev's counters: the bar is what is spent, the figure the dollars beside it. */
-function CreditBar(props: { row: CreditRow }) {
-  const { row } = props;
+function CreditBar(props: { row: CreditRow; cambio: Cambio | null }) {
+  const { row, cambio } = props;
   const lvl = level(row.spent);
   return (
     <div
@@ -246,13 +247,13 @@ function CreditBar(props: { row: CreditRow }) {
       aria-valuenow={Math.round(row.spent)}
       aria-valuemin={0}
       aria-valuemax={100}
-      aria-label={`Jev ${row.label}: ${row.says} ${dollars(row.figure)}`}
+      aria-label={`Jev ${row.label}: ${row.says} ${money(row.figure, cambio)}`}
     >
       <span class="usage-bar-label">{row.label}</span>
       <span class="usage-track">
         <span class={`usage-fill ${lvl}`} style={{ width: `max(2px, ${Math.min(100, Math.max(0, row.spent))}%)` }} />
       </span>
-      <span class={`usage-dollars ${lvl}`}>{dollars(row.figure)}</span>
+      <span class={`usage-dollars ${lvl}`}>{money(row.figure, cambio)}</span>
     </div>
   );
 }
@@ -276,8 +277,8 @@ function JevBlock(props: { line: JevLine; nowMs: number }) {
       </div>
       {line.credit && (
         <div class={`usage-bars ${stale ? "stale" : ""}`}>
-          {creditRows(line.credit).map((row) => (
-            <CreditBar key={row.label} row={row} />
+          {creditRows(line.credit, line.cambio).map((row) => (
+            <CreditBar key={row.label} row={row} cambio={line.cambio} />
           ))}
         </div>
       )}
@@ -290,7 +291,7 @@ function JevBlock(props: { line: JevLine; nowMs: number }) {
 function JevCompact(props: { line: JevLine; nowMs: number }) {
   const { line, nowMs } = props;
   const c = line.credit;
-  const figure = c ? dollars(available(c)) : "—";
+  const figure = c ? money(available(c), line.cambio) : "—";
   const spent = c ? Math.max(...creditRows(c).map((r) => (r.says === "restam" ? r.spent : 0))) : 0;
   return (
     <>
