@@ -128,6 +128,7 @@ run() {
         KEEP_AI_USAGE_CLAUDE_URL=http://127.0.0.1:${PORT:-9}/claude \
         KEEP_AI_USAGE_CODEX_URL=http://127.0.0.1:${PORT:-9}/codex \
         KEEP_IA_OPENROUTER_URL=http://127.0.0.1:${PORT:-9}/or \
+        KEEP_IA_PTAX_URL=http://127.0.0.1:9 \
         SEGURANCA_COM_CHAVE=$WORK/security-com-chave \
         NUCLEO=$NUCLEO CASA_NUCLEO=${CORE_HOME:-} \
         FALSO_IA=$WORK/fake-keep-ia.py FAKE_IA_DIR=$WORK/ia "$WORK/test"
@@ -210,6 +211,9 @@ sabotage "$HELPER" "a click on Medir agora not passed on to the Jev" \
         case .cached: arguments = ["--cache"]|||case .now, .cached: arguments = ["--cache"]' || ok=1
 sabotage "$HELPER" "a test app sending a refresh token to the real token service" \
     '            ("KEEP_IA_TOKEN_URL", ["KEEP_IA_TOKEN_URL"]),
+|||' || ok=1
+sabotage "$HELPER" "a test app asking the real Banco Central for the PTAX" \
+    '            ("KEEP_IA_PTAX_URL", ["KEEP_IA_PTAX_URL"]),
 |||' || ok=1
 sabotage "$HELPER" "a test app letting the Jev's key reach the real OpenRouter" \
     '            ("KEEP_IA_OPENROUTER_URL", ["KEEP_IA_OPENROUTER_URL"]),

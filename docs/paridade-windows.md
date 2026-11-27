@@ -692,6 +692,9 @@ máquina não tem). Nada disto foi visto na WebView2 nem com um Claude Code de v
 - [x] 0.3.91: o botão do Jev no bloco "Jev · OpenRouter", na coluna das chavinhas das contas (`JevSwitch`), e o símbolo
   do serviço (`✳` Claude, `◆` Codex) em cada conta (`EngineMark`), em `UsageFooter.tsx`. Compilado e no vitest; não
   visto no app do Windows.
+- [x] 0.3.94: os valores do OpenRouter em reais pela PTAX do dia, com spread de 2% e IOF de 3,5% (`money`, `cambioHelp`
+  em `ia.ts`; o câmbio vem do núcleo, `keep_ia::ptax`), no rodapé, nas dicas e na barra do Claude. Testado no
+  vitest; não visto no app do Windows.
 - [x] 0.3.93: o workspace recolhido com uma aba dele na tela fica marcado como a aba escolhida (`shownHere`, classe
   `shown-here` em `Sidebar.tsx`); aberto, a marca volta para a aba. Compilado; não visto no app do Windows.
 - [x] 0.3.92: a barra lateral não estreita a ponto de cortar o nome de um workspace ou a linha de uma conta do rodapé

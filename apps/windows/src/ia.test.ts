@@ -39,6 +39,8 @@ import {
   available,
   creditRows,
   dollars,
+  money,
+  cambioHelp,
   jevHelp,
   jevNote,
   type Account,
@@ -426,6 +428,24 @@ describe("the Jev's credit", () => {
     expect(dollars(-1)).toBe("US$ 0,00");
     expect(dollars(1500.5)).toBe("US$ 1500,50");
   });
+
+  it("puts OpenRouter's dollars in reais by the day's PTAX, spread and IOF (pedido de 27/11/2026)", () => {
+    const cambio = { data: "2026-11-26", ptax: 5, spread: 0.02, iof: 0.035, fator: 5.2785 };
+    expect(money(16.61, cambio)).toBe("R$ 87,68");
+    expect(money(1000, cambio)).toBe("R$ 5.278,50");
+    expect(money(250_000, cambio)).toBe("R$ 1.319.625,00");
+    expect(money(0, cambio)).toBe("R$ 0,00");
+    expect(money(0.001, cambio)).toBe("< R$ 0,01");
+    expect(money(-3, cambio)).toBe("R$ 0,00");
+    expect(money(16.61, null)).toBe("US$ 16,61");
+    expect(cambioHelp(cambio)).toBe("PTAX de venda de 26/11/2026: R$ 5,0000 · spread 2% · IOF 3,5% · R$ 5,2785 por dólar");
+    expect(creditRows({ total: 20, used: 3.39, keyLimit: null, keyUsed: null, usedToday: null, usedThisMonth: null }, cambio)[0].help).toBe(
+      "Crédito da conta no OpenRouter: R$ 17,89 gastos de R$ 105,57",
+    );
+    const lida = readJev({ credit: { total: 20, used: 3.39 }, measuredAt: 1, problem: null, cambio });
+    expect(lida?.cambio).toEqual(cambio);
+    expect(readJev({ credit: { total: 20, used: 3.39 }, measuredAt: 1, problem: null })?.cambio).toBeNull();
+  });
   it("what the Jev can still spend is the smaller of the account's credit and its key's ceiling", () => {
     expect(available(credit())).toBeCloseTo(4.9958, 9);
     expect(available(credit({ keyLimit: null }))).toBeCloseTo(9.9754, 9);
@@ -459,6 +479,7 @@ describe("the Jev's credit", () => {
       problem: "sem rede",
       pending: null,
       spent30d: null,
+      cambio: null,
     });
     expect(line?.pending).toBeNull();
     expect(readJev({ credit: credit(), measuredAt: 1, problem: null, pending: 0.0002 })?.pending).toBe(0.0002);
@@ -466,9 +487,9 @@ describe("the Jev's credit", () => {
   });
   it("the note and the tooltip say it as the macOS footer does", () => {
     const now = Date.UTC(2026, 9, 5, 12);
-    const line = { credit: credit({ keyLimit: null }), measuredAt: now / 1000 - 3600, problem: null, pending: null, spent30d: null };
+    const line = { credit: credit({ keyLimit: null }), measuredAt: now / 1000 - 3600, problem: null, pending: null, spent30d: null, cambio: null };
     expect(jevNote(line, now)).toBe("medido há 1h");
-    expect(jevNote({ credit: null, measuredAt: null, problem: null, pending: null, spent30d: null }, now)).toBe("medindo…");
+    expect(jevNote({ credit: null, measuredAt: null, problem: null, pending: null, spent30d: null, cambio: null }, now)).toBe("medindo…");
     expect(jevHelp(line, now)).toContain("Chave: sem teto, gastou < US$ 0,01");
     expect(jevHelp(line, now)).not.toContain("ainda não contou");
     expect(jevHelp({ ...line, pending: 0.0002 }, now)).toContain(
@@ -476,6 +497,12 @@ describe("the Jev's credit", () => {
     );
     // The spend is the Jev's through Keep on this machine in 30 days, and the tooltip says whose.
     expect(jevHelp({ ...line, spent30d: 7.5 }, now)).toContain("Gasto do Jev no Keep em 30 dias: US$ 7,50");
+    expect(jevHelp(line, now)).toContain("Sem a PTAX ainda: valores em dólares");
+    // In reais, the OpenRouter's dollars beside, and the exchange said.
+    const cambio = { data: "2026-11-26", ptax: 5, spread: 0.02, iof: 0.035, fator: 5.2785 };
+    const emReais = jevHelp({ ...line, spent30d: 7.5, cambio }, now);
+    expect(emReais).toContain("Gasto do Jev no Keep em 30 dias: R$ 39,59 (US$ 7,50)");
+    expect(emReais).toContain("PTAX de venda de 26/11/2026: R$ 5,0000 · spread 2% · IOF 3,5% · R$ 5,2785 por dólar");
   });
 });
 

@@ -29,7 +29,7 @@ func furoNoIsolamento(_ e: [String: String], casa: String) -> String? {
     }
     let servicos = [["KEEP_IA_PERFIL_URL", "CLAUDE_KIT_PERFIL_URL"], ["KEEP_IA_CLAUDE_URL", "KEEP_AI_USAGE_CLAUDE_URL"],
                     ["KEEP_IA_CODEX_URL", "KEEP_AI_USAGE_CODEX_URL"], ["KEEP_IA_OPENROUTER_URL"],
-                    ["KEEP_IA_OPENROUTER_AUTH_URL"], ["KEEP_IA_TOKEN_URL"]]
+                    ["KEEP_IA_OPENROUTER_AUTH_URL"], ["KEEP_IA_TOKEN_URL"], ["KEEP_IA_PTAX_URL"]]
     for nomes in servicos {
         let valores = nomes.compactMap { e[$0] }
         if valores.isEmpty || !valores.allSatisfy({ $0.hasPrefix("http://127.0.0.1") }) {
@@ -164,6 +164,29 @@ confere(JevAnswer.decode("{\"ok\":true,\"jev\":null}".data(using: .utf8)!)?.jev 
         && JevAnswer.decode("{\"ok\":true,\"jev\":null}".data(using: .utf8)!) != nil,
         "jev: sem chave é uma resposta, com jev nulo")
 confere(JevAnswer.decode("lixo".data(using: .utf8)!) == nil, "jev: lixo não é uma resposta")
+
+// --- em reais, pela PTAX do dia com spread e IOF (pedido de 27/11/2026)
+let comCambio = JevAnswer.decode("""
+{"ok":true,"jev":{"credit":{"total":20,"used":3.39,"keyLimit":null,"keyUsed":null,"usedToday":null,"usedThisMonth":null},
+"measuredAt":1791084861.45,"problem":null,"cambio":{"data":"2026-11-26","ptax":5.0,"spread":0.02,"iof":0.035,
+"fator":5.2785}}}
+""".data(using: .utf8)!)?.jev
+let cambio = comCambio?.cambio
+confere(cambio?.data == "2026-11-26" && cambio?.fator == 5.2785, "reais: o câmbio lido como o núcleo o escreve",
+        "\(String(describing: cambio))")
+confere(UsageText.money(16.61, cambio) == "R$ 87,68", "reais: US$ 16,61 × 5,2785", UsageText.money(16.61, cambio))
+confere(UsageText.money(1000, cambio) == "R$ 5.278,50" && UsageText.money(250_000, cambio) == "R$ 1.319.625,00",
+        "reais: milhar com ponto, sempre duas casas", "\(UsageText.money(1000, cambio)) \(UsageText.money(250_000, cambio))")
+confere(UsageText.money(0, cambio) == "R$ 0,00" && UsageText.money(0.001, cambio) == "< R$ 0,01"
+        && UsageText.money(-3, cambio) == "R$ 0,00" && UsageText.money(0.1, cambio) == "R$ 0,53",
+        "reais: zero, o que arredonda a nada e o negativo", UsageText.money(0.1, cambio))
+confere(UsageText.money(16.61, nil) == "US$ 16,61", "reais: sem PTAX ainda, em dólares")
+confere(cambio?.help == "PTAX de venda de 26/11/2026: R$ 5,0000 · spread 2% · IOF 3,5% · R$ 5,2785 por dólar",
+        "reais: a dica diz a data, a PTAX, o spread, o IOF e o dólar em reais", cambio?.help ?? "")
+let emReais = comCambio?.credit?.counters(in: cambio) ?? []
+confere(emReais.first?.help == "Crédito da conta no OpenRouter: R$ 17,89 gastos de R$ 105,57",
+        "reais: a dica dos contadores em reais", emReais.first?.help ?? "")
+confere(JevAnswer.decode(respostaDoJev)?.jev?.cambio == nil, "reais: resposta sem câmbio, nenhum")
 if let jev, let guardado = try? JSONEncoder().encode(jev) {
     confere((try? JSONDecoder().decode(JevLine.self, from: guardado)) == jev, "jev: guardado volta igual")
 } else { confere(false, "jev: codifica") }
@@ -483,7 +506,7 @@ confere(teste["KEEP_IA_SECURITY"] == "/casa/falsa/.keep-ia-estado/sem-chaveiro",
         "ambiente: app de teste: o Chaveiro é um que não tem nada")
 confere(teste["KEEP_IA_PERFIL_URL"] == KeepCLI.nowhere && teste["KEEP_IA_CLAUDE_URL"] == KeepCLI.nowhere
         && teste["KEEP_IA_CODEX_URL"] == KeepCLI.nowhere && teste["KEEP_IA_OPENROUTER_URL"] == KeepCLI.nowhere
-        && teste["KEEP_IA_TOKEN_URL"] == KeepCLI.nowhere,
+        && teste["KEEP_IA_TOKEN_URL"] == KeepCLI.nowhere && teste["KEEP_IA_PTAX_URL"] == KeepCLI.nowhere,
         "ambiente: app de teste: os serviços apontam para onde nada escuta")
 let comSubstitutos = KeepCLI.environment(["KEEP_AI_USAGE_HOME": "/c", "KEEP_IA_SECURITY": "/meu/security",
                                           "KEEP_AI_USAGE_CLAUDE_URL": "http://127.0.0.1:5/claude",
@@ -538,20 +561,20 @@ limpa()
 if case .failure(let p) = AIHelper.moveOrder("claude:a b", up: true) { confere(p.reason == "uso" && chamadas().isEmpty, "mover: chave inválida nem chega ao núcleo") } else { confere(false, "mover: chave inválida") }
 if case .failure = AIHelper.moveOrder(AIHelper.followOrder, up: true) { confere(chamadas().isEmpty, "mover: claude:ordem não é conta da fila") } else { confere(false, "mover: claude:ordem") }
 limpa()
-if case .success(let r) = AIHelper.switchAccount(workspace: "-ws estranho", tab: 7, to: "gpt:trabalho", interrupt: false) {
+if case .success(let r) = AIHelper.switchAccount(workspace: "-ws estranho", tab: 7, to: "gpt:trabalho", interrupt: false, origin: .tabMenu) {
     confere(r.contains("gpt:trabalho"), "trocar: ok com o feito", r)
 } else { confere(false, "trocar: ok") }
-confere(chamadas().last == ["trocar", "--ws=-ws estranho", "--aba=7", "--para=gpt:trabalho", "--json"], "trocar: argumentos com =, workspace com traço e espaço", "\(chamadas())")
+confere(chamadas().last == ["trocar", "--ws=-ws estranho", "--aba=7", "--para=gpt:trabalho", "--por=menu", "--json"], "trocar: argumentos com =, workspace com traço e espaço", "\(chamadas())")
 try! "".write(toFile: falsoDir + "/ocupada", atomically: true, encoding: .utf8)
-if case .failure(let p) = AIHelper.switchAccount(workspace: "w", tab: 2, to: "claude:reserva", interrupt: false) {
+if case .failure(let p) = AIHelper.switchAccount(workspace: "w", tab: 2, to: "claude:reserva", interrupt: false, origin: .tabMenu) {
     confere(p.reason == "ocupada" && p.detail == "A aba está no meio de uma resposta.", "trocar: ocupada chega com motivo e detalhe", "\(p)")
 } else { confere(false, "trocar: ocupada") }
-if case .success = AIHelper.switchAccount(workspace: "w", tab: 2, to: AIHelper.followOrder, interrupt: true) {
-    confere(chamadas().last == ["trocar", "--ws=w", "--aba=2", "--para=claude:ordem", "--interromper", "--json"], "trocar: seguir a ordem, com --interromper", "\(chamadas())")
+if case .success = AIHelper.switchAccount(workspace: "w", tab: 2, to: AIHelper.followOrder, interrupt: true, origin: .workspaceHeader) {
+    confere(chamadas().last == ["trocar", "--ws=w", "--aba=2", "--para=claude:ordem", "--por=cabecalho", "--interromper", "--json"], "trocar: seguir a ordem, com --interromper", "\(chamadas())")
 } else { confere(false, "trocar: interromper") }
 try? fm.removeItem(atPath: falsoDir + "/ocupada")
 limpa()
-if case .failure(let p) = AIHelper.switchAccount(workspace: "w", tab: 2, to: "claude:x/y", interrupt: false) {
+if case .failure(let p) = AIHelper.switchAccount(workspace: "w", tab: 2, to: "claude:x/y", interrupt: false, origin: .tabMenu) {
     confere(p.reason == "uso" && chamadas().isEmpty, "trocar: chave inválida recusada antes")
 } else { confere(false, "trocar: chave inválida") }
 // entrar: o falso abre a aba pelo cliente dado; aqui um cliente falso que só diz o número
@@ -570,13 +593,13 @@ if case .success(let aberta) = AIHelper.signIn(.openrouter, workspace: "casa") {
 confere(fm.fileExists(atPath: casa.appendingPathComponent(".codex-contas/nova/auth.json").path), "entrar (falso): a conta nova aparece na casa falsa")
 // conta fixa sem o login próprio: o núcleo abre o login numa aba e diz qual
 try! "".write(toFile: falsoDir + "/precisa-login", atomically: true, encoding: .utf8)
-if case .failure(let p) = AIHelper.switchAccount(workspace: "casa", tab: 2, to: "claude:reserva", interrupt: false) {
+if case .failure(let p) = AIHelper.switchAccount(workspace: "casa", tab: 2, to: "claude:reserva", interrupt: false, origin: .tabMenu) {
     confere(p.reason == "precisa-login" && p.login?.tab == 7 && p.login?.workspace == "casa",
             "trocar: precisa-login traz a aba do login e o workspace dela", "\(p)")
 } else { confere(false, "trocar: precisa-login") }
 try? fm.removeItem(atPath: falsoDir + "/precisa-login")
 try! "".write(toFile: falsoDir + "/ocupada", atomically: true, encoding: .utf8)
-if case .failure(let p) = AIHelper.switchAccount(workspace: "casa", tab: 2, to: "claude:reserva", interrupt: false) {
+if case .failure(let p) = AIHelper.switchAccount(workspace: "casa", tab: 2, to: "claude:reserva", interrupt: false, origin: .tabMenu) {
     confere(p.login == nil, "trocar: recusa sem aba de login não inventa uma", "\(p)")
 } else { confere(false, "trocar: ocupada sem login") }
 try? fm.removeItem(atPath: falsoDir + "/ocupada")
@@ -637,7 +660,7 @@ let quebrado = falsoDir + "/quebrado.sh"
 try! "#!/bin/sh\necho 'isto não é json'\nexit 1\n".write(toFile: quebrado, atomically: true, encoding: .utf8)
 chmod(quebrado, 0o755)
 setenv("KEEP_IA_BIN", quebrado, 1)
-if case .failure(let p) = AIHelper.switchAccount(workspace: "w", tab: 1, to: "claude:reserva", interrupt: false) {
+if case .failure(let p) = AIHelper.switchAccount(workspace: "w", tab: 1, to: "claude:reserva", interrupt: false, origin: .tabMenu) {
     confere(p.detail.contains("não dá para ler"), "resposta ilegível: dita", p.detail)
 } else { confere(false, "resposta ilegível") }
 setenv("KEEP_IA_BIN", "/nao/existe", 1)

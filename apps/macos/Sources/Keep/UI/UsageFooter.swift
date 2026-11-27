@@ -1018,9 +1018,9 @@ struct UsageFooter: View {
             .keptWhole("jev")
             if let credit = jev.credit {
                 Group {
-                    ForEach(credit.counters, id: \.label) { counter in
+                    ForEach(credit.counters(in: jev.cambio), id: \.label) { counter in
                         creditBar(counter.label, spent: counter.spent, figure: counter.figure, says: counter.says,
-                                  help: counter.help)
+                                  help: counter.help, cambio: jev.cambio)
                             .keptWhole("jev \(counter.label)")
                     }
                 }
@@ -1038,7 +1038,8 @@ struct UsageFooter: View {
 
     /// One counter: `spent` is the bar, `figure` the dollars beside it, and
     /// `says` how the figure reads aloud ("restam", "gastou").
-    private func creditBar(_ label: String, spent: Double, figure: Double, says: String, help: String) -> some View {
+    private func creditBar(_ label: String, spent: Double, figure: Double, says: String, help: String,
+                           cambio: JevCambio?) -> some View {
         let level = UsageText.level(spent)
         return HStack(spacing: 6) {
             Text(label)
@@ -1055,7 +1056,7 @@ struct UsageFooter: View {
                 }
             }
             .frame(height: 4)
-            Text(UsageText.dollars(figure))
+            Text(UsageText.money(figure, cambio))
                 .font(numbers)
                 .monospacedDigit()
                 .foregroundStyle(level == .normal ? UsageInk.inkResting : UsageInk.fill(level))
@@ -1065,13 +1066,13 @@ struct UsageFooter: View {
         .frame(height: 16 * scale)
         .help(help)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Jev \(label): \(says) \(UsageText.dollars(figure))")
+        .accessibilityLabel("Jev \(label): \(says) \(UsageText.money(figure, cambio))")
     }
 
     /// Folded: the Jev on one line, with what it can still spend — the
     /// smaller of the account's credit and its key's ceiling.
     private func jevCompact(_ jev: JevLine, now: Date) -> some View {
-        let figure = jev.credit.map { UsageText.dollars($0.available) } ?? "—"
+        let figure = jev.credit.map { UsageText.money($0.available, jev.cambio) } ?? "—"
         let spent = jev.credit.map { max($0.accountPercent, $0.keyPercent ?? 0) } ?? 0
         let level = UsageText.level(spent)
         return HStack(spacing: 5) {
@@ -1113,21 +1114,26 @@ struct UsageFooter: View {
 
     private func jevHelp(_ jev: JevLine, now: Date) -> String {
         var lines = ["Crédito que o Jev gasta no OpenRouter"]
+        // In reais, the dollars beside (the OpenRouter's own figure); in dollars only, without a PTAX yet.
+        let money = { (usd: Double) in
+            jev.cambio.map { "\(UsageText.money(usd, $0)) (\(UsageText.dollars(usd)))" } ?? UsageText.dollars(usd)
+        }
         if let credit = jev.credit {
-            lines.append("Pode gastar ainda: \(UsageText.dollars(credit.available))")
-            lines.append("Conta: \(UsageText.dollars(credit.accountLeft)) de \(UsageText.dollars(credit.total))")
+            lines.append("Pode gastar ainda: \(money(credit.available))")
+            lines.append("Conta: \(money(credit.accountLeft)) de \(money(credit.total))")
             if let left = credit.keyLeft, let limit = credit.keyLimit {
-                lines.append("Chave: \(UsageText.dollars(left)) de \(UsageText.dollars(limit))")
+                lines.append("Chave: \(money(left)) de \(money(limit))")
             } else if let used = credit.keyUsed {
-                lines.append("Chave: sem teto, gastou \(UsageText.dollars(used))")
+                lines.append("Chave: sem teto, gastou \(money(used))")
             }
-            if let today = credit.usedToday { lines.append("Gasto hoje: \(UsageText.dollars(today))") }
-            if let month = credit.usedThisMonth { lines.append("Gasto no mês: \(UsageText.dollars(month))") }
+            if let today = credit.usedToday { lines.append("Gasto hoje: \(money(today))") }
+            if let month = credit.usedThisMonth { lines.append("Gasto no mês: \(money(month))") }
         }
-        if let spent = jev.spent30d { lines.append("Gasto do Jev no Keep em 30 dias: \(UsageText.dollars(spent))") }
+        if let spent = jev.spent30d { lines.append("Gasto do Jev no Keep em 30 dias: \(money(spent))") }
         if let pending = jev.pending, pending > 0 {
-            lines.append("Inclui \(UsageText.dollars(pending)) de decisões desta máquina que o OpenRouter ainda não contou")
+            lines.append("Inclui \(money(pending)) de decisões desta máquina que o OpenRouter ainda não contou")
         }
+        lines.append(jev.cambio?.help ?? "Sem a PTAX ainda: valores em dólares até a primeira cotação")
         if let at = jev.measuredAt { lines.append("Medido \(UsageText.ago(at, now: now))") }
         return lines.joined(separator: "\n")
     }
